@@ -1,0 +1,1115 @@
+// ═══════════════════════════════════════════════════════════════
+// CONSTANTS - State enums, unit definitions, enemy definitions
+// ═══════════════════════════════════════════════════════════════
+
+export const State = {
+  MENU: 'menu',
+  HQ: 'hq',
+  SETTINGS: 'settings',
+  STATS: 'stats',
+  MATCHMAKING: 'matchmaking',
+  COUNTDOWN: 'countdown',
+  BATTLE: 'battle',
+  WAVE_COMPLETE: 'wave_complete',
+  PAUSED: 'paused',
+  VICTORY: 'victory',
+  DEFEAT: 'defeat',
+  // H2H States
+  H2H_DESIGN: 'h2h_design',
+  H2H_BATTLE: 'h2h_battle',
+  H2H_RESULT: 'h2h_result',
+  H2H_MATCH_END: 'h2h_match_end',
+  // Sprite Editor
+  SPRITE_EDITOR: 'sprite_editor',
+  // Campaign States
+  CAMPAIGN_ERA_SELECT: 'campaign_era_select',
+  CAMPAIGN_MOS_SELECT: 'campaign_mos_select',
+  CAMPAIGN_TRAINING: 'campaign_training',
+  CAMPAIGN_MAP: 'campaign_map',
+  CAMPAIGN_PLANNING: 'campaign_planning',
+  CAMPAIGN_BATTLE: 'campaign_battle',
+  CAMPAIGN_RESULT: 'campaign_result',
+  CAMPAIGN_ERA_END: 'campaign_era_end'
+};
+
+export const HQTab = {
+  LINEUP: 'lineup',
+  UNITS: 'units',
+  UPGRADES: 'upgrades'
+};
+
+// ═══════════════════════════════════════════════════════════════
+// UNIT TYPE SYSTEM
+// ═══════════════════════════════════════════════════════════════
+
+export const UnitType = {
+  INFANTRY: 'infantry',
+  ARMOR: 'armor',
+  RECON: 'recon',
+  ANTI_ARMOR: 'anti_armor',
+  ARTILLERY: 'artillery',
+  SUPPORT: 'support',
+  AIR: 'air',
+  ANTI_AIR: 'anti_air'
+};
+
+// Type effectiveness: strong = 1.5x damage, weak = 0.67x damage
+export const TYPE_CHART = {
+  infantry:   { strong: ['recon'], weak: ['armor', 'artillery', 'air'] },
+  armor:      { strong: ['infantry', 'recon'], weak: ['anti_armor', 'air'] },
+  recon:      { strong: ['artillery', 'support'], weak: ['infantry', 'armor', 'air'] },
+  anti_armor: { strong: ['armor'], weak: ['infantry', 'artillery', 'air'] },
+  artillery:  { strong: ['infantry', 'anti_armor'], weak: ['recon', 'air'] },
+  support:    { strong: [], weak: ['recon', 'air'] },
+  air:        { strong: ['infantry', 'armor', 'recon', 'anti_armor', 'artillery', 'support'], weak: ['anti_air'] },
+  anti_air:   { strong: ['air'], weak: ['armor', 'artillery'] }
+};
+
+// Calculate type effectiveness multiplier
+export function getTypeMultiplier(attackerTypes, defenderTypes) {
+  let multiplier = 1.0;
+  for (const atkType of attackerTypes) {
+    const chart = TYPE_CHART[atkType];
+    if (!chart) continue;
+    for (const defType of defenderTypes) {
+      if (chart.strong.includes(defType)) multiplier *= 1.5;
+      if (chart.weak.includes(defType)) multiplier *= 0.67;
+    }
+  }
+  return multiplier;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// H2H UNIT COSTS (for wave budget system)
+// ═══════════════════════════════════════════════════════════════
+
+export const UNIT_COSTS = {
+  infantry: 10,
+  medic: 15,
+  specops: 25,
+  stinger: 30,
+  jeep: 20,
+  humvee: 35,
+  sherman: 40,
+  tiger: 60,
+  abrams: 80,
+  howitzer: 50,
+  drone: 25,
+  apache: 70
+};
+
+export const H2H_BUDGET = 500;
+
+// Vehicle/tank units that need rotation to face enemy (drawn horizontally)
+export const VEHICLE_UNITS = ['jeep', 'humvee', 'sherman', 'tiger', 'abrams', 'howitzer', 'apache'];
+
+// ═══════════════════════════════════════════════════════════════
+// CAMPAIGN - ERAS AND MOS DEFINITIONS
+// ═══════════════════════════════════════════════════════════════
+
+export const CAMPAIGN_ERAS = [
+  { id: 1, name: 'Revolutionary War', period: '1775-1783', tech: 'muskets' },
+  { id: 2, name: 'Civil War I', period: '1861-1865', tech: 'rifles' },
+  { id: 3, name: 'World War I', period: '1917-1918', tech: 'trenches' },
+  { id: 4, name: 'World War II', period: '1942-1945', tech: 'tanks' },
+  { id: 5, name: 'Vietnam', period: '1965-1975', tech: 'helicopters' },
+  { id: 6, name: 'Civil War II', period: '2030+', tech: 'modern' }
+];
+
+export const CAMPAIGN_MOS = {
+  infantry: { name: 'Infantry', playstyle: 'Versatile, adaptable' },
+  cavalry: { name: 'Cavalry/Armor', playstyle: 'Heavy damage, mobile' },
+  naval: { name: 'Naval', playstyle: 'Special naval missions' },
+  aviation: { name: 'Aviation', playstyle: 'Air superiority', minEra: 3 },
+  artillery: { name: 'Artillery', playstyle: 'Long range, area damage' }
+};
+
+// Hero units by era and MOS
+export const CAMPAIGN_HERO_UNITS = {
+  1: { // Revolutionary War
+    infantry: { id: 'continental', name: 'Continental Soldier', hp: 80, speed: 120, damage: 15, fireRate: 2000 },
+    cavalry: { id: 'dragoon', name: 'Dragoon', hp: 100, speed: 180, damage: 20, fireRate: 1500 },
+    naval: { id: 'frigate_captain', name: 'Frigate Captain', hp: 120, speed: 100, damage: 25, fireRate: 2500 },
+    artillery: { id: 'cannon_crew', name: 'Cannon Crew', hp: 60, speed: 80, damage: 40, fireRate: 3000 }
+  },
+  3: { // WWI (first era with all 5 MOS)
+    infantry: { id: 'doughboy', name: 'Doughboy', hp: 100, speed: 130, damage: 20, fireRate: 800 },
+    cavalry: { id: 'mark_iv', name: 'Mark IV Tank', hp: 200, speed: 80, damage: 35, fireRate: 1500 },
+    naval: { id: 'destroyer_captain', name: 'Destroyer Captain', hp: 150, speed: 120, damage: 30, fireRate: 1200 },
+    aviation: { id: 'sopwith', name: 'Sopwith Camel', hp: 80, speed: 200, damage: 25, fireRate: 500 },
+    artillery: { id: 'howitzer_crew', name: 'Howitzer Crew', hp: 70, speed: 60, damage: 50, fireRate: 2500 }
+  },
+  4: { // WWII
+    infantry: { id: 'gi', name: 'GI', hp: 100, speed: 140, damage: 22, fireRate: 600 },
+    cavalry: { id: 'sherman', name: 'M4 Sherman', hp: 250, speed: 100, damage: 40, fireRate: 1200 },
+    naval: { id: 'pt_boat', name: 'PT Boat Captain', hp: 150, speed: 160, damage: 35, fireRate: 800 },
+    aviation: { id: 'p51', name: 'P-51 Mustang', hp: 100, speed: 250, damage: 30, fireRate: 400 },
+    artillery: { id: 'm7_priest', name: 'M7 Priest', hp: 150, speed: 90, damage: 55, fireRate: 2000 }
+  },
+  6: { // Civil War II (Modern)
+    infantry: { id: 'future_soldier', name: 'Future Soldier', hp: 120, speed: 160, damage: 28, fireRate: 400 },
+    cavalry: { id: 'abrams', name: 'M1A3 Abrams', hp: 350, speed: 120, damage: 50, fireRate: 1000 },
+    naval: { id: 'destroyer', name: 'Destroyer Captain', hp: 200, speed: 140, damage: 45, fireRate: 700 },
+    aviation: { id: 'apache', name: 'AH-64 Apache', hp: 150, speed: 220, damage: 40, fireRate: 350 },
+    artillery: { id: 'mlrs', name: 'M270 MLRS', hp: 120, speed: 80, damage: 70, fireRate: 1800 }
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════
+// PROJECTILE DEFINITIONS
+// ═══════════════════════════════════════════════════════════════
+
+export const PROJECTILES = {
+  bullet: {
+    speed: 600,       // pixels per second
+    width: 3,
+    height: 8,
+    color: '#ffcc00',
+    trail: false,
+    muzzleFlash: { size: 8, duration: 50 }
+  },
+  rifle: {
+    speed: 700,
+    width: 2,
+    height: 12,
+    color: '#ff6600',
+    trail: true,
+    trailColor: 'rgba(255, 102, 0, 0.4)',
+    muzzleFlash: { size: 10, duration: 60 }
+  },
+  missile: {
+    speed: 400,
+    width: 4,
+    height: 14,
+    color: '#ff3333',
+    trail: true,
+    trailColor: 'rgba(255, 150, 50, 0.6)',
+    muzzleFlash: { size: 12, duration: 80 }
+  },
+  shell: {
+    speed: 500,
+    width: 6,
+    height: 12,
+    color: '#888888',
+    trail: true,
+    trailColor: 'rgba(100, 100, 100, 0.5)',
+    muzzleFlash: { size: 16, duration: 100 }
+  },
+  artillery: {
+    speed: 350,
+    width: 8,
+    height: 16,
+    color: '#555555',
+    trail: true,
+    trailColor: 'rgba(80, 80, 80, 0.6)',
+    muzzleFlash: { size: 24, duration: 120 }
+  },
+  laser: {
+    speed: 900,
+    width: 2,
+    height: 20,
+    color: '#00ffff',
+    trail: true,
+    trailColor: 'rgba(0, 255, 255, 0.3)',
+    muzzleFlash: { size: 6, duration: 40 }
+  },
+  cannon: {
+    speed: 550,
+    width: 5,
+    height: 10,
+    color: '#ffaa00',
+    trail: true,
+    trailColor: 'rgba(255, 170, 0, 0.5)',
+    muzzleFlash: { size: 14, duration: 90 }
+  }
+};
+
+// Map unit types to their projectile type
+export const UNIT_PROJECTILES = {
+  infantry: 'bullet',
+  medic: 'bullet',
+  specops: 'rifle',
+  stinger: 'missile',
+  jeep: 'bullet',
+  humvee: 'rifle',
+  sherman: 'shell',
+  tiger: 'shell',
+  abrams: 'cannon',
+  howitzer: 'artillery',
+  drone: 'laser',
+  apache: 'missile'
+};
+
+// Unit combat stats: range (pixels), speed (pixels/second), isAir
+export const UNIT_COMBAT_STATS = {
+  infantry:  { range: 100, speed: 30, isAir: false },
+  medic:     { range: 80,  speed: 25, isAir: false },
+  specops:   { range: 150, speed: 35, isAir: false },
+  stinger:   { range: 200, speed: 30, isAir: false },
+  jeep:      { range: 100, speed: 60, isAir: false },
+  humvee:    { range: 120, speed: 50, isAir: false },
+  sherman:   { range: 150, speed: 35, isAir: false },
+  tiger:     { range: 160, speed: 25, isAir: false },
+  abrams:    { range: 180, speed: 40, isAir: false },
+  howitzer:  { range: 300, speed: 20, isAir: false },
+  drone:     { range: 180, speed: 70, isAir: true },
+  apache:    { range: 200, speed: 50, isAir: true }
+};
+
+// Unit descriptions for details panel
+export const UNIT_DESCRIPTIONS = {
+  infantry: "Standard ground troops armed with assault rifles. Cheap and reliable, they form the backbone of any defense.",
+  medic: "Combat medics providing suppressive fire while supporting allies. Low damage but steady presence on the field.",
+  specops: "Elite soldiers with high-powered rifles. Precise and deadly, they excel against light targets.",
+  stinger: "Anti-air specialists armed with guided missiles. Essential for countering aerial threats.",
+  jeep: "Fast reconnaissance vehicle with mounted gun. Quick deployment makes them ideal for rapid response.",
+  humvee: "Armored transport with heavy machine gun. Versatile and mobile with decent firepower.",
+  sherman: "Classic medium tank. Balanced armor and firepower, effective against most ground targets.",
+  tiger: "Heavy battle tank with thick armor and powerful gun. Slow but devastating against ground forces.",
+  abrams: "Modern main battle tank. Superior firepower and armor make it the ultimate ground weapon.",
+  howitzer: "Self-propelled artillery. Long-range bombardment deals heavy damage to clustered enemies.",
+  drone: "Unmanned aerial vehicle with precision laser. Fast targeting but vulnerable to anti-air.",
+  apache: "Attack helicopter with rocket pods. Dominates the battlefield from above but weak to AA."
+};
+
+export const SubState = {
+  PLAYING: 'playing',
+  LANE_SELECT: 'lane_select'
+  // Future: MATH_CHALLENGE, FORGE, etc.
+};
+
+// ═══════════════════════════════════════════════════════════════
+// UNITS - 12 units with types, unlock costs, and upgrades
+// ═══════════════════════════════════════════════════════════════
+
+export const UNITS = [
+  // === INFANTRY-BASED ===
+  {
+    id: 'infantry', name: 'Infantry',
+    types: [UnitType.INFANTRY],
+    damage: 10, fireRate: 1000, deployCooldown: 2000,
+    color: '#4ade80',
+    parts: ['boots', 'body', 'helmet', 'weapon'],
+    defaultColors: { boots: '#2d4a2d', body: '#3d5c3d', helmet: '#4a6b4a', weapon: '#1a1a1a' },
+    // Top-down: helmet, shoulders, rifle, feet (colored/shaded)
+    svg: `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+      <ellipse cx="17" cy="28" rx="4" ry="5" fill="#2d4a2d"/>
+      <ellipse cx="33" cy="28" rx="4" ry="5" fill="#2d4a2d"/>
+      <rect x="14" y="18" width="22" height="14" rx="3" fill="#3d5c3d"/>
+      <rect x="23" y="6" width="4" height="16" rx="1" fill="#1a1a1a"/>
+      <rect x="22" y="4" width="6" height="4" rx="1" fill="#333"/>
+      <circle cx="25" cy="22" r="8" fill="#4a6b4a"/>
+      <ellipse cx="25" cy="21" rx="5" ry="4" fill="#5a7d5a"/>
+    </svg>`,
+    svgFrames: [
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <ellipse cx="17" cy="25" rx="4" ry="5" fill="#2d4a2d"/><ellipse cx="33" cy="31" rx="4" ry="5" fill="#2d4a2d"/>
+        <rect x="14" y="18" width="22" height="14" rx="3" fill="#3d5c3d"/>
+        <rect x="23" y="6" width="4" height="16" rx="1" fill="#1a1a1a"/><rect x="22" y="4" width="6" height="4" rx="1" fill="#333"/>
+        <circle cx="25" cy="22" r="8" fill="#4a6b4a"/><ellipse cx="25" cy="21" rx="5" ry="4" fill="#5a7d5a"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <ellipse cx="17" cy="28" rx="4" ry="5" fill="#2d4a2d"/><ellipse cx="33" cy="28" rx="4" ry="5" fill="#2d4a2d"/>
+        <rect x="14" y="18" width="22" height="14" rx="3" fill="#3d5c3d"/>
+        <rect x="23" y="6" width="4" height="16" rx="1" fill="#1a1a1a"/><rect x="22" y="4" width="6" height="4" rx="1" fill="#333"/>
+        <circle cx="25" cy="22" r="8" fill="#4a6b4a"/><ellipse cx="25" cy="21" rx="5" ry="4" fill="#5a7d5a"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <ellipse cx="17" cy="31" rx="4" ry="5" fill="#2d4a2d"/><ellipse cx="33" cy="25" rx="4" ry="5" fill="#2d4a2d"/>
+        <rect x="14" y="18" width="22" height="14" rx="3" fill="#3d5c3d"/>
+        <rect x="23" y="6" width="4" height="16" rx="1" fill="#1a1a1a"/><rect x="22" y="4" width="6" height="4" rx="1" fill="#333"/>
+        <circle cx="25" cy="22" r="8" fill="#4a6b4a"/><ellipse cx="25" cy="21" rx="5" ry="4" fill="#5a7d5a"/>
+      </svg>`
+    ],
+    unlockCost: null,
+    upgrades: {
+      damage: { levels: [10, 12, 15], costs: [0, 50, 100] },
+      fireRate: { levels: [1000, 900, 800], costs: [0, 75, 150] }
+    }
+  },
+  {
+    id: 'medic', name: 'Medic',
+    types: [UnitType.INFANTRY, UnitType.SUPPORT],
+    damage: 5, fireRate: 1200, deployCooldown: 2500,
+    color: '#f87171',
+    parts: ['boots', 'body', 'helmet', 'medkit', 'cross'],
+    defaultColors: { boots: '#4a3030', body: '#5c4040', helmet: '#6b4a4a', medkit: '#eee', cross: '#c44' },
+    // Top-down: helmet with cross, shoulders, medkit, feet (colored)
+    svg: `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+      <ellipse cx="17" cy="28" rx="4" ry="5" fill="#4a3030"/>
+      <ellipse cx="33" cy="28" rx="4" ry="5" fill="#4a3030"/>
+      <rect x="14" y="18" width="22" height="14" rx="3" fill="#5c4040"/>
+      <rect x="36" y="20" width="8" height="8" rx="1" fill="#eee"/>
+      <line x1="40" y1="22" x2="40" y2="26" stroke="#c44"/><line x1="38" y1="24" x2="42" y2="24" stroke="#c44"/>
+      <circle cx="25" cy="22" r="8" fill="#6b4a4a"/>
+      <ellipse cx="25" cy="21" rx="5" ry="4" fill="#7d5a5a"/>
+      <line x1="25" y1="17" x2="25" y2="25" stroke="#fff" stroke-width="2"/><line x1="21" y1="21" x2="29" y2="21" stroke="#fff" stroke-width="2"/>
+    </svg>`,
+    svgFrames: [
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <ellipse cx="17" cy="25" rx="4" ry="5" fill="#4a3030"/><ellipse cx="33" cy="31" rx="4" ry="5" fill="#4a3030"/>
+        <rect x="14" y="18" width="22" height="14" rx="3" fill="#5c4040"/>
+        <rect x="36" y="20" width="8" height="8" rx="1" fill="#eee"/><line x1="40" y1="22" x2="40" y2="26" stroke="#c44"/><line x1="38" y1="24" x2="42" y2="24" stroke="#c44"/>
+        <circle cx="25" cy="22" r="8" fill="#6b4a4a"/><ellipse cx="25" cy="21" rx="5" ry="4" fill="#7d5a5a"/>
+        <line x1="25" y1="17" x2="25" y2="25" stroke="#fff" stroke-width="2"/><line x1="21" y1="21" x2="29" y2="21" stroke="#fff" stroke-width="2"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <ellipse cx="17" cy="28" rx="4" ry="5" fill="#4a3030"/><ellipse cx="33" cy="28" rx="4" ry="5" fill="#4a3030"/>
+        <rect x="14" y="18" width="22" height="14" rx="3" fill="#5c4040"/>
+        <rect x="36" y="20" width="8" height="8" rx="1" fill="#eee"/><line x1="40" y1="22" x2="40" y2="26" stroke="#c44"/><line x1="38" y1="24" x2="42" y2="24" stroke="#c44"/>
+        <circle cx="25" cy="22" r="8" fill="#6b4a4a"/><ellipse cx="25" cy="21" rx="5" ry="4" fill="#7d5a5a"/>
+        <line x1="25" y1="17" x2="25" y2="25" stroke="#fff" stroke-width="2"/><line x1="21" y1="21" x2="29" y2="21" stroke="#fff" stroke-width="2"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <ellipse cx="17" cy="31" rx="4" ry="5" fill="#4a3030"/><ellipse cx="33" cy="25" rx="4" ry="5" fill="#4a3030"/>
+        <rect x="14" y="18" width="22" height="14" rx="3" fill="#5c4040"/>
+        <rect x="36" y="20" width="8" height="8" rx="1" fill="#eee"/><line x1="40" y1="22" x2="40" y2="26" stroke="#c44"/><line x1="38" y1="24" x2="42" y2="24" stroke="#c44"/>
+        <circle cx="25" cy="22" r="8" fill="#6b4a4a"/><ellipse cx="25" cy="21" rx="5" ry="4" fill="#7d5a5a"/>
+        <line x1="25" y1="17" x2="25" y2="25" stroke="#fff" stroke-width="2"/><line x1="21" y1="21" x2="29" y2="21" stroke="#fff" stroke-width="2"/>
+      </svg>`
+    ],
+    unlockCost: { scrap: 75, parts: 5 },
+    upgrades: {
+      damage: { levels: [5, 7, 10], costs: [0, 40, 80] },
+      fireRate: { levels: [1200, 1100, 1000], costs: [0, 60, 120] }
+    }
+  },
+  {
+    id: 'specops', name: 'Spec Ops',
+    types: [UnitType.INFANTRY, UnitType.RECON],
+    damage: 18, fireRate: 700, deployCooldown: 3000,
+    color: '#1e293b',
+    parts: ['boots', 'body', 'helmet', 'weapon', 'nvg'],
+    defaultColors: { boots: '#1a1a1a', body: '#2a2a2a', helmet: '#333', weapon: '#111', nvg: '#3a5a3a' },
+    // Top-down: helmet with NVG, shoulders, suppressed rifle, feet (dark tactical colors)
+    svg: `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+      <ellipse cx="17" cy="28" rx="4" ry="5" fill="#1a1a1a"/>
+      <ellipse cx="33" cy="28" rx="4" ry="5" fill="#1a1a1a"/>
+      <rect x="14" y="18" width="22" height="14" rx="3" fill="#2a2a2a"/>
+      <rect x="23" y="4" width="4" height="20" rx="1" fill="#111"/>
+      <ellipse cx="25" cy="3" rx="3" ry="2" fill="#333"/>
+      <circle cx="25" cy="22" r="8" fill="#333"/>
+      <circle cx="21" cy="18" r="3" fill="#1a3a1a"/><circle cx="29" cy="18" r="3" fill="#1a3a1a"/>
+      <circle cx="21" cy="18" r="1.5" fill="#3a5a3a"/><circle cx="29" cy="18" r="1.5" fill="#3a5a3a"/>
+    </svg>`,
+    svgFrames: [
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <ellipse cx="17" cy="25" rx="4" ry="5" fill="#1a1a1a"/><ellipse cx="33" cy="31" rx="4" ry="5" fill="#1a1a1a"/>
+        <rect x="14" y="18" width="22" height="14" rx="3" fill="#2a2a2a"/>
+        <rect x="23" y="4" width="4" height="20" rx="1" fill="#111"/><ellipse cx="25" cy="3" rx="3" ry="2" fill="#333"/>
+        <circle cx="25" cy="22" r="8" fill="#333"/>
+        <circle cx="21" cy="18" r="3" fill="#1a3a1a"/><circle cx="29" cy="18" r="3" fill="#1a3a1a"/>
+        <circle cx="21" cy="18" r="1.5" fill="#3a5a3a"/><circle cx="29" cy="18" r="1.5" fill="#3a5a3a"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <ellipse cx="17" cy="28" rx="4" ry="5" fill="#1a1a1a"/><ellipse cx="33" cy="28" rx="4" ry="5" fill="#1a1a1a"/>
+        <rect x="14" y="18" width="22" height="14" rx="3" fill="#2a2a2a"/>
+        <rect x="23" y="4" width="4" height="20" rx="1" fill="#111"/><ellipse cx="25" cy="3" rx="3" ry="2" fill="#333"/>
+        <circle cx="25" cy="22" r="8" fill="#333"/>
+        <circle cx="21" cy="18" r="3" fill="#1a3a1a"/><circle cx="29" cy="18" r="3" fill="#1a3a1a"/>
+        <circle cx="21" cy="18" r="1.5" fill="#3a5a3a"/><circle cx="29" cy="18" r="1.5" fill="#3a5a3a"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <ellipse cx="17" cy="31" rx="4" ry="5" fill="#1a1a1a"/><ellipse cx="33" cy="25" rx="4" ry="5" fill="#1a1a1a"/>
+        <rect x="14" y="18" width="22" height="14" rx="3" fill="#2a2a2a"/>
+        <rect x="23" y="4" width="4" height="20" rx="1" fill="#111"/><ellipse cx="25" cy="3" rx="3" ry="2" fill="#333"/>
+        <circle cx="25" cy="22" r="8" fill="#333"/>
+        <circle cx="21" cy="18" r="3" fill="#1a3a1a"/><circle cx="29" cy="18" r="3" fill="#1a3a1a"/>
+        <circle cx="21" cy="18" r="1.5" fill="#3a5a3a"/><circle cx="29" cy="18" r="1.5" fill="#3a5a3a"/>
+      </svg>`
+    ],
+    unlockCost: { scrap: 100, parts: 6 },
+    upgrades: {
+      damage: { levels: [18, 22, 28], costs: [0, 80, 160] },
+      fireRate: { levels: [700, 600, 500], costs: [0, 100, 200] }
+    }
+  },
+  {
+    id: 'stinger', name: 'Stinger Team',
+    types: [UnitType.INFANTRY, UnitType.ANTI_AIR],
+    damage: 12, fireRate: 1100, deployCooldown: 2800,
+    color: '#22d3ee',
+    parts: ['boots', 'body', 'helmet', 'launcher', 'missile'],
+    defaultColors: { boots: '#1a4a4a', body: '#2a5a5a', helmet: '#3a7a7a', launcher: '#3a6a3a', missile: '#2a5a2a' },
+    // Top-down: helmet, shoulders, missile launcher, feet (cyan/teal colors)
+    svg: `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+      <ellipse cx="17" cy="28" rx="4" ry="5" fill="#1a4a4a"/>
+      <ellipse cx="33" cy="28" rx="4" ry="5" fill="#1a4a4a"/>
+      <rect x="14" y="18" width="22" height="14" rx="3" fill="#2a5a5a"/>
+      <rect x="34" y="8" width="7" height="24" rx="2" fill="#3a6a3a"/>
+      <ellipse cx="37.5" cy="6" rx="4" ry="3" fill="#2a5a2a"/>
+      <circle cx="37.5" cy="6" r="2" fill="#1a3a1a"/>
+      <circle cx="25" cy="22" r="8" fill="#3a7a7a"/>
+      <ellipse cx="25" cy="21" rx="5" ry="4" fill="#4a8a8a"/>
+    </svg>`,
+    svgFrames: [
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <ellipse cx="17" cy="25" rx="4" ry="5" fill="#1a4a4a"/><ellipse cx="33" cy="31" rx="4" ry="5" fill="#1a4a4a"/>
+        <rect x="14" y="18" width="22" height="14" rx="3" fill="#2a5a5a"/>
+        <rect x="34" y="8" width="7" height="24" rx="2" fill="#3a6a3a"/><ellipse cx="37.5" cy="6" rx="4" ry="3" fill="#2a5a2a"/><circle cx="37.5" cy="6" r="2" fill="#1a3a1a"/>
+        <circle cx="25" cy="22" r="8" fill="#3a7a7a"/><ellipse cx="25" cy="21" rx="5" ry="4" fill="#4a8a8a"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <ellipse cx="17" cy="28" rx="4" ry="5" fill="#1a4a4a"/><ellipse cx="33" cy="28" rx="4" ry="5" fill="#1a4a4a"/>
+        <rect x="14" y="18" width="22" height="14" rx="3" fill="#2a5a5a"/>
+        <rect x="34" y="8" width="7" height="24" rx="2" fill="#3a6a3a"/><ellipse cx="37.5" cy="6" rx="4" ry="3" fill="#2a5a2a"/><circle cx="37.5" cy="6" r="2" fill="#1a3a1a"/>
+        <circle cx="25" cy="22" r="8" fill="#3a7a7a"/><ellipse cx="25" cy="21" rx="5" ry="4" fill="#4a8a8a"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <ellipse cx="17" cy="31" rx="4" ry="5" fill="#1a4a4a"/><ellipse cx="33" cy="25" rx="4" ry="5" fill="#1a4a4a"/>
+        <rect x="14" y="18" width="22" height="14" rx="3" fill="#2a5a5a"/>
+        <rect x="34" y="8" width="7" height="24" rx="2" fill="#3a6a3a"/><ellipse cx="37.5" cy="6" rx="4" ry="3" fill="#2a5a2a"/><circle cx="37.5" cy="6" r="2" fill="#1a3a1a"/>
+        <circle cx="25" cy="22" r="8" fill="#3a7a7a"/><ellipse cx="25" cy="21" rx="5" ry="4" fill="#4a8a8a"/>
+      </svg>`
+    ],
+    unlockCost: { scrap: 150, parts: 8 },
+    upgrades: {
+      damage: { levels: [12, 16, 22], costs: [0, 100, 200] },
+      fireRate: { levels: [1100, 950, 800], costs: [0, 120, 240] }
+    }
+  },
+
+  // === RECON ===
+  {
+    id: 'jeep', name: 'Willys Jeep',
+    types: [UnitType.RECON],
+    damage: 15, fireRate: 800, deployCooldown: 3000,
+    color: '#86efac',
+    // Part colors for customization
+    parts: ['body', 'hood', 'seats', 'wheels', 'spare', 'detail'],
+    defaultColors: { body: '#4a5d23', hood: '#3d4d1c', seats: '#2a1a0a', wheels: '#1a1a1a', spare: '#1a1a1a', detail: '#888' },
+    // Top-down: detailed jeep with hood, seats, spare tire (colored)
+    svg: `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+      <rect data-part="wheels" x="9" y="10" width="4" height="8" rx="1" fill="#1a1a1a"/><rect data-part="wheels" x="37" y="10" width="4" height="8" rx="1" fill="#1a1a1a"/>
+      <rect data-part="wheels" x="9" y="32" width="4" height="8" rx="1" fill="#1a1a1a"/><rect data-part="wheels" x="37" y="32" width="4" height="8" rx="1" fill="#1a1a1a"/>
+      <rect data-part="body" x="13" y="6" width="24" height="38" rx="2" fill="#4a5d23"/>
+      <rect data-part="hood" x="15" y="8" width="20" height="10" rx="1" fill="#3d4d1c"/>
+      <line x1="15" y1="11" x2="35" y2="11" stroke="#2a3a12"/><line x1="15" y1="14" x2="35" y2="14" stroke="#2a3a12"/>
+      <rect data-part="seats" x="16" y="20" width="7" height="8" rx="1" fill="#2a1a0a"/><rect data-part="seats" x="27" y="20" width="7" height="8" rx="1" fill="#2a1a0a"/>
+      <circle data-part="spare" cx="25" cy="38" r="5" fill="#1a1a1a"/><circle cx="25" cy="38" r="2" fill="#333"/>
+      <line data-part="detail" x1="11" y1="12" x2="11" y2="16" stroke="#888"/><line data-part="detail" x1="39" y1="12" x2="39" y2="16" stroke="#888"/>
+      <line data-part="detail" x1="11" y1="34" x2="11" y2="38" stroke="#888"/><line data-part="detail" x1="39" y1="34" x2="39" y2="38" stroke="#888"/>
+    </svg>`,
+    svgFrames: [
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <rect data-part="wheels" x="9" y="10" width="4" height="8" rx="1" fill="#1a1a1a"/><rect data-part="wheels" x="37" y="10" width="4" height="8" rx="1" fill="#1a1a1a"/><rect data-part="wheels" x="9" y="32" width="4" height="8" rx="1" fill="#1a1a1a"/><rect data-part="wheels" x="37" y="32" width="4" height="8" rx="1" fill="#1a1a1a"/>
+        <rect data-part="body" x="13" y="6" width="24" height="38" rx="2" fill="#4a5d23"/><rect data-part="hood" x="15" y="8" width="20" height="10" rx="1" fill="#3d4d1c"/><line x1="15" y1="11" x2="35" y2="11" stroke="#2a3a12"/><line x1="15" y1="14" x2="35" y2="14" stroke="#2a3a12"/>
+        <rect data-part="seats" x="16" y="20" width="7" height="8" rx="1" fill="#2a1a0a"/><rect data-part="seats" x="27" y="20" width="7" height="8" rx="1" fill="#2a1a0a"/><circle data-part="spare" cx="25" cy="38" r="5" fill="#1a1a1a"/><circle cx="25" cy="38" r="2" fill="#333"/>
+        <line data-part="detail" x1="11" y1="11" x2="11" y2="13" stroke="#888"/><line data-part="detail" x1="11" y1="15" x2="11" y2="17" stroke="#888"/><line data-part="detail" x1="39" y1="11" x2="39" y2="13" stroke="#888"/><line data-part="detail" x1="39" y1="15" x2="39" y2="17" stroke="#888"/>
+        <line data-part="detail" x1="11" y1="33" x2="11" y2="35" stroke="#888"/><line data-part="detail" x1="11" y1="37" x2="11" y2="39" stroke="#888"/><line data-part="detail" x1="39" y1="33" x2="39" y2="35" stroke="#888"/><line data-part="detail" x1="39" y1="37" x2="39" y2="39" stroke="#888"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <rect data-part="wheels" x="9" y="10" width="4" height="8" rx="1" fill="#1a1a1a"/><rect data-part="wheels" x="37" y="10" width="4" height="8" rx="1" fill="#1a1a1a"/><rect data-part="wheels" x="9" y="32" width="4" height="8" rx="1" fill="#1a1a1a"/><rect data-part="wheels" x="37" y="32" width="4" height="8" rx="1" fill="#1a1a1a"/>
+        <rect data-part="body" x="13" y="6" width="24" height="38" rx="2" fill="#4a5d23"/><rect data-part="hood" x="15" y="8" width="20" height="10" rx="1" fill="#3d4d1c"/><line x1="15" y1="11" x2="35" y2="11" stroke="#2a3a12"/><line x1="15" y1="14" x2="35" y2="14" stroke="#2a3a12"/>
+        <rect data-part="seats" x="16" y="20" width="7" height="8" rx="1" fill="#2a1a0a"/><rect data-part="seats" x="27" y="20" width="7" height="8" rx="1" fill="#2a1a0a"/><circle data-part="spare" cx="25" cy="38" r="5" fill="#1a1a1a"/><circle cx="25" cy="38" r="2" fill="#333"/>
+        <line data-part="detail" x1="11" y1="12" x2="11" y2="14" stroke="#888"/><line data-part="detail" x1="11" y1="16" x2="11" y2="18" stroke="#888"/><line data-part="detail" x1="39" y1="12" x2="39" y2="14" stroke="#888"/><line data-part="detail" x1="39" y1="16" x2="39" y2="18" stroke="#888"/>
+        <line data-part="detail" x1="11" y1="34" x2="11" y2="36" stroke="#888"/><line data-part="detail" x1="11" y1="38" x2="11" y2="40" stroke="#888"/><line data-part="detail" x1="39" y1="34" x2="39" y2="36" stroke="#888"/><line data-part="detail" x1="39" y1="38" x2="39" y2="40" stroke="#888"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <rect data-part="wheels" x="9" y="10" width="4" height="8" rx="1" fill="#1a1a1a"/><rect data-part="wheels" x="37" y="10" width="4" height="8" rx="1" fill="#1a1a1a"/><rect data-part="wheels" x="9" y="32" width="4" height="8" rx="1" fill="#1a1a1a"/><rect data-part="wheels" x="37" y="32" width="4" height="8" rx="1" fill="#1a1a1a"/>
+        <rect data-part="body" x="13" y="6" width="24" height="38" rx="2" fill="#4a5d23"/><rect data-part="hood" x="15" y="8" width="20" height="10" rx="1" fill="#3d4d1c"/><line x1="15" y1="11" x2="35" y2="11" stroke="#2a3a12"/><line x1="15" y1="14" x2="35" y2="14" stroke="#2a3a12"/>
+        <rect data-part="seats" x="16" y="20" width="7" height="8" rx="1" fill="#2a1a0a"/><rect data-part="seats" x="27" y="20" width="7" height="8" rx="1" fill="#2a1a0a"/><circle data-part="spare" cx="25" cy="38" r="5" fill="#1a1a1a"/><circle cx="25" cy="38" r="2" fill="#333"/>
+        <line data-part="detail" x1="11" y1="13" x2="11" y2="15" stroke="#888"/><line data-part="detail" x1="11" y1="17" x2="11" y2="18" stroke="#888"/><line data-part="detail" x1="39" y1="13" x2="39" y2="15" stroke="#888"/><line data-part="detail" x1="39" y1="17" x2="39" y2="18" stroke="#888"/>
+        <line data-part="detail" x1="11" y1="35" x2="11" y2="37" stroke="#888"/><line data-part="detail" x1="11" y1="39" x2="11" y2="40" stroke="#888"/><line data-part="detail" x1="39" y1="35" x2="39" y2="37" stroke="#888"/><line data-part="detail" x1="39" y1="39" x2="39" y2="40" stroke="#888"/>
+      </svg>`
+    ],
+    unlockCost: { scrap: 50, parts: 3 },
+    upgrades: {
+      damage: { levels: [15, 20, 25], costs: [0, 60, 120] },
+      fireRate: { levels: [800, 700, 600], costs: [0, 80, 160] }
+    }
+  },
+  {
+    id: 'humvee', name: 'Humvee',
+    types: [UnitType.RECON, UnitType.ANTI_AIR],
+    damage: 20, fireRate: 600, deployCooldown: 3500,
+    color: '#a3e635',
+    parts: ['body', 'hood', 'roof', 'turret', 'gun', 'wheels', 'detail'],
+    defaultColors: { body: '#5a6b3a', hood: '#4a5a2d', roof: '#3d4a25', turret: '#2a3318', gun: '#1a1a1a', wheels: '#1a1a1a', detail: '#888' },
+    // Top-down: armored humvee with roof turret (colored)
+    svg: `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+      <rect data-part="wheels" x="6" y="10" width="5" height="10" rx="1" fill="#1a1a1a"/><rect data-part="wheels" x="39" y="10" width="5" height="10" rx="1" fill="#1a1a1a"/>
+      <rect data-part="wheels" x="6" y="30" width="5" height="10" rx="1" fill="#1a1a1a"/><rect data-part="wheels" x="39" y="30" width="5" height="10" rx="1" fill="#1a1a1a"/>
+      <rect data-part="body" x="11" y="6" width="28" height="38" rx="2" fill="#5a6b3a"/>
+      <path data-part="hood" d="M14 10 L36 10 L36 18 L14 18 Z" fill="#4a5a2d"/><line x1="14" y1="13" x2="36" y2="13" stroke="#3a4a20"/><line x1="14" y1="16" x2="36" y2="16" stroke="#3a4a20"/>
+      <rect data-part="roof" x="14" y="20" width="22" height="18" rx="1" fill="#3d4a25"/>
+      <circle data-part="turret" cx="25" cy="29" r="6" fill="#2a3318"/><circle cx="25" cy="29" r="3" fill="#3a4328"/>
+      <rect data-part="gun" x="23" y="6" width="4" height="20" rx="0.5" fill="#1a1a1a"/><rect data-part="gun" x="22" y="4" width="6" height="4" fill="#222"/>
+      <line data-part="detail" x1="7" y1="13" x2="10" y2="13" stroke="#888"/><line data-part="detail" x1="7" y1="17" x2="10" y2="17" stroke="#888"/>
+      <line data-part="detail" x1="40" y1="13" x2="43" y2="13" stroke="#888"/><line data-part="detail" x1="40" y1="17" x2="43" y2="17" stroke="#888"/>
+      <line data-part="detail" x1="7" y1="33" x2="10" y2="33" stroke="#888"/><line data-part="detail" x1="7" y1="37" x2="10" y2="37" stroke="#888"/>
+      <line data-part="detail" x1="40" y1="33" x2="43" y2="33" stroke="#888"/><line data-part="detail" x1="40" y1="37" x2="43" y2="37" stroke="#888"/>
+    </svg>`,
+    svgFrames: [
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <rect data-part="wheels" x="6" y="10" width="5" height="10" rx="1" fill="#1a1a1a"/><rect data-part="wheels" x="39" y="10" width="5" height="10" rx="1" fill="#1a1a1a"/><rect data-part="wheels" x="6" y="30" width="5" height="10" rx="1" fill="#1a1a1a"/><rect data-part="wheels" x="39" y="30" width="5" height="10" rx="1" fill="#1a1a1a"/>
+        <rect data-part="body" x="11" y="6" width="28" height="38" rx="2" fill="#5a6b3a"/><path data-part="hood" d="M14 10 L36 10 L36 18 L14 18 Z" fill="#4a5a2d"/><line x1="14" y1="13" x2="36" y2="13" stroke="#3a4a20"/><line x1="14" y1="16" x2="36" y2="16" stroke="#3a4a20"/>
+        <rect data-part="roof" x="14" y="20" width="22" height="18" rx="1" fill="#3d4a25"/><circle data-part="turret" cx="25" cy="29" r="6" fill="#2a3318"/><circle cx="25" cy="29" r="3" fill="#3a4328"/>
+        <rect data-part="gun" x="23" y="6" width="4" height="20" rx="0.5" fill="#1a1a1a"/><rect data-part="gun" x="22" y="4" width="6" height="4" fill="#222"/>
+        <line data-part="detail" x1="7" y1="12" x2="10" y2="12" stroke="#888"/><line data-part="detail" x1="7" y1="16" x2="10" y2="16" stroke="#888"/><line data-part="detail" x1="7" y1="19" x2="10" y2="19" stroke="#888"/>
+        <line data-part="detail" x1="40" y1="12" x2="43" y2="12" stroke="#888"/><line data-part="detail" x1="40" y1="16" x2="43" y2="16" stroke="#888"/><line data-part="detail" x1="40" y1="19" x2="43" y2="19" stroke="#888"/>
+        <line data-part="detail" x1="7" y1="32" x2="10" y2="32" stroke="#888"/><line data-part="detail" x1="7" y1="36" x2="10" y2="36" stroke="#888"/><line data-part="detail" x1="7" y1="39" x2="10" y2="39" stroke="#888"/>
+        <line data-part="detail" x1="40" y1="32" x2="43" y2="32" stroke="#888"/><line data-part="detail" x1="40" y1="36" x2="43" y2="36" stroke="#888"/><line data-part="detail" x1="40" y1="39" x2="43" y2="39" stroke="#888"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <rect data-part="wheels" x="6" y="10" width="5" height="10" rx="1" fill="#1a1a1a"/><rect data-part="wheels" x="39" y="10" width="5" height="10" rx="1" fill="#1a1a1a"/><rect data-part="wheels" x="6" y="30" width="5" height="10" rx="1" fill="#1a1a1a"/><rect data-part="wheels" x="39" y="30" width="5" height="10" rx="1" fill="#1a1a1a"/>
+        <rect data-part="body" x="11" y="6" width="28" height="38" rx="2" fill="#5a6b3a"/><path data-part="hood" d="M14 10 L36 10 L36 18 L14 18 Z" fill="#4a5a2d"/><line x1="14" y1="13" x2="36" y2="13" stroke="#3a4a20"/><line x1="14" y1="16" x2="36" y2="16" stroke="#3a4a20"/>
+        <rect data-part="roof" x="14" y="20" width="22" height="18" rx="1" fill="#3d4a25"/><circle data-part="turret" cx="25" cy="29" r="6" fill="#2a3318"/><circle cx="25" cy="29" r="3" fill="#3a4328"/>
+        <rect data-part="gun" x="23" y="6" width="4" height="20" rx="0.5" fill="#1a1a1a"/><rect data-part="gun" x="22" y="4" width="6" height="4" fill="#222"/>
+        <line data-part="detail" x1="7" y1="13" x2="10" y2="13" stroke="#888"/><line data-part="detail" x1="7" y1="17" x2="10" y2="17" stroke="#888"/>
+        <line data-part="detail" x1="40" y1="13" x2="43" y2="13" stroke="#888"/><line data-part="detail" x1="40" y1="17" x2="43" y2="17" stroke="#888"/>
+        <line data-part="detail" x1="7" y1="33" x2="10" y2="33" stroke="#888"/><line data-part="detail" x1="7" y1="37" x2="10" y2="37" stroke="#888"/>
+        <line data-part="detail" x1="40" y1="33" x2="43" y2="33" stroke="#888"/><line data-part="detail" x1="40" y1="37" x2="43" y2="37" stroke="#888"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <rect data-part="wheels" x="6" y="10" width="5" height="10" rx="1" fill="#1a1a1a"/><rect data-part="wheels" x="39" y="10" width="5" height="10" rx="1" fill="#1a1a1a"/><rect data-part="wheels" x="6" y="30" width="5" height="10" rx="1" fill="#1a1a1a"/><rect data-part="wheels" x="39" y="30" width="5" height="10" rx="1" fill="#1a1a1a"/>
+        <rect data-part="body" x="11" y="6" width="28" height="38" rx="2" fill="#5a6b3a"/><path data-part="hood" d="M14 10 L36 10 L36 18 L14 18 Z" fill="#4a5a2d"/><line x1="14" y1="13" x2="36" y2="13" stroke="#3a4a20"/><line x1="14" y1="16" x2="36" y2="16" stroke="#3a4a20"/>
+        <rect data-part="roof" x="14" y="20" width="22" height="18" rx="1" fill="#3d4a25"/><circle data-part="turret" cx="25" cy="29" r="6" fill="#2a3318"/><circle cx="25" cy="29" r="3" fill="#3a4328"/>
+        <rect data-part="gun" x="23" y="6" width="4" height="20" rx="0.5" fill="#1a1a1a"/><rect data-part="gun" x="22" y="4" width="6" height="4" fill="#222"/>
+        <line data-part="detail" x1="7" y1="14" x2="10" y2="14" stroke="#888"/><line data-part="detail" x1="7" y1="18" x2="10" y2="18" stroke="#888"/>
+        <line data-part="detail" x1="40" y1="14" x2="43" y2="14" stroke="#888"/><line data-part="detail" x1="40" y1="18" x2="43" y2="18" stroke="#888"/>
+        <line data-part="detail" x1="7" y1="34" x2="10" y2="34" stroke="#888"/><line data-part="detail" x1="7" y1="38" x2="10" y2="38" stroke="#888"/>
+        <line data-part="detail" x1="40" y1="34" x2="43" y2="34" stroke="#888"/><line data-part="detail" x1="40" y1="38" x2="43" y2="38" stroke="#888"/>
+      </svg>`
+    ],
+    unlockCost: { scrap: 125, parts: 7 },
+    upgrades: {
+      damage: { levels: [20, 26, 34], costs: [0, 90, 180] },
+      fireRate: { levels: [600, 500, 400], costs: [0, 110, 220] }
+    }
+  },
+
+  // === ARMOR ===
+  {
+    id: 'sherman', name: 'M4 Sherman',
+    types: [UnitType.ARMOR, UnitType.SUPPORT],
+    damage: 35, fireRate: 1500, deployCooldown: 4000,
+    color: '#60a5fa',
+    parts: ['tracks', 'hull', 'turret', 'gun', 'hatches', 'detail'],
+    defaultColors: { tracks: '#2a2a2a', hull: '#4a5a3a', turret: '#5a6b4a', gun: '#1a1a1a', hatches: '#3a4a2a', detail: '#6a7b5a' },
+    // Top-down: detailed Sherman with track segments, turret, hatches (colored)
+    svg: `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+      <rect data-part="tracks" x="6" y="4" width="9" height="42" rx="1" fill="#2a2a2a"/>
+      <rect data-part="tracks" x="35" y="4" width="9" height="42" rx="1" fill="#2a2a2a"/>
+      <line x1="6" y1="10" x2="15" y2="10" stroke="#444"/><line x1="6" y1="16" x2="15" y2="16" stroke="#444"/><line x1="6" y1="22" x2="15" y2="22" stroke="#444"/>
+      <line x1="6" y1="28" x2="15" y2="28" stroke="#444"/><line x1="6" y1="34" x2="15" y2="34" stroke="#444"/><line x1="6" y1="40" x2="15" y2="40" stroke="#444"/>
+      <line x1="35" y1="10" x2="44" y2="10" stroke="#444"/><line x1="35" y1="16" x2="44" y2="16" stroke="#444"/><line x1="35" y1="22" x2="44" y2="22" stroke="#444"/>
+      <line x1="35" y1="28" x2="44" y2="28" stroke="#444"/><line x1="35" y1="34" x2="44" y2="34" stroke="#444"/><line x1="35" y1="40" x2="44" y2="40" stroke="#444"/>
+      <rect data-part="hull" x="14" y="8" width="22" height="34" rx="2" fill="#4a5a3a"/>
+      <line x1="14" y1="38" x2="36" y2="38" stroke="#3a4a2a"/>
+      <path data-part="turret" d="M18 20 L32 20 L34 32 L30 38 L20 38 L16 32 Z" fill="#5a6b4a"/>
+      <circle data-part="hatches" cx="25" cy="30" r="4" fill="#3a4a2a"/><circle data-part="hatches" cx="21" cy="24" r="2" fill="#3a4a2a"/><circle data-part="hatches" cx="29" cy="24" r="2" fill="#3a4a2a"/>
+      <rect data-part="gun" x="23" y="2" width="4" height="16" rx="0.5" fill="#1a1a1a"/>
+      <rect data-part="gun" x="22" y="0" width="6" height="3" rx="0.5" fill="#222"/>
+    </svg>`,
+    // Animated frames - tracks shift by 2px each frame
+    svgFrames: [
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <rect data-part="tracks" x="6" y="4" width="9" height="42" rx="1" fill="#2a2a2a"/><rect data-part="tracks" x="35" y="4" width="9" height="42" rx="1" fill="#2a2a2a"/>
+        <line x1="6" y1="8" x2="15" y2="8" stroke="#444"/><line x1="6" y1="14" x2="15" y2="14" stroke="#444"/><line x1="6" y1="20" x2="15" y2="20" stroke="#444"/><line x1="6" y1="26" x2="15" y2="26" stroke="#444"/><line x1="6" y1="32" x2="15" y2="32" stroke="#444"/><line x1="6" y1="38" x2="15" y2="38" stroke="#444"/><line x1="6" y1="44" x2="15" y2="44" stroke="#444"/>
+        <line x1="35" y1="8" x2="44" y2="8" stroke="#444"/><line x1="35" y1="14" x2="44" y2="14" stroke="#444"/><line x1="35" y1="20" x2="44" y2="20" stroke="#444"/><line x1="35" y1="26" x2="44" y2="26" stroke="#444"/><line x1="35" y1="32" x2="44" y2="32" stroke="#444"/><line x1="35" y1="38" x2="44" y2="38" stroke="#444"/><line x1="35" y1="44" x2="44" y2="44" stroke="#444"/>
+        <rect data-part="hull" x="14" y="8" width="22" height="34" rx="2" fill="#4a5a3a"/><line x1="14" y1="38" x2="36" y2="38" stroke="#3a4a2a"/><path data-part="turret" d="M18 20 L32 20 L34 32 L30 38 L20 38 L16 32 Z" fill="#5a6b4a"/><circle data-part="hatches" cx="25" cy="30" r="4" fill="#3a4a2a"/><circle data-part="hatches" cx="21" cy="24" r="2" fill="#3a4a2a"/><circle data-part="hatches" cx="29" cy="24" r="2" fill="#3a4a2a"/><rect data-part="gun" x="23" y="2" width="4" height="16" rx="0.5" fill="#1a1a1a"/><rect data-part="gun" x="22" y="0" width="6" height="3" rx="0.5" fill="#222"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <rect data-part="tracks" x="6" y="4" width="9" height="42" rx="1" fill="#2a2a2a"/><rect data-part="tracks" x="35" y="4" width="9" height="42" rx="1" fill="#2a2a2a"/>
+        <line x1="6" y1="10" x2="15" y2="10" stroke="#444"/><line x1="6" y1="16" x2="15" y2="16" stroke="#444"/><line x1="6" y1="22" x2="15" y2="22" stroke="#444"/><line x1="6" y1="28" x2="15" y2="28" stroke="#444"/><line x1="6" y1="34" x2="15" y2="34" stroke="#444"/><line x1="6" y1="40" x2="15" y2="40" stroke="#444"/>
+        <line x1="35" y1="10" x2="44" y2="10" stroke="#444"/><line x1="35" y1="16" x2="44" y2="16" stroke="#444"/><line x1="35" y1="22" x2="44" y2="22" stroke="#444"/><line x1="35" y1="28" x2="44" y2="28" stroke="#444"/><line x1="35" y1="34" x2="44" y2="34" stroke="#444"/><line x1="35" y1="40" x2="44" y2="40" stroke="#444"/>
+        <rect data-part="hull" x="14" y="8" width="22" height="34" rx="2" fill="#4a5a3a"/><line x1="14" y1="38" x2="36" y2="38" stroke="#3a4a2a"/><path data-part="turret" d="M18 20 L32 20 L34 32 L30 38 L20 38 L16 32 Z" fill="#5a6b4a"/><circle data-part="hatches" cx="25" cy="30" r="4" fill="#3a4a2a"/><circle data-part="hatches" cx="21" cy="24" r="2" fill="#3a4a2a"/><circle data-part="hatches" cx="29" cy="24" r="2" fill="#3a4a2a"/><rect data-part="gun" x="23" y="2" width="4" height="16" rx="0.5" fill="#1a1a1a"/><rect data-part="gun" x="22" y="0" width="6" height="3" rx="0.5" fill="#222"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <rect data-part="tracks" x="6" y="4" width="9" height="42" rx="1" fill="#2a2a2a"/><rect data-part="tracks" x="35" y="4" width="9" height="42" rx="1" fill="#2a2a2a"/>
+        <line x1="6" y1="12" x2="15" y2="12" stroke="#444"/><line x1="6" y1="18" x2="15" y2="18" stroke="#444"/><line x1="6" y1="24" x2="15" y2="24" stroke="#444"/><line x1="6" y1="30" x2="15" y2="30" stroke="#444"/><line x1="6" y1="36" x2="15" y2="36" stroke="#444"/><line x1="6" y1="42" x2="15" y2="42" stroke="#444"/>
+        <line x1="35" y1="12" x2="44" y2="12" stroke="#444"/><line x1="35" y1="18" x2="44" y2="18" stroke="#444"/><line x1="35" y1="24" x2="44" y2="24" stroke="#444"/><line x1="35" y1="30" x2="44" y2="30" stroke="#444"/><line x1="35" y1="36" x2="44" y2="36" stroke="#444"/><line x1="35" y1="42" x2="44" y2="42" stroke="#444"/>
+        <rect data-part="hull" x="14" y="8" width="22" height="34" rx="2" fill="#4a5a3a"/><line x1="14" y1="38" x2="36" y2="38" stroke="#3a4a2a"/><path data-part="turret" d="M18 20 L32 20 L34 32 L30 38 L20 38 L16 32 Z" fill="#5a6b4a"/><circle data-part="hatches" cx="25" cy="30" r="4" fill="#3a4a2a"/><circle data-part="hatches" cx="21" cy="24" r="2" fill="#3a4a2a"/><circle data-part="hatches" cx="29" cy="24" r="2" fill="#3a4a2a"/><rect data-part="gun" x="23" y="2" width="4" height="16" rx="0.5" fill="#1a1a1a"/><rect data-part="gun" x="22" y="0" width="6" height="3" rx="0.5" fill="#222"/>
+      </svg>`
+    ],
+    unlockCost: { scrap: 100, parts: 5 },
+    upgrades: {
+      damage: { levels: [35, 45, 55], costs: [0, 120, 240] },
+      fireRate: { levels: [1500, 1300, 1100], costs: [0, 140, 280] }
+    }
+  },
+  {
+    id: 'tiger', name: 'Tiger I',
+    types: [UnitType.ARMOR, UnitType.ANTI_ARMOR],
+    damage: 50, fireRate: 2000, deployCooldown: 5000,
+    color: '#fbbf24',
+    parts: ['tracks', 'hull', 'turret', 'gun', 'hatches', 'detail'],
+    defaultColors: { tracks: '#2a2a2a', hull: '#8b7355', turret: '#9b8365', gun: '#1a1a1a', hatches: '#6b5a45', detail: '#ab9375' },
+    // Top-down: heavy Tiger tank with thick tracks, boxy turret (dunkelgelb/desert tan)
+    svg: `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+      <rect data-part="tracks" x="4" y="3" width="11" height="44" rx="1" fill="#2a2a2a"/>
+      <rect data-part="tracks" x="35" y="3" width="11" height="44" rx="1" fill="#2a2a2a"/>
+      <line x1="4" y1="9" x2="15" y2="9" stroke="#444"/><line x1="4" y1="15" x2="15" y2="15" stroke="#444"/><line x1="4" y1="21" x2="15" y2="21" stroke="#444"/>
+      <line x1="4" y1="27" x2="15" y2="27" stroke="#444"/><line x1="4" y1="33" x2="15" y2="33" stroke="#444"/><line x1="4" y1="39" x2="15" y2="39" stroke="#444"/>
+      <line x1="35" y1="9" x2="46" y2="9" stroke="#444"/><line x1="35" y1="15" x2="46" y2="15" stroke="#444"/><line x1="35" y1="21" x2="46" y2="21" stroke="#444"/>
+      <line x1="35" y1="27" x2="46" y2="27" stroke="#444"/><line x1="35" y1="33" x2="46" y2="33" stroke="#444"/><line x1="35" y1="39" x2="46" y2="39" stroke="#444"/>
+      <rect data-part="hull" x="14" y="6" width="22" height="38" rx="1" fill="#8b7355"/>
+      <rect data-part="detail" x="16" y="40" width="18" height="3" fill="#7b6345"/>
+      <rect data-part="turret" x="17" y="18" width="16" height="20" rx="1" fill="#9b8365"/>
+      <circle data-part="hatches" cx="25" cy="32" r="4" fill="#6b5a45"/>
+      <rect data-part="hatches" x="19" y="20" width="5" height="4" rx="0.5" fill="#6b5a45"/><rect data-part="hatches" x="26" y="20" width="5" height="4" rx="0.5" fill="#6b5a45"/>
+      <rect data-part="gun" x="23" y="2" width="4" height="18" rx="0.5" fill="#1a1a1a"/>
+      <rect data-part="gun" x="21" y="0" width="8" height="4" rx="0.5" fill="#222"/>
+      <line x1="25" y1="4" x2="25" y2="0" stroke="#111"/>
+    </svg>`,
+    svgFrames: [
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <rect data-part="tracks" x="4" y="3" width="11" height="44" rx="1" fill="#2a2a2a"/><rect data-part="tracks" x="35" y="3" width="11" height="44" rx="1" fill="#2a2a2a"/>
+        <line x1="4" y1="7" x2="15" y2="7" stroke="#444"/><line x1="4" y1="13" x2="15" y2="13" stroke="#444"/><line x1="4" y1="19" x2="15" y2="19" stroke="#444"/><line x1="4" y1="25" x2="15" y2="25" stroke="#444"/><line x1="4" y1="31" x2="15" y2="31" stroke="#444"/><line x1="4" y1="37" x2="15" y2="37" stroke="#444"/><line x1="4" y1="43" x2="15" y2="43" stroke="#444"/>
+        <line x1="35" y1="7" x2="46" y2="7" stroke="#444"/><line x1="35" y1="13" x2="46" y2="13" stroke="#444"/><line x1="35" y1="19" x2="46" y2="19" stroke="#444"/><line x1="35" y1="25" x2="46" y2="25" stroke="#444"/><line x1="35" y1="31" x2="46" y2="31" stroke="#444"/><line x1="35" y1="37" x2="46" y2="37" stroke="#444"/><line x1="35" y1="43" x2="46" y2="43" stroke="#444"/>
+        <rect data-part="hull" x="14" y="6" width="22" height="38" rx="1" fill="#8b7355"/><rect data-part="detail" x="16" y="40" width="18" height="3" fill="#7b6345"/><rect data-part="turret" x="17" y="18" width="16" height="20" rx="1" fill="#9b8365"/><circle data-part="hatches" cx="25" cy="32" r="4" fill="#6b5a45"/><rect data-part="hatches" x="19" y="20" width="5" height="4" rx="0.5" fill="#6b5a45"/><rect data-part="hatches" x="26" y="20" width="5" height="4" rx="0.5" fill="#6b5a45"/><rect data-part="gun" x="23" y="2" width="4" height="18" rx="0.5" fill="#1a1a1a"/><rect data-part="gun" x="21" y="0" width="8" height="4" rx="0.5" fill="#222"/><line x1="25" y1="4" x2="25" y2="0" stroke="#111"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <rect data-part="tracks" x="4" y="3" width="11" height="44" rx="1" fill="#2a2a2a"/><rect data-part="tracks" x="35" y="3" width="11" height="44" rx="1" fill="#2a2a2a"/>
+        <line x1="4" y1="9" x2="15" y2="9" stroke="#444"/><line x1="4" y1="15" x2="15" y2="15" stroke="#444"/><line x1="4" y1="21" x2="15" y2="21" stroke="#444"/><line x1="4" y1="27" x2="15" y2="27" stroke="#444"/><line x1="4" y1="33" x2="15" y2="33" stroke="#444"/><line x1="4" y1="39" x2="15" y2="39" stroke="#444"/>
+        <line x1="35" y1="9" x2="46" y2="9" stroke="#444"/><line x1="35" y1="15" x2="46" y2="15" stroke="#444"/><line x1="35" y1="21" x2="46" y2="21" stroke="#444"/><line x1="35" y1="27" x2="46" y2="27" stroke="#444"/><line x1="35" y1="33" x2="46" y2="33" stroke="#444"/><line x1="35" y1="39" x2="46" y2="39" stroke="#444"/>
+        <rect data-part="hull" x="14" y="6" width="22" height="38" rx="1" fill="#8b7355"/><rect data-part="detail" x="16" y="40" width="18" height="3" fill="#7b6345"/><rect data-part="turret" x="17" y="18" width="16" height="20" rx="1" fill="#9b8365"/><circle data-part="hatches" cx="25" cy="32" r="4" fill="#6b5a45"/><rect data-part="hatches" x="19" y="20" width="5" height="4" rx="0.5" fill="#6b5a45"/><rect data-part="hatches" x="26" y="20" width="5" height="4" rx="0.5" fill="#6b5a45"/><rect data-part="gun" x="23" y="2" width="4" height="18" rx="0.5" fill="#1a1a1a"/><rect data-part="gun" x="21" y="0" width="8" height="4" rx="0.5" fill="#222"/><line x1="25" y1="4" x2="25" y2="0" stroke="#111"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <rect data-part="tracks" x="4" y="3" width="11" height="44" rx="1" fill="#2a2a2a"/><rect data-part="tracks" x="35" y="3" width="11" height="44" rx="1" fill="#2a2a2a"/>
+        <line x1="4" y1="11" x2="15" y2="11" stroke="#444"/><line x1="4" y1="17" x2="15" y2="17" stroke="#444"/><line x1="4" y1="23" x2="15" y2="23" stroke="#444"/><line x1="4" y1="29" x2="15" y2="29" stroke="#444"/><line x1="4" y1="35" x2="15" y2="35" stroke="#444"/><line x1="4" y1="41" x2="15" y2="41" stroke="#444"/>
+        <line x1="35" y1="11" x2="46" y2="11" stroke="#444"/><line x1="35" y1="17" x2="46" y2="17" stroke="#444"/><line x1="35" y1="23" x2="46" y2="23" stroke="#444"/><line x1="35" y1="29" x2="46" y2="29" stroke="#444"/><line x1="35" y1="35" x2="46" y2="35" stroke="#444"/><line x1="35" y1="41" x2="46" y2="41" stroke="#444"/>
+        <rect data-part="hull" x="14" y="6" width="22" height="38" rx="1" fill="#8b7355"/><rect data-part="detail" x="16" y="40" width="18" height="3" fill="#7b6345"/><rect data-part="turret" x="17" y="18" width="16" height="20" rx="1" fill="#9b8365"/><circle data-part="hatches" cx="25" cy="32" r="4" fill="#6b5a45"/><rect data-part="hatches" x="19" y="20" width="5" height="4" rx="0.5" fill="#6b5a45"/><rect data-part="hatches" x="26" y="20" width="5" height="4" rx="0.5" fill="#6b5a45"/><rect data-part="gun" x="23" y="2" width="4" height="18" rx="0.5" fill="#1a1a1a"/><rect data-part="gun" x="21" y="0" width="8" height="4" rx="0.5" fill="#222"/><line x1="25" y1="4" x2="25" y2="0" stroke="#111"/>
+      </svg>`
+    ],
+    unlockCost: { scrap: 200, parts: 10 },
+    upgrades: {
+      damage: { levels: [50, 65, 80], costs: [0, 150, 300] },
+      fireRate: { levels: [2000, 1750, 1500], costs: [0, 175, 350] }
+    }
+  },
+  {
+    id: 'abrams', name: 'M1 Abrams',
+    types: [UnitType.ARMOR, UnitType.ARTILLERY],
+    damage: 75, fireRate: 1800, deployCooldown: 6000,
+    color: '#f472b6',
+    parts: ['tracks', 'hull', 'turret', 'gun', 'hatches', 'detail'],
+    defaultColors: { tracks: '#2a2a2a', hull: '#5a5a5a', turret: '#6a6a6a', gun: '#1a1a1a', hatches: '#4a4a4a', detail: '#7a7a7a' },
+    // Top-down: modern Abrams with angular turret, composite armor look (modern gray)
+    svg: `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+      <rect data-part="tracks" x="5" y="4" width="10" height="42" rx="1" fill="#2a2a2a"/>
+      <rect data-part="tracks" x="35" y="4" width="10" height="42" rx="1" fill="#2a2a2a"/>
+      <line x1="5" y1="10" x2="15" y2="10" stroke="#444"/><line x1="5" y1="16" x2="15" y2="16" stroke="#444"/><line x1="5" y1="22" x2="15" y2="22" stroke="#444"/>
+      <line x1="5" y1="28" x2="15" y2="28" stroke="#444"/><line x1="5" y1="34" x2="15" y2="34" stroke="#444"/><line x1="5" y1="40" x2="15" y2="40" stroke="#444"/>
+      <line x1="35" y1="10" x2="45" y2="10" stroke="#444"/><line x1="35" y1="16" x2="45" y2="16" stroke="#444"/><line x1="35" y1="22" x2="45" y2="22" stroke="#444"/>
+      <line x1="35" y1="28" x2="45" y2="28" stroke="#444"/><line x1="35" y1="34" x2="45" y2="34" stroke="#444"/><line x1="35" y1="40" x2="45" y2="40" stroke="#444"/>
+      <path data-part="hull" d="M14 8 L36 8 L38 12 L38 42 L36 46 L14 46 L12 42 L12 12 Z" fill="#5a5a5a"/>
+      <path data-part="turret" d="M17 18 L33 18 L35 22 L33 40 L17 40 L15 22 Z" fill="#6a6a6a"/>
+      <path data-part="detail" d="M20 22 L30 22 L28 36 L22 36 Z" fill="#7a7a7a"/>
+      <circle data-part="hatches" cx="25" cy="30" r="3" fill="#4a4a4a"/>
+      <rect data-part="hatches" x="18" y="19" width="4" height="3" rx="0.5" fill="#4a4a4a"/><rect data-part="hatches" x="28" y="19" width="4" height="3" rx="0.5" fill="#4a4a4a"/>
+      <rect data-part="gun" x="23" y="2" width="4" height="18" rx="0.5" fill="#1a1a1a"/>
+      <rect data-part="gun" x="22" y="0" width="6" height="3" fill="#222"/>
+      <line data-part="detail" x1="33" y1="26" x2="36" y2="26" stroke="#8a8a8a"/><line data-part="detail" x1="33" y1="30" x2="36" y2="30" stroke="#8a8a8a"/>
+    </svg>`,
+    svgFrames: [
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <rect data-part="tracks" x="5" y="4" width="10" height="42" rx="1" fill="#2a2a2a"/><rect data-part="tracks" x="35" y="4" width="10" height="42" rx="1" fill="#2a2a2a"/>
+        <line x1="5" y1="8" x2="15" y2="8" stroke="#444"/><line x1="5" y1="14" x2="15" y2="14" stroke="#444"/><line x1="5" y1="20" x2="15" y2="20" stroke="#444"/><line x1="5" y1="26" x2="15" y2="26" stroke="#444"/><line x1="5" y1="32" x2="15" y2="32" stroke="#444"/><line x1="5" y1="38" x2="15" y2="38" stroke="#444"/><line x1="5" y1="44" x2="15" y2="44" stroke="#444"/>
+        <line x1="35" y1="8" x2="45" y2="8" stroke="#444"/><line x1="35" y1="14" x2="45" y2="14" stroke="#444"/><line x1="35" y1="20" x2="45" y2="20" stroke="#444"/><line x1="35" y1="26" x2="45" y2="26" stroke="#444"/><line x1="35" y1="32" x2="45" y2="32" stroke="#444"/><line x1="35" y1="38" x2="45" y2="38" stroke="#444"/><line x1="35" y1="44" x2="45" y2="44" stroke="#444"/>
+        <path data-part="hull" d="M14 8 L36 8 L38 12 L38 42 L36 46 L14 46 L12 42 L12 12 Z" fill="#5a5a5a"/><path data-part="turret" d="M17 18 L33 18 L35 22 L33 40 L17 40 L15 22 Z" fill="#6a6a6a"/><path data-part="detail" d="M20 22 L30 22 L28 36 L22 36 Z" fill="#7a7a7a"/><circle data-part="hatches" cx="25" cy="30" r="3" fill="#4a4a4a"/><rect data-part="hatches" x="18" y="19" width="4" height="3" rx="0.5" fill="#4a4a4a"/><rect data-part="hatches" x="28" y="19" width="4" height="3" rx="0.5" fill="#4a4a4a"/><rect data-part="gun" x="23" y="2" width="4" height="18" rx="0.5" fill="#1a1a1a"/><rect data-part="gun" x="22" y="0" width="6" height="3" fill="#222"/><line data-part="detail" x1="33" y1="26" x2="36" y2="26" stroke="#8a8a8a"/><line data-part="detail" x1="33" y1="30" x2="36" y2="30" stroke="#8a8a8a"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <rect data-part="tracks" x="5" y="4" width="10" height="42" rx="1" fill="#2a2a2a"/><rect data-part="tracks" x="35" y="4" width="10" height="42" rx="1" fill="#2a2a2a"/>
+        <line x1="5" y1="10" x2="15" y2="10" stroke="#444"/><line x1="5" y1="16" x2="15" y2="16" stroke="#444"/><line x1="5" y1="22" x2="15" y2="22" stroke="#444"/><line x1="5" y1="28" x2="15" y2="28" stroke="#444"/><line x1="5" y1="34" x2="15" y2="34" stroke="#444"/><line x1="5" y1="40" x2="15" y2="40" stroke="#444"/>
+        <line x1="35" y1="10" x2="45" y2="10" stroke="#444"/><line x1="35" y1="16" x2="45" y2="16" stroke="#444"/><line x1="35" y1="22" x2="45" y2="22" stroke="#444"/><line x1="35" y1="28" x2="45" y2="28" stroke="#444"/><line x1="35" y1="34" x2="45" y2="34" stroke="#444"/><line x1="35" y1="40" x2="45" y2="40" stroke="#444"/>
+        <path data-part="hull" d="M14 8 L36 8 L38 12 L38 42 L36 46 L14 46 L12 42 L12 12 Z" fill="#5a5a5a"/><path data-part="turret" d="M17 18 L33 18 L35 22 L33 40 L17 40 L15 22 Z" fill="#6a6a6a"/><path data-part="detail" d="M20 22 L30 22 L28 36 L22 36 Z" fill="#7a7a7a"/><circle data-part="hatches" cx="25" cy="30" r="3" fill="#4a4a4a"/><rect data-part="hatches" x="18" y="19" width="4" height="3" rx="0.5" fill="#4a4a4a"/><rect data-part="hatches" x="28" y="19" width="4" height="3" rx="0.5" fill="#4a4a4a"/><rect data-part="gun" x="23" y="2" width="4" height="18" rx="0.5" fill="#1a1a1a"/><rect data-part="gun" x="22" y="0" width="6" height="3" fill="#222"/><line data-part="detail" x1="33" y1="26" x2="36" y2="26" stroke="#8a8a8a"/><line data-part="detail" x1="33" y1="30" x2="36" y2="30" stroke="#8a8a8a"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <rect data-part="tracks" x="5" y="4" width="10" height="42" rx="1" fill="#2a2a2a"/><rect data-part="tracks" x="35" y="4" width="10" height="42" rx="1" fill="#2a2a2a"/>
+        <line x1="5" y1="12" x2="15" y2="12" stroke="#444"/><line x1="5" y1="18" x2="15" y2="18" stroke="#444"/><line x1="5" y1="24" x2="15" y2="24" stroke="#444"/><line x1="5" y1="30" x2="15" y2="30" stroke="#444"/><line x1="5" y1="36" x2="15" y2="36" stroke="#444"/><line x1="5" y1="42" x2="15" y2="42" stroke="#444"/>
+        <line x1="35" y1="12" x2="45" y2="12" stroke="#444"/><line x1="35" y1="18" x2="45" y2="18" stroke="#444"/><line x1="35" y1="24" x2="45" y2="24" stroke="#444"/><line x1="35" y1="30" x2="45" y2="30" stroke="#444"/><line x1="35" y1="36" x2="45" y2="36" stroke="#444"/><line x1="35" y1="42" x2="45" y2="42" stroke="#444"/>
+        <path data-part="hull" d="M14 8 L36 8 L38 12 L38 42 L36 46 L14 46 L12 42 L12 12 Z" fill="#5a5a5a"/><path data-part="turret" d="M17 18 L33 18 L35 22 L33 40 L17 40 L15 22 Z" fill="#6a6a6a"/><path data-part="detail" d="M20 22 L30 22 L28 36 L22 36 Z" fill="#7a7a7a"/><circle data-part="hatches" cx="25" cy="30" r="3" fill="#4a4a4a"/><rect data-part="hatches" x="18" y="19" width="4" height="3" rx="0.5" fill="#4a4a4a"/><rect data-part="hatches" x="28" y="19" width="4" height="3" rx="0.5" fill="#4a4a4a"/><rect data-part="gun" x="23" y="2" width="4" height="18" rx="0.5" fill="#1a1a1a"/><rect data-part="gun" x="22" y="0" width="6" height="3" fill="#222"/><line data-part="detail" x1="33" y1="26" x2="36" y2="26" stroke="#8a8a8a"/><line data-part="detail" x1="33" y1="30" x2="36" y2="30" stroke="#8a8a8a"/>
+      </svg>`
+    ],
+    unlockCost: { scrap: 300, parts: 15 },
+    upgrades: {
+      damage: { levels: [75, 95, 120], costs: [0, 200, 400] },
+      fireRate: { levels: [1800, 1550, 1300], costs: [0, 225, 450] }
+    }
+  },
+
+  // === ARTILLERY ===
+  {
+    id: 'howitzer', name: 'Howitzer',
+    types: [UnitType.ARTILLERY],
+    damage: 60, fireRate: 2500, deployCooldown: 5500,
+    color: '#fb923c',
+    parts: ['tracks', 'hull', 'turret', 'gun', 'hatches', 'detail'],
+    defaultColors: { tracks: '#2a2a2a', hull: '#5a6a4a', turret: '#6a7a5a', gun: '#1a1a1a', hatches: '#4a5a3a', detail: '#7a8a6a' },
+    // Top-down: self-propelled howitzer with long barrel (olive)
+    svg: `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+      <rect data-part="tracks" x="8" y="22" width="8" height="24" rx="1" fill="#2a2a2a"/>
+      <rect data-part="tracks" x="34" y="22" width="8" height="24" rx="1" fill="#2a2a2a"/>
+      <line x1="8" y1="28" x2="16" y2="28" stroke="#444"/><line x1="8" y1="34" x2="16" y2="34" stroke="#444"/><line x1="8" y1="40" x2="16" y2="40" stroke="#444"/>
+      <line x1="34" y1="28" x2="42" y2="28" stroke="#444"/><line x1="34" y1="34" x2="42" y2="34" stroke="#444"/><line x1="34" y1="40" x2="42" y2="40" stroke="#444"/>
+      <rect data-part="hull" x="15" y="24" width="20" height="22" rx="2" fill="#5a6a4a"/>
+      <rect data-part="turret" x="18" y="18" width="14" height="14" rx="1" fill="#6a7a5a"/>
+      <circle data-part="hatches" cx="25" cy="25" r="4" fill="#4a5a3a"/>
+      <rect data-part="gun" x="22" y="2" width="6" height="18" rx="1" fill="#1a1a1a"/>
+      <ellipse data-part="gun" cx="25" cy="2" rx="4" ry="2" fill="#222"/>
+      <line x1="23" y1="6" x2="23" y2="16" stroke="#333"/><line x1="27" y1="6" x2="27" y2="16" stroke="#333"/>
+      <rect data-part="hatches" x="20" y="30" width="4" height="3" rx="0.5" fill="#4a5a3a"/><rect data-part="hatches" x="26" y="30" width="4" height="3" rx="0.5" fill="#4a5a3a"/>
+    </svg>`,
+    svgFrames: [
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <rect data-part="tracks" x="8" y="22" width="8" height="24" rx="1" fill="#2a2a2a"/><rect data-part="tracks" x="34" y="22" width="8" height="24" rx="1" fill="#2a2a2a"/>
+        <line x1="8" y1="26" x2="16" y2="26" stroke="#444"/><line x1="8" y1="32" x2="16" y2="32" stroke="#444"/><line x1="8" y1="38" x2="16" y2="38" stroke="#444"/><line x1="8" y1="44" x2="16" y2="44" stroke="#444"/>
+        <line x1="34" y1="26" x2="42" y2="26" stroke="#444"/><line x1="34" y1="32" x2="42" y2="32" stroke="#444"/><line x1="34" y1="38" x2="42" y2="38" stroke="#444"/><line x1="34" y1="44" x2="42" y2="44" stroke="#444"/>
+        <rect data-part="hull" x="15" y="24" width="20" height="22" rx="2" fill="#5a6a4a"/><rect data-part="turret" x="18" y="18" width="14" height="14" rx="1" fill="#6a7a5a"/><circle data-part="hatches" cx="25" cy="25" r="4" fill="#4a5a3a"/><rect data-part="gun" x="22" y="2" width="6" height="18" rx="1" fill="#1a1a1a"/><ellipse data-part="gun" cx="25" cy="2" rx="4" ry="2" fill="#222"/><line x1="23" y1="6" x2="23" y2="16" stroke="#333"/><line x1="27" y1="6" x2="27" y2="16" stroke="#333"/><rect data-part="hatches" x="20" y="30" width="4" height="3" rx="0.5" fill="#4a5a3a"/><rect data-part="hatches" x="26" y="30" width="4" height="3" rx="0.5" fill="#4a5a3a"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <rect data-part="tracks" x="8" y="22" width="8" height="24" rx="1" fill="#2a2a2a"/><rect data-part="tracks" x="34" y="22" width="8" height="24" rx="1" fill="#2a2a2a"/>
+        <line x1="8" y1="28" x2="16" y2="28" stroke="#444"/><line x1="8" y1="34" x2="16" y2="34" stroke="#444"/><line x1="8" y1="40" x2="16" y2="40" stroke="#444"/>
+        <line x1="34" y1="28" x2="42" y2="28" stroke="#444"/><line x1="34" y1="34" x2="42" y2="34" stroke="#444"/><line x1="34" y1="40" x2="42" y2="40" stroke="#444"/>
+        <rect data-part="hull" x="15" y="24" width="20" height="22" rx="2" fill="#5a6a4a"/><rect data-part="turret" x="18" y="18" width="14" height="14" rx="1" fill="#6a7a5a"/><circle data-part="hatches" cx="25" cy="25" r="4" fill="#4a5a3a"/><rect data-part="gun" x="22" y="2" width="6" height="18" rx="1" fill="#1a1a1a"/><ellipse data-part="gun" cx="25" cy="2" rx="4" ry="2" fill="#222"/><line x1="23" y1="6" x2="23" y2="16" stroke="#333"/><line x1="27" y1="6" x2="27" y2="16" stroke="#333"/><rect data-part="hatches" x="20" y="30" width="4" height="3" rx="0.5" fill="#4a5a3a"/><rect data-part="hatches" x="26" y="30" width="4" height="3" rx="0.5" fill="#4a5a3a"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <rect data-part="tracks" x="8" y="22" width="8" height="24" rx="1" fill="#2a2a2a"/><rect data-part="tracks" x="34" y="22" width="8" height="24" rx="1" fill="#2a2a2a"/>
+        <line x1="8" y1="30" x2="16" y2="30" stroke="#444"/><line x1="8" y1="36" x2="16" y2="36" stroke="#444"/><line x1="8" y1="42" x2="16" y2="42" stroke="#444"/>
+        <line x1="34" y1="30" x2="42" y2="30" stroke="#444"/><line x1="34" y1="36" x2="42" y2="36" stroke="#444"/><line x1="34" y1="42" x2="42" y2="42" stroke="#444"/>
+        <rect data-part="hull" x="15" y="24" width="20" height="22" rx="2" fill="#5a6a4a"/><rect data-part="turret" x="18" y="18" width="14" height="14" rx="1" fill="#6a7a5a"/><circle data-part="hatches" cx="25" cy="25" r="4" fill="#4a5a3a"/><rect data-part="gun" x="22" y="2" width="6" height="18" rx="1" fill="#1a1a1a"/><ellipse data-part="gun" cx="25" cy="2" rx="4" ry="2" fill="#222"/><line x1="23" y1="6" x2="23" y2="16" stroke="#333"/><line x1="27" y1="6" x2="27" y2="16" stroke="#333"/><rect data-part="hatches" x="20" y="30" width="4" height="3" rx="0.5" fill="#4a5a3a"/><rect data-part="hatches" x="26" y="30" width="4" height="3" rx="0.5" fill="#4a5a3a"/>
+      </svg>`
+    ],
+    unlockCost: { scrap: 250, parts: 12 },
+    upgrades: {
+      damage: { levels: [60, 80, 100], costs: [0, 175, 350] },
+      fireRate: { levels: [2500, 2200, 1900], costs: [0, 200, 400] }
+    }
+  },
+
+  // === AIR ===
+  {
+    id: 'drone', name: 'Scout Drone',
+    types: [UnitType.AIR, UnitType.RECON],
+    damage: 8, fireRate: 500, deployCooldown: 2000,
+    color: '#94a3b8',
+    parts: ['body', 'camera', 'arms', 'rotors', 'motors', 'detail'],
+    defaultColors: { body: '#4a4a4a', camera: '#2a4a6a', arms: '#3a3a3a', rotors: '#5a5a5a', motors: '#2a2a2a', detail: '#6a6a6a' },
+    // Top-down: detailed quadcopter with camera pod (tech gray)
+    svg: `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+      <line data-part="arms" x1="18" y1="21" x2="8" y2="11" stroke="#3a3a3a" stroke-width="2"/><line data-part="arms" x1="32" y1="21" x2="42" y2="11" stroke="#3a3a3a" stroke-width="2"/>
+      <line data-part="arms" x1="18" y1="29" x2="8" y2="39" stroke="#3a3a3a" stroke-width="2"/><line data-part="arms" x1="32" y1="29" x2="42" y2="39" stroke="#3a3a3a" stroke-width="2"/>
+      <circle data-part="rotors" cx="8" cy="11" r="6" fill="#5a5a5a"/><circle data-part="rotors" cx="42" cy="11" r="6" fill="#5a5a5a"/>
+      <circle data-part="rotors" cx="8" cy="39" r="6" fill="#5a5a5a"/><circle data-part="rotors" cx="42" cy="39" r="6" fill="#5a5a5a"/>
+      <circle data-part="motors" cx="8" cy="11" r="2" fill="#2a2a2a"/><circle data-part="motors" cx="42" cy="11" r="2" fill="#2a2a2a"/>
+      <circle data-part="motors" cx="8" cy="39" r="2" fill="#2a2a2a"/><circle data-part="motors" cx="42" cy="39" r="2" fill="#2a2a2a"/>
+      <rect data-part="body" x="18" y="18" width="14" height="14" rx="2" fill="#4a4a4a"/>
+      <circle data-part="camera" cx="25" cy="25" r="3" fill="#2a4a6a"/>
+      <line data-part="detail" x1="22" y1="18" x2="22" y2="14" stroke="#6a6a6a"/><line data-part="detail" x1="28" y1="18" x2="28" y2="14" stroke="#6a6a6a"/>
+      <line data-part="detail" x1="22" y1="32" x2="22" y2="36" stroke="#6a6a6a"/><line data-part="detail" x1="28" y1="32" x2="28" y2="36" stroke="#6a6a6a"/>
+    </svg>`,
+    // Rotor spin animation - blades rotate
+    svgFrames: [
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <line data-part="arms" x1="18" y1="21" x2="8" y2="11" stroke="#3a3a3a" stroke-width="2"/><line data-part="arms" x1="32" y1="21" x2="42" y2="11" stroke="#3a3a3a" stroke-width="2"/><line data-part="arms" x1="18" y1="29" x2="8" y2="39" stroke="#3a3a3a" stroke-width="2"/><line data-part="arms" x1="32" y1="29" x2="42" y2="39" stroke="#3a3a3a" stroke-width="2"/>
+        <circle data-part="rotors" cx="8" cy="11" r="6" fill="#5a5a5a"/><circle data-part="rotors" cx="42" cy="11" r="6" fill="#5a5a5a"/><circle data-part="rotors" cx="8" cy="39" r="6" fill="#5a5a5a"/><circle data-part="rotors" cx="42" cy="39" r="6" fill="#5a5a5a"/>
+        <line x1="4" y1="11" x2="12" y2="11" stroke="#888" stroke-width="2"/><line x1="38" y1="11" x2="46" y2="11" stroke="#888" stroke-width="2"/><line x1="4" y1="39" x2="12" y2="39" stroke="#888" stroke-width="2"/><line x1="38" y1="39" x2="46" y2="39" stroke="#888" stroke-width="2"/>
+        <circle data-part="motors" cx="8" cy="11" r="2" fill="#2a2a2a"/><circle data-part="motors" cx="42" cy="11" r="2" fill="#2a2a2a"/><circle data-part="motors" cx="8" cy="39" r="2" fill="#2a2a2a"/><circle data-part="motors" cx="42" cy="39" r="2" fill="#2a2a2a"/>
+        <rect data-part="body" x="18" y="18" width="14" height="14" rx="2" fill="#4a4a4a"/><circle data-part="camera" cx="25" cy="25" r="3" fill="#2a4a6a"/>
+        <line data-part="detail" x1="22" y1="18" x2="22" y2="14" stroke="#6a6a6a"/><line data-part="detail" x1="28" y1="18" x2="28" y2="14" stroke="#6a6a6a"/><line data-part="detail" x1="22" y1="32" x2="22" y2="36" stroke="#6a6a6a"/><line data-part="detail" x1="28" y1="32" x2="28" y2="36" stroke="#6a6a6a"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <line data-part="arms" x1="18" y1="21" x2="8" y2="11" stroke="#3a3a3a" stroke-width="2"/><line data-part="arms" x1="32" y1="21" x2="42" y2="11" stroke="#3a3a3a" stroke-width="2"/><line data-part="arms" x1="18" y1="29" x2="8" y2="39" stroke="#3a3a3a" stroke-width="2"/><line data-part="arms" x1="32" y1="29" x2="42" y2="39" stroke="#3a3a3a" stroke-width="2"/>
+        <circle data-part="rotors" cx="8" cy="11" r="6" fill="#5a5a5a"/><circle data-part="rotors" cx="42" cy="11" r="6" fill="#5a5a5a"/><circle data-part="rotors" cx="8" cy="39" r="6" fill="#5a5a5a"/><circle data-part="rotors" cx="42" cy="39" r="6" fill="#5a5a5a"/>
+        <line x1="8" y1="7" x2="8" y2="15" stroke="#888" stroke-width="2"/><line x1="42" y1="7" x2="42" y2="15" stroke="#888" stroke-width="2"/><line x1="8" y1="35" x2="8" y2="43" stroke="#888" stroke-width="2"/><line x1="42" y1="35" x2="42" y2="43" stroke="#888" stroke-width="2"/>
+        <circle data-part="motors" cx="8" cy="11" r="2" fill="#2a2a2a"/><circle data-part="motors" cx="42" cy="11" r="2" fill="#2a2a2a"/><circle data-part="motors" cx="8" cy="39" r="2" fill="#2a2a2a"/><circle data-part="motors" cx="42" cy="39" r="2" fill="#2a2a2a"/>
+        <rect data-part="body" x="18" y="18" width="14" height="14" rx="2" fill="#4a4a4a"/><circle data-part="camera" cx="25" cy="25" r="3" fill="#2a4a6a"/>
+        <line data-part="detail" x1="22" y1="18" x2="22" y2="14" stroke="#6a6a6a"/><line data-part="detail" x1="28" y1="18" x2="28" y2="14" stroke="#6a6a6a"/><line data-part="detail" x1="22" y1="32" x2="22" y2="36" stroke="#6a6a6a"/><line data-part="detail" x1="28" y1="32" x2="28" y2="36" stroke="#6a6a6a"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <line data-part="arms" x1="18" y1="21" x2="8" y2="11" stroke="#3a3a3a" stroke-width="2"/><line data-part="arms" x1="32" y1="21" x2="42" y2="11" stroke="#3a3a3a" stroke-width="2"/><line data-part="arms" x1="18" y1="29" x2="8" y2="39" stroke="#3a3a3a" stroke-width="2"/><line data-part="arms" x1="32" y1="29" x2="42" y2="39" stroke="#3a3a3a" stroke-width="2"/>
+        <circle data-part="rotors" cx="8" cy="11" r="6" fill="#5a5a5a"/><circle data-part="rotors" cx="42" cy="11" r="6" fill="#5a5a5a"/><circle data-part="rotors" cx="8" cy="39" r="6" fill="#5a5a5a"/><circle data-part="rotors" cx="42" cy="39" r="6" fill="#5a5a5a"/>
+        <line x1="4" y1="7" x2="12" y2="15" stroke="#888" stroke-width="2"/><line x1="38" y1="7" x2="46" y2="15" stroke="#888" stroke-width="2"/><line x1="4" y1="43" x2="12" y2="35" stroke="#888" stroke-width="2"/><line x1="38" y1="43" x2="46" y2="35" stroke="#888" stroke-width="2"/>
+        <circle data-part="motors" cx="8" cy="11" r="2" fill="#2a2a2a"/><circle data-part="motors" cx="42" cy="11" r="2" fill="#2a2a2a"/><circle data-part="motors" cx="8" cy="39" r="2" fill="#2a2a2a"/><circle data-part="motors" cx="42" cy="39" r="2" fill="#2a2a2a"/>
+        <rect data-part="body" x="18" y="18" width="14" height="14" rx="2" fill="#4a4a4a"/><circle data-part="camera" cx="25" cy="25" r="3" fill="#2a4a6a"/>
+        <line data-part="detail" x1="22" y1="18" x2="22" y2="14" stroke="#6a6a6a"/><line data-part="detail" x1="28" y1="18" x2="28" y2="14" stroke="#6a6a6a"/><line data-part="detail" x1="22" y1="32" x2="22" y2="36" stroke="#6a6a6a"/><line data-part="detail" x1="28" y1="32" x2="28" y2="36" stroke="#6a6a6a"/>
+      </svg>`
+    ],
+    unlockCost: { scrap: 200, parts: 10 },
+    upgrades: {
+      damage: { levels: [8, 12, 16], costs: [0, 80, 160] },
+      fireRate: { levels: [500, 400, 300], costs: [0, 100, 200] }
+    }
+  },
+  {
+    id: 'apache', name: 'Apache',
+    types: [UnitType.AIR],
+    damage: 45, fireRate: 900, deployCooldown: 5000,
+    color: '#7c3aed',
+    parts: ['body', 'cockpit', 'wings', 'weapons', 'rotor', 'tail'],
+    defaultColors: { body: '#3a4a2a', cockpit: '#2a4a5a', wings: '#4a5a3a', weapons: '#1a1a1a', rotor: '#5a5a5a', tail: '#3a4a2a' },
+    // Top-down: detailed Apache with rotor, stub wings, weapons (military olive) - narrow fuselage
+    svg: `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+      <line data-part="wings" x1="8" y1="24" x2="18" y2="24" stroke="#4a5a3a" stroke-width="2"/><line data-part="wings" x1="32" y1="24" x2="42" y2="24" stroke="#4a5a3a" stroke-width="2"/>
+      <line data-part="wings" x1="8" y1="28" x2="18" y2="28" stroke="#4a5a3a" stroke-width="2"/><line data-part="wings" x1="32" y1="28" x2="42" y2="28" stroke="#4a5a3a" stroke-width="2"/>
+      <rect data-part="weapons" x="5" y="22" width="4" height="8" rx="0.5" fill="#1a1a1a"/><rect data-part="weapons" x="41" y="22" width="4" height="8" rx="0.5" fill="#1a1a1a"/>
+      <circle data-part="weapons" cx="7" cy="26" r="1.5" fill="#2a2a2a"/><circle data-part="weapons" cx="43" cy="26" r="1.5" fill="#2a2a2a"/>
+      <rect data-part="tail" x="23" y="38" width="4" height="10" fill="#3a4a2a"/>
+      <line data-part="tail" x1="20" y1="46" x2="30" y2="46" stroke="#4a5a3a" stroke-width="2"/>
+      <rect data-part="body" x="20" y="14" width="10" height="26" rx="2" fill="#3a4a2a"/>
+      <path data-part="body" d="M25 12 L20 18 L30 18 Z" fill="#4a5a3a"/>
+      <rect data-part="cockpit" x="22" y="18" width="6" height="10" rx="1" fill="#2a4a5a"/>
+      <circle data-part="rotor" cx="25" cy="22" r="11" fill="none" stroke="#5a5a5a" stroke-dasharray="4 2"/>
+      <line data-part="rotor" x1="25" y1="11" x2="25" y2="33" stroke="#6a6a6a"/>
+    </svg>`,
+    // Main rotor spin animation - blades rotate
+    svgFrames: [
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <line data-part="wings" x1="8" y1="24" x2="18" y2="24" stroke="#4a5a3a" stroke-width="2"/><line data-part="wings" x1="32" y1="24" x2="42" y2="24" stroke="#4a5a3a" stroke-width="2"/><line data-part="wings" x1="8" y1="28" x2="18" y2="28" stroke="#4a5a3a" stroke-width="2"/><line data-part="wings" x1="32" y1="28" x2="42" y2="28" stroke="#4a5a3a" stroke-width="2"/>
+        <rect data-part="weapons" x="5" y="22" width="4" height="8" rx="0.5" fill="#1a1a1a"/><rect data-part="weapons" x="41" y="22" width="4" height="8" rx="0.5" fill="#1a1a1a"/><circle data-part="weapons" cx="7" cy="26" r="1.5" fill="#2a2a2a"/><circle data-part="weapons" cx="43" cy="26" r="1.5" fill="#2a2a2a"/>
+        <rect data-part="tail" x="23" y="38" width="4" height="10" fill="#3a4a2a"/><line data-part="tail" x1="20" y1="46" x2="30" y2="46" stroke="#4a5a3a" stroke-width="2"/>
+        <rect data-part="body" x="20" y="14" width="10" height="26" rx="2" fill="#3a4a2a"/><path data-part="body" d="M25 12 L20 18 L30 18 Z" fill="#4a5a3a"/><rect data-part="cockpit" x="22" y="18" width="6" height="10" rx="1" fill="#2a4a5a"/>
+        <line data-part="rotor" x1="14" y1="22" x2="36" y2="22" stroke="#6a6a6a" stroke-width="2"/><line data-part="rotor" x1="25" y1="11" x2="25" y2="33" stroke="#6a6a6a" stroke-width="2"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <line data-part="wings" x1="8" y1="24" x2="18" y2="24" stroke="#4a5a3a" stroke-width="2"/><line data-part="wings" x1="32" y1="24" x2="42" y2="24" stroke="#4a5a3a" stroke-width="2"/><line data-part="wings" x1="8" y1="28" x2="18" y2="28" stroke="#4a5a3a" stroke-width="2"/><line data-part="wings" x1="32" y1="28" x2="42" y2="28" stroke="#4a5a3a" stroke-width="2"/>
+        <rect data-part="weapons" x="5" y="22" width="4" height="8" rx="0.5" fill="#1a1a1a"/><rect data-part="weapons" x="41" y="22" width="4" height="8" rx="0.5" fill="#1a1a1a"/><circle data-part="weapons" cx="7" cy="26" r="1.5" fill="#2a2a2a"/><circle data-part="weapons" cx="43" cy="26" r="1.5" fill="#2a2a2a"/>
+        <rect data-part="tail" x="23" y="38" width="4" height="10" fill="#3a4a2a"/><line data-part="tail" x1="20" y1="46" x2="30" y2="46" stroke="#4a5a3a" stroke-width="2"/>
+        <rect data-part="body" x="20" y="14" width="10" height="26" rx="2" fill="#3a4a2a"/><path data-part="body" d="M25 12 L20 18 L30 18 Z" fill="#4a5a3a"/><rect data-part="cockpit" x="22" y="18" width="6" height="10" rx="1" fill="#2a4a5a"/>
+        <line data-part="rotor" x1="17" y1="14" x2="33" y2="30" stroke="#6a6a6a" stroke-width="2"/><line data-part="rotor" x1="17" y1="30" x2="33" y2="14" stroke="#6a6a6a" stroke-width="2"/>
+      </svg>`,
+      `<svg viewBox="0 0 50 50" fill="none" stroke="#111" stroke-width="1">
+        <line data-part="wings" x1="8" y1="24" x2="18" y2="24" stroke="#4a5a3a" stroke-width="2"/><line data-part="wings" x1="32" y1="24" x2="42" y2="24" stroke="#4a5a3a" stroke-width="2"/><line data-part="wings" x1="8" y1="28" x2="18" y2="28" stroke="#4a5a3a" stroke-width="2"/><line data-part="wings" x1="32" y1="28" x2="42" y2="28" stroke="#4a5a3a" stroke-width="2"/>
+        <rect data-part="weapons" x="5" y="22" width="4" height="8" rx="0.5" fill="#1a1a1a"/><rect data-part="weapons" x="41" y="22" width="4" height="8" rx="0.5" fill="#1a1a1a"/><circle data-part="weapons" cx="7" cy="26" r="1.5" fill="#2a2a2a"/><circle data-part="weapons" cx="43" cy="26" r="1.5" fill="#2a2a2a"/>
+        <rect data-part="tail" x="23" y="38" width="4" height="10" fill="#3a4a2a"/><line data-part="tail" x1="20" y1="46" x2="30" y2="46" stroke="#4a5a3a" stroke-width="2"/>
+        <rect data-part="body" x="20" y="14" width="10" height="26" rx="2" fill="#3a4a2a"/><path data-part="body" d="M25 12 L20 18 L30 18 Z" fill="#4a5a3a"/><rect data-part="cockpit" x="22" y="18" width="6" height="10" rx="1" fill="#2a4a5a"/>
+        <line data-part="rotor" x1="25" y1="11" x2="25" y2="33" stroke="#6a6a6a" stroke-width="2"/><line data-part="rotor" x1="14" y1="22" x2="36" y2="22" stroke="#6a6a6a" stroke-width="2"/>
+      </svg>`
+    ],
+    unlockCost: { scrap: 400, parts: 20 },
+    upgrades: {
+      damage: { levels: [45, 60, 80], costs: [0, 250, 500] },
+      fireRate: { levels: [900, 750, 600], costs: [0, 275, 550] }
+    }
+  }
+];
+
+export const ENEMIES = [
+  { id: 'scout', unitId: 'jeep', health: 30, speed: 1.8, damage: 10, scrap: 5, partsChance: 0, range: 80, isAir: false, types: ['recon'] },
+  { id: 'grunt', unitId: 'infantry', health: 60, speed: 1.3, damage: 15, scrap: 10, partsChance: 0.1, range: 100, isAir: false, types: ['infantry'] },
+  { id: 'heavy', unitId: 'sherman', health: 120, speed: 0.9, damage: 25, scrap: 20, partsChance: 0.25, range: 120, isAir: false, types: ['armor'] },
+  { id: 'elite', unitId: 'tiger', health: 200, speed: 1.1, damage: 40, scrap: 50, partsChance: 0.5, range: 150, isAir: false, types: ['armor', 'anti_armor'] }
+];
+
+// Terrain SVG definitions for battle rendering (must match ui.js planning SVGs)
+export const TERRAIN_SVGS = {
+  open: `<svg viewBox="0 0 32 32" class="terrain-svg terrain-open-svg">
+    <rect width="32" height="32" fill="#5a5045"/>
+    <circle cx="6" cy="8" r="1.5" fill="#4a4035" opacity="0.5"/>
+    <circle cx="20" cy="6" r="1" fill="#6a6055" opacity="0.4"/>
+    <circle cx="28" cy="14" r="1.5" fill="#4a4035" opacity="0.5"/>
+    <circle cx="10" cy="22" r="1" fill="#6a6055" opacity="0.4"/>
+    <circle cx="24" cy="26" r="1.5" fill="#4a4035" opacity="0.5"/>
+    <circle cx="16" cy="16" r="1" fill="#4a4035" opacity="0.3"/>
+  </svg>`,
+
+  grass: `<svg viewBox="0 0 32 32" class="terrain-svg terrain-grass-svg">
+    <rect width="32" height="32" fill="#4a6a3a"/>
+    <ellipse cx="6" cy="8" rx="3" ry="2" fill="#5a7a4a" opacity="0.6"/>
+    <ellipse cx="26" cy="10" rx="3" ry="2" fill="#5a8a4a" opacity="0.5"/>
+    <ellipse cx="8" cy="20" rx="2.5" ry="2" fill="#4a7040" opacity="0.6"/>
+    <ellipse cx="28" cy="24" rx="2.5" ry="2" fill="#5a8050" opacity="0.5"/>
+    <ellipse cx="16" cy="26" rx="3" ry="2" fill="#5a7a4a" opacity="0.6"/>
+    <ellipse cx="20" cy="14" rx="2" ry="1.5" fill="#3a6030" opacity="0.5"/>
+  </svg>`,
+
+  brush: `<svg viewBox="0 0 32 32" class="terrain-svg terrain-brush-svg">
+    <defs>
+      <radialGradient id="bush" cx="50%" cy="50%" fx="45%" fy="40%" r="50%">
+        <stop offset="0%" stop-color="#5a8a48"/>
+        <stop offset="40%" stop-color="#4a7a38"/>
+        <stop offset="70%" stop-color="#3a6a2a"/>
+        <stop offset="100%" stop-color="#2a5a1a"/>
+      </radialGradient>
+    </defs>
+    <rect width="32" height="32" fill="#2a4a1a"/>
+    <ellipse cx="3" cy="5" rx="11" ry="10" fill="url(#bush)"/>
+    <ellipse cx="28" cy="6" rx="12" ry="11" fill="url(#bush)"/>
+    <ellipse cx="32" cy="24" rx="11" ry="13" fill="url(#bush)"/>
+    <ellipse cx="6" cy="30" rx="13" ry="11" fill="url(#bush)"/>
+    <ellipse cx="-3" cy="16" rx="10" ry="12" fill="url(#bush)"/>
+    <ellipse cx="16" cy="3" rx="9" ry="8" fill="url(#bush)"/>
+    <ellipse cx="30" cy="15" rx="10" ry="9" fill="url(#bush)"/>
+    <ellipse cx="18" cy="30" rx="11" ry="9" fill="url(#bush)"/>
+    <ellipse cx="2" cy="22" rx="9" ry="10" fill="url(#bush)"/>
+    <ellipse cx="12" cy="10" rx="8" ry="7" fill="url(#bush)"/>
+    <ellipse cx="22" cy="11" rx="7" ry="8" fill="url(#bush)"/>
+    <ellipse cx="24" cy="22" rx="9" ry="8" fill="url(#bush)"/>
+    <ellipse cx="10" cy="20" rx="8" ry="7" fill="url(#bush)"/>
+    <ellipse cx="16" cy="16" rx="7" ry="6" fill="url(#bush)"/>
+    <ellipse cx="9" cy="8" rx="4" ry="3" fill="#5a9a52" opacity="0.6"/>
+    <ellipse cx="24" cy="9" rx="3" ry="4" fill="#6aaa62" opacity="0.5"/>
+    <ellipse cx="22" cy="24" rx="4" ry="3" fill="#5a9a52" opacity="0.5"/>
+    <ellipse cx="8" cy="22" rx="3" ry="3" fill="#6aaa62" opacity="0.4"/>
+  </svg>`,
+
+  forest: `<svg viewBox="0 0 32 32" class="terrain-svg terrain-forest-svg">
+    <defs>
+      <radialGradient id="canopy" cx="50%" cy="50%" fx="45%" fy="40%" r="50%">
+        <stop offset="0%" stop-color="#4a7a42"/>
+        <stop offset="40%" stop-color="#3a6a32"/>
+        <stop offset="70%" stop-color="#2a5a25"/>
+        <stop offset="100%" stop-color="#1e4a18"/>
+      </radialGradient>
+    </defs>
+    <rect width="32" height="32" fill="#1e3a18"/>
+    <ellipse cx="5" cy="7" rx="12" ry="11" fill="url(#canopy)"/>
+    <ellipse cx="26" cy="4" rx="14" ry="12" fill="url(#canopy)"/>
+    <ellipse cx="30" cy="22" rx="13" ry="14" fill="url(#canopy)"/>
+    <ellipse cx="8" cy="28" rx="15" ry="12" fill="url(#canopy)"/>
+    <ellipse cx="-2" cy="18" rx="11" ry="13" fill="url(#canopy)"/>
+    <ellipse cx="14" cy="5" rx="10" ry="9" fill="url(#canopy)"/>
+    <ellipse cx="28" cy="14" rx="11" ry="10" fill="url(#canopy)"/>
+    <ellipse cx="20" cy="28" rx="12" ry="10" fill="url(#canopy)"/>
+    <ellipse cx="3" cy="24" rx="10" ry="11" fill="url(#canopy)"/>
+    <ellipse cx="10" cy="12" rx="9" ry="8" fill="url(#canopy)"/>
+    <ellipse cx="24" cy="9" rx="8" ry="9" fill="url(#canopy)"/>
+    <ellipse cx="22" cy="21" rx="10" ry="9" fill="url(#canopy)"/>
+    <ellipse cx="9" cy="19" rx="9" ry="8" fill="url(#canopy)"/>
+    <ellipse cx="17" cy="15" rx="8" ry="7" fill="url(#canopy)"/>
+    <ellipse cx="7" cy="10" rx="5" ry="4" fill="#4a8a42" opacity="0.6"/>
+    <ellipse cx="23" cy="7" rx="4" ry="5" fill="#5a9a52" opacity="0.5"/>
+    <ellipse cx="25" cy="23" rx="5" ry="4" fill="#4a8a42" opacity="0.5"/>
+    <ellipse cx="11" cy="24" rx="4" ry="4" fill="#5a9a52" opacity="0.4"/>
+    <ellipse cx="18" cy="13" rx="4" ry="3" fill="#5a9a52" opacity="0.5"/>
+  </svg>`,
+
+  high: `<svg viewBox="0 0 32 32" class="terrain-svg terrain-high-svg">
+    <defs>
+      <linearGradient id="rock" x1="0%" y1="100%" x2="0%" y2="0%">
+        <stop offset="0%" stop-color="#3a2a1a"/>
+        <stop offset="50%" stop-color="#5a4a3a"/>
+        <stop offset="100%" stop-color="#7a6a58"/>
+      </linearGradient>
+    </defs>
+    <rect width="32" height="32" fill="#5a4a3a"/>
+    <ellipse cx="5" cy="7" rx="12" ry="11" fill="url(#rock)"/>
+    <ellipse cx="26" cy="4" rx="14" ry="12" fill="url(#rock)"/>
+    <ellipse cx="30" cy="22" rx="13" ry="14" fill="url(#rock)"/>
+    <ellipse cx="8" cy="28" rx="15" ry="12" fill="url(#rock)"/>
+    <ellipse cx="-2" cy="18" rx="11" ry="13" fill="url(#rock)"/>
+    <ellipse cx="14" cy="5" rx="10" ry="9" fill="url(#rock)"/>
+    <ellipse cx="20" cy="26" rx="11" ry="10" fill="url(#rock)"/>
+    <ellipse cx="2" cy="12" rx="9" ry="8" fill="url(#rock)"/>
+    <ellipse cx="28" cy="14" rx="10" ry="9" fill="url(#rock)"/>
+    <ellipse cx="16" cy="16" rx="12" ry="10" fill="url(#rock)"/>
+    <ellipse cx="6" cy="22" rx="9" ry="8" fill="url(#rock)"/>
+    <ellipse cx="24" cy="8" rx="8" ry="7" fill="url(#rock)"/>
+    <ellipse cx="7" cy="10" rx="5" ry="4" fill="#6a5a48" opacity="0.5"/>
+    <ellipse cx="22" cy="6" rx="4" ry="3" fill="#7a6a58" opacity="0.5"/>
+    <ellipse cx="25" cy="20" rx="5" ry="4" fill="#6a5a48" opacity="0.5"/>
+    <ellipse cx="11" cy="24" rx="4" ry="4" fill="#7a6a58" opacity="0.4"/>
+    <ellipse cx="18" cy="13" rx="4" ry="3" fill="#6a5a48" opacity="0.5"/>
+  </svg>`,
+
+  water: `<svg viewBox="0 0 32 32" class="terrain-svg terrain-water-svg">
+    <defs>
+      <linearGradient id="water" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#2a5a75"/>
+        <stop offset="50%" stop-color="#1a4a65"/>
+        <stop offset="100%" stop-color="#2a5a75"/>
+      </linearGradient>
+    </defs>
+    <rect width="32" height="32" fill="url(#water)"/>
+    <ellipse cx="10" cy="10" rx="4" ry="2" fill="#3a6a85" opacity="0.3"/>
+    <ellipse cx="24" cy="22" rx="5" ry="2" fill="#3a6a85" opacity="0.25"/>
+  </svg>`,
+
+  trench: `<svg viewBox="0 0 32 32" class="terrain-svg terrain-trench-svg">
+    <defs>
+      <linearGradient id="trenchWall" x1="0%" y1="0%" x2="0%" y2="100%">
+        <stop offset="0%" stop-color="#5a4a35"/>
+        <stop offset="100%" stop-color="#3a2a1a"/>
+      </linearGradient>
+    </defs>
+    <rect width="32" height="32" fill="#6a5a45"/>
+    <rect x="0" y="10" width="32" height="12" fill="#2a1a0a"/>
+    <rect x="0" y="14" width="32" height="4" fill="#4a3a25"/>
+    <line x1="4" y1="14" x2="4" y2="18" stroke="#3a2a15" stroke-width="0.5"/>
+    <line x1="10" y1="14" x2="10" y2="18" stroke="#3a2a15" stroke-width="0.5"/>
+    <line x1="16" y1="14" x2="16" y2="18" stroke="#3a2a15" stroke-width="0.5"/>
+    <line x1="22" y1="14" x2="22" y2="18" stroke="#3a2a15" stroke-width="0.5"/>
+    <line x1="28" y1="14" x2="28" y2="18" stroke="#3a2a15" stroke-width="0.5"/>
+    <ellipse cx="3" cy="10" rx="4" ry="2.5" fill="url(#trenchWall)"/>
+    <ellipse cx="10" cy="9" rx="4" ry="2.5" fill="url(#trenchWall)"/>
+    <ellipse cx="17" cy="10" rx="4" ry="2.5" fill="url(#trenchWall)"/>
+    <ellipse cx="24" cy="9" rx="4" ry="2.5" fill="url(#trenchWall)"/>
+    <ellipse cx="31" cy="10" rx="4" ry="2.5" fill="url(#trenchWall)"/>
+    <ellipse cx="1" cy="22" rx="4" ry="2.5" fill="url(#trenchWall)"/>
+    <ellipse cx="8" cy="23" rx="4" ry="2.5" fill="url(#trenchWall)"/>
+    <ellipse cx="15" cy="22" rx="4" ry="2.5" fill="url(#trenchWall)"/>
+    <ellipse cx="22" cy="23" rx="4" ry="2.5" fill="url(#trenchWall)"/>
+    <ellipse cx="29" cy="22" rx="4" ry="2.5" fill="url(#trenchWall)"/>
+    <rect x="0" y="10" width="3" height="12" fill="#5a4a35"/>
+    <ellipse cx="2" cy="12" rx="2" ry="1.5" fill="url(#trenchWall)"/>
+    <ellipse cx="2" cy="16" rx="2" ry="1.5" fill="url(#trenchWall)"/>
+    <ellipse cx="2" cy="20" rx="2" ry="1.5" fill="url(#trenchWall)"/>
+    <rect x="29" y="10" width="3" height="12" fill="#5a4a35"/>
+    <ellipse cx="30" cy="12" rx="2" ry="1.5" fill="url(#trenchWall)"/>
+    <ellipse cx="30" cy="16" rx="2" ry="1.5" fill="url(#trenchWall)"/>
+    <ellipse cx="30" cy="20" rx="2" ry="1.5" fill="url(#trenchWall)"/>
+  </svg>`,
+
+  pillbox: `<svg viewBox="0 0 32 32" class="terrain-svg terrain-pillbox-svg">
+    <defs>
+      <linearGradient id="concreteTop" x1="0%" y1="100%" x2="0%" y2="0%">
+        <stop offset="0%" stop-color="#6a6a6a"/>
+        <stop offset="100%" stop-color="#8a8a8a"/>
+      </linearGradient>
+      <linearGradient id="concreteSide" x1="0%" y1="100%" x2="0%" y2="0%">
+        <stop offset="0%" stop-color="#5a5a5a"/>
+        <stop offset="100%" stop-color="#3a3a3a"/>
+      </linearGradient>
+    </defs>
+    <rect width="32" height="32" fill="#8a7a65"/>
+    <ellipse cx="10" cy="28" rx="3" ry="2" fill="#5a4a35"/>
+    <ellipse cx="22" cy="28" rx="3" ry="2" fill="#5a4a35"/>
+    <ellipse cx="6" cy="22" rx="2" ry="3" fill="#5a4a35"/>
+    <ellipse cx="26" cy="22" rx="2" ry="3" fill="#5a4a35"/>
+    <polygon points="8,26 24,26 24,12 20,8 16,4 12,8 8,12" fill="#2a2a2a" opacity="0.3" transform="translate(1,1)"/>
+    <polygon points="8,26 24,26 24,12 8,12" fill="url(#concreteSide)"/>
+    <polygon points="8,12 12,8 16,4 20,8 24,12" fill="url(#concreteSide)"/>
+    <polygon points="8,24 24,24 24,12 20,8 16,4 12,8 8,12" fill="url(#concreteTop)" opacity="0.5"/>
+    <polygon points="10,22 22,22 22,14 19,10 16,7 13,10 10,14" fill="#7a7a7a"/>
+    <rect x="14" y="4" width="4" height="3" fill="#1a1a1a"/>
+    <rect x="9" y="8" width="3" height="2" fill="#1a1a1a" transform="rotate(-30 10.5 9)"/>
+    <rect x="20" y="8" width="3" height="2" fill="#1a1a1a" transform="rotate(30 21.5 9)"/>
+  </svg>`,
+
+  pillboxSouth: `<svg viewBox="0 0 32 32" class="terrain-svg terrain-pillbox-svg">
+    <defs>
+      <linearGradient id="concreteTopS" x1="0%" y1="0%" x2="0%" y2="100%">
+        <stop offset="0%" stop-color="#6a6a6a"/>
+        <stop offset="100%" stop-color="#8a8a8a"/>
+      </linearGradient>
+      <linearGradient id="concreteSideS" x1="0%" y1="0%" x2="0%" y2="100%">
+        <stop offset="0%" stop-color="#3a3a3a"/>
+        <stop offset="100%" stop-color="#5a5a5a"/>
+      </linearGradient>
+    </defs>
+    <rect width="32" height="32" fill="#8a7a65"/>
+    <ellipse cx="10" cy="4" rx="3" ry="2" fill="#5a4a35"/>
+    <ellipse cx="22" cy="4" rx="3" ry="2" fill="#5a4a35"/>
+    <ellipse cx="6" cy="10" rx="2" ry="3" fill="#5a4a35"/>
+    <ellipse cx="26" cy="10" rx="2" ry="3" fill="#5a4a35"/>
+    <polygon points="8,6 24,6 24,20 20,24 16,28 12,24 8,20" fill="#2a2a2a" opacity="0.3" transform="translate(1,1)"/>
+    <polygon points="8,6 24,6 24,20 8,20" fill="url(#concreteSideS)"/>
+    <polygon points="8,20 12,24 16,28 20,24 24,20" fill="url(#concreteSideS)"/>
+    <polygon points="8,8 24,8 24,20 20,24 16,28 12,24 8,20" fill="url(#concreteTopS)" opacity="0.5"/>
+    <polygon points="10,10 22,10 22,18 19,22 16,25 13,22 10,18" fill="#7a7a7a"/>
+    <rect x="14" y="25" width="4" height="3" fill="#1a1a1a"/>
+    <rect x="9" y="22" width="3" height="2" fill="#1a1a1a" transform="rotate(30 10.5 23)"/>
+    <rect x="20" y="22" width="3" height="2" fill="#1a1a1a" transform="rotate(-30 21.5 23)"/>
+  </svg>`
+};
+
+// Get terrain SVG for a specific type and position
+export function getTerrainSVG(terrainType, row, gridHeight) {
+  if (terrainType === 'pillbox') {
+    const midRow = Math.floor(gridHeight / 2);
+    return row < midRow ? TERRAIN_SVGS.pillboxSouth : TERRAIN_SVGS.pillbox;
+  }
+  return TERRAIN_SVGS[terrainType] || TERRAIN_SVGS.open;
+}
