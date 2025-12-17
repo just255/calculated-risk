@@ -1,5 +1,5 @@
 // Service Worker for Calculated Risk PWA
-const CACHE_NAME = 'calculated-risk-v2';
+const CACHE_NAME = 'calculated-risk-v3';
 const ASSETS = [
   '/',
   '/index.html',

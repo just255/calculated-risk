@@ -136,18 +136,21 @@ export function render() {
 function menuHTML() {
   return `
     <div class="screen menu-screen">
-      <h1 class="game-title"><span>CALCULATED</span>RISK</h1>
-      <p class="game-subtitle">TACTICAL DEFENSE</p>
-      <button class="menu-btn" data-action="campaign">Campaign</button>
-      <button class="menu-btn" data-action="endless">Endless</button>
-      <button class="menu-btn" data-action="versus">Head 2 Head</button>
-      <button class="menu-btn" data-action="hq">Headquarters</button>
-      <button class="menu-btn secondary" data-action="settings">Settings</button>
-      <button class="menu-btn secondary" data-action="stats">Statistics</button>
-      <button class="menu-btn secondary" data-action="sprite-editor">Sprite Editor</button>
-      <div style="margin-top:30px;font-size:0.85rem;color:var(--text-secondary)">
-        <span style="color:var(--accent-yellow)">⬡ ${Game.resources.scrap}</span> ·
-        <span style="color:var(--accent-blue)">◈ ${Game.resources.parts}</span>
+      <div class="menu-header">
+        <h1 class="game-title"><span>CALCULATED</span> RISK</h1>
+        <p class="game-subtitle">TACTICAL DEFENSE</p>
+        <div style="margin-top:10px;font-size:0.85rem;color:var(--text-secondary)">
+          <span style="color:var(--accent-yellow)">⬡ ${Game.resources.scrap}</span> ·
+          <span style="color:var(--accent-blue)">◈ ${Game.resources.parts}</span>
+        </div>
+      </div>
+      <div class="menu-buttons">
+        <button class="menu-btn" data-action="campaign">Campaign</button>
+        <button class="menu-btn" data-action="endless">Endless</button>
+        <button class="menu-btn" data-action="versus">Head 2 Head</button>
+        <button class="menu-btn" data-action="hq">Headquarters</button>
+        <button class="menu-btn secondary" data-action="settings">Settings</button>
+        <button class="menu-btn secondary" data-action="stats">Statistics</button>
       </div>
     </div>
   `;
@@ -187,18 +190,20 @@ function statsHTML() {
         <button class="back-btn" data-action="menu">←</button>
         <h2 class="settings-title">Statistics</h2>
       </div>
-      <div class="stats-section">
-        <h3>Battle Record</h3>
-        <div class="stat-row"><span>Games Played</span><span class="stat-value">${s.gamesPlayed}</span></div>
-        <div class="stat-row"><span>High Score</span><span class="stat-value">${s.highScore.toLocaleString()}</span></div>
-        <div class="stat-row"><span>Highest Wave</span><span class="stat-value">${s.highestWave}</span></div>
-        <div class="stat-row"><span>Total Kills</span><span class="stat-value">${s.totalKills.toLocaleString()}</span></div>
-      </div>
-      <div class="stats-section">
-        <h3>Resources</h3>
-        <div class="stat-row"><span>Total Scrap Earned</span><span class="stat-value">${s.totalScrap.toLocaleString()}</span></div>
-        <div class="stat-row"><span>Current Scrap</span><span class="stat-value">${Game.resources.scrap.toLocaleString()}</span></div>
-        <div class="stat-row"><span>Current Parts</span><span class="stat-value">${Game.resources.parts}</span></div>
+      <div class="stats-sections">
+        <div class="stats-section">
+          <h3>Battle Record</h3>
+          <div class="stat-row"><span>Games Played</span><span class="stat-value">${s.gamesPlayed}</span></div>
+          <div class="stat-row"><span>High Score</span><span class="stat-value">${s.highScore.toLocaleString()}</span></div>
+          <div class="stat-row"><span>Highest Wave</span><span class="stat-value">${s.highestWave}</span></div>
+          <div class="stat-row"><span>Total Kills</span><span class="stat-value">${s.totalKills.toLocaleString()}</span></div>
+        </div>
+        <div class="stats-section">
+          <h3>Resources</h3>
+          <div class="stat-row"><span>Total Scrap Earned</span><span class="stat-value">${s.totalScrap.toLocaleString()}</span></div>
+          <div class="stat-row"><span>Current Scrap</span><span class="stat-value">${Game.resources.scrap.toLocaleString()}</span></div>
+          <div class="stat-row"><span>Current Parts</span><span class="stat-value">${Game.resources.parts}</span></div>
+        </div>
       </div>
     </div>
   `;
