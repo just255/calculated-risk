@@ -1428,11 +1428,17 @@ function updateCampaignBattle(dt) {
   hero.x = Math.max(30, Math.min(b.mapWidth - 30, hero.x));
   hero.y = Math.max(30, Math.min(b.mapHeight - 30, hero.y));
 
-  // --- MOUSE AIMING ---
-  // Angle from hero to mouse (in world coordinates)
-  const worldMouseX = b.mouse.x + b.camera.x;
-  const worldMouseY = b.mouse.y + b.camera.y;
-  hero.angle = Math.atan2(worldMouseY - hero.y, worldMouseX - hero.x);
+  // --- AIMING ---
+  // Use aim joystick if available (mobile), otherwise mouse position
+  if (b.aimAngle !== null && b.aimAngle !== undefined) {
+    // Direct angle from aim joystick
+    hero.angle = b.aimAngle;
+  } else {
+    // Angle from hero to mouse (in world coordinates)
+    const worldMouseX = b.mouse.x + b.camera.x;
+    const worldMouseY = b.mouse.y + b.camera.y;
+    hero.angle = Math.atan2(worldMouseY - hero.y, worldMouseX - hero.x);
+  }
 
   // --- HERO SHOOTING ---
   if (b.mouse.down && now - hero.lastShot > hero.fireRate) {
@@ -1453,12 +1459,37 @@ function updateCampaignBattle(dt) {
     sound('shoot');
   }
 
-  // --- UPDATE CAMERA ---
-  // Center camera on hero
+  // --- UPDATE CAMERA WITH LOOK-AHEAD ---
   const screenW = 800;  // Will be updated from actual element
   const screenH = 600;
-  b.camera.x = Math.max(0, Math.min(b.mapWidth - screenW, hero.x - screenW / 2));
-  b.camera.y = Math.max(0, Math.min(b.mapHeight - screenH, hero.y - screenH / 2));
+
+  // Calculate look-ahead offset based on movement and aim
+  const lookAheadDist = 80; // How far ahead to look
+  let lookX = 0, lookY = 0;
+
+  // Movement-based look-ahead (primary)
+  if (dx !== 0 || dy !== 0) {
+    lookX = dx * lookAheadDist;
+    lookY = dy * lookAheadDist;
+  }
+  // Aim-based look-ahead when shooting (secondary, adds to movement)
+  else if (b.mouse.down) {
+    lookX = Math.cos(hero.angle) * lookAheadDist * 0.5;
+    lookY = Math.sin(hero.angle) * lookAheadDist * 0.5;
+  }
+
+  // Smoothly interpolate camera look-ahead
+  if (!b.camera.lookX) b.camera.lookX = 0;
+  if (!b.camera.lookY) b.camera.lookY = 0;
+  const lookSmooth = 0.08; // Lower = smoother/slower
+  b.camera.lookX += (lookX - b.camera.lookX) * lookSmooth;
+  b.camera.lookY += (lookY - b.camera.lookY) * lookSmooth;
+
+  // Center camera on hero with look-ahead offset
+  const targetX = hero.x + b.camera.lookX - screenW / 2;
+  const targetY = hero.y + b.camera.lookY - screenH / 2;
+  b.camera.x = Math.max(0, Math.min(b.mapWidth - screenW, targetX));
+  b.camera.y = Math.max(0, Math.min(b.mapHeight - screenH, targetY));
 
   // --- SPAWN ENEMIES ---
   // Simple wave spawning for now
@@ -1890,4 +1921,20 @@ export function campaignMouseUp() {
   if (!b) return;
 
   b.mouse.down = false;
+}
+
+// Set aim angle directly (for mobile joystick)
+export function campaignSetAimAngle(angle) {
+  const b = Game.campaign?.heroBattle;
+  if (!b) return;
+
+  b.aimAngle = angle;
+}
+
+// Clear aim angle (revert to mouse-based aiming)
+export function campaignClearAimAngle() {
+  const b = Game.campaign?.heroBattle;
+  if (!b) return;
+
+  b.aimAngle = null;
 }

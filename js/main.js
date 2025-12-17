@@ -6,7 +6,7 @@ import { State, SubState, HQTab, UNITS, PROJECTILES, UNIT_PROJECTILES } from './
 import { Game, newBattlePlan } from './state.js';
 import { initAudio, sound } from './audio.js';
 import { save, load } from './storage.js';
-import { goto, deploy, switchUnit, stopLoop, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, campaignMouseDown, campaignMouseUp } from './game.js';
+import { goto, deploy, switchUnit, stopLoop, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, campaignMouseDown, campaignMouseUp, campaignSetAimAngle, campaignClearAimAngle } from './game.js';
 import { render, setSubState } from './ui.js';
 import { initController, getControllerInput, updateButtonStates, setControllerCallbacks, isControllerConnected } from './controller.js';
 
@@ -928,21 +928,31 @@ document.addEventListener('mouseup', e => {
 // Detect mobile
 const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
 
-// Virtual joystick state
+// Virtual joystick state (movement - left side)
 const joystick = {
   active: false,
   startX: 0,
   startY: 0,
   currentX: 0,
   currentY: 0,
-  dx: 0,
-  dy: 0
+  touchId: null
 };
 
-// Touch for shooting (right side of screen)
-let shootingTouch = null;
+// Shoot joystick state (aiming - right side)
+const shootJoystick = {
+  active: false,
+  startX: 0,
+  startY: 0,
+  currentX: 0,
+  currentY: 0,
+  touchId: null,
+  firing: false
+};
 
-// Handle joystick touch start (left side)
+// Minimum drag distance to start firing (in pixels)
+const SHOOT_DEADZONE = 20;
+
+// Handle joystick touch start
 document.addEventListener('touchstart', e => {
   if (Game.state !== State.CAMPAIGN_BATTLE) return;
 
@@ -950,7 +960,7 @@ document.addEventListener('touchstart', e => {
     const x = touch.clientX;
     const screenMid = window.innerWidth / 2;
 
-    // Left side = joystick
+    // Left side = movement joystick
     if (x < screenMid && !joystick.active) {
       joystick.active = true;
       joystick.startX = touch.clientX;
@@ -960,15 +970,16 @@ document.addEventListener('touchstart', e => {
       joystick.touchId = touch.identifier;
       updateJoystickInput();
     }
-    // Right side = aim and shoot
-    else if (x >= screenMid) {
-      shootingTouch = touch.identifier;
-      const bf = document.querySelector('.campaign-battlefield');
-      if (bf) {
-        const rect = bf.getBoundingClientRect();
-        campaignMouseMove(touch.clientX - rect.left, touch.clientY - rect.top);
-        campaignMouseDown();
-      }
+    // Right side = shoot joystick
+    else if (x >= screenMid && !shootJoystick.active) {
+      shootJoystick.active = true;
+      shootJoystick.startX = touch.clientX;
+      shootJoystick.startY = touch.clientY;
+      shootJoystick.currentX = touch.clientX;
+      shootJoystick.currentY = touch.clientY;
+      shootJoystick.touchId = touch.identifier;
+      shootJoystick.firing = false;
+      // Don't start firing yet - wait for drag
     }
   }
 }, { passive: false });
@@ -977,19 +988,40 @@ document.addEventListener('touchmove', e => {
   if (Game.state !== State.CAMPAIGN_BATTLE) return;
 
   for (const touch of e.changedTouches) {
-    // Update joystick
+    // Update movement joystick
     if (joystick.active && touch.identifier === joystick.touchId) {
       joystick.currentX = touch.clientX;
       joystick.currentY = touch.clientY;
       updateJoystickInput();
       e.preventDefault();
     }
-    // Update aim while shooting
-    if (touch.identifier === shootingTouch) {
-      const bf = document.querySelector('.campaign-battlefield');
-      if (bf) {
-        const rect = bf.getBoundingClientRect();
-        campaignMouseMove(touch.clientX - rect.left, touch.clientY - rect.top);
+
+    // Update shoot joystick
+    if (shootJoystick.active && touch.identifier === shootJoystick.touchId) {
+      shootJoystick.currentX = touch.clientX;
+      shootJoystick.currentY = touch.clientY;
+      e.preventDefault();
+
+      // Calculate drag distance and angle
+      const dx = shootJoystick.currentX - shootJoystick.startX;
+      const dy = shootJoystick.currentY - shootJoystick.startY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist > SHOOT_DEADZONE) {
+        // Calculate aim angle and start firing
+        const angle = Math.atan2(dy, dx);
+        campaignSetAimAngle(angle);
+
+        if (!shootJoystick.firing) {
+          shootJoystick.firing = true;
+          campaignMouseDown();
+        }
+      } else {
+        // Inside deadzone - stop firing
+        if (shootJoystick.firing) {
+          shootJoystick.firing = false;
+          campaignMouseUp();
+        }
       }
     }
   }
@@ -999,28 +1031,40 @@ document.addEventListener('touchend', e => {
   if (Game.state !== State.CAMPAIGN_BATTLE) return;
 
   for (const touch of e.changedTouches) {
-    // Release joystick
+    // Release movement joystick
     if (touch.identifier === joystick.touchId) {
       joystick.active = false;
-      joystick.dx = 0;
-      joystick.dy = 0;
+      joystick.touchId = null;
       updateJoystickInput();
     }
-    // Release shooting
-    if (touch.identifier === shootingTouch) {
-      shootingTouch = null;
-      campaignMouseUp();
+
+    // Release shoot joystick
+    if (touch.identifier === shootJoystick.touchId) {
+      shootJoystick.active = false;
+      shootJoystick.touchId = null;
+      if (shootJoystick.firing) {
+        shootJoystick.firing = false;
+        campaignMouseUp();
+      }
+      campaignClearAimAngle();
     }
   }
 });
 
 document.addEventListener('touchcancel', e => {
+  // Reset movement joystick
   joystick.active = false;
-  joystick.dx = 0;
-  joystick.dy = 0;
+  joystick.touchId = null;
   updateJoystickInput();
-  shootingTouch = null;
-  campaignMouseUp();
+
+  // Reset shoot joystick
+  shootJoystick.active = false;
+  shootJoystick.touchId = null;
+  if (shootJoystick.firing) {
+    shootJoystick.firing = false;
+    campaignMouseUp();
+  }
+  campaignClearAimAngle();
 });
 
 // Convert joystick position to WASD-style input
