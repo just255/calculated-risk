@@ -2763,177 +2763,183 @@ function campaignPlanningHTML() {
   const revealedCells = plan.enemyArmy.filter(e => e.revealed).length;
   const intelPercent = plan.enemyArmy.length > 0 ? Math.round((revealedCells / plan.enemyArmy.length) * 100) : 0;
 
+  // Build unit detail panel HTML (for selected unit from roster or placed unit)
+  let unitDetailHTML = '';
+  if (plan.selectedPlacedUnit) {
+    const { row, col } = plan.selectedPlacedUnit;
+    const cell = grid[row]?.[col];
+    if (cell) {
+      const unitDef = UNITS.find(u => u.id === cell.unitId);
+      if (unitDef) {
+        const stance = cell.stance || 'defensive';
+        const hasPath = cell.waypoints && cell.waypoints.length > 0;
+        unitDetailHTML = `
+          <div class="unit-detail-card ${plan.pathSetMode ? 'path-mode' : ''}">
+            <div class="detail-header">
+              <div class="detail-icon">${getAnimatedSvg(unitDef, 'detail-svg')}</div>
+              <div class="detail-info">
+                <div class="detail-name">${unitDef.name}</div>
+                <div class="detail-pos">Row ${row}, Col ${col}</div>
+              </div>
+              <button class="detail-close" data-action="close-placed-unit">×</button>
+            </div>
+            ${plan.pathSetMode ? `
+              <div class="path-mode-controls">
+                <div class="path-hint">Click cells to add waypoints (${plan.plannedPath.length})</div>
+                <div class="path-btns">
+                  <button class="btn-cancel" data-action="cancel-set-path">Cancel</button>
+                  <button class="btn-confirm" data-action="confirm-set-path">Confirm</button>
+                </div>
+              </div>
+            ` : `
+              <div class="detail-actions">
+                <button class="action-btn" data-action="start-set-path">
+                  📍 Path ${hasPath ? `(${cell.waypoints.length})` : ''}
+                </button>
+                ${hasPath ? `<button class="action-btn" data-action="clear-path">🗑 Clear</button>` : ''}
+                <button class="action-btn remove" data-action="remove-placed-unit">✕ Remove</button>
+              </div>
+              <div class="stance-row">
+                <span class="stance-label">Stance:</span>
+                <button class="stance-btn ${stance === 'aggressive' ? 'active' : ''}" data-action="set-stance" data-stance="aggressive">⚔️</button>
+                <button class="stance-btn ${stance === 'defensive' ? 'active' : ''}" data-action="set-stance" data-stance="defensive">🛡️</button>
+                <button class="stance-btn ${stance === 'support' ? 'active' : ''}" data-action="set-stance" data-stance="support">➕</button>
+              </div>
+            `}
+          </div>
+        `;
+      }
+    }
+  } else if (selectedUnit && selectedUnit !== 'hero') {
+    const unit = availableUnits.find(u => u.id === selectedUnit);
+    const unitDef = unit ? UNITS.find(u => u.id === unit.id) : null;
+    if (unitDef) {
+      unitDetailHTML = `
+        <div class="unit-detail-card">
+          <div class="detail-header">
+            <div class="detail-icon">${getAnimatedSvg(unitDef, 'detail-svg')}</div>
+            <div class="detail-info">
+              <div class="detail-name">${unitDef.name}</div>
+              <div class="detail-stats">
+                DMG ${unitDef.damage} · ${(unitDef.fireRate / 1000).toFixed(1)}s
+              </div>
+            </div>
+            <button class="detail-close" data-action="close-unit-detail">×</button>
+          </div>
+          <div class="detail-hint">Click in blue zone to place</div>
+        </div>
+      `;
+    }
+  } else if (selectedUnit === 'hero') {
+    unitDetailHTML = `
+      <div class="unit-detail-card">
+        <div class="detail-header">
+          <div class="detail-icon hero-icon">★</div>
+          <div class="detail-info">
+            <div class="detail-name">Hero</div>
+            <div class="detail-stats">Your commander</div>
+          </div>
+          <button class="detail-close" data-action="close-unit-detail">×</button>
+        </div>
+        <div class="detail-hint">Click in blue zone to place</div>
+      </div>
+    `;
+  }
+
   return `
     <div class="screen planning-screen">
-      <div class="intel-bar">
-        <div class="intel-status">
-          <span class="intel-label">ENEMY INTEL</span>
-          <div class="intel-progress">
-            <div class="intel-fill" style="width: ${intelPercent}%"></div>
-          </div>
-          <span class="intel-percent">${intelPercent}%</span>
+      <!-- LEFT PANEL: Units -->
+      <div class="plan-left-panel">
+        <div class="panel-header">
+          <h2>UNITS</h2>
+          <button class="back-btn" data-action="campaign">←</button>
         </div>
-        <button class="intel-scout-btn" data-action="scout-enemy">
-          <span class="scout-icon">🔭</span>
-          <span>SCOUT</span>
-        </button>
-        <div class="intel-hint">Solve problems to reveal enemy positions</div>
+
+        ${unitDetailHTML}
+
+        <div class="roster-section">
+          <div class="roster-grid">
+            ${rosterHTML}
+            <div class="roster-unit ${selectedUnit === 'hero' ? 'selected' : ''}" data-action="select-plan-unit" data-unit="hero">
+              <div class="roster-unit-icon hero-icon">★</div>
+              <div class="roster-unit-name">Hero</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tactic-section">
+          <h3>Doctrine</h3>
+          <div class="doctrine-grid">
+            ${doctrineHTML}
+          </div>
+        </div>
+
+        <div class="plan-actions">
+          <button class="btn-clear" data-action="plan-clear">Clear All</button>
+          <button class="btn-deploy" data-action="plan-deploy">DEPLOY →</button>
+        </div>
       </div>
 
-      <div class="planning-main">
-        <div class="planning-grid-wrapper">
-          <div class="planning-grid-viewport" id="grid-viewport">
-            <div class="planning-grid time-${plan.timeOfDay} weather-${plan.weather}"
-                 id="planning-grid"
-                 style="grid-template-columns: repeat(${gridWidth}, 1fr); transform: scale(${plan.zoom}) translate(${plan.panX}px, ${plan.panY}px);">
-              ${gridHTML}
-            </div>
-            <div class="grid-controls">
-              <button class="grid-ctrl-btn" data-action="grid-zoom-in" title="Zoom In">+</button>
-              <span class="grid-zoom-level">${Math.round(plan.zoom * 100)}%</span>
-              <button class="grid-ctrl-btn" data-action="grid-zoom-out" title="Zoom Out">−</button>
-              <button class="grid-ctrl-btn" data-action="grid-center" title="Center View">⌖</button>
-              <button class="grid-ctrl-btn" data-action="grid-reset" title="Reset View">↺</button>
-            </div>
+      <!-- CENTER: Map Grid -->
+      <div class="plan-center">
+        <div class="planning-grid-viewport" id="grid-viewport">
+          <div class="planning-grid time-${plan.timeOfDay} weather-${plan.weather}"
+               id="planning-grid"
+               style="grid-template-columns: repeat(${gridWidth}, 1fr); transform: scale(${plan.zoom}) translate(${plan.panX}px, ${plan.panY}px);">
+            ${gridHTML}
+          </div>
+          <div class="grid-controls">
+            <button class="grid-ctrl-btn" data-action="grid-zoom-in">+</button>
+            <span class="grid-zoom-level">${Math.round(plan.zoom * 100)}%</span>
+            <button class="grid-ctrl-btn" data-action="grid-zoom-out">−</button>
+            <button class="grid-ctrl-btn" data-action="grid-reset">↺</button>
           </div>
         </div>
+        <div class="map-help">
+          ${plan.pathSetMode
+            ? 'PATH MODE: Click cells to add waypoints'
+            : 'Click unit to select · Click map to place'}
+        </div>
+      </div>
 
-        <div class="planning-panel">
-          ${/* === PLACED UNIT DETAIL PANEL === */
-          plan.selectedPlacedUnit ? (() => {
-            const { row, col } = plan.selectedPlacedUnit;
-            const cell = grid[row]?.[col];
-            if (!cell) return '';
-            const unitDef = UNITS.find(u => u.id === cell.unitId);
-            if (!unitDef) return '';
-            const stance = cell.stance || 'defensive';
-            const hasPath = cell.waypoints && cell.waypoints.length > 0;
+      <!-- RIGHT PANEL: Enemy Intel -->
+      <div class="plan-right-panel">
+        <div class="panel-header enemy">
+          <h2>ENEMY INTEL</h2>
+        </div>
 
-            return `
-              <div class="placed-unit-panel ${plan.pathSetMode ? 'path-mode' : ''}">
-                <div class="placed-unit-header">
-                  <div class="placed-unit-icon">${getAnimatedSvg(unitDef, 'placed-svg')}</div>
-                  <div class="placed-unit-info">
-                    <div class="placed-unit-name">${unitDef.name}</div>
-                    <div class="placed-unit-pos">Position: ${row}, ${col}</div>
-                  </div>
-                  <button class="placed-unit-close" data-action="close-placed-unit">×</button>
-                </div>
-
-                ${plan.pathSetMode ? `
-                  <div class="path-set-controls">
-                    <div class="path-set-hint">Click cells to define path (${plan.plannedPath.length} points)</div>
-                    <div class="path-set-btns">
-                      <button class="path-btn cancel" data-action="cancel-set-path">Cancel</button>
-                      <button class="path-btn confirm" data-action="confirm-set-path">Confirm Path</button>
-                    </div>
-                  </div>
-                ` : `
-                  <div class="placed-unit-actions">
-                    <button class="placed-action-btn path-btn" data-action="start-set-path">
-                      <span class="btn-icon">📍</span>
-                      <span>Set Path</span>
-                      ${hasPath ? `<span class="path-count">(${cell.waypoints.length})</span>` : ''}
-                    </button>
-                    ${hasPath ? `
-                      <button class="placed-action-btn clear-btn" data-action="clear-path">
-                        <span class="btn-icon">🗑</span>
-                        <span>Clear Path</span>
-                      </button>
-                    ` : ''}
-                    <button class="placed-action-btn remove-btn" data-action="remove-placed-unit">
-                      <span class="btn-icon">✕</span>
-                      <span>Remove</span>
-                    </button>
-                  </div>
-
-                  <div class="stance-selector">
-                    <div class="stance-label">Stance:</div>
-                    <div class="stance-options">
-                      <button class="stance-btn ${stance === 'aggressive' ? 'active' : ''}" data-action="set-stance" data-stance="aggressive" title="Push forward, engage enemies">
-                        ⚔️ Aggressive
-                      </button>
-                      <button class="stance-btn ${stance === 'defensive' ? 'active' : ''}" data-action="set-stance" data-stance="defensive" title="Hold position, return fire">
-                        🛡️ Defensive
-                      </button>
-                      <button class="stance-btn ${stance === 'support' ? 'active' : ''}" data-action="set-stance" data-stance="support" title="Stay back, support allies">
-                        ➕ Support
-                      </button>
-                    </div>
-                  </div>
-                `}
-              </div>
-            `;
-          })() : ''}
-          ${/* === NEW UNIT SELECTION PANEL (from roster) === */
-          selectedUnit && selectedUnit !== 'hero' && !plan.selectedPlacedUnit ? (() => {
-            const unit = availableUnits.find(u => u.id === selectedUnit);
-            const unitDef = unit ? UNITS.find(u => u.id === unit.id) : null;
-            if (!unitDef) return '';
-            return `
-              <div class="unit-detail-panel">
-                <div class="unit-detail-header">
-                  <div class="unit-detail-icon">${getAnimatedSvg(unitDef, 'detail-svg')}</div>
-                  <div class="unit-detail-info">
-                    <div class="unit-detail-name">${unitDef.name}</div>
-                    <div class="unit-detail-stats">
-                      <span class="stat">DMG: ${unitDef.damage}</span>
-                      <span class="stat">RATE: ${(unitDef.fireRate / 1000).toFixed(1)}s</span>
-                      <span class="stat">CD: ${(unitDef.deployCooldown / 1000).toFixed(0)}s</span>
-                    </div>
-                  </div>
-                  <button class="unit-detail-close" data-action="close-unit-detail">▼</button>
-                </div>
-              </div>
-            `;
-          })() : ''}
-          ${selectedUnit === 'hero' && !plan.selectedPlacedUnit ? `
-            <div class="unit-detail-panel">
-              <div class="unit-detail-header">
-                <div class="unit-detail-icon hero-detail-icon">★</div>
-                <div class="unit-detail-info">
-                  <div class="unit-detail-name">Hero</div>
-                  <div class="unit-detail-stats">
-                    <span class="stat">Your commander on the battlefield</span>
-                  </div>
-                </div>
-                <button class="unit-detail-close" data-action="close-unit-detail">▼</button>
-              </div>
-            </div>
-          ` : ''}
-
-          <div class="panel-divider-top"></div>
-
-          <div class="panel-section units-section">
-            <h3>Units</h3>
-            <div class="roster-grid">
-              ${rosterHTML}
-              <button class="roster-unit ${selectedUnit === 'hero' ? 'selected' : ''}"
-                      data-action="select-plan-unit" data-unit="hero">
-                <div class="roster-unit-icon hero-icon">★</div>
-                <div class="roster-unit-name">Hero</div>
-              </button>
-            </div>
+        <div class="intel-section">
+          <div class="intel-progress-bar">
+            <div class="intel-fill" style="width: ${intelPercent}%"></div>
+            <span class="intel-text">${intelPercent}% Revealed</span>
           </div>
+          <button class="scout-btn" data-action="scout-enemy">
+            🔭 SCOUT ENEMY
+          </button>
+          <p class="intel-hint">Solve math problems to reveal enemy positions</p>
+        </div>
 
-          <div class="panel-section tactic-section">
-            <h3>Tactic</h3>
-            <div class="doctrine-grid">
-              ${doctrineHTML}
+        <div class="enemy-list">
+          <h3>Detected Units</h3>
+          ${plan.enemyArmy.filter(e => e.revealed).length > 0 ? `
+            <div class="enemy-units">
+              ${plan.enemyArmy.filter(e => e.revealed).map(e => {
+                const enemyDef = UNITS.find(u => u.id === e.unitId);
+                return `<div class="enemy-unit">
+                  <span class="enemy-icon">${enemyDef ? getAnimatedSvg(enemyDef, 'enemy-svg') : '?'}</span>
+                  <span class="enemy-name">${enemyDef?.name || 'Unknown'}</span>
+                </div>`;
+              }).join('')}
             </div>
-          </div>
+          ` : `
+            <div class="no-intel">No enemy units detected yet</div>
+          `}
+        </div>
 
-          <div class="panel-section help-section">
-            <div class="help-text">
-              ${plan.pathSetMode
-                ? '<strong>Path Mode:</strong> Click cells to add to path. Click existing path cell to trim. Click Confirm when done.'
-                : '<strong>Tip:</strong> Click a placed unit to select it and set its path and stance. Units follow their paths when battle starts.'}
-            </div>
-          </div>
-
-          <div class="panel-actions">
-            <button class="menu-btn secondary" data-action="plan-clear">Clear</button>
-            <button class="menu-btn" data-action="plan-deploy">DEPLOY →</button>
+        <div class="threat-section">
+          <h3>Threat Assessment</h3>
+          <div class="threat-level ${intelPercent < 30 ? 'unknown' : intelPercent < 70 ? 'medium' : 'known'}">
+            ${intelPercent < 30 ? '⚠️ Unknown' : intelPercent < 70 ? '⚡ Partial' : '✓ Clear'}
           </div>
         </div>
       </div>

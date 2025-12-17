@@ -2951,127 +2951,397 @@
     }
 
     /* ═══════════════════════════════════════════════════════════════
-       CAMPAIGN PLANNING SCREEN
+       CAMPAIGN PLANNING SCREEN - 3 Column Landscape Layout
        ═══════════════════════════════════════════════════════════════ */
 
     .planning-screen {
       display: flex;
-      flex-direction: column;
+      flex-direction: row;
       height: 100vh;
-      height: 100dvh; /* Dynamic viewport height for mobile */
-      padding: 0;
-      box-sizing: border-box;
+      height: 100dvh;
       overflow: hidden;
+      background: var(--bg-dark);
     }
 
-    .planning-header {
-      display: none;
+    /* === LEFT PANEL: Units === */
+    .plan-left-panel {
+      width: 220px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      background: rgba(20, 25, 35, 0.98);
+      border-right: 2px solid var(--accent-blue);
+      overflow-y: auto;
     }
 
-    /* Intel Bar - top of screen */
-    .intel-bar {
+    .plan-left-panel .panel-header {
       display: flex;
       align-items: center;
-      gap: 15px;
-      padding: 10px 15px;
-      background: linear-gradient(to right, rgba(255,50,50,0.2), rgba(30,30,40,0.95), rgba(30,30,40,0.95));
-      border-bottom: 2px solid #c33;
-      flex-shrink: 0;
+      justify-content: space-between;
+      padding: 10px 12px;
+      background: rgba(74, 158, 255, 0.15);
+      border-bottom: 1px solid rgba(74, 158, 255, 0.3);
     }
 
-    .intel-status {
+    .plan-left-panel .panel-header h2 {
+      font-family: 'Black Ops One', cursive;
+      font-size: 1rem;
+      color: var(--accent-blue);
+      margin: 0;
+    }
+
+    .plan-left-panel .back-btn {
+      background: none;
+      border: 1px solid var(--text-secondary);
+      color: var(--text-secondary);
+      padding: 4px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 1rem;
+    }
+
+    .plan-left-panel .back-btn:hover {
+      border-color: var(--text-primary);
+      color: var(--text-primary);
+    }
+
+    /* Unit Detail Card */
+    .unit-detail-card {
+      background: rgba(40, 45, 60, 0.9);
+      border-bottom: 1px solid #444;
+      padding: 10px;
+    }
+
+    .unit-detail-card.path-mode {
+      background: rgba(76, 175, 80, 0.2);
+      border-color: var(--accent-green);
+    }
+
+    .detail-header {
       display: flex;
       align-items: center;
       gap: 10px;
+      margin-bottom: 8px;
     }
 
-    .intel-label {
-      font-size: 0.8rem;
-      font-weight: bold;
-      color: var(--accent-red);
-      text-transform: uppercase;
-      letter-spacing: 1px;
+    .detail-icon {
+      width: 40px;
+      height: 40px;
+      flex-shrink: 0;
     }
 
-    .intel-progress {
-      width: 120px;
-      height: 8px;
-      background: #333;
-      border-radius: 4px;
-      overflow: hidden;
-    }
-
-    .intel-fill {
+    .detail-icon svg, .detail-svg {
+      width: 100%;
       height: 100%;
-      background: linear-gradient(to right, #c33, #f55);
-      transition: width 0.3s;
     }
 
-    .intel-percent {
-      font-size: 0.85rem;
+    .detail-icon.hero-icon {
+      font-size: 32px;
+      color: var(--accent-yellow);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .detail-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .detail-name {
       font-weight: bold;
-      color: var(--accent-red);
-      min-width: 35px;
+      font-size: 0.9rem;
+      color: var(--text-primary);
     }
 
-    .intel-scout-btn {
+    .detail-pos, .detail-stats {
+      font-size: 0.7rem;
+      color: var(--text-secondary);
+    }
+
+    .detail-close {
+      background: none;
+      border: none;
+      color: var(--text-secondary);
+      font-size: 1.2rem;
+      cursor: pointer;
+      padding: 2px 6px;
+    }
+
+    .detail-close:hover {
+      color: var(--accent-red);
+    }
+
+    .detail-hint {
+      font-size: 0.7rem;
+      color: var(--accent-blue);
+      text-align: center;
+      padding: 4px;
+      background: rgba(74, 158, 255, 0.1);
+      border-radius: 4px;
+    }
+
+    .detail-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .action-btn {
+      flex: 1;
+      min-width: 60px;
+      padding: 6px 8px;
+      background: var(--bg-light);
+      border: 1px solid var(--bg-lighter);
+      border-radius: 4px;
+      color: var(--text-primary);
+      font-size: 0.7rem;
+      cursor: pointer;
+    }
+
+    .action-btn:hover {
+      border-color: var(--accent-blue);
+    }
+
+    .action-btn.remove {
+      background: rgba(255, 68, 68, 0.2);
+      border-color: rgba(255, 68, 68, 0.4);
+    }
+
+    .action-btn.remove:hover {
+      background: rgba(255, 68, 68, 0.4);
+    }
+
+    .stance-row {
       display: flex;
       align-items: center;
       gap: 6px;
-      padding: 8px 16px;
-      background: linear-gradient(to bottom, #c33, #922);
-      border: none;
-      border-radius: 6px;
-      color: white;
-      font-weight: bold;
+    }
+
+    .stance-label {
+      font-size: 0.7rem;
+      color: var(--text-secondary);
+    }
+
+    .stance-btn {
+      padding: 4px 8px;
+      background: var(--bg-light);
+      border: 1px solid var(--bg-lighter);
+      border-radius: 4px;
       font-size: 0.85rem;
+      cursor: pointer;
+    }
+
+    .stance-btn.active {
+      border-color: var(--accent-green);
+      background: rgba(74, 222, 128, 0.2);
+    }
+
+    .path-mode-controls {
+      text-align: center;
+    }
+
+    .path-hint {
+      font-size: 0.75rem;
+      color: var(--accent-green);
+      margin-bottom: 8px;
+    }
+
+    .path-btns {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn-cancel, .btn-confirm {
+      flex: 1;
+      padding: 8px;
+      border: none;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    .btn-cancel {
+      background: var(--bg-light);
+      color: var(--text-secondary);
+    }
+
+    .btn-confirm {
+      background: var(--accent-green);
+      color: #000;
+    }
+
+    /* Roster Section */
+    .roster-section {
+      padding: 10px;
+      flex: 1;
+    }
+
+    .roster-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 6px;
+    }
+
+    .roster-unit {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      padding: 6px;
+      background: var(--bg-light);
+      border: 2px solid var(--bg-lighter);
+      border-radius: 6px;
       cursor: pointer;
       transition: all 0.15s;
     }
 
-    .intel-scout-btn:hover {
-      background: linear-gradient(to bottom, #d44, #a33);
-      transform: scale(1.05);
+    .roster-unit:hover {
+      border-color: var(--accent-blue);
     }
 
-    .scout-icon {
-      font-size: 1.1rem;
+    .roster-unit.selected {
+      border-color: var(--accent-yellow);
+      background: rgba(255, 204, 0, 0.2);
+      box-shadow: 0 0 10px rgba(255, 204, 0, 0.3);
     }
 
-    .intel-hint {
-      font-size: 0.75rem;
+    .roster-unit-icon {
+      width: 32px;
+      height: 32px;
+    }
+
+    .roster-unit-icon svg, .roster-svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    .roster-unit-icon.hero-icon {
+      font-size: 24px;
+      color: var(--accent-yellow);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .roster-unit-name {
+      font-size: 0.6rem;
       color: var(--text-secondary);
-      margin-left: auto;
+      white-space: nowrap;
     }
 
-    .planning-main {
-      display: flex;
-      flex-direction: column;
-      flex: 1;
-      overflow: hidden;
-      min-height: 0;
+    .roster-unit-count {
+      font-size: 0.7rem;
+      color: var(--accent-yellow);
+      font-weight: bold;
     }
 
-    /* Grid fills most of the screen */
-    .planning-grid-wrapper {
+    /* Tactic Section */
+    .tactic-section {
+      padding: 0 10px 10px;
+      border-top: 1px solid #333;
+    }
+
+    .tactic-section h3 {
+      font-size: 0.7rem;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      margin: 8px 0;
+    }
+
+    .doctrine-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+
+    .doctrine-btn {
+      padding: 6px 10px;
+      background: var(--bg-light);
+      border: 1px solid var(--bg-lighter);
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .doctrine-btn:hover {
+      border-color: var(--accent-blue);
+    }
+
+    .doctrine-btn.selected {
+      border-color: var(--accent-green);
+      background: rgba(74, 222, 128, 0.2);
+    }
+
+    .doctrine-name {
+      font-size: 0.7rem;
+      font-weight: bold;
+      color: var(--text-primary);
+    }
+
+    .doctrine-desc {
+      display: none;
+    }
+
+    /* Plan Actions */
+    .plan-actions {
+      display: flex;
+      gap: 8px;
+      padding: 10px;
+      border-top: 1px solid #333;
+      margin-top: auto;
+    }
+
+    .btn-clear {
+      flex: 0;
+      padding: 10px 12px;
+      background: var(--bg-light);
+      border: 1px solid var(--text-secondary);
+      border-radius: 4px;
+      color: var(--text-secondary);
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+
+    .btn-clear:hover {
+      border-color: var(--accent-red);
+      color: var(--accent-red);
+    }
+
+    .btn-deploy {
+      flex: 1;
+      padding: 10px 16px;
+      background: var(--accent-green);
+      border: none;
+      border-radius: 4px;
+      color: #000;
+      font-size: 0.9rem;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    .btn-deploy:hover {
+      background: #5be090;
+    }
+
+    /* === CENTER: Map Grid === */
+    .plan-center {
       flex: 1;
       display: flex;
       flex-direction: column;
-      min-height: 0;
+      min-width: 0;
+      background: linear-gradient(to bottom,
+        rgba(255,50,50,0.1) 0%,
+        rgba(100,100,100,0.05) 40%,
+        rgba(50,100,255,0.1) 100%
+      );
     }
 
     .planning-grid-viewport {
       flex: 1;
-      width: 100%;
       overflow: hidden;
-      background: linear-gradient(to bottom,
-        rgba(255,50,50,0.1) 0%,
-        rgba(255,50,50,0.05) 30%,
-        rgba(100,100,100,0.05) 35%,
-        rgba(100,100,100,0.05) 65%,
-        rgba(50,100,255,0.05) 70%,
-        rgba(50,100,255,0.1) 100%
-      );
       cursor: grab;
       display: flex;
       align-items: center;
@@ -3093,33 +3363,31 @@
       transform-origin: center center;
     }
 
-    /* Floating controls overlay */
     .grid-controls {
       position: absolute;
-      top: 10px;
-      right: 10px;
+      top: 8px;
+      right: 8px;
       display: flex;
       align-items: center;
-      gap: 5px;
+      gap: 4px;
       background: rgba(30,30,40,0.9);
-      padding: 5px 8px;
-      border-radius: 20px;
+      padding: 4px 6px;
+      border-radius: 16px;
       z-index: 10;
     }
 
     .grid-ctrl-btn {
-      width: 32px;
-      height: 32px;
+      width: 28px;
+      height: 28px;
       border: none;
       border-radius: 50%;
       background: var(--bg-lighter);
       color: var(--text-primary);
-      font-size: 1.2rem;
+      font-size: 1rem;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: all 0.15s;
     }
 
     .grid-ctrl-btn:hover {
@@ -3127,256 +3395,183 @@
     }
 
     .grid-zoom-level {
-      font-size: 0.8rem;
+      font-size: 0.7rem;
       color: var(--text-secondary);
-      min-width: 40px;
+      min-width: 35px;
       text-align: center;
     }
 
-    /* Bottom panel - vertical stacking */
-    .planning-panel {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      padding: 0 10px 10px 10px;
-      background: rgba(20,20,30,0.98);
-      flex-shrink: 0;
-      position: relative;
-    }
-
-    /* Full-width divider at top of panel */
-    .panel-divider-top {
-      width: 100%;
-      height: 2px;
-      background: #444;
-      margin: 0 -10px;
-      width: calc(100% + 20px);
-    }
-
-    /* Expandable unit detail panel - overlays above the panel */
-    .unit-detail-panel {
-      position: absolute;
-      bottom: 100%;
-      left: 0;
-      right: 0;
-      background: rgba(30,30,40,0.98);
-      padding: 10px;
-      border-top: 2px solid #444;
-      z-index: 10;
-    }
-
-    .unit-detail-header {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .unit-detail-icon {
-      width: 48px;
-      height: 48px;
-      flex-shrink: 0;
-    }
-
-    .unit-detail-icon svg, .detail-svg {
-      width: 100%;
-      height: 100%;
-    }
-
-    .hero-detail-icon {
-      font-size: 36px;
-      color: var(--accent-yellow);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 48px;
-      height: 48px;
-    }
-
-    .unit-detail-info {
-      flex: 1;
-    }
-
-    .unit-detail-name {
-      font-weight: bold;
-      font-size: 1rem;
-      color: var(--text-primary);
-      margin-bottom: 4px;
-    }
-
-    .unit-detail-stats {
-      display: flex;
-      gap: 12px;
-      flex-wrap: wrap;
-    }
-
-    .unit-detail-stats .stat {
+    .map-help {
+      padding: 6px 12px;
+      background: rgba(0,0,0,0.6);
+      text-align: center;
       font-size: 0.75rem;
       color: var(--text-secondary);
-      background: var(--bg-dark);
-      padding: 2px 8px;
-      border-radius: 4px;
     }
 
-    .unit-detail-close {
-      background: none;
-      border: none;
-      color: var(--text-secondary);
-      font-size: 1.2rem;
-      cursor: pointer;
-      padding: 4px 8px;
-    }
-
-    .unit-detail-close:hover {
-      color: var(--text-primary);
-    }
-
-    /* Panel sections - vertical stacking */
-    .panel-section {
+    /* === RIGHT PANEL: Enemy Intel === */
+    .plan-right-panel {
+      width: 200px;
+      flex-shrink: 0;
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      background: rgba(35, 20, 20, 0.98);
+      border-left: 2px solid var(--accent-red);
+      overflow-y: auto;
     }
 
-    .panel-section h3 {
-      font-size: 0.7rem;
-      color: var(--text-secondary);
-      text-transform: uppercase;
+    .plan-right-panel .panel-header {
+      padding: 10px 12px;
+      background: rgba(255, 68, 68, 0.15);
+      border-bottom: 1px solid rgba(255, 68, 68, 0.3);
+    }
+
+    .plan-right-panel .panel-header h2 {
+      font-family: 'Black Ops One', cursive;
+      font-size: 0.9rem;
+      color: var(--accent-red);
       margin: 0;
     }
 
-    /* Unit roster - wrap grid */
-    .roster-grid {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
+    .intel-section {
+      padding: 12px;
+      border-bottom: 1px solid #333;
     }
 
-    .roster-unit {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 2px;
-      padding: 6px 8px;
-      background: var(--bg-light);
-      border: 2px solid var(--bg-lighter);
-      border-radius: 6px;
-      cursor: pointer;
-      transition: all 0.15s;
-      min-width: 55px;
-    }
-
-    .roster-unit:hover {
-      border-color: var(--accent-blue);
-      transform: translateY(-2px);
-    }
-
-    .roster-unit.selected {
-      border-color: var(--accent-yellow);
-      background: rgba(255, 204, 0, 0.2);
-      box-shadow: 0 0 12px rgba(255, 204, 0, 0.4);
-    }
-
-    .roster-unit-icon {
-      width: 36px;
-      height: 36px;
-      flex-shrink: 0;
-    }
-
-    .roster-unit-icon svg, .roster-svg {
-      width: 100%;
-      height: 100%;
-    }
-
-    .roster-unit-icon.hero-icon {
-      font-size: 28px;
-      color: var(--accent-yellow);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .roster-unit-name {
-      font-size: 0.65rem;
-      white-space: nowrap;
-      color: var(--text-secondary);
-    }
-
-    .roster-unit-count {
-      font-size: 0.75rem;
-      color: var(--accent-yellow);
-      font-weight: bold;
-    }
-
-    .doctrine-grid {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-    }
-
-    .doctrine-btn {
-      padding: 8px 12px;
-      background: var(--bg-light);
-      border: 2px solid var(--bg-lighter);
-      border-radius: 6px;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-
-    .doctrine-btn:hover {
-      border-color: var(--accent-blue);
-    }
-
-    .doctrine-btn.selected {
-      border-color: var(--accent-green);
-      background: rgba(74, 222, 128, 0.2);
-    }
-
-    .doctrine-name {
-      font-weight: bold;
-      font-size: 0.75rem;
-      color: var(--text-primary);
-      white-space: nowrap;
-    }
-
-    .doctrine-desc {
-      display: none;
-    }
-
-    .help-section {
-      padding: 8px 0;
-    }
-
-    .help-text {
-      font-size: 0.7rem;
-      color: var(--text-secondary);
-      line-height: 1.4;
-      padding: 8px;
-      background: rgba(0, 0, 0, 0.3);
+    .intel-progress-bar {
+      position: relative;
+      height: 20px;
+      background: #333;
       border-radius: 4px;
-      border-left: 2px solid var(--accent-green);
+      overflow: hidden;
+      margin-bottom: 10px;
     }
 
-    .help-text strong {
-      color: var(--accent-green);
+    .intel-progress-bar .intel-fill {
+      height: 100%;
+      background: linear-gradient(to right, #c33, #f55);
+      transition: width 0.3s;
     }
 
-    .panel-actions {
-      display: flex;
-      justify-content: space-between;
-      gap: 10px;
-      padding-top: 8px;
-      border-top: 1px solid #333;
+    .intel-text {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 0.7rem;
+      font-weight: bold;
+      color: white;
+      text-shadow: 0 0 3px black;
     }
 
-    .panel-actions .menu-btn {
-      padding: 10px 20px;
-      font-size: 0.9rem;
+    .scout-btn {
+      width: 100%;
+      padding: 10px;
+      background: linear-gradient(to bottom, #c33, #922);
+      border: none;
+      border-radius: 6px;
+      color: white;
+      font-weight: bold;
+      font-size: 0.85rem;
+      cursor: pointer;
+      margin-bottom: 8px;
+    }
+
+    .scout-btn:hover {
+      background: linear-gradient(to bottom, #d44, #a33);
+    }
+
+    .intel-hint {
+      font-size: 0.65rem;
+      color: var(--text-secondary);
+      text-align: center;
+      margin: 0;
+    }
+
+    .enemy-list {
+      padding: 10px;
       flex: 1;
     }
 
-    .panel-actions .menu-btn.secondary {
-      flex: 0;
-      padding: 10px 16px;
+    .enemy-list h3 {
+      font-size: 0.7rem;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      margin: 0 0 8px 0;
+    }
+
+    .enemy-units {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .enemy-unit {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px;
+      background: rgba(255, 68, 68, 0.1);
+      border-radius: 4px;
+    }
+
+    .enemy-icon {
+      width: 24px;
+      height: 24px;
+    }
+
+    .enemy-icon svg, .enemy-svg {
+      width: 100%;
+      height: 100%;
+      filter: hue-rotate(180deg) saturate(1.5);
+    }
+
+    .enemy-name {
+      font-size: 0.75rem;
+      color: var(--text-primary);
+    }
+
+    .no-intel {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      text-align: center;
+      padding: 20px 10px;
+      font-style: italic;
+    }
+
+    .threat-section {
+      padding: 10px;
+      border-top: 1px solid #333;
+    }
+
+    .threat-section h3 {
+      font-size: 0.7rem;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      margin: 0 0 8px 0;
+    }
+
+    .threat-level {
+      padding: 10px;
+      border-radius: 6px;
+      text-align: center;
+      font-size: 0.85rem;
+      font-weight: bold;
+    }
+
+    .threat-level.unknown {
+      background: rgba(255, 200, 50, 0.2);
+      color: var(--accent-yellow);
+    }
+
+    .threat-level.medium {
+      background: rgba(255, 150, 50, 0.2);
+      color: var(--accent-orange);
+    }
+
+    .threat-level.known {
+      background: rgba(74, 222, 128, 0.2);
+      color: var(--accent-green);
     }
 
     /* Grid cells */
