@@ -1,5 +1,5 @@
 // Service Worker for Calculated Risk PWA
-const CACHE_NAME = 'calculated-risk-v4';
+const CACHE_NAME = 'calculated-risk-v5';
 const ASSETS = [
   '/',
   '/index.html',
@@ -14,7 +14,8 @@ const ASSETS = [
   '/js/pathfinding.js',
   '/js/storage.js',
   '/js/controller.js',
-  '/manifest.json'
+  '/manifest.json',
+  '/icon.svg'
 ];
 
 // Install - cache assets

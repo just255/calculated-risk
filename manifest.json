@@ -2,10 +2,19 @@
   "name": "Calculated Risk",
   "short_name": "CalcRisk",
   "description": "Military-themed math training game",
-  "start_url": "/",
+  "start_url": "/index.html",
+  "scope": "/",
   "display": "fullscreen",
   "orientation": "landscape",
   "background_color": "#1a1a2e",
   "theme_color": "#4a9eff",
-  "categories": ["games", "education"]
+  "categories": ["games", "education"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
 }
