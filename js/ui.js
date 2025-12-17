@@ -133,6 +133,9 @@ export function render() {
 // SCREEN TEMPLATES
 // ═══════════════════════════════════════════════════════════════
 
+// Game version - update this when making changes
+const GAME_VERSION = '0.5.0';
+
 function menuHTML() {
   return `
     <div class="screen menu-screen">
@@ -152,6 +155,7 @@ function menuHTML() {
         <button class="menu-btn secondary" data-action="settings">Settings</button>
         <button class="menu-btn secondary" data-action="stats">Statistics</button>
       </div>
+      <div class="menu-version">v${GAME_VERSION}</div>
     </div>
   `;
 }
@@ -2337,7 +2341,7 @@ function campaignPlanningHTML() {
 
   if (!plan) return '<div class="screen">Loading battle plan...</div>';
 
-  const { gridWidth, gridHeight, grid, terrain, hero, availableUnits, selectedUnit, playerStartRow, enemyEndRow } = plan;
+  const { gridWidth, gridHeight, grid, terrain, hero, availableUnits, selectedPlacement, playerStartRow, enemyEndRow, contextMenu } = plan;
 
   // Build grid HTML
   let gridHTML = '';
@@ -2349,12 +2353,14 @@ function campaignPlanningHTML() {
       const isEnemyZone = row < enemyEndRow;
       const isNoMansLand = !isPlayerZone && !isEnemyZone;
       const isHeroCell = hero.row === row && hero.col === col;
+      const isSpawnPoint = plan.spawnPoint?.row === row && plan.spawnPoint?.col === col;
 
       let cellClass = 'plan-cell';
       if (isPlayerZone) cellClass += ' player-zone';
       if (isEnemyZone) cellClass += ' enemy-zone';
       if (isNoMansLand) cellClass += ' no-mans-land';
       if (isHeroCell) cellClass += ' hero-cell';
+      if (isSpawnPoint) cellClass += ' spawn-point';
 
       // Add terrain class
       if (terrainType !== 'open') {
@@ -2677,17 +2683,61 @@ function campaignPlanningHTML() {
         }
       }
 
-      if (isHeroCell) {
+      if (isSpawnPoint && !isHeroCell) {
+        cellContent = '<div class="spawn-marker">SPAWN</div>';
+      } else if (isHeroCell) {
         cellContent = '<div class="plan-hero">★</div>';
-      } else if (cell) {
-        const unit = UNITS.find(u => u.id === cell.unitId);
-        if (unit) {
-          const isWaypointSelected = plan.waypointUnit === cell;
-          const hasWaypoints = cell.waypoints && cell.waypoints.length > 0;
-          const waypointClass = isWaypointSelected ? ' waypoint-selected' : (hasWaypoints ? ' has-waypoints' : '');
-          const selectedClass = isSelectedPlacedUnit ? ' unit-selected' : '';
-          const pathModeClass = isSelectedPlacedUnit && plan.pathSetMode ? ' path-mode' : '';
-          cellContent = `<div class="plan-unit ${cell.owner}${waypointClass}${selectedClass}${pathModeClass}" title="${unit.name}${hasWaypoints ? ' (has ' + cell.waypoints.length + ' waypoints)' : ''}">${getAnimatedSvg(unit, 'plan-unit-svg')}</div>`;
+      } else {
+        // Check for destination markers from unitPlacements (new system)
+        // Pulsing border + unit SVG - terrain stays visible underneath
+        const placements = plan.unitPlacements || [];
+        for (let pIdx = 0; pIdx < placements.length; pIdx++) {
+          const p = placements[pIdx];
+          const isSelected = plan.selectedPlacement === p;  // Object reference comparison
+          const inSpawnClass = p.inSpawnZone ? ' in-spawn-zone' : '';
+
+          // Primary position - pulsing border + unit SVG
+          if (p.primaryPos?.row === row && p.primaryPos?.col === col) {
+            const unit = UNITS.find(u => u.id === p.unitId);
+            cellClass += ' has-primary-marker';
+            if (isSelected) cellClass += ' selected-placement';
+            cellContent = `<div class="dest-marker primary${isSelected ? ' selected' : ''}${inSpawnClass}" data-placement="${pIdx}" data-draggable="true" title="${unit?.name || p.unitId}">
+              ${getAnimatedSvg(unit, 'dest-unit-svg')}
+              <span class="marker-type-icon">🎯</span>
+            </div>`;
+            break;
+          }
+          // Advance position - blue border + type icon only
+          if (p.advancePos?.row === row && p.advancePos?.col === col) {
+            cellClass += ' has-advance-marker';
+            if (isSelected) cellClass += ' selected-placement';
+            cellContent = `<div class="dest-marker advance${isSelected ? ' selected' : ''}" data-placement="${pIdx}" title="Advance Position">
+              <span class="marker-type-icon">⚔️</span>
+            </div>`;
+            break;
+          }
+          // Fallback position - yellow border + type icon only
+          if (p.fallbackPos?.row === row && p.fallbackPos?.col === col) {
+            cellClass += ' has-fallback-marker';
+            if (isSelected) cellClass += ' selected-placement';
+            cellContent = `<div class="dest-marker fallback${isSelected ? ' selected' : ''}" data-placement="${pIdx}" title="Fallback Position">
+              <span class="marker-type-icon">🛡️</span>
+            </div>`;
+            break;
+          }
+        }
+
+        // Legacy: Check grid cell for old-style placed units
+        if (!cellContent && cell) {
+          const unit = UNITS.find(u => u.id === cell.unitId);
+          if (unit) {
+            const isWaypointSelected = plan.waypointUnit === cell;
+            const hasWaypoints = cell.waypoints && cell.waypoints.length > 0;
+            const waypointClass = isWaypointSelected ? ' waypoint-selected' : (hasWaypoints ? ' has-waypoints' : '');
+            const selectedClass = isSelectedPlacedUnit ? ' unit-selected' : '';
+            const pathModeClass = isSelectedPlacedUnit && plan.pathSetMode ? ' path-mode' : '';
+            cellContent = `<div class="plan-unit ${cell.owner}${waypointClass}${selectedClass}${pathModeClass}" title="${unit.name}${hasWaypoints ? ' (has ' + cell.waypoints.length + ' waypoints)' : ''}">${getAnimatedSvg(unit, 'plan-unit-svg')}</div>`;
+          }
         }
       }
 
@@ -2730,17 +2780,15 @@ function campaignPlanningHTML() {
     }
   }
 
-  // Build unit roster HTML
-  const rosterHTML = availableUnits.map(unit => {
-    const isSelected = selectedUnit === unit.id;
-    return `
-      <div class="roster-unit ${isSelected ? 'selected' : ''}" data-action="select-plan-unit" data-unit="${unit.id}">
-        <div class="roster-unit-icon">${getAnimatedSvg(unit, 'roster-svg')}</div>
-        <div class="roster-unit-name">${unit.name}</div>
-        <div class="roster-unit-count">x${unit.count}</div>
-      </div>
-    `;
-  }).join('');
+  // Count units by type for summary
+  const unitCounts = {};
+  plan.unitPlacements.forEach(p => {
+    unitCounts[p.unitId] = (unitCounts[p.unitId] || 0) + 1;
+  });
+  const unitSummary = Object.entries(unitCounts).map(([id, count]) => {
+    const unit = UNITS.find(u => u.id === id);
+    return unit ? `${unit.icon || unit.name[0]} x${count}` : '';
+  }).filter(Boolean).join(' · ');
 
   // Doctrine selector
   const doctrines = [
@@ -2763,59 +2811,20 @@ function campaignPlanningHTML() {
   const revealedCells = plan.enemyArmy.filter(e => e.revealed).length;
   const intelPercent = plan.enemyArmy.length > 0 ? Math.round((revealedCells / plan.enemyArmy.length) * 100) : 0;
 
-  // Build unit detail panel HTML (for selected unit from roster or placed unit)
-  let unitDetailHTML = '';
-  if (plan.selectedPlacedUnit) {
-    const { row, col } = plan.selectedPlacedUnit;
-    const cell = grid[row]?.[col];
-    if (cell) {
-      const unitDef = UNITS.find(u => u.id === cell.unitId);
-      if (unitDef) {
-        const stance = cell.stance || 'defensive';
-        const hasPath = cell.waypoints && cell.waypoints.length > 0;
-        unitDetailHTML = `
-          <div class="unit-detail-card ${plan.pathSetMode ? 'path-mode' : ''}">
-            <div class="detail-header">
-              <div class="detail-icon">${getAnimatedSvg(unitDef, 'detail-svg')}</div>
-              <div class="detail-info">
-                <div class="detail-name">${unitDef.name}</div>
-                <div class="detail-pos">Row ${row}, Col ${col}</div>
-              </div>
-              <button class="detail-close" data-action="close-placed-unit">×</button>
-            </div>
-            ${plan.pathSetMode ? `
-              <div class="path-mode-controls">
-                <div class="path-hint">Click cells to add waypoints (${plan.plannedPath.length})</div>
-                <div class="path-btns">
-                  <button class="btn-cancel" data-action="cancel-set-path">Cancel</button>
-                  <button class="btn-confirm" data-action="confirm-set-path">Confirm</button>
-                </div>
-              </div>
-            ` : `
-              <div class="detail-actions">
-                <button class="action-btn" data-action="start-set-path">
-                  📍 Path ${hasPath ? `(${cell.waypoints.length})` : ''}
-                </button>
-                ${hasPath ? `<button class="action-btn" data-action="clear-path">🗑 Clear</button>` : ''}
-                <button class="action-btn remove" data-action="remove-placed-unit">✕ Remove</button>
-              </div>
-              <div class="stance-row">
-                <span class="stance-label">Stance:</span>
-                <button class="stance-btn ${stance === 'aggressive' ? 'active' : ''}" data-action="set-stance" data-stance="aggressive">⚔️</button>
-                <button class="stance-btn ${stance === 'defensive' ? 'active' : ''}" data-action="set-stance" data-stance="defensive">🛡️</button>
-                <button class="stance-btn ${stance === 'support' ? 'active' : ''}" data-action="set-stance" data-stance="support">➕</button>
-              </div>
-            `}
-          </div>
-        `;
-      }
-    }
-  } else if (selectedUnit && selectedUnit !== 'hero') {
-    const unit = availableUnits.find(u => u.id === selectedUnit);
-    const unitDef = unit ? UNITS.find(u => u.id === unit.id) : null;
+  // Build details panel HTML - shows selected unit info or instructions
+  let detailsPanelHTML = '';
+
+  if (selectedPlacement) {
+    // A unit is selected - show its details
+    const unitDef = UNITS.find(u => u.id === selectedPlacement.unitId);
     if (unitDef) {
-      unitDetailHTML = `
-        <div class="unit-detail-card">
+      const primaryPos = selectedPlacement.primaryPos;
+      const advancePos = selectedPlacement.advancePos;
+      const fallbackPos = selectedPlacement.fallbackPos;
+      const placementIdx = plan.unitPlacements.indexOf(selectedPlacement);
+
+      detailsPanelHTML = `
+        <div class="details-panel selected">
           <div class="detail-header">
             <div class="detail-icon">${getAnimatedSvg(unitDef, 'detail-svg')}</div>
             <div class="detail-info">
@@ -2824,58 +2833,145 @@ function campaignPlanningHTML() {
                 DMG ${unitDef.damage} · ${(unitDef.fireRate / 1000).toFixed(1)}s
               </div>
             </div>
-            <button class="detail-close" data-action="close-unit-detail">×</button>
+            <button class="detail-close" data-action="deselect-placement">×</button>
           </div>
-          <div class="detail-hint">Click in blue zone to place</div>
+          <div class="placement-positions">
+            <div class="pos-row primary">
+              <span class="pos-icon">🎯</span>
+              <span class="pos-label">Primary:</span>
+              <span class="pos-value">${primaryPos ? `Row ${primaryPos.row}, Col ${primaryPos.col}` : 'Not set'}</span>
+            </div>
+            <div class="pos-row advance">
+              <span class="pos-icon">⚔️</span>
+              <span class="pos-label">Advance:</span>
+              <span class="pos-value">${advancePos ? `Row ${advancePos.row}, Col ${advancePos.col}` : 'Long-press to set'}</span>
+            </div>
+            <div class="pos-row fallback">
+              <span class="pos-icon">🛡️</span>
+              <span class="pos-label">Fallback:</span>
+              <span class="pos-value">${fallbackPos ? `Row ${fallbackPos.row}, Col ${fallbackPos.col}` : 'Long-press to set'}</span>
+            </div>
+          </div>
+          <div class="placement-mode-stack">
+            <div class="mode-label">Set Position:</div>
+            <div class="mode-buttons">
+              <button class="mode-btn ${plan.placementMode === 'primary' ? 'active' : ''}" data-action="set-placement-mode" data-mode="primary" title="Primary Position">
+                <span class="mode-icon">🎯</span>
+              </button>
+              <button class="mode-btn ${plan.placementMode === 'advance' ? 'active' : ''}" data-action="set-placement-mode" data-mode="advance" title="Advance Position">
+                <span class="mode-icon">⚔️</span>
+              </button>
+              <button class="mode-btn ${plan.placementMode === 'fallback' ? 'active' : ''}" data-action="set-placement-mode" data-mode="fallback" title="Fallback Position">
+                <span class="mode-icon">🛡️</span>
+              </button>
+            </div>
+          </div>
+          <div class="detail-actions">
+            <button class="action-btn support-toggle ${selectedPlacement.isSupport ? 'active' : ''}" data-action="toggle-support" data-placement="${placementIdx}">
+              ${selectedPlacement.isSupport ? '★ Support' : '☆ Support'}
+            </button>
+            <button class="action-btn remove" data-action="remove-placement" data-placement="${placementIdx}">✕ Remove</button>
+          </div>
+          <div class="placement-hint">
+            Tap cell to set position · Change mode above
+          </div>
         </div>
       `;
     }
-  } else if (selectedUnit === 'hero') {
-    unitDetailHTML = `
-      <div class="unit-detail-card">
-        <div class="detail-header">
-          <div class="detail-icon hero-icon">★</div>
-          <div class="detail-info">
-            <div class="detail-name">Hero</div>
-            <div class="detail-stats">Your commander</div>
-          </div>
-          <button class="detail-close" data-action="close-unit-detail">×</button>
+  } else {
+    // No unit selected - show instructions
+    detailsPanelHTML = `
+      <div class="details-panel empty">
+        <div class="instructions">
+          <p class="instruction-main">Tap a unit to select it</p>
+          <p class="instruction-sub">Then tap a cell to set its position</p>
         </div>
-        <div class="detail-hint">Click in blue zone to place</div>
+        <div class="unit-summary">
+          <h4>Your Forces</h4>
+          <div class="summary-text">${unitSummary || 'No units available'}</div>
+        </div>
+        <div class="position-legend">
+          <h4>Position Types</h4>
+          <div class="legend-row"><span class="legend-icon primary">🎯</span> Primary - Starting position</div>
+          <div class="legend-row"><span class="legend-icon advance">⚔️</span> Advance - Push forward</div>
+          <div class="legend-row"><span class="legend-icon fallback">🛡️</span> Fallback - Retreat point</div>
+        </div>
       </div>
     `;
   }
 
+  // Context menu HTML (for long-press/right-click)
+  const contextMenuHTML = contextMenu ? `
+    <div class="context-menu" style="top: ${contextMenu.screenY}px; left: ${contextMenu.screenX}px;">
+      <button class="ctx-btn" data-action="set-ctx-position" data-pos-type="advance">
+        <span class="ctx-icon">⚔️</span>
+        <span class="ctx-label">Advance</span>
+      </button>
+      <button class="ctx-btn" data-action="set-ctx-position" data-pos-type="fallback">
+        <span class="ctx-icon">🛡️</span>
+        <span class="ctx-label">Fallback</span>
+      </button>
+      <button class="ctx-btn cancel" data-action="close-context-menu">
+        <span class="ctx-icon">✕</span>
+        <span class="ctx-label">Cancel</span>
+      </button>
+    </div>
+  ` : '';
+
+  // Collapsible unit roster - grouped by type with counts
+  const rosterExpanded = plan.rosterExpanded !== false; // Default expanded
+  const rosterHTML = availableUnits.map(unitType => {
+    const count = unitCounts[unitType.id] || 0;
+    if (count === 0) return '';
+    const unit = UNITS.find(u => u.id === unitType.id);
+    return `
+      <div class="roster-item" data-action="roster-unit-click" data-unit-id="${unitType.id}" draggable="true">
+        <span class="roster-icon">${unit?.icon || '●'}</span>
+        <span class="roster-name">${unit?.name || unitType.id}</span>
+        <span class="roster-count">×${count}</span>
+      </div>
+    `;
+  }).filter(Boolean).join('');
+
   return `
     <div class="screen planning-screen">
-      <!-- LEFT PANEL: Units -->
+      <!-- LEFT PANEL: Details -->
       <div class="plan-left-panel">
         <div class="panel-header">
-          <h2>UNITS</h2>
+          <h2>DEPLOYMENT</h2>
           <button class="back-btn" data-action="campaign">←</button>
         </div>
 
-        ${unitDetailHTML}
+        <!-- Collapsible Unit Roster -->
+        <div class="collapsible-section ${rosterExpanded ? 'expanded' : 'collapsed'}">
+          <div class="collapsible-header" data-action="toggle-roster">
+            <span class="collapse-icon">${rosterExpanded ? '▼' : '▶'}</span>
+            <span class="collapse-title">Units</span>
+            <span class="collapse-summary">${Object.values(unitCounts).reduce((a, b) => a + b, 0)} total</span>
+          </div>
+          <div class="collapsible-content">
+            <div class="roster-list">
+              ${rosterHTML || '<div class="roster-empty">No units</div>'}
+            </div>
+            <div class="roster-hint">Drag to map or tap to select</div>
+          </div>
+        </div>
 
-        <div class="roster-section">
-          <div class="roster-grid">
-            ${rosterHTML}
-            <div class="roster-unit ${selectedUnit === 'hero' ? 'selected' : ''}" data-action="select-plan-unit" data-unit="hero">
-              <div class="roster-unit-icon hero-icon">★</div>
-              <div class="roster-unit-name">Hero</div>
+        ${detailsPanelHTML}
+
+        <div class="tactic-section collapsible-section expanded">
+          <div class="collapsible-header" data-action="toggle-doctrine">
+            <span class="collapse-icon">▼</span>
+            <span class="collapse-title">Doctrine</span>
+          </div>
+          <div class="collapsible-content">
+            <div class="doctrine-grid">
+              ${doctrineHTML}
             </div>
           </div>
         </div>
 
-        <div class="tactic-section">
-          <h3>Doctrine</h3>
-          <div class="doctrine-grid">
-            ${doctrineHTML}
-          </div>
-        </div>
-
         <div class="plan-actions">
-          <button class="btn-clear" data-action="plan-clear">Clear All</button>
           <button class="btn-deploy" data-action="plan-deploy">DEPLOY →</button>
         </div>
       </div>
@@ -2896,10 +2992,13 @@ function campaignPlanningHTML() {
           </div>
         </div>
         <div class="map-help">
-          ${plan.pathSetMode
-            ? 'PATH MODE: Click cells to add waypoints'
-            : 'Click unit to select · Click map to place'}
+          ${contextMenu
+            ? 'Select position type for this cell'
+            : selectedPlacement
+            ? `${selectedPlacement.unitId} selected · Tap to move · Long-press for Advance/Fallback`
+            : 'Tap a unit on the map to select it'}
         </div>
+        ${contextMenuHTML}
       </div>
 
       <!-- RIGHT PANEL: Enemy Intel -->
@@ -2963,6 +3062,23 @@ function campaignBattleHTML() {
             <span class="legend-unit">●</span> Allies
             <span class="legend-enemy">●</span> Enemy
           </div>
+        </div>
+        <div class="front-line-commands">
+          <button class="front-line-btn advance ${b.frontLineState === 'advance' ? 'active' : ''}" data-front-line="advance" title="Move to advance positions">
+            <span class="fl-icon">⚔️</span>
+            <span class="fl-label">ADVANCE</span>
+            <span class="fl-key">Z</span>
+          </button>
+          <button class="front-line-btn hold ${b.frontLineState === 'hold' ? 'active' : ''}" data-front-line="hold" title="Fall back and hold (staged)">
+            <span class="fl-icon">🛡️</span>
+            <span class="fl-label">FALL BACK</span>
+            <span class="fl-key">X</span>
+          </button>
+          <button class="front-line-btn retreat ${b.frontLineState === 'retreat' ? 'active' : ''}" data-front-line="retreat" title="Full retreat to fallback positions">
+            <span class="fl-icon">🏃</span>
+            <span class="fl-label">RETREAT</span>
+            <span class="fl-key">C</span>
+          </button>
         </div>
         <div class="campaign-hud">
           <div class="campaign-hp-bar">

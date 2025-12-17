@@ -250,6 +250,17 @@ function setupEventHandlers() {
 // ═══════════════════════════════════════════════════════════════
 
 document.getElementById('app').addEventListener('click', e => {
+  // Front line command buttons
+  const frontLineBtn = e.target.closest('[data-front-line]');
+  if (frontLineBtn && Game.state === State.CAMPAIGN_BATTLE) {
+    const cmd = frontLineBtn.dataset.frontLine;
+    // Trigger the keyboard command (Z, X, C)
+    if (cmd === 'advance') campaignKeyDown('z');
+    else if (cmd === 'hold') campaignKeyDown('x');
+    else if (cmd === 'retreat') campaignKeyDown('c');
+    return;
+  }
+
   // Mobile command buttons
   const cmdBtn = e.target.closest('[data-cmd]');
   if (cmdBtn && Game.state === State.CAMPAIGN_BATTLE) {
@@ -420,121 +431,243 @@ document.getElementById('app').addEventListener('click', e => {
         render();
       }
     }
+    else if (a === 'set-placement-mode') {
+      const mode = action.dataset.mode;
+      const plan = Game.campaign?.battlePlan;
+      if (plan && mode) {
+        plan.placementMode = mode;
+        render();
+      }
+    }
+    else if (a === 'set-position') {
+      // User selected a position type from the popup
+      const posType = action.dataset.posType;
+      const plan = Game.campaign?.battlePlan;
+      if (plan && plan.positionPopup && posType) {
+        const { row, col } = plan.positionPopup;
+        const terrainType = plan.terrain[row]?.[col];
+
+        // Can't place on impassable terrain or water
+        if (terrainType === 'high' || terrainType === 'water') {
+          plan.positionPopup = null;
+          render();
+          return;
+        }
+
+        if (posType === 'primary') {
+          // Check if we have units available
+          const unitToPlace = plan.availableUnits.find(u => u.id === plan.selectedUnit);
+          if (!unitToPlace || unitToPlace.count <= 0) {
+            plan.positionPopup = null;
+            render();
+            return;
+          }
+          // Check if there's already a placement at this position
+          const existingIdx = plan.unitPlacements.findIndex(p =>
+            p.primaryPos?.row === row && p.primaryPos?.col === col
+          );
+          if (existingIdx >= 0) {
+            // Remove existing placement
+            const existing = plan.unitPlacements[existingIdx];
+            const existingUnit = plan.availableUnits.find(u => u.id === existing.unitId);
+            if (existingUnit) existingUnit.count++;
+            plan.unitPlacements.splice(existingIdx, 1);
+          }
+          // Add new placement
+          const newPlacement = {
+            unitId: plan.selectedUnit,
+            primaryPos: { row, col },
+            advancePos: null,
+            fallbackPos: null,
+            isSupport: false
+          };
+          plan.unitPlacements.push(newPlacement);
+          unitToPlace.count--;
+          plan.selectedPlacement = plan.unitPlacements.length - 1;
+        } else if (posType === 'advance' && plan.selectedPlacement !== null) {
+          const placement = plan.unitPlacements[plan.selectedPlacement];
+          if (placement) {
+            placement.advancePos = { row, col };
+          }
+        } else if (posType === 'fallback' && plan.selectedPlacement !== null) {
+          const placement = plan.unitPlacements[plan.selectedPlacement];
+          if (placement) {
+            placement.fallbackPos = { row, col };
+          }
+        }
+        plan.positionPopup = null;
+        render();
+      }
+    }
+    else if (a === 'close-position-popup') {
+      const plan = Game.campaign?.battlePlan;
+      if (plan) {
+        plan.positionPopup = null;
+        render();
+      }
+    }
+    else if (a === 'deselect-placement') {
+      const plan = Game.campaign?.battlePlan;
+      if (plan) {
+        plan.selectedPlacement = null;
+        render();
+      }
+    }
+    else if (a === 'toggle-support') {
+      const placementIdx = parseInt(action.dataset.placement);
+      const plan = Game.campaign?.battlePlan;
+      if (plan && plan.unitPlacements[placementIdx]) {
+        plan.unitPlacements[placementIdx].isSupport = !plan.unitPlacements[placementIdx].isSupport;
+        render();
+      }
+    }
+    else if (a === 'remove-placement') {
+      const placementIdx = parseInt(action.dataset.placement);
+      const plan = Game.campaign?.battlePlan;
+      if (plan && plan.unitPlacements[placementIdx]) {
+        // Remove from array (no unit count restoration since units are always on map)
+        plan.unitPlacements.splice(placementIdx, 1);
+        plan.selectedPlacement = null;
+        render();
+      }
+    }
+    else if (a === 'set-ctx-position') {
+      // Set advance or fallback position from context menu
+      const posType = action.dataset.posType;
+      const plan = Game.campaign?.battlePlan;
+      if (!plan || !plan.contextMenu || !plan.selectedPlacement) return;
+
+      const { row, col } = plan.contextMenu;
+      if (posType === 'advance') {
+        plan.selectedPlacement.advancePos = { row, col };
+      } else if (posType === 'fallback') {
+        plan.selectedPlacement.fallbackPos = { row, col };
+      }
+      plan.contextMenu = null;
+      render();
+    }
+    else if (a === 'close-context-menu') {
+      const plan = Game.campaign?.battlePlan;
+      if (plan) {
+        plan.contextMenu = null;
+        render();
+      }
+    }
+    else if (a === 'toggle-roster') {
+      const plan = Game.campaign?.battlePlan;
+      if (plan) {
+        plan.rosterExpanded = plan.rosterExpanded === false ? true : false;
+        render();
+      }
+    }
+    else if (a === 'toggle-doctrine') {
+      const plan = Game.campaign?.battlePlan;
+      if (plan) {
+        plan.doctrineExpanded = plan.doctrineExpanded === false ? true : false;
+        render();
+      }
+    }
+    else if (a === 'roster-unit-click') {
+      // Select a unit from roster to highlight on map
+      const unitId = action.dataset.unitId;
+      const plan = Game.campaign?.battlePlan;
+      if (!plan) return;
+
+      // Find first placement of this unit type
+      const placement = plan.unitPlacements.find(p => p.unitId === unitId);
+      if (placement) {
+        plan.selectedPlacement = placement;
+        // Scroll map to show this unit
+        const cell = document.querySelector(`.plan-cell[data-row="${placement.primaryPos.row}"][data-col="${placement.primaryPos.col}"]`);
+        if (cell) {
+          cell.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+        }
+        render();
+      }
+    }
     else if (a === 'plan-cell') {
       const row = parseInt(action.dataset.row);
       const col = parseInt(action.dataset.col);
       const plan = Game.campaign.battlePlan;
       if (!plan) return;
 
-      const cell = plan.grid[row]?.[col];
+      // Close context menu if open
+      if (plan.contextMenu) {
+        plan.contextMenu = null;
+        render();
+        return;
+      }
+
       const isPlayerZone = row >= plan.playerStartRow;
+      const isNoMansLand = row >= plan.enemyEndRow && row < plan.playerStartRow;
       const isHeroCell = plan.hero.row === row && plan.hero.col === col;
+      const terrainType = plan.terrain[row]?.[col];
 
-      // === PATH SET MODE: Add cell to path ===
-      if (plan.pathSetMode && plan.selectedPlacedUnit) {
-        // Can't add impassable terrain to path
-        const terrainType = plan.terrain[row]?.[col];
-        if (terrainType === 'high') {
-          return;
-        }
+      // Can't place on impassable terrain
+      if (terrainType === 'high') return;
 
-        // Check if this cell is already in the path
-        const existingIdx = plan.plannedPath.findIndex(p => p.row === row && p.col === col);
-        if (existingIdx >= 0) {
-          // Remove this cell and all after it (click to trim path)
-          plan.plannedPath = plan.plannedPath.slice(0, existingIdx);
-        } else {
-          // Add cell to path
-          plan.plannedPath.push({ row, col });
-        }
-        render();
-        return;
-      }
+      const placements = plan.unitPlacements || [];
 
-      // === CLICK ON EXISTING PLAYER UNIT: Select it ===
-      if (cell && cell.owner === 'player') {
-        // Toggle selection
-        if (plan.selectedPlacedUnit?.row === row && plan.selectedPlacedUnit?.col === col) {
-          plan.selectedPlacedUnit = null;
-        } else {
-          plan.selectedPlacedUnit = { row, col };
-          plan.selectedUnit = null;  // Clear roster selection
-          plan.pathSetMode = false;
-          plan.plannedPath = [];
-        }
-        render();
-        return;
-      }
-
-      // === PLACING NEW UNIT ===
-      if (plan.selectedUnit) {
-        // Can only place in player zone
-        if (!isPlayerZone && plan.selectedUnit !== 'hero') {
-          return;
-        }
-
-        // Can't place on water
-        if (plan.terrain && plan.terrain[row] && plan.terrain[row][col] === 'water') {
-          return;
-        }
-
-        if (plan.selectedUnit === 'hero') {
-          // Move hero - can go anywhere in player zone
-          if (isPlayerZone) {
-            plan.hero.row = row;
-            plan.hero.col = col;
-          }
-        } else {
-          if (isHeroCell) {
-            // Can't place on hero
-            return;
-          }
-
-          // Shift+click to add waypoint to selected waypoint unit
-          if (e.shiftKey && plan.waypointUnit) {
-            const wpUnit = plan.waypointUnit;
-            if (!wpUnit.waypoints) wpUnit.waypoints = [];
-            wpUnit.waypoints.push({ row, col });
-            render();
-            return;
-          }
-
-          // Right-click to select unit for waypoint mode
-          if (e.button === 2 && cell && cell.owner === 'player') {
-            plan.waypointUnit = cell;
-            if (!cell.waypoints) cell.waypoints = [];
-            render();
-            return;
-          }
-
-          if (cell) {
-            // Remove existing unit (restore count)
-            const existingUnit = plan.availableUnits.find(u => u.id === cell.unitId);
-            if (existingUnit) existingUnit.count++;
-            plan.grid[row][col] = null;
-            // Clear selections if removed
-            if (plan.waypointUnit === cell) {
-              plan.waypointUnit = null;
-            }
-            if (plan.selectedPlacedUnit?.row === row && plan.selectedPlacedUnit?.col === col) {
-              plan.selectedPlacedUnit = null;
-            }
+      // === CHECK IF CLICKING ON EXISTING UNIT MARKER ===
+      for (const p of placements) {
+        if (p.primaryPos?.row === row && p.primaryPos?.col === col) {
+          // Toggle selection (object reference)
+          if (plan.selectedPlacement === p) {
+            plan.selectedPlacement = null;
           } else {
-            // Place new unit (if available)
-            const unitToPlace = plan.availableUnits.find(u => u.id === plan.selectedUnit);
-            if (unitToPlace && unitToPlace.count > 0) {
-              plan.grid[row][col] = { unitId: plan.selectedUnit, owner: 'player', waypoints: [], stance: 'defensive' };
-              unitToPlace.count--;
-            }
+            plan.selectedPlacement = p;
           }
+          render();
+          return;
+        }
+      }
+
+      // === UNIT SELECTED: Set position based on placement mode ===
+      if (plan.selectedPlacement) {
+        // Can only place in player zone or NML
+        if (!isPlayerZone && !isNoMansLand) return;
+        // Can't place on water or hero
+        if (terrainType === 'water' || isHeroCell) return;
+
+        const mode = plan.placementMode || 'primary';
+
+        if (mode === 'primary') {
+          // Check if there's another unit already at this position
+          const existingAtPos = placements.find(p =>
+            p !== plan.selectedPlacement &&
+            p.primaryPos?.row === row && p.primaryPos?.col === col
+          );
+          if (existingAtPos) return; // Can't stack units
+
+          // Move this unit's primary position to the new cell
+          plan.selectedPlacement.primaryPos = { row, col };
+          plan.selectedPlacement.inSpawnZone = false;  // No longer in spawn zone
+        } else if (mode === 'advance') {
+          plan.selectedPlacement.advancePos = { row, col };
+        } else if (mode === 'fallback') {
+          plan.selectedPlacement.fallbackPos = { row, col };
         }
         render();
+        return;
       }
+
+      // === CLICKING EMPTY CELL WITH NO SELECTION: Clear selection ===
+      plan.selectedPlacement = null;
+      render();
     }
     else if (a === 'plan-clear') {
       const plan = Game.campaign.battlePlan;
       if (plan) {
-        // Clear grid and restore counts
+        // Restore unit counts from unitPlacements
+        for (const placement of plan.unitPlacements) {
+          const unit = plan.availableUnits.find(u => u.id === placement.unitId);
+          if (unit) unit.count++;
+        }
+        // Clear all placements
+        plan.unitPlacements = [];
+        plan.selectedPlacement = null;
+
+        // Also clear legacy grid for backwards compatibility
         for (let row = 0; row < plan.gridHeight; row++) {
           for (let col = 0; col < plan.gridWidth; col++) {
             const cell = plan.grid[row][col];
@@ -545,14 +678,14 @@ document.getElementById('app').addEventListener('click', e => {
             }
           }
         }
+
         // Reset hero to default position
         plan.hero.row = plan.gridHeight - 2;
         plan.hero.col = Math.floor(plan.gridWidth / 2);
+
         // Clear all selection states
-        plan.selectedPlacedUnit = null;
-        plan.pathSetMode = false;
-        plan.plannedPath = [];
-        plan.waypointUnit = null;
+        plan.selectedUnit = null;
+        plan.placementMode = 'primary';
         render();
       }
     }
@@ -1154,7 +1287,7 @@ document.addEventListener('contextmenu', e => {
   }
 });
 
-// Right-click handler for waypoint selection in planning
+// Right-click handler for context menu in planning (set advance/fallback)
 document.addEventListener('mousedown', e => {
   if (Game.state !== State.CAMPAIGN_PLANNING) return;
   if (e.button !== 2) return; // Only right-click
@@ -1165,15 +1298,20 @@ document.addEventListener('mousedown', e => {
   const plan = Game.campaign?.battlePlan;
   if (!plan) return;
 
+  // Need a unit selected to set advance/fallback
+  if (!plan.selectedPlacement) return;
+
   const row = parseInt(cell.dataset.row);
   const col = parseInt(cell.dataset.col);
-  const gridCell = plan.grid[row]?.[col];
 
-  if (gridCell && gridCell.owner === 'player') {
-    plan.waypointUnit = gridCell;
-    if (!gridCell.waypoints) gridCell.waypoints = [];
-    render();
-  }
+  // Show context menu at this position
+  plan.contextMenu = {
+    row,
+    col,
+    screenX: e.clientX,
+    screenY: e.clientY
+  };
+  render();
 });
 
 // Mouse wheel zoom on grid viewport
@@ -1387,7 +1525,371 @@ document.addEventListener('touchcancel', e => {
   planningTouches.panning = false;
   planningTouches.pinching = false;
   planningTouches.touchId = null;
+  // Clear long-press timer
+  clearTimeout(longPressTimer);
+  longPressTimer = null;
 });
+
+// ═══════════════════════════════════════════════════════════════
+// PLANNING GRID - LONG PRESS FOR CONTEXT MENU (MOBILE)
+// ═══════════════════════════════════════════════════════════════
+
+let longPressTimer = null;
+const LONG_PRESS_MS = 500;
+
+// Track touch on planning cells for long-press detection
+document.addEventListener('touchstart', e => {
+  if (Game.state !== State.CAMPAIGN_PLANNING) return;
+
+  const cell = e.target.closest('.plan-cell');
+  if (!cell || e.touches.length !== 1) return;
+
+  const plan = Game.campaign?.battlePlan;
+  if (!plan || !plan.selectedPlacement) return; // Need selection for context menu
+
+  const touch = e.touches[0];
+  const row = parseInt(cell.dataset.row);
+  const col = parseInt(cell.dataset.col);
+
+  // Start long-press timer
+  longPressTimer = setTimeout(() => {
+    // Show context menu
+    plan.contextMenu = {
+      row,
+      col,
+      screenX: touch.clientX,
+      screenY: touch.clientY
+    };
+    render();
+    longPressTimer = null;
+  }, LONG_PRESS_MS);
+}, { passive: true });
+
+// Cancel long-press on touch move (user is dragging)
+document.addEventListener('touchmove', e => {
+  if (longPressTimer) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+}, { passive: true });
+
+// Clear long-press timer on touch end
+document.addEventListener('touchend', e => {
+  if (longPressTimer) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+}, { passive: true });
+
+// ═══════════════════════════════════════════════════════════════
+// PLANNING GRID - DRAG AND DROP (DESKTOP + MOBILE)
+// ═══════════════════════════════════════════════════════════════
+
+let dragState = {
+  active: false,
+  placementIdx: null,
+  startX: 0,
+  startY: 0,
+  ghostEl: null,
+  edgePanInterval: null
+};
+
+// Create ghost element for dragging
+function createDragGhost(unitIcon, x, y) {
+  const ghost = document.createElement('div');
+  ghost.className = 'drag-ghost';
+  ghost.innerHTML = unitIcon;
+  ghost.style.cssText = `
+    position: fixed;
+    left: ${x - 16}px;
+    top: ${y - 16}px;
+    width: 32px;
+    height: 32px;
+    background: rgba(74, 158, 255, 0.8);
+    border: 2px solid #4a9eff;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    pointer-events: none;
+    z-index: 10000;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  `;
+  document.body.appendChild(ghost);
+  return ghost;
+}
+
+// Edge panning - pan map when dragging near viewport edge
+function startEdgePan(x, y, viewport, plan) {
+  if (dragState.edgePanInterval) return;
+
+  const rect = viewport.getBoundingClientRect();
+  const EDGE_ZONE = 50; // Pixels from edge to trigger pan
+  const PAN_SPEED = 5;
+
+  dragState.edgePanInterval = setInterval(() => {
+    let panX = 0, panY = 0;
+
+    if (x < rect.left + EDGE_ZONE) panX = PAN_SPEED;
+    if (x > rect.right - EDGE_ZONE) panX = -PAN_SPEED;
+    if (y < rect.top + EDGE_ZONE) panY = PAN_SPEED;
+    if (y > rect.bottom - EDGE_ZONE) panY = -PAN_SPEED;
+
+    if (panX !== 0 || panY !== 0) {
+      plan.panX += panX / plan.zoom;
+      plan.panY += panY / plan.zoom;
+      const grid = document.getElementById('planning-grid');
+      if (grid) {
+        grid.style.transform = `scale(${plan.zoom}) translate(${plan.panX}px, ${plan.panY}px)`;
+      }
+    }
+  }, 16);
+}
+
+function stopEdgePan() {
+  if (dragState.edgePanInterval) {
+    clearInterval(dragState.edgePanInterval);
+    dragState.edgePanInterval = null;
+  }
+}
+
+// Desktop: Mouse drag start on markers
+document.addEventListener('mousedown', e => {
+  if (Game.state !== State.CAMPAIGN_PLANNING) return;
+  if (e.button !== 0) return; // Left click only
+
+  const marker = e.target.closest('.dest-marker[data-draggable="true"]');
+  if (!marker) return;
+
+  const plan = Game.campaign?.battlePlan;
+  if (!plan) return;
+
+  const placementIdx = parseInt(marker.dataset.placement);
+  const placement = plan.unitPlacements[placementIdx];
+  if (!placement) return;
+
+  e.preventDefault();
+
+  // Select this unit
+  plan.selectedPlacement = placement;
+
+  // Start drag
+  dragState.active = true;
+  dragState.placementIdx = placementIdx;
+  dragState.startX = e.clientX;
+  dragState.startY = e.clientY;
+
+  const unit = UNITS.find(u => u.id === placement.unitId);
+  dragState.ghostEl = createDragGhost(unit?.icon || '●', e.clientX, e.clientY);
+
+  marker.classList.add('dragging');
+  render();
+});
+
+// Desktop: Mouse drag move
+document.addEventListener('mousemove', e => {
+  if (!dragState.active || Game.state !== State.CAMPAIGN_PLANNING) return;
+
+  // Update ghost position
+  if (dragState.ghostEl) {
+    dragState.ghostEl.style.left = `${e.clientX - 16}px`;
+    dragState.ghostEl.style.top = `${e.clientY - 16}px`;
+  }
+
+  // Edge panning
+  const viewport = document.querySelector('.planning-grid-viewport');
+  const plan = Game.campaign?.battlePlan;
+  if (viewport && plan) {
+    startEdgePan(e.clientX, e.clientY, viewport, plan);
+  }
+});
+
+// Desktop: Mouse drag end
+document.addEventListener('mouseup', e => {
+  if (!dragState.active || Game.state !== State.CAMPAIGN_PLANNING) return;
+
+  const plan = Game.campaign?.battlePlan;
+
+  // Remove ghost
+  if (dragState.ghostEl) {
+    dragState.ghostEl.remove();
+    dragState.ghostEl = null;
+  }
+
+  stopEdgePan();
+
+  // Find cell under cursor
+  const cell = document.elementFromPoint(e.clientX, e.clientY)?.closest('.plan-cell');
+  if (cell && plan) {
+    const row = parseInt(cell.dataset.row);
+    const col = parseInt(cell.dataset.col);
+    const placement = plan.unitPlacements[dragState.placementIdx];
+
+    if (placement) {
+      const isPlayerZone = row >= plan.playerStartRow;
+      const isNoMansLand = row >= plan.enemyEndRow && row < plan.playerStartRow;
+      const terrainType = plan.terrain[row]?.[col];
+      const isHeroCell = plan.hero.row === row && plan.hero.col === col;
+
+      // Check valid drop location
+      if ((isPlayerZone || isNoMansLand) && terrainType !== 'high' && terrainType !== 'water' && !isHeroCell) {
+        // Check no other unit there
+        const existingAtPos = plan.unitPlacements.find((p, i) =>
+          i !== dragState.placementIdx &&
+          p.primaryPos?.row === row && p.primaryPos?.col === col
+        );
+        if (!existingAtPos) {
+          placement.primaryPos = { row, col };
+          placement.inSpawnZone = false;
+        }
+      }
+    }
+  }
+
+  // Reset drag state
+  dragState.active = false;
+  dragState.placementIdx = null;
+
+  render();
+});
+
+// Mobile: Tap-and-hold to drag (uses modified long-press)
+let mobileDragState = {
+  active: false,
+  placementIdx: null,
+  ghostEl: null,
+  touchId: null
+};
+
+// Update the touch handlers for drag support
+document.addEventListener('touchstart', e => {
+  if (Game.state !== State.CAMPAIGN_PLANNING) return;
+
+  const marker = e.target.closest('.dest-marker[data-draggable="true"]');
+  if (!marker || e.touches.length !== 1) return;
+
+  const plan = Game.campaign?.battlePlan;
+  if (!plan) return;
+
+  const placementIdx = parseInt(marker.dataset.placement);
+  const placement = plan.unitPlacements[placementIdx];
+  if (!placement) return;
+
+  const touch = e.touches[0];
+
+  // Select this unit
+  plan.selectedPlacement = placement;
+
+  // Start long-press timer for drag
+  mobileDragState.touchId = touch.identifier;
+  mobileDragState.placementIdx = placementIdx;
+
+  longPressTimer = setTimeout(() => {
+    // Start mobile drag
+    mobileDragState.active = true;
+    const unit = UNITS.find(u => u.id === placement.unitId);
+    mobileDragState.ghostEl = createDragGhost(unit?.icon || '●', touch.clientX, touch.clientY);
+    marker.classList.add('dragging');
+
+    // Vibrate if supported
+    if (navigator.vibrate) navigator.vibrate(50);
+
+    render();
+    longPressTimer = null;
+  }, LONG_PRESS_MS);
+}, { passive: true });
+
+document.addEventListener('touchmove', e => {
+  // Cancel long-press timer if moving before hold completes
+  if (longPressTimer && !mobileDragState.active) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+    return;
+  }
+
+  // Handle active mobile drag
+  if (!mobileDragState.active || Game.state !== State.CAMPAIGN_PLANNING) return;
+
+  const touch = Array.from(e.touches).find(t => t.identifier === mobileDragState.touchId);
+  if (!touch) return;
+
+  e.preventDefault();
+
+  // Update ghost position
+  if (mobileDragState.ghostEl) {
+    mobileDragState.ghostEl.style.left = `${touch.clientX - 16}px`;
+    mobileDragState.ghostEl.style.top = `${touch.clientY - 16}px`;
+  }
+
+  // Edge panning
+  const viewport = document.querySelector('.planning-grid-viewport');
+  const plan = Game.campaign?.battlePlan;
+  if (viewport && plan) {
+    startEdgePan(touch.clientX, touch.clientY, viewport, plan);
+  }
+}, { passive: false });
+
+document.addEventListener('touchend', e => {
+  // Clear long-press timer
+  if (longPressTimer) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+
+  // Handle mobile drag end
+  if (!mobileDragState.active || Game.state !== State.CAMPAIGN_PLANNING) {
+    mobileDragState.active = false;
+    mobileDragState.placementIdx = null;
+    return;
+  }
+
+  const plan = Game.campaign?.battlePlan;
+  const touch = e.changedTouches[0];
+
+  // Remove ghost
+  if (mobileDragState.ghostEl) {
+    mobileDragState.ghostEl.remove();
+    mobileDragState.ghostEl = null;
+  }
+
+  stopEdgePan();
+
+  // Find cell under touch point
+  const cell = document.elementFromPoint(touch.clientX, touch.clientY)?.closest('.plan-cell');
+  if (cell && plan) {
+    const row = parseInt(cell.dataset.row);
+    const col = parseInt(cell.dataset.col);
+    const placement = plan.unitPlacements[mobileDragState.placementIdx];
+
+    if (placement) {
+      const isPlayerZone = row >= plan.playerStartRow;
+      const isNoMansLand = row >= plan.enemyEndRow && row < plan.playerStartRow;
+      const terrainType = plan.terrain[row]?.[col];
+      const isHeroCell = plan.hero.row === row && plan.hero.col === col;
+
+      // Check valid drop location
+      if ((isPlayerZone || isNoMansLand) && terrainType !== 'high' && terrainType !== 'water' && !isHeroCell) {
+        // Check no other unit there
+        const existingAtPos = plan.unitPlacements.find((p, i) =>
+          i !== mobileDragState.placementIdx &&
+          p.primaryPos?.row === row && p.primaryPos?.col === col
+        );
+        if (!existingAtPos) {
+          placement.primaryPos = { row, col };
+          placement.inSpawnZone = false;
+        }
+      }
+    }
+  }
+
+  // Reset mobile drag state
+  mobileDragState.active = false;
+  mobileDragState.placementIdx = null;
+  mobileDragState.touchId = null;
+
+  render();
+}, { passive: true });
 
 } // End setupEventHandlers
 
