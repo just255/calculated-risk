@@ -6,6 +6,9 @@ import { State, SubState, HQTab, UnitType, UNITS, UNIT_COSTS, H2H_BUDGET, VEHICL
 import { Game } from './state.js';
 import { save } from './storage.js';
 
+// Mobile detection
+const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+
 // ═══════════════════════════════════════════════════════════════
 // ANIMATION PREVIEW SYSTEM
 // ═══════════════════════════════════════════════════════════════
@@ -2965,6 +2968,22 @@ function campaignBattleHTML() {
       <div class="campaign-battlefield">
         <!-- Entities rendered by game loop -->
       </div>
+      ${isMobile ? `
+      <div class="mobile-controls">
+        <div class="mobile-joystick-zone">
+          <div class="joystick-hint">MOVE</div>
+        </div>
+        <div class="mobile-shoot-zone">
+          <div class="shoot-hint">TAP TO SHOOT</div>
+        </div>
+        <div class="mobile-commands">
+          <button class="mobile-cmd-btn" data-cmd="follow">👥 1</button>
+          <button class="mobile-cmd-btn" data-cmd="hold">🛡️ 2</button>
+          <button class="mobile-cmd-btn" data-cmd="attack">⚔️ 3</button>
+          <button class="mobile-cmd-btn" data-cmd="retreat">↩️ 5</button>
+        </div>
+      </div>
+      ` : `
       <div class="campaign-controls-hint">
         <div class="controls-row">
           <span class="control-group"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move</span>
@@ -2984,6 +3003,7 @@ function campaignBattleHTML() {
           <span class="control-group"><kbd>E</kbd> Defensive</span>
         </div>
       </div>
+      `}
     </div>
   `;
 }

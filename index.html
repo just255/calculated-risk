@@ -4,6 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Calculated Risk</title>
+
+  <!-- PWA Meta Tags -->
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#4a9eff">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="CalcRisk">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="screen-orientation" content="landscape">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Oxanium:wght@400;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
@@ -4090,6 +4099,113 @@
       border-color: rgba(255, 200, 50, 0.4);
     }
 
+    /* Mobile Controls */
+    .mobile-controls {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      pointer-events: none;
+      z-index: 90;
+    }
+
+    .mobile-joystick-zone {
+      position: absolute;
+      left: 10px;
+      bottom: 80px;
+      width: 120px;
+      height: 120px;
+      background: rgba(255,255,255,0.1);
+      border: 2px solid rgba(255,255,255,0.3);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: auto;
+    }
+
+    .joystick-hint {
+      color: rgba(255,255,255,0.5);
+      font-size: 12px;
+      font-weight: bold;
+    }
+
+    .mobile-shoot-zone {
+      position: absolute;
+      right: 10px;
+      bottom: 80px;
+      width: 100px;
+      height: 100px;
+      background: rgba(255,100,100,0.15);
+      border: 2px solid rgba(255,100,100,0.4);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: auto;
+    }
+
+    .shoot-hint {
+      color: rgba(255,150,150,0.7);
+      font-size: 10px;
+      font-weight: bold;
+      text-align: center;
+    }
+
+    .mobile-commands {
+      position: absolute;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 8px;
+      pointer-events: auto;
+    }
+
+    .mobile-cmd-btn {
+      background: rgba(0,0,0,0.7);
+      border: 1px solid rgba(255,255,255,0.3);
+      color: #fff;
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+
+    .mobile-cmd-btn:active {
+      background: rgba(74, 158, 255, 0.5);
+      border-color: #4a9eff;
+    }
+
+    /* Hide desktop controls on mobile */
+    @media (max-width: 768px) {
+      .campaign-controls-hint {
+        display: none;
+      }
+
+      .campaign-top-bar {
+        padding: 5px 10px;
+        gap: 10px;
+      }
+
+      .minimap-canvas {
+        width: 80px;
+        height: 80px;
+      }
+
+      .campaign-hp-bar {
+        width: 120px;
+        height: 20px;
+      }
+
+      .campaign-stats {
+        font-size: 0.8rem;
+        gap: 10px;
+      }
+    }
+
     /* Campaign Result Screen */
     .campaign-result-screen {
       display: flex;
@@ -4114,11 +4230,78 @@
       text-align: center;
       line-height: 2;
     }
+
+    /* Landscape orientation warning */
+    #rotate-warning {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: #1a1a2e;
+      z-index: 10000;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .rotate-content {
+      text-align: center;
+      color: #fff;
+      font-family: 'Share Tech Mono', monospace;
+    }
+
+    .rotate-icon {
+      font-size: 80px;
+      animation: rotate-hint 2s ease-in-out infinite;
+    }
+
+    @keyframes rotate-hint {
+      0%, 100% { transform: rotate(0deg); }
+      50% { transform: rotate(90deg); }
+    }
+
+    .rotate-content h2 {
+      margin: 20px 0 10px;
+      color: #4a9eff;
+    }
+
+    .rotate-content p {
+      color: #888;
+    }
+
+    /* Show warning only on mobile in portrait */
+    @media (max-width: 900px) and (orientation: portrait) {
+      #rotate-warning {
+        display: flex;
+      }
+      #app {
+        display: none;
+      }
+    }
   </style>
 </head>
 <body>
   <div id="app"><div style="padding:40px;text-align:center;">Loading...</div></div>
 
+  <!-- Landscape orientation warning -->
+  <div id="rotate-warning">
+    <div class="rotate-content">
+      <div class="rotate-icon">📱</div>
+      <h2>Rotate Your Device</h2>
+      <p>This game plays best in landscape mode</p>
+    </div>
+  </div>
+
   <script type="module" src="js/main.js"></script>
+
+  <!-- Register Service Worker for PWA -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js')
+        .then(reg => console.log('SW registered:', reg.scope))
+        .catch(err => console.log('SW registration failed:', err));
+    }
+  </script>
 </body>
 </html>

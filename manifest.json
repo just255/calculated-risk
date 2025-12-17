@@ -1,0 +1,11 @@
+{
+  "name": "Calculated Risk",
+  "short_name": "CalcRisk",
+  "description": "Military-themed math training game",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#1a1a2e",
+  "theme_color": "#4a9eff",
+  "categories": ["games", "education"]
+}

@@ -8,6 +8,7 @@ import { initAudio, sound } from './audio.js';
 import { save, load } from './storage.js';
 import { goto, deploy, switchUnit, stopLoop, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, campaignMouseDown, campaignMouseUp } from './game.js';
 import { render, setSubState } from './ui.js';
+import { initController, getControllerInput, updateButtonStates, setControllerCallbacks, isControllerConnected } from './controller.js';
 
 // ═══════════════════════════════════════════════════════════════
 // PASSWORD PROTECTION
@@ -97,6 +98,116 @@ function initApp() {
   load();
   render();
   setupEventHandlers();
+  setupController();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CONTROLLER SUPPORT
+// ═══════════════════════════════════════════════════════════════
+
+function setupController() {
+  initController();
+
+  // Show notification when controller connects/disconnects
+  setControllerCallbacks(
+    (gp) => console.log('Controller ready:', gp.id),
+    () => console.log('Controller disconnected')
+  );
+
+  // Start controller polling loop
+  requestAnimationFrame(controllerLoop);
+}
+
+// Controller state tracking
+let controllerShootHeld = false;
+
+function controllerLoop() {
+  requestAnimationFrame(controllerLoop);
+
+  if (!isControllerConnected()) return;
+
+  const input = getControllerInput();
+  if (!input) return;
+
+  // Only process during campaign battle
+  if (Game.state === State.CAMPAIGN_BATTLE) {
+    processControllerBattle(input);
+  }
+
+  // Update button states for next frame
+  updateButtonStates();
+}
+
+function processControllerBattle(input) {
+  // Movement (left stick) - translate to WASD
+  if (input.isMoving) {
+    // Horizontal
+    if (input.moveX < -0.3) {
+      campaignKeyDown('a');
+    } else if (input.moveX > 0.3) {
+      campaignKeyDown('d');
+    } else {
+      campaignKeyUp('a');
+      campaignKeyUp('d');
+    }
+    // Vertical
+    if (input.moveY < -0.3) {
+      campaignKeyDown('w');
+    } else if (input.moveY > 0.3) {
+      campaignKeyDown('s');
+    } else {
+      campaignKeyUp('w');
+      campaignKeyUp('s');
+    }
+  } else {
+    // Release movement
+    campaignKeyUp('w');
+    campaignKeyUp('a');
+    campaignKeyUp('s');
+    campaignKeyUp('d');
+  }
+
+  // Aiming (right stick) - calculate aim position
+  if (input.isAiming) {
+    const bf = document.querySelector('.campaign-battlefield');
+    if (bf) {
+      const rect = bf.getBoundingClientRect();
+      const heroBattle = Game.campaign?.heroBattle;
+      if (heroBattle) {
+        // Aim in direction of right stick from hero position
+        const aimDist = 200; // How far to project aim
+        const aimX = heroBattle.hero.x + input.aimX * aimDist;
+        const aimY = heroBattle.hero.y + input.aimY * aimDist;
+        campaignMouseMove(aimX, aimY);
+      }
+    }
+  }
+
+  // Shooting (RT trigger)
+  if (input.shoot && !controllerShootHeld) {
+    controllerShootHeld = true;
+    campaignMouseDown();
+  } else if (!input.shoot && controllerShootHeld) {
+    controllerShootHeld = false;
+    campaignMouseUp();
+  }
+
+  // Unit commands (face buttons)
+  if (input.deploy) campaignKeyDown('1');  // Follow
+  if (input.cancel) campaignKeyDown('5');  // Retreat
+  if (input.switchUnit) campaignKeyDown('2');  // Hold
+  if (input.artillery) campaignKeyDown('3');  // Attack
+
+  // D-pad for commands
+  if (input.dpadUp) campaignKeyDown('1');    // Follow
+  if (input.dpadDown) campaignKeyDown('5');  // Retreat
+  if (input.dpadLeft) campaignKeyDown('2');  // Hold
+  if (input.dpadRight) campaignKeyDown('3'); // Attack
+
+  // Pause
+  if (input.pause) {
+    goto(State.PAUSED);
+  }
 }
 
 function setupEventHandlers() {
@@ -105,6 +216,19 @@ function setupEventHandlers() {
 // ═══════════════════════════════════════════════════════════════
 
 document.getElementById('app').addEventListener('click', e => {
+  // Mobile command buttons
+  const cmdBtn = e.target.closest('[data-cmd]');
+  if (cmdBtn && Game.state === State.CAMPAIGN_BATTLE) {
+    const cmd = cmdBtn.dataset.cmd;
+    // Trigger the keyboard command
+    if (cmd === 'follow') campaignKeyDown('1');
+    else if (cmd === 'hold') campaignKeyDown('2');
+    else if (cmd === 'attack') campaignKeyDown('3');
+    else if (cmd === 'move') campaignKeyDown('4');
+    else if (cmd === 'retreat') campaignKeyDown('5');
+    return;
+  }
+
   // Actions
   const action = e.target.closest('[data-action]');
   if (action) {
@@ -796,6 +920,148 @@ document.addEventListener('mouseup', e => {
     if (plan) plan.isPanning = false;
   }
 });
+
+// ═══════════════════════════════════════════════════════════════
+// MOBILE TOUCH CONTROLS
+// ═══════════════════════════════════════════════════════════════
+
+// Detect mobile
+const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+
+// Virtual joystick state
+const joystick = {
+  active: false,
+  startX: 0,
+  startY: 0,
+  currentX: 0,
+  currentY: 0,
+  dx: 0,
+  dy: 0
+};
+
+// Touch for shooting (right side of screen)
+let shootingTouch = null;
+
+// Handle joystick touch start (left side)
+document.addEventListener('touchstart', e => {
+  if (Game.state !== State.CAMPAIGN_BATTLE) return;
+
+  for (const touch of e.changedTouches) {
+    const x = touch.clientX;
+    const screenMid = window.innerWidth / 2;
+
+    // Left side = joystick
+    if (x < screenMid && !joystick.active) {
+      joystick.active = true;
+      joystick.startX = touch.clientX;
+      joystick.startY = touch.clientY;
+      joystick.currentX = touch.clientX;
+      joystick.currentY = touch.clientY;
+      joystick.touchId = touch.identifier;
+      updateJoystickInput();
+    }
+    // Right side = aim and shoot
+    else if (x >= screenMid) {
+      shootingTouch = touch.identifier;
+      const bf = document.querySelector('.campaign-battlefield');
+      if (bf) {
+        const rect = bf.getBoundingClientRect();
+        campaignMouseMove(touch.clientX - rect.left, touch.clientY - rect.top);
+        campaignMouseDown();
+      }
+    }
+  }
+}, { passive: false });
+
+document.addEventListener('touchmove', e => {
+  if (Game.state !== State.CAMPAIGN_BATTLE) return;
+
+  for (const touch of e.changedTouches) {
+    // Update joystick
+    if (joystick.active && touch.identifier === joystick.touchId) {
+      joystick.currentX = touch.clientX;
+      joystick.currentY = touch.clientY;
+      updateJoystickInput();
+      e.preventDefault();
+    }
+    // Update aim while shooting
+    if (touch.identifier === shootingTouch) {
+      const bf = document.querySelector('.campaign-battlefield');
+      if (bf) {
+        const rect = bf.getBoundingClientRect();
+        campaignMouseMove(touch.clientX - rect.left, touch.clientY - rect.top);
+      }
+    }
+  }
+}, { passive: false });
+
+document.addEventListener('touchend', e => {
+  if (Game.state !== State.CAMPAIGN_BATTLE) return;
+
+  for (const touch of e.changedTouches) {
+    // Release joystick
+    if (touch.identifier === joystick.touchId) {
+      joystick.active = false;
+      joystick.dx = 0;
+      joystick.dy = 0;
+      updateJoystickInput();
+    }
+    // Release shooting
+    if (touch.identifier === shootingTouch) {
+      shootingTouch = null;
+      campaignMouseUp();
+    }
+  }
+});
+
+document.addEventListener('touchcancel', e => {
+  joystick.active = false;
+  joystick.dx = 0;
+  joystick.dy = 0;
+  updateJoystickInput();
+  shootingTouch = null;
+  campaignMouseUp();
+});
+
+// Convert joystick position to WASD-style input
+function updateJoystickInput() {
+  if (!joystick.active) {
+    // Release all keys
+    campaignKeyUp('w');
+    campaignKeyUp('a');
+    campaignKeyUp('s');
+    campaignKeyUp('d');
+    return;
+  }
+
+  const dx = joystick.currentX - joystick.startX;
+  const dy = joystick.currentY - joystick.startY;
+  const deadzone = 15;
+
+  // Horizontal
+  if (dx < -deadzone) {
+    campaignKeyDown('a');
+    campaignKeyUp('d');
+  } else if (dx > deadzone) {
+    campaignKeyDown('d');
+    campaignKeyUp('a');
+  } else {
+    campaignKeyUp('a');
+    campaignKeyUp('d');
+  }
+
+  // Vertical
+  if (dy < -deadzone) {
+    campaignKeyDown('w');
+    campaignKeyUp('s');
+  } else if (dy > deadzone) {
+    campaignKeyDown('s');
+    campaignKeyUp('w');
+  } else {
+    campaignKeyUp('w');
+    campaignKeyUp('s');
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════
 // PLANNING GRID - ZOOM & PAN
