@@ -99,6 +99,40 @@ function initApp() {
   render();
   setupEventHandlers();
   setupController();
+  setupWakeLock();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SCREEN WAKE LOCK - Keep screen on while app is active
+// ═══════════════════════════════════════════════════════════════
+
+let wakeLock = null;
+
+async function requestWakeLock() {
+  try {
+    if ('wakeLock' in navigator) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      console.log('Wake lock active');
+
+      wakeLock.addEventListener('release', () => {
+        console.log('Wake lock released');
+      });
+    }
+  } catch (err) {
+    console.log('Wake lock error:', err.message);
+  }
+}
+
+function setupWakeLock() {
+  // Request wake lock on init
+  requestWakeLock();
+
+  // Re-acquire wake lock when page becomes visible again
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      requestWakeLock();
+    }
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════
