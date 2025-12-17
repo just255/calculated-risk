@@ -1155,6 +1155,162 @@ document.addEventListener('mousemove', e => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// PLANNING GRID - TOUCH PAN & PINCH ZOOM
+// ═══════════════════════════════════════════════════════════════
+
+// Track touch state for planning grid
+let planningTouches = {
+  panning: false,
+  pinching: false,
+  lastX: 0,
+  lastY: 0,
+  lastDist: 0,
+  touchId: null
+};
+
+// Helper: get distance between two touches
+function getTouchDistance(t1, t2) {
+  const dx = t2.clientX - t1.clientX;
+  const dy = t2.clientY - t1.clientY;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+// Helper: get center point between two touches
+function getTouchCenter(t1, t2) {
+  return {
+    x: (t1.clientX + t2.clientX) / 2,
+    y: (t1.clientY + t2.clientY) / 2
+  };
+}
+
+// Touch start on planning grid
+document.addEventListener('touchstart', e => {
+  if (Game.state !== State.CAMPAIGN_PLANNING) return;
+
+  const viewport = e.target.closest('.planning-grid-viewport');
+  if (!viewport) return;
+
+  const plan = Game.campaign?.battlePlan;
+  if (!plan) return;
+
+  // Don't intercept cell taps (for unit placement)
+  const cell = e.target.closest('.plan-cell');
+  if (cell && e.touches.length === 1) return;
+
+  const touches = e.touches;
+
+  if (touches.length === 2) {
+    // Two fingers = pinch zoom
+    e.preventDefault();
+    planningTouches.pinching = true;
+    planningTouches.panning = false;
+    planningTouches.lastDist = getTouchDistance(touches[0], touches[1]);
+    const center = getTouchCenter(touches[0], touches[1]);
+    planningTouches.lastX = center.x;
+    planningTouches.lastY = center.y;
+  } else if (touches.length === 1 && !cell) {
+    // One finger on empty space = pan
+    e.preventDefault();
+    planningTouches.panning = true;
+    planningTouches.pinching = false;
+    planningTouches.touchId = touches[0].identifier;
+    planningTouches.lastX = touches[0].clientX;
+    planningTouches.lastY = touches[0].clientY;
+  }
+}, { passive: false });
+
+// Touch move on planning grid
+document.addEventListener('touchmove', e => {
+  if (Game.state !== State.CAMPAIGN_PLANNING) return;
+
+  const plan = Game.campaign?.battlePlan;
+  if (!plan) return;
+
+  const touches = e.touches;
+
+  // Pinch zoom
+  if (planningTouches.pinching && touches.length === 2) {
+    e.preventDefault();
+
+    const newDist = getTouchDistance(touches[0], touches[1]);
+    const center = getTouchCenter(touches[0], touches[1]);
+
+    // Zoom based on pinch distance change
+    const scale = newDist / planningTouches.lastDist;
+    const newZoom = Math.max(0.3, Math.min(2.0, plan.zoom * scale));
+
+    // Pan while pinching (follow center point)
+    const dx = center.x - planningTouches.lastX;
+    const dy = center.y - planningTouches.lastY;
+    plan.panX += dx / plan.zoom;
+    plan.panY += dy / plan.zoom;
+
+    plan.zoom = newZoom;
+    planningTouches.lastDist = newDist;
+    planningTouches.lastX = center.x;
+    planningTouches.lastY = center.y;
+
+    // Update transform directly for smooth interaction
+    const grid = document.getElementById('planning-grid');
+    if (grid) {
+      grid.style.transform = `scale(${plan.zoom}) translate(${plan.panX}px, ${plan.panY}px)`;
+    }
+  }
+  // Single finger pan
+  else if (planningTouches.panning && touches.length === 1) {
+    const touch = touches[0];
+    if (touch.identifier !== planningTouches.touchId) return;
+
+    e.preventDefault();
+
+    const dx = touch.clientX - planningTouches.lastX;
+    const dy = touch.clientY - planningTouches.lastY;
+
+    plan.panX += dx / plan.zoom;
+    plan.panY += dy / plan.zoom;
+
+    planningTouches.lastX = touch.clientX;
+    planningTouches.lastY = touch.clientY;
+
+    // Update transform directly
+    const grid = document.getElementById('planning-grid');
+    if (grid) {
+      grid.style.transform = `scale(${plan.zoom}) translate(${plan.panX}px, ${plan.panY}px)`;
+    }
+  }
+}, { passive: false });
+
+// Touch end
+document.addEventListener('touchend', e => {
+  if (Game.state !== State.CAMPAIGN_PLANNING) return;
+
+  // If we were pinching and now have 1 finger, switch to panning
+  if (planningTouches.pinching && e.touches.length === 1) {
+    planningTouches.pinching = false;
+    planningTouches.panning = true;
+    planningTouches.touchId = e.touches[0].identifier;
+    planningTouches.lastX = e.touches[0].clientX;
+    planningTouches.lastY = e.touches[0].clientY;
+    return;
+  }
+
+  // Reset if no touches left
+  if (e.touches.length === 0) {
+    planningTouches.panning = false;
+    planningTouches.pinching = false;
+    planningTouches.touchId = null;
+  }
+});
+
+// Touch cancel
+document.addEventListener('touchcancel', e => {
+  if (Game.state !== State.CAMPAIGN_PLANNING) return;
+  planningTouches.panning = false;
+  planningTouches.pinching = false;
+  planningTouches.touchId = null;
+});
+
 } // End setupEventHandlers
 
 // ═══════════════════════════════════════════════════════════════
