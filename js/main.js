@@ -1401,7 +1401,7 @@ document.addEventListener('mousedown', e => {
 document.addEventListener('wheel', e => {
   if (Game.state !== State.CAMPAIGN_PLANNING) return;
 
-  const viewport = e.target.closest('.planning-grid-viewport');
+  const viewport = e.target.closest('.planning-grid-viewport, .planning-grid-viewport-v2');
   if (!viewport) return;
 
   e.preventDefault();
@@ -1419,7 +1419,7 @@ document.addEventListener('wheel', e => {
 document.addEventListener('mousedown', e => {
   if (Game.state !== State.CAMPAIGN_PLANNING) return;
 
-  const viewport = e.target.closest('.planning-grid-viewport');
+  const viewport = e.target.closest('.planning-grid-viewport, .planning-grid-viewport-v2');
   // Don't start panning if clicking on a cell (for unit placement)
   const cell = e.target.closest('.plan-cell');
   if (!viewport || cell) return;
@@ -1487,7 +1487,7 @@ function getTouchCenter(t1, t2) {
 document.addEventListener('touchstart', e => {
   if (Game.state !== State.CAMPAIGN_PLANNING) return;
 
-  const viewport = e.target.closest('.planning-grid-viewport');
+  const viewport = e.target.closest('.planning-grid-viewport, .planning-grid-viewport-v2');
   if (!viewport) return;
 
   const plan = Game.campaign?.battlePlan;
@@ -1781,7 +1781,7 @@ document.addEventListener('mousemove', e => {
   }
 
   // Edge panning
-  const viewport = document.querySelector('.planning-grid-viewport');
+  const viewport = document.querySelector('.planning-grid-viewport, .planning-grid-viewport-v2');
   const plan = Game.campaign?.battlePlan;
   if (viewport && plan) {
     startEdgePan(e.clientX, e.clientY, viewport, plan);
@@ -1906,7 +1906,7 @@ document.addEventListener('touchmove', e => {
   }
 
   // Edge panning
-  const viewport = document.querySelector('.planning-grid-viewport');
+  const viewport = document.querySelector('.planning-grid-viewport, .planning-grid-viewport-v2');
   const plan = Game.campaign?.battlePlan;
   if (viewport && plan) {
     startEdgePan(touch.clientX, touch.clientY, viewport, plan);

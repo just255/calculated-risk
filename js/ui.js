@@ -3037,8 +3037,14 @@ function campaignPlanningHTML() {
         <div class="planning-grid-viewport-v2" id="grid-viewport">
           <div class="planning-grid time-${plan.timeOfDay} weather-${plan.weather}"
                id="planning-grid"
-               style="grid-template-columns: repeat(${gridWidth}, 1fr); transform: scale(${plan.zoom}) translate(${plan.panX}px, ${plan.panY}px);">
+               style="grid-template-columns: repeat(${gridWidth}, 32px); transform: scale(${plan.zoom}) translate(${plan.panX}px, ${plan.panY}px);">
             ${gridHTML}
+          </div>
+          <div class="grid-controls">
+            <button class="grid-ctrl-btn" data-action="grid-zoom-in">+</button>
+            <span class="grid-zoom-level">${Math.round(plan.zoom * 100)}%</span>
+            <button class="grid-ctrl-btn" data-action="grid-zoom-out">−</button>
+            <button class="grid-ctrl-btn" data-action="grid-reset">↺</button>
           </div>
         </div>
 

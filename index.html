@@ -5068,13 +5068,28 @@
     /* Map Grid Viewport V2 */
     .planning-grid-viewport-v2 {
       flex: 1;
-      overflow: hidden;
+      overflow: auto;
       position: relative;
       cursor: grab;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 10px;
     }
 
     .planning-grid-viewport-v2:active {
       cursor: grabbing;
+    }
+
+    /* Override grid to use fixed cell sizes, not 1fr */
+    .planning-grid-viewport-v2 .planning-grid {
+      width: max-content;
+    }
+
+    .planning-grid-viewport-v2 .plan-cell {
+      width: 32px;
+      min-width: 32px;
+      max-width: 32px;
     }
 
     /* Helper Text */
