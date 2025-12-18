@@ -1420,13 +1420,30 @@ document.addEventListener('mousedown', e => {
   if (Game.state !== State.CAMPAIGN_PLANNING) return;
 
   const viewport = e.target.closest('.planning-grid-viewport, .planning-grid-viewport-v2');
-  // Don't start panning if clicking on a cell (for unit placement)
-  const cell = e.target.closest('.plan-cell');
-  if (!viewport || cell) return;
+  if (!viewport) return;
 
   const plan = Game.campaign?.battlePlan;
   if (!plan) return;
 
+  const cell = e.target.closest('.plan-cell');
+  const marker = e.target.closest('.dest-marker');
+
+  // Don't pan if clicking on a unit marker (for selection)
+  if (marker) return;
+
+  // Don't pan if clicking on a cell AND we have a unit selected to place
+  if (cell && plan.selectedUnit) return;
+
+  // Don't pan if clicking on a cell with an existing unit placement
+  if (cell) {
+    const row = parseInt(cell.dataset.row);
+    const col = parseInt(cell.dataset.col);
+    const placements = plan.unitPlacements || [];
+    const hasUnit = placements.some(p => p.primaryPos?.row === row && p.primaryPos?.col === col);
+    if (hasUnit) return;
+  }
+
+  // Start panning
   plan.isPanning = true;
   plan.lastPanX = e.clientX;
   plan.lastPanY = e.clientY;
@@ -1493,10 +1510,8 @@ document.addEventListener('touchstart', e => {
   const plan = Game.campaign?.battlePlan;
   if (!plan) return;
 
-  // Don't intercept cell taps (for unit placement)
   const cell = e.target.closest('.plan-cell');
-  if (cell && e.touches.length === 1) return;
-
+  const marker = e.target.closest('.dest-marker');
   const touches = e.touches;
 
   if (touches.length === 2) {
@@ -1508,14 +1523,33 @@ document.addEventListener('touchstart', e => {
     const center = getTouchCenter(touches[0], touches[1]);
     planningTouches.lastX = center.x;
     planningTouches.lastY = center.y;
-  } else if (touches.length === 1 && !cell) {
-    // One finger on empty space = pan
-    e.preventDefault();
-    planningTouches.panning = true;
-    planningTouches.pinching = false;
-    planningTouches.touchId = touches[0].identifier;
-    planningTouches.lastX = touches[0].clientX;
-    planningTouches.lastY = touches[0].clientY;
+  } else if (touches.length === 1) {
+    // Check if we should pan or let tap through for interaction
+    let shouldPan = true;
+
+    // Don't pan if tapping on a unit marker
+    if (marker) shouldPan = false;
+
+    // Don't pan if tapping on a cell AND we have a unit selected to place
+    if (cell && plan.selectedUnit) shouldPan = false;
+
+    // Don't pan if tapping on a cell with an existing unit
+    if (cell && shouldPan) {
+      const row = parseInt(cell.dataset.row);
+      const col = parseInt(cell.dataset.col);
+      const placements = plan.unitPlacements || [];
+      const hasUnit = placements.some(p => p.primaryPos?.row === row && p.primaryPos?.col === col);
+      if (hasUnit) shouldPan = false;
+    }
+
+    if (shouldPan) {
+      e.preventDefault();
+      planningTouches.panning = true;
+      planningTouches.pinching = false;
+      planningTouches.touchId = touches[0].identifier;
+      planningTouches.lastX = touches[0].clientX;
+      planningTouches.lastY = touches[0].clientY;
+    }
   }
 }, { passive: false });
 
