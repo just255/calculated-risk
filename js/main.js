@@ -332,6 +332,46 @@ document.getElementById('app').addEventListener('click', e => {
         render();
       }
     }
+    // V2: Select unit from roster cards
+    else if (a === 'select-roster-unit') {
+      const unitId = action.dataset.unitId;
+      const plan = Game.campaign?.battlePlan;
+      if (plan) {
+        // Toggle selection - tap same unit to deselect
+        plan.selectedUnit = plan.selectedUnit === unitId ? null : unitId;
+        // Clear placed unit selection when selecting from roster
+        plan.selectedPlacement = null;
+        plan.placementMode = 'primary';
+        render();
+      }
+    }
+    // V2: Cycle through doctrine options
+    else if (a === 'cycle-doctrine') {
+      const plan = Game.campaign?.battlePlan;
+      if (plan) {
+        const doctrines = ['frontal', 'flanking', 'defensive', 'blitz'];
+        const currentIdx = doctrines.indexOf(plan.doctrine || 'frontal');
+        plan.doctrine = doctrines[(currentIdx + 1) % doctrines.length];
+        render();
+      }
+    }
+    // V2: Toggle support
+    else if (a === 'toggle-support') {
+      const plan = Game.campaign?.battlePlan;
+      if (plan) {
+        plan.supportEnabled = !plan.supportEnabled;
+        render();
+      }
+    }
+    // V2: Artillery targeting (placeholder)
+    else if (a === 'set-artillery') {
+      const plan = Game.campaign?.battlePlan;
+      if (plan) {
+        // TODO: Enter artillery targeting mode
+        console.log('Artillery targeting mode - not yet implemented');
+        render();
+      }
+    }
     else if (a === 'close-unit-detail') {
       const plan = Game.campaign?.battlePlan;
       if (plan) {
@@ -525,9 +565,15 @@ document.getElementById('app').addEventListener('click', e => {
       const placementIdx = parseInt(action.dataset.placement);
       const plan = Game.campaign?.battlePlan;
       if (plan && plan.unitPlacements[placementIdx]) {
-        // Remove from array (no unit count restoration since units are always on map)
+        // Restore unit count to roster
+        const placement = plan.unitPlacements[placementIdx];
+        const unitType = plan.availableUnits.find(u => u.id === placement.unitId);
+        if (unitType) unitType.count++;
+
+        // Remove from array
         plan.unitPlacements.splice(placementIdx, 1);
         plan.selectedPlacement = null;
+        plan.selectedUnit = null;
         render();
       }
     }
@@ -616,13 +662,50 @@ document.getElementById('app').addEventListener('click', e => {
             plan.selectedPlacement = null;
           } else {
             plan.selectedPlacement = p;
+            plan.selectedUnit = null; // Clear roster selection
           }
+          plan.placementMode = 'primary'; // Reset mode
           render();
           return;
         }
       }
 
-      // === UNIT SELECTED: Set position based on placement mode ===
+      // === NEW UNIT FROM ROSTER: Place it ===
+      if (plan.selectedUnit) {
+        // Can only place in player zone or NML
+        if (!isPlayerZone && !isNoMansLand) return;
+        // Can't place on water or hero cell
+        if (terrainType === 'water' || isHeroCell) return;
+
+        // Check available count
+        const unitType = plan.availableUnits.find(u => u.id === plan.selectedUnit);
+        if (!unitType || unitType.count <= 0) return;
+
+        // Check if cell is already occupied
+        const existingAtPos = placements.find(p => p.primaryPos?.row === row && p.primaryPos?.col === col);
+        if (existingAtPos) return;
+
+        // Create new placement
+        const newPlacement = {
+          unitId: plan.selectedUnit,
+          primaryPos: { row, col },
+          advancePos: null,
+          fallbackPos: null,
+          isSupport: false,
+          inSpawnZone: false
+        };
+        plan.unitPlacements.push(newPlacement);
+        unitType.count--;
+
+        // Clear roster selection, select the placed unit for position editing
+        plan.selectedUnit = null;
+        plan.selectedPlacement = newPlacement;
+        plan.placementMode = 'primary';
+        render();
+        return;
+      }
+
+      // === PLACED UNIT SELECTED: Set position based on placement mode ===
       if (plan.selectedPlacement) {
         // Can only place in player zone or NML
         if (!isPlayerZone && !isNoMansLand) return;

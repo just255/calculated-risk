@@ -328,19 +328,52 @@ export function newBattlePlan(era, mos) {
     return unit ? { ...unit, count: 5 } : null;  // Start with 5 of each
   }).filter(Boolean);
 
+  // Auto-spawn units in base zone (rows 20-23, which is playerStartRow to gridHeight-1)
+  const spawnZoneStartRow = GRID_HEIGHT - PLAYER_ROWS;  // Row 20
+  const unitPlacements = [];
+  let spawnRow = GRID_HEIGHT - 1;  // Start at bottom row (23)
+  let spawnCol = 0;
+  const maxCols = GRID_WIDTH;
+
+  availableUnits.forEach(unitType => {
+    for (let i = 0; i < unitType.count; i++) {
+      unitPlacements.push({
+        unitId: unitType.id,
+        primaryPos: { row: spawnRow, col: spawnCol },
+        advancePos: null,
+        fallbackPos: null,
+        isSupport: false,
+        inSpawnZone: true  // Flag to track if unit hasn't been moved yet
+      });
+
+      spawnCol++;
+      if (spawnCol >= maxCols) {
+        spawnCol = 0;
+        spawnRow--;
+        if (spawnRow < spawnZoneStartRow) spawnRow = spawnZoneStartRow; // Keep in spawn zone
+      }
+    }
+  });
+
   return {
     // Grid config
     gridWidth: GRID_WIDTH,
     gridHeight: GRID_HEIGHT,
-    playerStartRow: GRID_HEIGHT - PLAYER_ROWS,  // Row 14
-    enemyEndRow: ENEMY_ROWS,                     // Row 6
+    playerStartRow: GRID_HEIGHT - PLAYER_ROWS,  // Row 20
+    enemyEndRow: ENEMY_ROWS,                     // Row 4
     cellSize: 33,  // Pixels per cell for rendering (32px + 1px gap)
 
-    // The grid - each cell is null or { unitId, owner: 'player'|'enemy' }
+    // The grid - now only for terrain/structures, not unit positions
     grid,
 
     // Terrain grid
     terrain,
+
+    // Spawn point (center bottom of player zone)
+    spawnPoint: {
+      row: GRID_HEIGHT - 1,
+      col: Math.floor(GRID_WIDTH / 2)
+    },
 
     // Hero placement (grid coordinates)
     hero: {
@@ -350,20 +383,27 @@ export function newBattlePlan(era, mos) {
       stats: heroStats
     },
 
-    // Available units to place (with counts)
+    // Unit placements - destination-based system (auto-populated with units in spawn zone)
+    // Each placement: { unitId, primaryPos, advancePos?, fallbackPos?, isSupport, inSpawnZone }
+    unitPlacements,
+
+    // Available units info (for reference, not for roster selection)
     availableUnits,
 
-    // Currently selected unit for placement
-    selectedUnit: null,  // unit id or 'hero'
+    // Currently selected placement object (direct reference, not index)
+    selectedPlacement: null,
 
-    // Placement mode
-    mode: 'place',  // 'place' | 'remove' | 'hero'
+    // Context menu state for long-press/right-click
+    contextMenu: null,  // { row, col, screenX, screenY } when open
 
     // Enemy army (AI generates, or preset)
     enemyArmy: [],
 
     // Doctrine/tactic selection
     doctrine: 'frontal',  // 'frontal' | 'flanking' | 'defensive' | 'blitz'
+
+    // Front line commands state
+    frontLineState: 'hold',  // 'advance' | 'hold' | 'retreat'
 
     // Battlefield conditions
     timeOfDay: 'day',     // 'dawn' | 'day' | 'dusk' | 'night'
@@ -377,11 +417,6 @@ export function newBattlePlan(era, mos) {
     isPanning: false,
     lastPanX: 0,
     lastPanY: 0,
-
-    // Unit selection and path planning
-    selectedPlacedUnit: null,  // { row, col } of selected unit on grid
-    pathSetMode: false,        // True when user is defining a path
-    plannedPath: [],           // Array of { row, col } for current path being set
   };
 }
 
@@ -405,36 +440,81 @@ export function newCampaignBattle(era, mos, battlePlan) {
   const heroX = (heroGridPos.col + 0.5) * CELL_SIZE;
   const heroY = (heroGridPos.row + 0.5) * CELL_SIZE;
 
-  // Extract player units from battlePlan grid
+  // Get spawn point from battlePlan
+  const spawnPoint = battlePlan?.spawnPoint || { row: gridHeight - 1, col: Math.floor(gridWidth / 2) };
+  const spawnX = (spawnPoint.col + 0.5) * CELL_SIZE;
+  const spawnY = (spawnPoint.row + 0.5) * CELL_SIZE;
+
+  // Extract player units from battlePlan unitPlacements (new destination system)
   const playerUnits = [];
-  if (battlePlan?.grid) {
+  if (battlePlan?.unitPlacements) {
+    battlePlan.unitPlacements.forEach((placement, index) => {
+      // Convert positions from grid coords to world coords
+      const primaryPos = placement.primaryPos ? {
+        x: (placement.primaryPos.col + 0.5) * CELL_SIZE,
+        y: (placement.primaryPos.row + 0.5) * CELL_SIZE
+      } : null;
+
+      const advancePos = placement.advancePos ? {
+        x: (placement.advancePos.col + 0.5) * CELL_SIZE,
+        y: (placement.advancePos.row + 0.5) * CELL_SIZE
+      } : null;
+
+      const fallbackPos = placement.fallbackPos ? {
+        x: (placement.fallbackPos.col + 0.5) * CELL_SIZE,
+        y: (placement.fallbackPos.row + 0.5) * CELL_SIZE
+      } : null;
+
+      // Get unit stats
+      const unitDef = UNITS.find(u => u.id === placement.unitId);
+      const hp = unitDef?.hp || 100;
+
+      playerUnits.push({
+        id: `unit_${index}`,  // Unique ID for aggro tracking
+        unitId: placement.unitId,
+        // Start at spawn point
+        x: spawnX + (index % 3 - 1) * 40,  // Spread out slightly
+        y: spawnY + Math.floor(index / 3) * 40,
+        hp: hp,
+        maxHp: hp,
+        angle: -Math.PI / 2,  // Face up (toward enemy)
+        lastShot: 0,
+        // Destination-based movement
+        primaryPos: primaryPos,
+        advancePos: advancePos,
+        fallbackPos: fallbackPos,
+        currentDestination: primaryPos,  // Start moving to primary
+        isSupport: placement.isSupport || false,
+        // AI state
+        aiState: primaryPos ? 'moving_to_position' : 'defending',
+        reachedDestination: false
+      });
+    });
+  }
+
+  // Also support legacy grid-based placement for backwards compatibility
+  if (playerUnits.length === 0 && battlePlan?.grid) {
     for (let row = 0; row < gridHeight; row++) {
       for (let col = 0; col < gridWidth; col++) {
         const cell = battlePlan.grid[row]?.[col];
         if (cell && cell.owner === 'player') {
-          // Convert waypoints from grid coords to world coords
           const waypoints = (cell.waypoints || []).map(wp => ({
             x: (wp.col + 0.5) * CELL_SIZE,
             y: (wp.row + 0.5) * CELL_SIZE
           }));
 
           playerUnits.push({
-            id: `unit_${row}_${col}`,  // Unique ID for aggro tracking
+            id: `unit_${row}_${col}`,
             unitId: cell.unitId,
-            row,
-            col,
             x: (col + 0.5) * CELL_SIZE,
             y: (row + 0.5) * CELL_SIZE,
-            hp: 100,  // TODO: Get from unit stats
-            maxHp: 100,  // maxHp for threat calculation
-            angle: -Math.PI / 2,  // Face up (toward enemy)
+            hp: 100,
+            maxHp: 100,
+            angle: -Math.PI / 2,
             lastShot: 0,
-            // Waypoint support
             waypoints: waypoints,
             currentWaypoint: 0,
-            // AI behavior preset (can be set during planning)
             aiBehavior: cell.aiBehavior || null,
-            // Initial AI state
             aiState: waypoints.length > 0 ? 'moving' : 'defending'
           });
         }
@@ -500,7 +580,13 @@ export function newCampaignBattle(era, mos, battlePlan) {
 
     // Result
     result: null,  // 'victory' | 'defeat'
-    kills: 0
+    kills: 0,
+
+    // Front line command state
+    frontLineState: 'hold',  // 'advance' | 'hold' | 'retreat'
+
+    // Pending command (for move orders etc)
+    pendingCommand: null
   };
 }
 

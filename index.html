@@ -4889,6 +4889,479 @@
     .plan-cell.terrain-water:hover::after { content: "Water: Impassable"; }
     .plan-cell.terrain-crater:hover::after { content: "Crater: +15% def, -20% speed"; }
 
+    /* ═══════════════════════════════════════════════════════════════ */
+    /* PLANNING SCREEN V2 - Simplified Layout                          */
+    /* ═══════════════════════════════════════════════════════════════ */
+
+    .planning-screen-v2 {
+      display: flex;
+      flex-direction: row;
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
+      background: var(--bg-dark);
+    }
+
+    /* === LEFT PANEL V2: Unit Roster === */
+    .plan-left-panel-v2 {
+      width: 180px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      background: rgba(20, 25, 35, 0.98);
+      border-right: 2px solid var(--accent-blue);
+    }
+
+    .panel-header-v2 {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px;
+      background: rgba(74, 158, 255, 0.15);
+      border-bottom: 1px solid rgba(74, 158, 255, 0.3);
+    }
+
+    .panel-header-v2 h2 {
+      font-family: 'Black Ops One', cursive;
+      font-size: 0.85rem;
+      color: var(--accent-blue);
+      margin: 0;
+    }
+
+    .back-btn-v2 {
+      background: none;
+      border: 1px solid var(--text-secondary);
+      color: var(--text-secondary);
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+
+    .back-btn-v2:hover {
+      border-color: var(--accent-blue);
+      color: var(--accent-blue);
+    }
+
+    .roster-cards {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .roster-card {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      background: rgba(40, 45, 60, 0.8);
+      border: 2px solid transparent;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .roster-card:hover {
+      background: rgba(50, 55, 70, 0.9);
+      border-color: var(--accent-blue);
+    }
+
+    .roster-card.selected {
+      background: rgba(74, 158, 255, 0.2);
+      border-color: var(--accent-blue);
+      box-shadow: 0 0 10px rgba(74, 158, 255, 0.3);
+    }
+
+    .roster-card.depleted {
+      opacity: 0.4;
+      pointer-events: none;
+    }
+
+    .roster-card-icon {
+      font-size: 1.5rem;
+      flex-shrink: 0;
+    }
+
+    .roster-card-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .roster-card-name {
+      font-weight: bold;
+      font-size: 0.8rem;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .roster-card-stats {
+      font-size: 0.7rem;
+      color: var(--text-secondary);
+    }
+
+    /* === CENTER V2: Map Area === */
+    .plan-center-v2 {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Intel Banner */
+    .intel-banner {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      background: rgba(255, 68, 68, 0.15);
+      border-bottom: 1px solid rgba(255, 68, 68, 0.3);
+    }
+
+    .intel-icon {
+      font-size: 1.2rem;
+    }
+
+    .intel-bar {
+      flex: 1;
+      height: 12px;
+      background: #333;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .intel-bar .intel-fill {
+      height: 100%;
+      background: linear-gradient(to right, #c33, #f55);
+      transition: width 0.3s;
+    }
+
+    .intel-percent {
+      font-size: 0.75rem;
+      font-weight: bold;
+      color: var(--accent-red);
+      min-width: 35px;
+    }
+
+    .scout-btn-v2 {
+      padding: 6px 12px;
+      background: linear-gradient(to bottom, #c33, #a22);
+      border: none;
+      border-radius: 4px;
+      color: #fff;
+      font-family: 'Oxanium', sans-serif;
+      font-size: 0.7rem;
+      font-weight: bold;
+      cursor: pointer;
+      text-transform: uppercase;
+    }
+
+    .scout-btn-v2:hover {
+      background: linear-gradient(to bottom, #d44, #b33);
+    }
+
+    /* Map Grid Viewport V2 */
+    .planning-grid-viewport-v2 {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+      cursor: grab;
+    }
+
+    .planning-grid-viewport-v2:active {
+      cursor: grabbing;
+    }
+
+    /* Helper Text */
+    .map-helper-v2 {
+      padding: 8px 12px;
+      background: rgba(0, 0, 0, 0.6);
+      color: var(--text-secondary);
+      font-size: 0.75rem;
+      text-align: center;
+    }
+
+    /* Base HQ Zone */
+    .base-hq-zone {
+      padding: 12px;
+      background: linear-gradient(to bottom, rgba(40, 50, 70, 0.95), rgba(30, 40, 55, 0.98));
+      border-top: 2px solid var(--accent-blue);
+    }
+
+    .hq-title {
+      text-align: center;
+      font-family: 'Black Ops One', cursive;
+      font-size: 0.9rem;
+      color: var(--accent-gold);
+      margin-bottom: 10px;
+      letter-spacing: 2px;
+    }
+
+    .hq-buttons {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .hq-btn {
+      flex: 1;
+      padding: 8px 6px;
+      background: rgba(50, 55, 70, 0.9);
+      border: 1px solid #555;
+      border-radius: 6px;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.15s ease;
+    }
+
+    .hq-btn:hover {
+      background: rgba(60, 65, 80, 0.95);
+      border-color: var(--accent-blue);
+    }
+
+    .hq-btn.active {
+      background: rgba(76, 175, 80, 0.3);
+      border-color: var(--accent-green);
+    }
+
+    .hq-btn-label {
+      display: block;
+      font-size: 0.6rem;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      margin-bottom: 2px;
+    }
+
+    .hq-btn-value {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: bold;
+      color: var(--text-primary);
+    }
+
+    .deploy-btn-v2 {
+      width: 100%;
+      padding: 12px;
+      background: linear-gradient(to bottom, var(--accent-green), #3a8a3a);
+      border: none;
+      border-radius: 6px;
+      color: #fff;
+      font-family: 'Oxanium', sans-serif;
+      font-size: 1rem;
+      font-weight: bold;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .deploy-btn-v2:hover {
+      background: linear-gradient(to bottom, #5cb85c, #4caf50);
+    }
+
+    /* === RIGHT PANEL V2: Position Actions === */
+    .plan-right-panel-v2 {
+      width: 160px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      background: rgba(25, 30, 40, 0.98);
+      border-left: 2px solid #555;
+    }
+
+    .position-panel {
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    .position-panel.empty {
+      justify-content: center;
+      align-items: center;
+    }
+
+    .position-panel-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #444;
+    }
+
+    .position-unit-icon {
+      font-size: 1.5rem;
+    }
+
+    .position-unit-name {
+      font-weight: bold;
+      font-size: 0.9rem;
+      color: var(--text-primary);
+    }
+
+    .position-label {
+      font-size: 0.7rem;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+
+    .position-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 15px;
+    }
+
+    .position-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px;
+      background: rgba(50, 55, 70, 0.8);
+      border: 2px solid transparent;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      text-align: left;
+    }
+
+    .position-btn:hover {
+      background: rgba(60, 65, 80, 0.9);
+      border-color: var(--text-secondary);
+    }
+
+    .position-btn.active {
+      border-color: var(--accent-blue);
+      box-shadow: 0 0 8px rgba(74, 158, 255, 0.4);
+    }
+
+    .position-btn[data-mode="primary"].active {
+      border-color: #4caf50;
+      box-shadow: 0 0 8px rgba(76, 175, 80, 0.4);
+    }
+
+    .position-btn[data-mode="advance"].active {
+      border-color: #2196f3;
+      box-shadow: 0 0 8px rgba(33, 150, 243, 0.4);
+    }
+
+    .position-btn[data-mode="fallback"].active {
+      border-color: #ffc107;
+      box-shadow: 0 0 8px rgba(255, 193, 7, 0.4);
+    }
+
+    .pos-icon {
+      font-size: 1.2rem;
+    }
+
+    .pos-text {
+      flex: 1;
+      font-size: 0.8rem;
+      color: var(--text-primary);
+    }
+
+    .pos-check {
+      color: var(--accent-green);
+      font-size: 0.9rem;
+    }
+
+    .position-btn:not(.has-pos) .pos-check {
+      display: none;
+    }
+
+    .position-btn[data-mode="primary"] .pos-check {
+      display: inline; /* Primary always shows check */
+    }
+
+    .remove-unit-btn {
+      margin-top: auto;
+      padding: 10px;
+      background: rgba(255, 68, 68, 0.2);
+      border: 1px solid rgba(255, 68, 68, 0.4);
+      border-radius: 6px;
+      color: var(--accent-red);
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+
+    .remove-unit-btn:hover {
+      background: rgba(255, 68, 68, 0.3);
+    }
+
+    .position-instructions {
+      text-align: center;
+      padding: 20px 10px;
+    }
+
+    .inst-main {
+      font-size: 0.85rem;
+      font-weight: bold;
+      color: var(--text-primary);
+      margin-bottom: 8px;
+    }
+
+    .inst-sub {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+    }
+
+    /* Mobile responsive for v2 */
+    @media (max-width: 768px) {
+      .planning-screen-v2 {
+        flex-direction: column;
+      }
+
+      .plan-left-panel-v2 {
+        width: 100%;
+        height: auto;
+        max-height: 120px;
+        border-right: none;
+        border-bottom: 2px solid var(--accent-blue);
+      }
+
+      .roster-cards {
+        flex-direction: row;
+        flex-wrap: wrap;
+        overflow-x: auto;
+        padding: 6px;
+      }
+
+      .roster-card {
+        flex: 0 0 auto;
+        min-width: 100px;
+      }
+
+      .plan-right-panel-v2 {
+        width: 100%;
+        height: auto;
+        max-height: 150px;
+        border-left: none;
+        border-top: 2px solid #555;
+      }
+
+      .position-buttons {
+        flex-direction: row;
+      }
+
+      .position-btn {
+        flex: 1;
+        flex-direction: column;
+        text-align: center;
+        padding: 8px 4px;
+      }
+
+      .pos-text {
+        font-size: 0.65rem;
+      }
+    }
+
     /* Campaign Battle Screen - Landscape optimized */
     .campaign-battle-screen {
       display: flex;

@@ -2918,129 +2918,159 @@ function campaignPlanningHTML() {
     </div>
   ` : '';
 
-  // Collapsible unit roster - grouped by type with counts
-  const rosterExpanded = plan.rosterExpanded !== false; // Default expanded
-  const rosterHTML = availableUnits.map(unitType => {
+  // Build unit roster cards for left panel
+  const rosterCardsHTML = availableUnits.map(unitType => {
     const count = unitCounts[unitType.id] || 0;
-    if (count === 0) return '';
     const unit = UNITS.find(u => u.id === unitType.id);
+    const isSelected = plan.selectedUnit === unitType.id;
+    const isDepleted = count === 0;
+
     return `
-      <div class="roster-item" data-action="roster-unit-click" data-unit-id="${unitType.id}" draggable="true">
-        <span class="roster-icon">${unit?.icon || '●'}</span>
-        <span class="roster-name">${unit?.name || unitType.id}</span>
-        <span class="roster-count">×${count}</span>
+      <div class="roster-card ${isSelected ? 'selected' : ''} ${isDepleted ? 'depleted' : ''}"
+           data-action="select-roster-unit" data-unit-id="${unitType.id}">
+        <div class="roster-card-icon">${unit?.icon || '●'}</div>
+        <div class="roster-card-info">
+          <div class="roster-card-name">${unit?.name || unitType.id}</div>
+          <div class="roster-card-stats">DMG ${unit?.damage || 0} · ×${count}</div>
+        </div>
       </div>
     `;
-  }).filter(Boolean).join('');
+  }).join('');
+
+  // Build right panel content based on selection state
+  let rightPanelHTML = '';
+  if (selectedPlacement) {
+    // Unit is selected on map - show position controls
+    const unitDef = UNITS.find(u => u.id === selectedPlacement.unitId);
+    const hasAdvance = !!selectedPlacement.advancePos;
+    const hasFallback = !!selectedPlacement.fallbackPos;
+    const currentMode = plan.placementMode || 'primary';
+
+    rightPanelHTML = `
+      <div class="position-panel">
+        <div class="position-panel-header">
+          <span class="position-unit-icon">${unitDef?.icon || '●'}</span>
+          <span class="position-unit-name">${unitDef?.name || 'Unit'}</span>
+        </div>
+        <div class="position-label">SET POSITION:</div>
+        <div class="position-buttons">
+          <button class="position-btn ${currentMode === 'primary' ? 'active' : ''}"
+                  data-action="set-placement-mode" data-mode="primary">
+            <span class="pos-icon">🎯</span>
+            <span class="pos-text">Primary</span>
+            <span class="pos-check">✓</span>
+          </button>
+          <button class="position-btn ${currentMode === 'advance' ? 'active' : ''} ${hasAdvance ? 'has-pos' : ''}"
+                  data-action="set-placement-mode" data-mode="advance">
+            <span class="pos-icon">⚔️</span>
+            <span class="pos-text">Advance</span>
+            ${hasAdvance ? '<span class="pos-check">✓</span>' : ''}
+          </button>
+          <button class="position-btn ${currentMode === 'fallback' ? 'active' : ''} ${hasFallback ? 'has-pos' : ''}"
+                  data-action="set-placement-mode" data-mode="fallback">
+            <span class="pos-icon">🛡️</span>
+            <span class="pos-text">Fallback</span>
+            ${hasFallback ? '<span class="pos-check">✓</span>' : ''}
+          </button>
+        </div>
+        <button class="remove-unit-btn" data-action="remove-placement" data-placement="${plan.unitPlacements.indexOf(selectedPlacement)}">
+          ✕ Remove Unit
+        </button>
+      </div>
+    `;
+  } else {
+    // No unit selected - show instructions
+    rightPanelHTML = `
+      <div class="position-panel empty">
+        <div class="position-instructions">
+          <p class="inst-main">TAP A UNIT ON THE MAP</p>
+          <p class="inst-sub">Then set positions for battle</p>
+        </div>
+      </div>
+    `;
+  }
+
+  // Doctrine display for Base HQ
+  const doctrineNames = {
+    frontal: 'Frontal',
+    flanking: 'Flanking',
+    defensive: 'Defensive',
+    blitz: 'Blitz'
+  };
+  const currentDoctrine = plan.doctrine || 'frontal';
+
+  // Helper text based on current state
+  let helperText = 'Select a unit from the roster, then tap the map to place it';
+  if (plan.selectedUnit) {
+    helperText = `Tap map to place ${plan.selectedUnit}`;
+  } else if (selectedPlacement) {
+    const mode = plan.placementMode || 'primary';
+    helperText = `Tap map to set ${mode.toUpperCase()} position`;
+  }
 
   return `
-    <div class="screen planning-screen">
-      <!-- LEFT PANEL: Details -->
-      <div class="plan-left-panel">
-        <div class="panel-header">
-          <h2>DEPLOYMENT</h2>
-          <button class="back-btn" data-action="campaign">←</button>
+    <div class="screen planning-screen-v2">
+      <!-- LEFT PANEL: Unit Roster -->
+      <div class="plan-left-panel-v2">
+        <div class="panel-header-v2">
+          <button class="back-btn-v2" data-action="campaign">←</button>
+          <h2>YOUR FORCES</h2>
         </div>
-
-        <!-- Collapsible Unit Roster -->
-        <div class="collapsible-section ${rosterExpanded ? 'expanded' : 'collapsed'}">
-          <div class="collapsible-header" data-action="toggle-roster">
-            <span class="collapse-icon">${rosterExpanded ? '▼' : '▶'}</span>
-            <span class="collapse-title">Units</span>
-            <span class="collapse-summary">${Object.values(unitCounts).reduce((a, b) => a + b, 0)} total</span>
-          </div>
-          <div class="collapsible-content">
-            <div class="roster-list">
-              ${rosterHTML || '<div class="roster-empty">No units</div>'}
-            </div>
-            <div class="roster-hint">Drag to map or tap to select</div>
-          </div>
-        </div>
-
-        ${detailsPanelHTML}
-
-        <div class="tactic-section collapsible-section expanded">
-          <div class="collapsible-header" data-action="toggle-doctrine">
-            <span class="collapse-icon">▼</span>
-            <span class="collapse-title">Doctrine</span>
-          </div>
-          <div class="collapsible-content">
-            <div class="doctrine-grid">
-              ${doctrineHTML}
-            </div>
-          </div>
-        </div>
-
-        <div class="plan-actions">
-          <button class="btn-deploy" data-action="plan-deploy">DEPLOY →</button>
+        <div class="roster-cards">
+          ${rosterCardsHTML}
         </div>
       </div>
 
-      <!-- CENTER: Map Grid -->
-      <div class="plan-center">
-        <div class="planning-grid-viewport" id="grid-viewport">
+      <!-- CENTER: Map with Intel Banner and Base HQ -->
+      <div class="plan-center-v2">
+        <!-- Intel Banner at top -->
+        <div class="intel-banner">
+          <span class="intel-icon">🔭</span>
+          <div class="intel-bar">
+            <div class="intel-fill" style="width: ${intelPercent}%"></div>
+          </div>
+          <span class="intel-percent">${intelPercent}%</span>
+          <button class="scout-btn-v2" data-action="scout-enemy">SCOUT</button>
+        </div>
+
+        <!-- Map Grid -->
+        <div class="planning-grid-viewport-v2" id="grid-viewport">
           <div class="planning-grid time-${plan.timeOfDay} weather-${plan.weather}"
                id="planning-grid"
                style="grid-template-columns: repeat(${gridWidth}, 1fr); transform: scale(${plan.zoom}) translate(${plan.panX}px, ${plan.panY}px);">
             ${gridHTML}
           </div>
-          <div class="grid-controls">
-            <button class="grid-ctrl-btn" data-action="grid-zoom-in">+</button>
-            <span class="grid-zoom-level">${Math.round(plan.zoom * 100)}%</span>
-            <button class="grid-ctrl-btn" data-action="grid-zoom-out">−</button>
-            <button class="grid-ctrl-btn" data-action="grid-reset">↺</button>
+        </div>
+
+        <!-- Helper Text -->
+        <div class="map-helper-v2">${helperText}</div>
+
+        <!-- Base HQ Zone (overlays bottom of map) -->
+        <div class="base-hq-zone">
+          <div class="hq-title">★ BASE HQ ★</div>
+          <div class="hq-buttons">
+            <button class="hq-btn" data-action="cycle-doctrine">
+              <span class="hq-btn-label">Doctrine</span>
+              <span class="hq-btn-value">${doctrineNames[currentDoctrine]}</span>
+            </button>
+            <button class="hq-btn ${plan.supportEnabled ? 'active' : ''}" data-action="toggle-support">
+              <span class="hq-btn-label">Support</span>
+              <span class="hq-btn-value">${plan.supportEnabled ? 'ON' : 'OFF'}</span>
+            </button>
+            <button class="hq-btn" data-action="set-artillery">
+              <span class="hq-btn-label">Artillery</span>
+              <span class="hq-btn-value">Set</span>
+            </button>
           </div>
+          <button class="deploy-btn-v2" data-action="plan-deploy">DEPLOY →</button>
         </div>
-        <div class="map-help">
-          ${contextMenu
-            ? 'Select position type for this cell'
-            : selectedPlacement
-            ? `${selectedPlacement.unitId} selected · Tap to move · Long-press for Advance/Fallback`
-            : 'Tap a unit on the map to select it'}
-        </div>
+
         ${contextMenuHTML}
       </div>
 
-      <!-- RIGHT PANEL: Enemy Intel -->
-      <div class="plan-right-panel">
-        <div class="panel-header enemy">
-          <h2>ENEMY INTEL</h2>
-        </div>
-
-        <div class="intel-section">
-          <div class="intel-progress-bar">
-            <div class="intel-fill" style="width: ${intelPercent}%"></div>
-            <span class="intel-text">${intelPercent}% Revealed</span>
-          </div>
-          <button class="scout-btn" data-action="scout-enemy">
-            🔭 SCOUT ENEMY
-          </button>
-          <p class="intel-hint">Solve math problems to reveal enemy positions</p>
-        </div>
-
-        <div class="enemy-list">
-          <h3>Detected Units</h3>
-          ${plan.enemyArmy.filter(e => e.revealed).length > 0 ? `
-            <div class="enemy-units">
-              ${plan.enemyArmy.filter(e => e.revealed).map(e => {
-                const enemyDef = UNITS.find(u => u.id === e.unitId);
-                return `<div class="enemy-unit">
-                  <span class="enemy-icon">${enemyDef ? getAnimatedSvg(enemyDef, 'enemy-svg') : '?'}</span>
-                  <span class="enemy-name">${enemyDef?.name || 'Unknown'}</span>
-                </div>`;
-              }).join('')}
-            </div>
-          ` : `
-            <div class="no-intel">No enemy units detected yet</div>
-          `}
-        </div>
-
-        <div class="threat-section">
-          <h3>Threat Assessment</h3>
-          <div class="threat-level ${intelPercent < 30 ? 'unknown' : intelPercent < 70 ? 'medium' : 'known'}">
-            ${intelPercent < 30 ? '⚠️ Unknown' : intelPercent < 70 ? '⚡ Partial' : '✓ Clear'}
-          </div>
-        </div>
+      <!-- RIGHT PANEL: Position Actions (contextual) -->
+      <div class="plan-right-panel-v2">
+        ${rightPanelHTML}
       </div>
     </div>
   `;
