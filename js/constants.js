@@ -39,6 +39,309 @@ export const HQTab = {
 };
 
 // ═══════════════════════════════════════════════════════════════
+// SQUAD SYSTEM
+// ═══════════════════════════════════════════════════════════════
+
+// Squad-level tactical orders
+export const SquadOrder = {
+  HOLD: 'hold',           // Stop and defend current position
+  ADVANCE: 'advance',     // Move forward aggressively
+  FALLBACK: 'fallback',   // Retreat to rally/fallback position
+  SUPPRESS: 'suppress',   // Focus fire on area, reduce enemy accuracy
+  FLANK: 'flank',         // Move around for side attack bonus
+  DIG_IN: 'digIn',        // Fortify position, +defense, immobile
+  SEARCH: 'search'        // Hunt enemies in area (search & destroy)
+};
+
+// Target priority options for units
+export const TargetPriority = {
+  NEAREST: 'nearest',     // Attack closest enemy
+  WEAKEST: 'weakest',     // Attack lowest HP enemy
+  STRONGEST: 'strongest', // Attack highest threat enemy
+  ARMOR: 'armor',         // Prioritize armored targets
+  INFANTRY: 'infantry',   // Prioritize infantry targets
+  ARTILLERY: 'artillery', // Prioritize artillery/support
+  ASSIGNED: 'assigned'    // Attack squad's concentrate target only
+};
+
+// Squad formation types
+export const Formation = {
+  AUTO: 'auto',           // Automatically arrange by unit type
+  LINE: 'line',           // Horizontal line
+  WEDGE: 'wedge',         // V-shape with leader at front
+  COLUMN: 'column',       // Single file
+  SPREAD: 'spread'        // Maximum spacing (anti-artillery)
+};
+
+// Order effects on unit behavior
+export const ORDER_EFFECTS = {
+  hold: {
+    speedMod: 0,
+    defenseMod: 1.0,
+    canMove: false
+  },
+  advance: {
+    speedMod: 1.2,
+    defenseMod: 0.8,
+    canMove: true,
+    aggressive: true
+  },
+  fallback: {
+    speedMod: 1.0,
+    defenseMod: 0.9,
+    canMove: true,
+    retreating: true
+  },
+  suppress: {
+    speedMod: 0,
+    defenseMod: 1.0,
+    canMove: false,
+    areaFire: true,
+    accuracyDebuff: 0.3  // Debuff applied to enemies in area
+  },
+  flank: {
+    speedMod: 1.1,
+    defenseMod: 0.7,
+    canMove: true,
+    damageMod: 1.5  // Bonus when attacking from side/rear
+  },
+  digIn: {
+    speedMod: 0,
+    defenseMod: 1.5,
+    canMove: false,
+    setupTime: 2000  // ms to set up
+  },
+  search: {
+    speedMod: 0.8,
+    defenseMod: 0.9,
+    canMove: true,
+    hunting: true
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════
+// ZONE SYSTEM - Scrolling zone-capture mechanics
+// ═══════════════════════════════════════════════════════════════
+
+// Zone ownership states
+export const ZoneOwner = {
+  PLAYER: 'player',       // Controlled by player
+  ENEMY: 'enemy',         // Controlled by enemy
+  CONTESTED: 'contested', // Being fought over
+  NEUTRAL: 'neutral'      // No current owner
+};
+
+// Scenario types for zone battles
+export const ScenarioType = {
+  ADVANCING: 'advancing', // Player pushes north through zones
+  FRONTLINE: 'frontline'  // Tug-of-war, zones can be lost
+};
+
+// Biome types for terrain generation
+export const Biome = {
+  BEACH: 'beach',         // Sand, water, sparse cover
+  FIELDS: 'fields',       // Open grass, hedgerows
+  FOREST: 'forest',       // Dense trees, limited sightlines
+  URBAN: 'urban',         // Buildings, streets, rubble
+  FORTRESS: 'fortress'    // Fortifications, trenches, pillboxes
+};
+
+// Biome terrain distribution (probability weights)
+export const BIOME_TERRAIN = {
+  beach: {
+    open: 0.3,
+    grass: 0.2,
+    water: 0.25,
+    brush: 0.15,
+    pillbox: 0.05,
+    trench: 0.05
+  },
+  fields: {
+    open: 0.15,
+    grass: 0.4,
+    brush: 0.2,
+    forest: 0.1,
+    high: 0.1,
+    trench: 0.05
+  },
+  forest: {
+    open: 0.05,
+    grass: 0.15,
+    brush: 0.25,
+    forest: 0.45,
+    high: 0.1
+  },
+  urban: {
+    open: 0.2,
+    pillbox: 0.25,
+    trench: 0.15,
+    high: 0.2,
+    brush: 0.2
+  },
+  fortress: {
+    open: 0.1,
+    trench: 0.35,
+    pillbox: 0.3,
+    high: 0.15,
+    brush: 0.1
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════
+// UNIT STANCE SYSTEM - Drives proactive AI behavior
+// ═══════════════════════════════════════════════════════════════
+
+export const UnitStance = {
+  AUTONOMOUS: 'autonomous',  // Default - AI decides based on situation
+  AGGRESSIVE: 'aggressive',  // Push forward, deal more damage, take more damage
+  DEFENSIVE: 'defensive',    // Hold ground, take less damage, deal less damage
+  SUPPORT: 'support'         // Follow hero, provide backup
+};
+
+// Stance interaction modifiers (Rock-Paper-Scissors)
+// Format: STANCE_MODIFIERS[attackerStance][targetStance] = { damageMod, defenseMod }
+export const STANCE_MODIFIERS = {
+  aggressive: {
+    aggressive: { damageMod: 1.2, defenseMod: 0.8 },  // High risk/reward
+    defensive:  { damageMod: 0.9, defenseMod: 1.0 },  // Defensive is prepared
+    autonomous: { damageMod: 1.1, defenseMod: 1.0 },  // Slight edge
+    support:    { damageMod: 1.0, defenseMod: 1.0 }
+  },
+  defensive: {
+    aggressive: { damageMod: 1.2, defenseMod: 1.0 },  // Punish rushers
+    defensive:  { damageMod: 0.8, defenseMod: 1.2 },  // Stalemate
+    autonomous: { damageMod: 1.0, defenseMod: 1.1 },  // Slight edge
+    support:    { damageMod: 1.0, defenseMod: 1.0 }
+  },
+  autonomous: {
+    aggressive: { damageMod: 1.0, defenseMod: 1.0 },  // Balanced
+    defensive:  { damageMod: 1.0, defenseMod: 1.0 },
+    autonomous: { damageMod: 1.0, defenseMod: 1.0 },
+    support:    { damageMod: 1.0, defenseMod: 1.0 }
+  },
+  support: {
+    aggressive: { damageMod: 1.0, defenseMod: 1.0 },
+    defensive:  { damageMod: 1.0, defenseMod: 1.0 },
+    autonomous: { damageMod: 1.0, defenseMod: 1.0 },
+    support:    { damageMod: 1.0, defenseMod: 1.0 }
+  }
+};
+
+// Get stance modifier for damage calculation
+export function getStanceModifier(attackerStance, targetStance) {
+  const attacker = attackerStance || 'autonomous';
+  const target = targetStance || 'autonomous';
+  return STANCE_MODIFIERS[attacker]?.[target] || { damageMod: 1.0, defenseMod: 1.0 };
+}
+
+// Map enemy AI type to an equivalent stance for modifier calculations
+export function getEnemyStance(aiType) {
+  switch (aiType) {
+    case 'RUSHER':
+    case 'HUNTER':
+      return 'aggressive';
+    case 'CAUTIOUS':
+    case 'RETREATER':
+      return 'defensive';
+    default:
+      return 'autonomous';
+  }
+}
+
+// Stance behavior parameters
+export const STANCE_PARAMS = {
+  autonomous: {
+    advanceSpeed: 1.0,
+    retreatThreshold: 0.30,  // Retreat at 30% HP
+    threatPushThreshold: 0.3, // Push forward if threat < 30%
+    threatHoldThreshold: 0.7  // Hold if threat 30-70%, retreat if > 70%
+  },
+  aggressive: {
+    advanceSpeed: 1.3,       // 30% faster advance
+    retreatThreshold: 0.15,  // Only retreat at 15% HP
+    threatPushThreshold: 0.8, // Almost always push
+    threatHoldThreshold: 0.95
+  },
+  defensive: {
+    advanceSpeed: 0.8,       // 20% slower, more cautious
+    retreatThreshold: 0.40,  // Retreat at 40% HP
+    threatPushThreshold: 0.1, // Rarely push
+    threatHoldThreshold: 0.5  // Hold more often
+  },
+  support: {
+    advanceSpeed: 1.0,
+    retreatThreshold: 0.30,
+    followDistance: 80,       // Stay close to hero
+    threatPushThreshold: 0,   // Never push independently
+    threatHoldThreshold: 1.0  // Always follow hero
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════
+// FORMATION OFFSETS - Preset formation positions
+// ═══════════════════════════════════════════════════════════════
+
+// Formation offsets from center point (for N units)
+// Each array element is [offsetX, offsetY] relative to formation center
+export const FORMATION_OFFSETS = {
+  line: [
+    // Spread horizontally
+    [0, 0],
+    [-60, 0], [60, 0],
+    [-120, 0], [120, 0],
+    [-180, 0], [180, 0],
+    [-240, 0], [240, 0]
+  ],
+  wedge: [
+    // V-shape pointing forward (up)
+    [0, 0],           // Leader at point
+    [-40, 40], [40, 40],
+    [-80, 80], [80, 80],
+    [-120, 120], [120, 120],
+    [-160, 160], [160, 160]
+  ],
+  column: [
+    // Single file
+    [0, 0],
+    [0, 50],
+    [0, 100],
+    [0, 150],
+    [0, 200],
+    [0, 250],
+    [0, 300],
+    [0, 350]
+  ],
+  spread: [
+    // Maximum spacing (anti-artillery)
+    [0, 0],
+    [-100, -50], [100, -50],
+    [-100, 50], [100, 50],
+    [-200, 0], [200, 0],
+    [0, -100], [0, 100]
+  ]
+};
+
+// Get formation positions for N units centered at (cx, cy)
+export function getFormationPositions(formation, cx, cy, unitCount, facing = -Math.PI/2) {
+  const offsets = FORMATION_OFFSETS[formation] || FORMATION_OFFSETS.line;
+  const positions = [];
+
+  // Rotate offsets based on facing direction
+  const cos = Math.cos(facing + Math.PI/2); // +90° to make "up" the default
+  const sin = Math.sin(facing + Math.PI/2);
+
+  for (let i = 0; i < Math.min(unitCount, offsets.length); i++) {
+    const [ox, oy] = offsets[i];
+    // Rotate offset
+    const rx = ox * cos - oy * sin;
+    const ry = ox * sin + oy * cos;
+    positions.push({ x: cx + rx, y: cy + ry });
+  }
+
+  return positions;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // UNIT TYPE SYSTEM
 // ═══════════════════════════════════════════════════════════════
 
@@ -289,6 +592,7 @@ export const UNITS = [
     types: [UnitType.INFANTRY],
     damage: 10, fireRate: 1000, deployCooldown: 2000,
     color: '#4ade80',
+    sprite: { src: '/sprites/units/infantry.png', frameCount: 3, frameWidth: 256, frameHeight: 256 },
     parts: ['boots', 'body', 'helmet', 'weapon'],
     defaultColors: { boots: '#2d4a2d', body: '#3d5c3d', helmet: '#4a6b4a', weapon: '#1a1a1a' },
     // Top-down: helmet, shoulders, rifle, feet (colored/shaded)
@@ -332,6 +636,7 @@ export const UNITS = [
     types: [UnitType.INFANTRY, UnitType.SUPPORT],
     damage: 5, fireRate: 1200, deployCooldown: 2500,
     color: '#f87171',
+    sprite: { src: '/sprites/units/medic.png', frameCount: 1, frameWidth: 256, frameHeight: 256 },
     parts: ['boots', 'body', 'helmet', 'medkit', 'cross'],
     defaultColors: { boots: '#4a3030', body: '#5c4040', helmet: '#6b4a4a', medkit: '#eee', cross: '#c44' },
     // Top-down: helmet with cross, shoulders, medkit, feet (colored)
@@ -379,6 +684,7 @@ export const UNITS = [
     types: [UnitType.INFANTRY, UnitType.RECON],
     damage: 18, fireRate: 700, deployCooldown: 3000,
     color: '#1e293b',
+    sprite: { src: '/sprites/units/specops.png', frameCount: 1, frameWidth: 256, frameHeight: 256 },
     parts: ['boots', 'body', 'helmet', 'weapon', 'nvg'],
     defaultColors: { boots: '#1a1a1a', body: '#2a2a2a', helmet: '#333', weapon: '#111', nvg: '#3a5a3a' },
     // Top-down: helmet with NVG, shoulders, suppressed rifle, feet (dark tactical colors)
@@ -429,6 +735,7 @@ export const UNITS = [
     types: [UnitType.INFANTRY, UnitType.ANTI_AIR],
     damage: 12, fireRate: 1100, deployCooldown: 2800,
     color: '#22d3ee',
+    sprite: { src: '/sprites/units/stinger.png', frameCount: 1, frameWidth: 256, frameHeight: 256 },
     parts: ['boots', 'body', 'helmet', 'launcher', 'missile'],
     defaultColors: { boots: '#1a4a4a', body: '#2a5a5a', helmet: '#3a7a7a', launcher: '#3a6a3a', missile: '#2a5a2a' },
     // Top-down: helmet, shoulders, missile launcher, feet (cyan/teal colors)
@@ -475,6 +782,7 @@ export const UNITS = [
     types: [UnitType.RECON],
     damage: 15, fireRate: 800, deployCooldown: 3000,
     color: '#86efac',
+    sprite: { src: '/sprites/units/jeep.png', frameCount: 1, frameWidth: 256, frameHeight: 256 },
     // Part colors for customization
     parts: ['body', 'hood', 'seats', 'wheels', 'spare', 'detail'],
     defaultColors: { body: '#4a5d23', hood: '#3d4d1c', seats: '#2a1a0a', wheels: '#1a1a1a', spare: '#1a1a1a', detail: '#888' },
@@ -524,6 +832,7 @@ export const UNITS = [
     types: [UnitType.RECON, UnitType.ANTI_AIR],
     damage: 20, fireRate: 600, deployCooldown: 3500,
     color: '#a3e635',
+    sprite: { src: '/sprites/units/humvee.png', frameCount: 1, frameWidth: 256, frameHeight: 256 },
     parts: ['body', 'hood', 'roof', 'turret', 'gun', 'wheels', 'detail'],
     defaultColors: { body: '#5a6b3a', hood: '#4a5a2d', roof: '#3d4a25', turret: '#2a3318', gun: '#1a1a1a', wheels: '#1a1a1a', detail: '#888' },
     // Top-down: armored humvee with roof turret (colored)
@@ -585,6 +894,7 @@ export const UNITS = [
     types: [UnitType.ARMOR, UnitType.SUPPORT],
     damage: 35, fireRate: 1500, deployCooldown: 4000,
     color: '#60a5fa',
+    sprite: { src: '/sprites/units/sherman.png', frameCount: 1, frameWidth: 256, frameHeight: 256 },
     parts: ['tracks', 'hull', 'turret', 'gun', 'hatches', 'detail'],
     defaultColors: { tracks: '#2a2a2a', hull: '#4a5a3a', turret: '#5a6b4a', gun: '#1a1a1a', hatches: '#3a4a2a', detail: '#6a7b5a' },
     // Top-down: detailed Sherman with track segments, turret, hatches (colored)
@@ -634,6 +944,7 @@ export const UNITS = [
     types: [UnitType.ARMOR, UnitType.ANTI_ARMOR],
     damage: 50, fireRate: 2000, deployCooldown: 5000,
     color: '#fbbf24',
+    sprite: { src: '/sprites/units/tiger.png', frameCount: 1, frameWidth: 256, frameHeight: 256 },
     parts: ['tracks', 'hull', 'turret', 'gun', 'hatches', 'detail'],
     defaultColors: { tracks: '#2a2a2a', hull: '#8b7355', turret: '#9b8365', gun: '#1a1a1a', hatches: '#6b5a45', detail: '#ab9375' },
     // Top-down: heavy Tiger tank with thick tracks, boxy turret (dunkelgelb/desert tan)
@@ -684,6 +995,7 @@ export const UNITS = [
     types: [UnitType.ARMOR, UnitType.ARTILLERY],
     damage: 75, fireRate: 1800, deployCooldown: 6000,
     color: '#f472b6',
+    sprite: { src: '/sprites/units/abrams/full-256-trimmed.png', frameCount: 1, frameWidth: 256, frameHeight: 256 },
     parts: ['tracks', 'hull', 'turret', 'gun', 'hatches', 'detail'],
     defaultColors: { tracks: '#2a2a2a', hull: '#5a5a5a', turret: '#6a6a6a', gun: '#1a1a1a', hatches: '#4a4a4a', detail: '#7a7a7a' },
     // Top-down: modern Abrams with angular turret, composite armor look (modern gray)
@@ -736,6 +1048,7 @@ export const UNITS = [
     types: [UnitType.ARTILLERY],
     damage: 60, fireRate: 2500, deployCooldown: 5500,
     color: '#fb923c',
+    sprite: { src: '/sprites/units/howitzer.png', frameCount: 1, frameWidth: 256, frameHeight: 256 },
     parts: ['tracks', 'hull', 'turret', 'gun', 'hatches', 'detail'],
     defaultColors: { tracks: '#2a2a2a', hull: '#5a6a4a', turret: '#6a7a5a', gun: '#1a1a1a', hatches: '#4a5a3a', detail: '#7a8a6a' },
     // Top-down: self-propelled howitzer with long barrel (olive)
@@ -785,6 +1098,7 @@ export const UNITS = [
     types: [UnitType.AIR, UnitType.RECON],
     damage: 8, fireRate: 500, deployCooldown: 2000,
     color: '#94a3b8',
+    sprite: { src: '/sprites/units/drone.png', frameCount: 2, frameWidth: 256, frameHeight: 256 },
     parts: ['body', 'camera', 'arms', 'rotors', 'motors', 'detail'],
     defaultColors: { body: '#4a4a4a', camera: '#2a4a6a', arms: '#3a3a3a', rotors: '#5a5a5a', motors: '#2a2a2a', detail: '#6a6a6a' },
     // Top-down: detailed quadcopter with camera pod (tech gray)
@@ -838,6 +1152,7 @@ export const UNITS = [
     types: [UnitType.AIR],
     damage: 45, fireRate: 900, deployCooldown: 5000,
     color: '#7c3aed',
+    sprite: { src: '/sprites/units/apache.png', frameCount: 2, frameWidth: 256, frameHeight: 256 },
     parts: ['body', 'cockpit', 'wings', 'weapons', 'rotor', 'tail'],
     defaultColors: { body: '#3a4a2a', cockpit: '#2a4a5a', wings: '#4a5a3a', weapons: '#1a1a1a', rotor: '#5a5a5a', tail: '#3a4a2a' },
     // Top-down: detailed Apache with rotor, stub wings, weapons (military olive) - narrow fuselage
@@ -1113,3 +1428,21 @@ export function getTerrainSVG(terrainType, row, gridHeight) {
   }
   return TERRAIN_SVGS[terrainType] || TERRAIN_SVGS.open;
 }
+
+// ═══════════════════════════════════════════════════════════════
+// SHADOW SYSTEM
+// ═══════════════════════════════════════════════════════════════
+
+export const SHADOW_CONFIG = {
+  enabled: true,
+  // Sun angle in degrees (0 = directly overhead, 45 = afternoon)
+  sunAngle: 35,
+  // Sun direction in degrees (0 = from east, 90 = from south, 180 = from west)
+  sunDirection: 135,
+  // Shadow opacity (0-1)
+  opacity: 0.25,
+  // Shadow scale Y (vertical squish, 0.3 = 30% height)
+  scaleY: 0.4,
+  // Shadow blur in pixels
+  blur: 2
+};

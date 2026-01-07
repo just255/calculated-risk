@@ -2,7 +2,7 @@
 // STATE - Game state object and battle factory
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, H2H_BUDGET, CAMPAIGN_HERO_UNITS, UNITS } from './constants.js';
+import { State, SubState, HQTab, H2H_BUDGET, CAMPAIGN_HERO_UNITS, UNITS, ZoneOwner, ScenarioType, Biome, BIOME_TERRAIN } from './constants.js';
 
 export const Game = {
   state: State.MENU,
@@ -16,7 +16,14 @@ export const Game = {
   settings: {
     sound: true,
     difficulty: 'normal',
-    mode: 'waves'
+    mode: 'waves',
+    // Control settings
+    controls: {
+      joystickDragThreshold: 8,      // Pixels to drag before joystick activates
+      joystickActivationRadius: 80,  // Pixels from anchor to activate joystick
+      gestureHoldTime: 1000,         // Ms to hold for artillery
+      gestureTapInterval: 300        // Ms between multi-taps
+    }
   },
 
   // Persistent across sessions
@@ -31,10 +38,11 @@ export const Game = {
 
   // Player progression (persistent)
   player: {
-    unlockedUnits: ['infantry'],  // Only infantry starts unlocked
+    unlockedUnits: ['infantry', 'abrams'],  // Infantry + Abrams for testing
     upgrades: {},                 // { unitId: { damage: 0, fireRate: 0 } }
     lineup: [0, 0, 0],            // Unit indices for the 3 lanes
-    unitColors: {}                // { unitId: { partName: '#color', ... } } - custom colors per unit
+    unitColors: {},               // { unitId: { partName: '#color', ... } } - custom colors per unit
+    spriteSelections: {}          // { unitId: { partName: 'spriteName', ... } | null } - custom sprites per unit, null = use default SVG
   },
 
   // Reset each battle
@@ -469,6 +477,9 @@ export function newCampaignBattle(era, mos, battlePlan) {
       const unitDef = UNITS.find(u => u.id === placement.unitId);
       const hp = unitDef?.hp || 100;
 
+      // Note: Smart positioning is handled by assignSmartPositions() in game.js
+      // Units without explicit positions will have them assigned after battle creation
+
       playerUnits.push({
         id: `unit_${index}`,  // Unique ID for aggro tracking
         unitId: placement.unitId,
@@ -483,11 +494,20 @@ export function newCampaignBattle(era, mos, battlePlan) {
         primaryPos: primaryPos,
         advancePos: advancePos,
         fallbackPos: fallbackPos,
-        currentDestination: primaryPos,  // Start moving to primary
+        currentDestination: primaryPos,  // Will be set by smart positioning if null
+        advanceTarget: null,              // Target for ADVANCING state
+        repositionTarget: null,           // Target for REPOSITIONING state
         isSupport: placement.isSupport || false,
-        // AI state
-        aiState: primaryPos ? 'moving_to_position' : 'defending',
-        reachedDestination: false
+        // AI stance (determines proactive behavior)
+        stance: placement.isSupport ? 'support' : 'autonomous',
+        // AI state - starts idle, will advance proactively
+        aiState: 'idle',
+        reachedDestination: false,
+        // Squad system
+        targetPriority: 'nearest',  // 'nearest' | 'weakest' | 'strongest' | 'armor' | 'infantry' | etc.
+        currentOrder: 'hold',       // Current order this unit is following
+        hasIndividualOrder: false,  // True if unit has override order (not following squad)
+        isSelected: false           // UI selection state
       });
     });
   }
@@ -515,7 +535,10 @@ export function newCampaignBattle(era, mos, battlePlan) {
             waypoints: waypoints,
             currentWaypoint: 0,
             aiBehavior: cell.aiBehavior || null,
-            aiState: waypoints.length > 0 ? 'moving' : 'defending'
+            aiState: 'idle',  // Will proactively advance
+            stance: 'autonomous',
+            advanceTarget: null,
+            repositionTarget: null
           });
         }
       }
@@ -582,11 +605,527 @@ export function newCampaignBattle(era, mos, battlePlan) {
     result: null,  // 'victory' | 'defeat'
     kills: 0,
 
-    // Front line command state
+    // Front line command state (legacy - will be replaced by squad system)
     frontLineState: 'hold',  // 'advance' | 'hold' | 'retreat'
 
     // Pending command (for move orders etc)
-    pendingCommand: null
+    pendingCommand: null,
+
+    // === SQUAD SYSTEM ===
+    squad: {
+      // Squad-wide stance (determines proactive behavior for all units)
+      stance: 'autonomous',  // 'autonomous' | 'aggressive' | 'defensive' | 'support'
+
+      // Squad-wide order (applies to all units unless they have individual orders)
+      currentOrder: 'hold',  // 'hold' | 'advance' | 'fallback' | 'suppress' | 'flank' | 'digIn'
+
+      // Formation
+      formation: 'line',  // 'line' | 'wedge' | 'column' | 'spread' | 'auto'
+
+      // Custom formations (saved by player)
+      customFormations: [],  // Array of { name, positions: [{offsetX, offsetY}, ...] }
+
+      // Selection state
+      selectedUnitId: null,  // ID of selected unit (null = whole squad or none)
+      selectionMode: 'none', // 'none' | 'squad' | 'unit'
+
+      // Multi-select mode
+      multiSelectMode: false,  // true when multi-select toggle is on
+      selectedUnits: [],       // Array of unit IDs when in multi-select mode
+
+      // Concentrate fire target
+      concentrateTarget: null  // Enemy ID that all units should focus
+    },
+
+    // Spotted enemies (enemies that have been seen by hero or any unit)
+    spottedEnemies: [],  // Array of { enemyId, lastSeenX, lastSeenY, lastSeenTime, isVisible }
+
+    // Command mode for radio UI
+    commandMode: null,  // null | 'selectTarget' | 'selectLocation'
+    commandAction: null, // The action waiting for target selection
+
+    // Radio popup UI state
+    radioOpen: false  // Whether the radio command popup is open
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ZONE BATTLE SYSTEM - Scrolling zone-capture battles
+// ═══════════════════════════════════════════════════════════════
+
+// Zone name generator based on position
+function getZoneName(index, total) {
+  const names = [
+    ['Beachhead', 'Landing Zone', 'Shore Defense'],
+    ['Fields', 'No Man\'s Land', 'Open Ground', 'Crossroads'],
+    ['Village', 'Outskirts', 'Town Center'],
+    ['Forest', 'Woods', 'Thicket'],
+    ['Stronghold', 'Fortress', 'Enemy HQ', 'Final Stand']
+  ];
+
+  // First zone = beach-type names, last zone = stronghold names
+  if (index === 0) return names[0][Math.floor(Math.random() * names[0].length)];
+  if (index === total - 1) return names[4][Math.floor(Math.random() * names[4].length)];
+
+  // Middle zones pick from fields/village/forest
+  const midNames = [...names[1], ...names[2], ...names[3]];
+  return midNames[Math.floor(Math.random() * midNames.length)];
+}
+
+// Get biome for zone based on position
+function getZoneBiome(index, total) {
+  // Progression: beach → fields → forest/urban → fortress
+  if (index === 0) return Biome.BEACH;
+  if (index === total - 1) return Biome.FORTRESS;
+
+  // Middle zones alternate
+  const midBiomes = [Biome.FIELDS, Biome.FOREST, Biome.URBAN];
+  return midBiomes[(index - 1) % midBiomes.length];
+}
+
+// Create a zone object
+export function createZone(id, config = {}) {
+  const rowsPerZone = config.rowsPerZone || 24;
+
+  return {
+    id,
+    name: config.name || `Zone ${id}`,
+    owner: config.owner || ZoneOwner.NEUTRAL,
+    startRow: config.startRow ?? (id * rowsPerZone),
+    endRow: config.endRow ?? ((id + 1) * rowsPerZone - 1),
+    biome: config.biome || Biome.FIELDS,
+    terrain: config.terrain || null,  // null = generate, or 2D array for pre-designed
+    spawnPoints: config.spawnPoints || [],
+    enemiesRemaining: config.enemiesRemaining ?? 10,
+    enemiesActive: 0,
+    captureProgress: 0,  // 0-100 for contested zones
+    timer: config.timer ?? 120000,  // ms, time limit for zone
+    timerStarted: false,
+    rewards: config.rewards || { scrap: 100 }
+  };
+}
+
+// Create an advancing scenario (player pushes from south to north)
+// Zone 0 = BOTTOM (player start), Zone N-1 = TOP (enemy stronghold)
+export function createAdvancingScenario(name, zoneCount = 3, config = {}) {
+  const zones = [];
+  const rowsPerZone = config.rowsPerZone || 24;
+  const mapWidth = config.mapWidth || 16;  // Narrower map (was 24)
+  const totalRows = zoneCount * rowsPerZone;
+
+  for (let i = 0; i < zoneCount; i++) {
+    // REVERSED: Zone 0 at bottom (high rows), Zone N-1 at top (low rows)
+    const zoneIndex = zoneCount - 1 - i;  // Reverse for row calculation
+    const zone = createZone(i, {
+      name: getZoneName(i, zoneCount),
+      owner: i === 0 ? ZoneOwner.PLAYER : ZoneOwner.ENEMY,
+      startRow: zoneIndex * rowsPerZone,  // Zone 0 gets highest rows
+      endRow: (zoneIndex + 1) * rowsPerZone - 1,
+      biome: getZoneBiome(i, zoneCount),
+      rowsPerZone,
+      enemiesRemaining: 10 + i * 5,  // More enemies in later zones
+      timer: 120000,  // 2 minutes per zone
+      rewards: { scrap: 100 + i * 50 }
+    });
+    zones.push(zone);
+  }
+
+  return {
+    type: ScenarioType.ADVANCING,
+    name: name || 'Operation Advance',
+    description: config.description || 'Push through enemy territory to capture the stronghold',
+    zones,
+    mapWidth,
+    totalRows,
+    playerStartZone: 0,
+    enemyStartZone: zoneCount - 1,
+    allowZoneLoss: false,  // Advancing scenarios don't allow zone loss
+    globalTimer: config.globalTimer || null,
+    victoryCondition: 'capture_all',
+    defeatCondition: 'hero_death'
+  };
+}
+
+// Create a frontline scenario (tug-of-war, zones can be lost)
+// Zone 0 = BOTTOM (player home), Zone N-1 = TOP (enemy home)
+export function createFrontlineScenario(name, zoneCount = 5, config = {}) {
+  const zones = [];
+  const rowsPerZone = config.rowsPerZone || 24;
+  const mapWidth = config.mapWidth || 16;  // Narrower map (was 24)
+  const totalRows = zoneCount * rowsPerZone;
+  const midZone = Math.floor(zoneCount / 2);
+
+  for (let i = 0; i < zoneCount; i++) {
+    // Determine initial ownership (zone 0 = player, zone N-1 = enemy)
+    let owner;
+    if (i < midZone) owner = ZoneOwner.PLAYER;
+    else if (i > midZone) owner = ZoneOwner.ENEMY;
+    else owner = ZoneOwner.CONTESTED;
+
+    // REVERSED: Zone 0 at bottom (high rows), Zone N-1 at top (low rows)
+    const zoneIndex = zoneCount - 1 - i;
+    const zone = createZone(i, {
+      name: getZoneName(i, zoneCount),
+      owner,
+      startRow: zoneIndex * rowsPerZone,
+      endRow: (zoneIndex + 1) * rowsPerZone - 1,
+      biome: getZoneBiome(i, zoneCount),
+      rowsPerZone,
+      enemiesRemaining: 8 + Math.abs(i - midZone) * 3,
+      timer: 90000,  // 90 seconds per zone
+      rewards: { scrap: 75 + Math.abs(i - midZone) * 25 }
+    });
+
+    // Start timer for middle contested zone
+    if (i === midZone) zone.timerStarted = true;
+
+    zones.push(zone);
+  }
+
+  return {
+    type: ScenarioType.FRONTLINE,
+    name: name || 'Operation Frontline',
+    description: config.description || 'Hold the line and push back the enemy forces',
+    zones,
+    mapWidth,
+    totalRows,
+    playerStartZone: 0,  // Player starts at zone 0 (bottom)
+    enemyStartZone: zoneCount - 1,  // Enemy at zone N-1 (top)
+    allowZoneLoss: true,  // Frontline allows zone loss
+    globalTimer: config.globalTimer || 600000,  // 10 minute total battle
+    victoryCondition: 'capture_all',
+    defeatCondition: 'lose_home_zone'
+  };
+}
+
+// Generate spawn points for a zone
+// Enemies spawn at the BACK of the zone (near north edge for enemy zones)
+// Returns RELATIVE row positions (0 = zone.startRow, 1 = zone.startRow + 1, etc.)
+export function generateZoneSpawnPoints(zone, mapWidth, count = 5) {
+  const points = [];
+
+  // Spawn from TOP/BACK of zone (low relative rows = north edge of zone)
+  // Row 1-3 relative = near the north edge of the zone
+  for (let i = 0; i < count; i++) {
+    points.push({
+      col: 2 + Math.floor(Math.random() * (mapWidth - 4)),  // Avoid edges
+      row: 1 + Math.floor(Math.random() * 3),  // Relative rows 1-3 (back of zone)
+      type: 'standard'
+    });
+  }
+
+  return points;
+}
+
+// Generate terrain for a single zone based on biome with CLUSTERING
+export function generateZoneTerrain(zone, mapWidth, previousEdge = null) {
+  const rows = zone.endRow - zone.startRow + 1;
+  const terrain = [];
+  const biomeWeights = BIOME_TERRAIN[zone.biome] || BIOME_TERRAIN.fields;
+
+  // Initialize with base terrain (open or grass)
+  const baseType = Math.random() < 0.6 ? 'open' : 'grass';
+  for (let r = 0; r < rows; r++) {
+    const row = [];
+    for (let c = 0; c < mapWidth; c++) {
+      row.push(baseType);
+    }
+    terrain.push(row);
+  }
+
+  // Blend with previous zone edge for first 2 rows
+  if (previousEdge) {
+    for (let r = 0; r < Math.min(2, rows); r++) {
+      const blendRow = previousEdge[previousEdge.length - 2 + r];
+      if (blendRow) {
+        for (let c = 0; c < mapWidth; c++) {
+          if (Math.random() < 0.7) terrain[r][c] = blendRow[c] || baseType;
+        }
+      }
+    }
+  }
+
+  // Helper to place clustered features
+  function placeCluster(type, centerR, centerC, size, chance = 0.7) {
+    for (let dr = -size; dr <= size; dr++) {
+      for (let dc = -size; dc <= size; dc++) {
+        const r = centerR + dr;
+        const c = centerC + dc;
+        if (r >= 0 && r < rows && c >= 0 && c < mapWidth) {
+          // Falloff from center
+          const dist = Math.sqrt(dr * dr + dc * dc);
+          const falloff = 1 - (dist / (size + 1));
+          if (Math.random() < chance * falloff) {
+            terrain[r][c] = type;
+          }
+        }
+      }
+    }
+  }
+
+  // Place water features (rivers/ponds) - fewer, larger
+  if (biomeWeights.water > 0.1) {
+    const waterCount = 1 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < waterCount; i++) {
+      const r = 3 + Math.floor(Math.random() * (rows - 6));
+      const c = 2 + Math.floor(Math.random() * (mapWidth - 4));
+      // River-like: horizontal or vertical stretch
+      if (Math.random() < 0.5) {
+        // Horizontal river
+        const length = 4 + Math.floor(Math.random() * 6);
+        for (let dc = 0; dc < length && c + dc < mapWidth - 1; dc++) {
+          terrain[r][c + dc] = 'water';
+          if (r > 0 && Math.random() < 0.3) terrain[r - 1][c + dc] = 'water';
+        }
+      } else {
+        // Pond cluster
+        placeCluster('water', r, c, 2, 0.6);
+      }
+    }
+  }
+
+  // Place brush/vegetation clusters
+  if (biomeWeights.brush > 0.05) {
+    const brushCount = 2 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < brushCount; i++) {
+      const r = 2 + Math.floor(Math.random() * (rows - 4));
+      const c = 2 + Math.floor(Math.random() * (mapWidth - 4));
+      placeCluster('brush', r, c, 2 + Math.floor(Math.random() * 2), 0.65);
+    }
+  }
+
+  // Place forest clusters (larger, with brush edges)
+  if (biomeWeights.forest > 0) {
+    const forestCount = Math.floor(biomeWeights.forest * 5);
+    for (let i = 0; i < forestCount; i++) {
+      const r = 3 + Math.floor(Math.random() * (rows - 6));
+      const c = 3 + Math.floor(Math.random() * (mapWidth - 6));
+      const size = 2 + Math.floor(Math.random() * 2);
+      // Forest core
+      placeCluster('forest', r, c, size, 0.75);
+      // Brush edge around forest
+      placeCluster('brush', r, c, size + 1, 0.3);
+    }
+  }
+
+  // Place structures (trenches, pillboxes) - sparse
+  if (biomeWeights.trench > 0) {
+    const trenchCount = Math.ceil(biomeWeights.trench * 3);
+    for (let i = 0; i < trenchCount; i++) {
+      const r = 4 + Math.floor(Math.random() * (rows - 8));
+      const c = 2 + Math.floor(Math.random() * (mapWidth - 6));
+      const length = 3 + Math.floor(Math.random() * 4);
+      for (let dc = 0; dc < length && c + dc < mapWidth - 1; dc++) {
+        if (terrain[r][c + dc] !== 'water') {
+          terrain[r][c + dc] = 'trench';
+        }
+      }
+    }
+  }
+
+  if (biomeWeights.pillbox > 0) {
+    const pillboxCount = Math.ceil(biomeWeights.pillbox * 3);
+    for (let i = 0; i < pillboxCount; i++) {
+      const r = 3 + Math.floor(Math.random() * (rows - 6));
+      const c = 2 + Math.floor(Math.random() * (mapWidth - 4));
+      if (terrain[r][c] !== 'water') {
+        terrain[r][c] = 'pillbox';
+      }
+    }
+  }
+
+  // Place high ground (ridges)
+  if (biomeWeights.high > 0) {
+    const ridgeCount = Math.ceil(biomeWeights.high * 2);
+    for (let i = 0; i < ridgeCount; i++) {
+      const r = 5 + Math.floor(Math.random() * (rows - 10));
+      const c = 2 + Math.floor(Math.random() * (mapWidth - 8));
+      const length = 4 + Math.floor(Math.random() * 5);
+      for (let dc = 0; dc < length && c + dc < mapWidth - 2; dc++) {
+        terrain[r][c + dc] = 'high';
+        // Slight vertical extension
+        if (Math.random() < 0.3 && r > 0) terrain[r - 1][c + dc] = 'high';
+      }
+    }
+  }
+
+  return terrain;
+}
+
+// Generate terrain for entire scenario (all zones stitched together)
+export function generateZonedTerrain(scenario) {
+  const terrain = [];
+  let previousEdge = null;
+
+  for (const zone of scenario.zones) {
+    if (zone.terrain) {
+      // Pre-designed map section
+      terrain.push(...zone.terrain);
+      previousEdge = zone.terrain.slice(-2);
+    } else {
+      // Generate based on biome, blend with previous zone
+      const section = generateZoneTerrain(zone, scenario.mapWidth, previousEdge);
+      terrain.push(...section);
+      previousEdge = section.slice(-2);
+
+      // Store generated terrain back to zone
+      zone.terrain = section;
+    }
+
+    // Generate spawn points if not defined
+    if (!zone.spawnPoints || zone.spawnPoints.length === 0) {
+      zone.spawnPoints = generateZoneSpawnPoints(zone, scenario.mapWidth, zone.enemiesRemaining);
+    }
+  }
+
+  return terrain;
+}
+
+// Create starting squad of allied units for zone battles
+function createStartingSquad(heroX, heroY, cellSize) {
+  const units = [];
+
+  // Starting squad composition: 4 infantry spread around the hero
+  const squadPositions = [
+    { dx: -cellSize * 1.5, dy: 0 },      // Left
+    { dx: cellSize * 1.5, dy: 0 },       // Right
+    { dx: -cellSize * 0.75, dy: cellSize },    // Back-left
+    { dx: cellSize * 0.75, dy: cellSize },     // Back-right
+  ];
+
+  squadPositions.forEach((pos, i) => {
+    units.push({
+      id: `ally_${i}`,
+      unitId: 'infantry',
+      x: heroX + pos.dx,
+      y: heroY + pos.dy,
+      hp: 50,
+      maxHp: 50,
+      damage: 8,
+      fireRate: 1200,
+      lastShot: 0,
+      speed: 80,
+      angle: -Math.PI / 2,  // Face north
+      currentOrder: 'hold',
+      hasIndividualOrder: false,
+      supportTarget: null,
+      protectTarget: null,
+      moveTarget: null
+    });
+  });
+
+  return units;
+}
+
+// Zone battle factory - creates a battle from a scenario
+export function newZoneBattle(era, mos, scenario) {
+  const CELL_SIZE = 64;
+
+  // Generate terrain for all zones
+  const terrain = generateZonedTerrain(scenario);
+
+  // Find the starting zone for player (zone 0 = bottom, high row numbers)
+  const startZone = scenario.zones[scenario.playerStartZone];
+
+  // Hero position: near bottom of start zone (high row = bottom of screen)
+  // startZone.endRow is the highest row number in the zone
+  const heroX = (scenario.mapWidth / 2) * CELL_SIZE;
+  const heroY = (startZone.endRow - 2) * CELL_SIZE;  // 2 rows up from bottom of zone
+
+  // Get hero stats
+  const eraUnits = CAMPAIGN_HERO_UNITS[era] || CAMPAIGN_HERO_UNITS[1];
+  const heroStats = eraUnits[mos] || eraUnits.infantry;
+
+  // Find first non-player zone as active zone (the one player needs to capture next)
+  // Zones are sorted by id (0, 1, 2...) where 0 is player home at bottom
+  const activeZoneIndex = scenario.zones.findIndex(z => z.owner !== ZoneOwner.PLAYER);
+
+  // Calculate map height
+  const mapHeight = scenario.totalRows * CELL_SIZE;
+
+  return {
+    // Scenario reference
+    scenario,
+    zones: scenario.zones.map(z => ({ ...z })),  // Deep copy zones
+    activeZoneIndex: activeZoneIndex >= 0 ? activeZoneIndex : 0,
+
+    // Front line tracking (Y position where enemy zones start - lower Y = further north)
+    frontLineY: activeZoneIndex >= 0
+      ? scenario.zones[activeZoneIndex].endRow * CELL_SIZE  // Bottom edge of contested zone
+      : mapHeight / 2,
+
+    // Zone transition animation state
+    zoneTransition: null,
+
+    // Cell/grid config
+    cellSize: CELL_SIZE,
+    gridWidth: scenario.mapWidth,
+    gridHeight: scenario.totalRows,
+
+    // Map size in pixels
+    mapWidth: scenario.mapWidth * CELL_SIZE,
+    mapHeight,
+
+    // Terrain
+    terrain,
+
+    // Camera position - start looking at hero (near bottom of map)
+    camera: { x: 0, y: heroY - 300 },
+
+    // Hero
+    hero: {
+      x: heroX,
+      y: heroY,
+      angle: -Math.PI / 2,  // Face UP (north)
+      hp: heroStats.hp,
+      maxHp: heroStats.hp,
+      speed: heroStats.speed,
+      damage: heroStats.damage,
+      fireRate: heroStats.fireRate,
+      lastShot: 0,
+      unitId: heroStats.id,
+      mos,
+      isHero: true
+    },
+
+    // Player units - spawn a starting squad near the hero
+    units: createStartingSquad(heroX, heroY, CELL_SIZE),
+
+    // Input state
+    keys: { w: false, a: false, s: false, d: false },
+    mouse: { x: 0, y: 0, down: false },
+
+    // Enemies
+    enemies: [],
+
+    // Projectiles & Effects
+    projectiles: [],
+    effects: [],
+
+    // Result
+    result: null,
+    kills: 0,
+
+    // Squad system
+    squad: {
+      stance: 'autonomous',
+      currentOrder: 'hold',
+      formation: 'line',
+      customFormations: [],
+      selectedUnitId: null,
+      selectionMode: 'none',
+      multiSelectMode: false,
+      selectedUnits: [],
+      concentrateTarget: null
+    },
+
+    // Spotted enemies
+    spottedEnemies: [],
+
+    // Command mode
+    commandMode: null,
+    commandAction: null,
+    radioOpen: false
   };
 }
 

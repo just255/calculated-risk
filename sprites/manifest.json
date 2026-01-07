@@ -1,0 +1,80 @@
+{
+  "version": "1.0",
+  "units": {
+    "abrams": {
+      "name": "abrams",
+      "category": "unknown",
+      "parts": {
+        "accessories": [],
+        "armor_plates": [],
+        "cannon": [
+          {
+            "id": "abrams-cannon-default",
+            "name": "abrams-cannon-default",
+            "file": "abrams-cannon-default/sprite.png",
+            "frameCount": 1,
+            "snapPoints": [
+              {
+                "id": "snap_1767724379288",
+                "name": "cannon_mount",
+                "x": 0.5,
+                "y": 44,
+                "type": "cannon_mount",
+                "rotation": 0
+              }
+            ]
+          }
+        ],
+        "hatches": [],
+        "hull": [
+          {
+            "id": "abrams-hull-default",
+            "name": "abrams-hull-default",
+            "file": "abrams-hull-default/sprite.png",
+            "frameCount": 1
+          },
+          {
+            "id": "abrams-hull-alpha",
+            "name": "abrams-hull-alpha",
+            "file": "abrams-hull-alpha.png",
+            "frameCount": 1
+          },
+          {
+            "id": "tank_hull_alpha_color_matched",
+            "name": "tank_hull_alpha_color_matched",
+            "file": "tank_hull_alpha_color_matched.png",
+            "frameCount": 1
+          }
+        ],
+        "null": [
+          {
+            "id": "default",
+            "name": "default",
+            "file": "default/sprite.png",
+            "frameCount": 1
+          }
+        ],
+        "tracks": [],
+        "turret": [
+          {
+            "id": "abrams-turret-default",
+            "name": "abrams-turret-default",
+            "file": "abrams-turret-default/sprite.png",
+            "frameCount": 1,
+            "snapPoints": [
+              {
+                "id": "snap_1767564609764",
+                "name": "cannon_mount",
+                "x": -0.5,
+                "y": -48,
+                "type": "cannon_mount",
+                "rotation": 0
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "terrain": {}
+}

@@ -2,11 +2,11 @@
 // GAME - Battle logic, game loop, update, draw
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, UNITS, ENEMIES, getTypeMultiplier, UNIT_COSTS, H2H_BUDGET, PROJECTILES, UNIT_PROJECTILES, UNIT_COMBAT_STATS, getTerrainSVG } from './constants.js';
+import { State, SubState, HQTab, UNITS, ENEMIES, getTypeMultiplier, UNIT_COSTS, H2H_BUDGET, PROJECTILES, UNIT_PROJECTILES, UNIT_COMBAT_STATS, getTerrainSVG, getStanceModifier, getEnemyStance, ZoneOwner, ScenarioType, SHADOW_CONFIG } from './constants.js';
 import { Game, newBattle, newH2H, newCampaign, newCampaignBattle } from './state.js';
 import { sound } from './audio.js';
 import { save } from './storage.js';
-import { render, setSubState, getCustomizedSvg, getCustomizedSvgFrames, getEntitySvg, getEntitySvgFrames, drawCommandUI } from './ui.js';
+import { render, setSubState, getCustomizedSvg, getCustomizedSvgFrames, getEntitySvg, getEntitySvgFrames, drawCommandUI, getUnitVisual, getUnitShadow } from './ui.js';
 import {
   isBlocked,
   findTargetsInRange,
@@ -30,7 +30,9 @@ import {
   clearWaypoints,
   setWaypointsFromGrid,
   recordDamage,
-  ENTITY_RADIUS
+  ENTITY_RADIUS,
+  issueFrontLineCommand,
+  assignSmartPositions
 } from './ai.js';
 
 // Get effective unit stats with upgrades applied
@@ -53,16 +55,26 @@ let loopId = null;
 let lastT = 0;
 let animFrame = 0; // Animation frame counter for track/wheel animation
 
-// Get animated SVG frame for units with svgFrames, otherwise return static svg
-// Applies faction-specific colors (player uses custom colors, enemy/ai uses enemy faction colors)
-function getUnitSvg(unitDef, faction = 'player') {
-  // Get faction-appropriate SVG frames if available
-  const frames = getEntitySvgFrames(unitDef, faction);
-  if (frames && frames.length > 0) {
-    return frames[animFrame % frames.length];
-  }
-  // Fall back to faction-appropriate static svg
-  return getEntitySvg(unitDef, faction);
+// Create a shadow element for a unit
+function createShadowElement(x, y, rotation = 0) {
+  if (!SHADOW_CONFIG.enabled) return null;
+
+  const shadow = document.createElement('div');
+  shadow.className = 'unit-shadow';
+
+  // Simple drop shadow: small offset in direction away from sun
+  const sunRad = (SHADOW_CONFIG.sunDirection * Math.PI) / 180;
+
+  // Offset shadow away from sun direction (4px)
+  const offsetX = -Math.cos(sunRad) * 4;
+  const offsetY = -Math.sin(sunRad) * 4;
+
+  shadow.style.left = `${x + offsetX}px`;
+  shadow.style.top = `${y + offsetY}px`;
+  shadow.style.transform = `rotate(${rotation}deg)`;
+  // Note: opacity is applied inline for PNG sprites to preserve transparency
+
+  return shadow;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -164,6 +176,8 @@ export function goto(newState, data = {}) {
           Game.campaign.mos,
           Game.campaign.battlePlan
         );
+        // Assign smart positions to units without explicit positions
+        assignSmartPositions(Game.campaign.heroBattle);
       }
       render();
       startCampaignLoop();
@@ -231,6 +245,7 @@ function spawnWave() {
       type,
       lane: Math.floor(Math.random() * 3),
       y: -60 - i * 100,
+      rotation: 180,  // Facing down (south)
       hp: Math.floor(def.health * scale),
       maxHp: Math.floor(def.health * scale)
     });
@@ -254,6 +269,7 @@ export function deploy(laneIdx) {
     lane.deployed.push({
       type: lane.unit,
       y: h - 80,
+      rotation: 0,  // Facing up (north)
       lastShot: 0
     });
 
@@ -610,45 +626,82 @@ function draw() {
     }
   });
 
-  // Clear entities
-  bf.querySelectorAll('.enemy, .unit, .explosion, .loot-drop, .projectile, .muzzle-flash, .impact').forEach(el => el.remove());
+  // Clear entities (including shadows)
+  bf.querySelectorAll('.enemy, .unit, .unit-shadow, .explosion, .loot-drop, .projectile, .muzzle-flash, .impact').forEach(el => el.remove());
 
-  // Draw enemies using their linked unit visuals with enemy faction colors
+  // Draw shadows first (behind all units)
+  if (SHADOW_CONFIG.enabled) {
+    // Enemy shadows
+    b.enemies.forEach(e => {
+      const enemyDef = ENEMIES[e.type];
+      const unitDef = UNITS.find(u => u.id === enemyDef.unitId);
+      const x = e.lane * laneW + (laneW - 50) / 2;
+      const content = unitDef ? getUnitShadow(unitDef, animFrame) : '';
+
+      const shadow = createShadowElement(x, e.y, e.rotation || 180);
+      if (shadow) {
+        shadow.innerHTML = content;
+        bf.appendChild(shadow);
+      }
+    });
+
+    // Player unit shadows
+    b.lanes.forEach((lane, li) => {
+      lane.deployed.forEach(u => {
+        const def = UNITS[u.type];
+        const x = li * laneW + (laneW - 50) / 2;
+        const content = getUnitShadow(def, animFrame);
+
+        const shadow = createShadowElement(x, u.y, u.rotation || 0);
+        if (shadow) {
+          shadow.innerHTML = content;
+          bf.appendChild(shadow);
+        }
+      });
+    });
+  }
+
+  // Draw enemies using their linked unit visuals (PNG or SVG)
   b.enemies.forEach(e => {
     const enemyDef = ENEMIES[e.type];
     const unitDef = UNITS.find(u => u.id === enemyDef.unitId);
+    const rotation = e.rotation ?? 180;
 
     const el = document.createElement('div');
     el.className = 'enemy';
     el.style.left = `${e.lane * laneW + (laneW - 50) / 2}px`;
     el.style.top = `${e.y}px`;
-    el.style.transform = 'rotate(180deg)'; // Enemies face downward
+    el.style.transform = `rotate(${rotation}deg)`;
 
-    // Use modular rendering with enemy faction colors
-    const svgContent = unitDef ? getUnitSvg(unitDef, 'enemy') : '';
+    const content = unitDef ? getUnitVisual(unitDef, 'enemy', animFrame) : '';
+    // Counter-rotate health bar so it stays upright
     el.innerHTML = `
-      ${svgContent}
-      <div class="health-pip" style="transform: rotate(180deg);"><div class="health-pip-fill" style="width:${(e.hp/e.maxHp)*100}%"></div></div>
+      ${content}
+      <div class="health-pip" style="transform: rotate(${-rotation}deg);"><div class="health-pip-fill" style="width:${(e.hp/e.maxHp)*100}%"></div></div>
     `;
     bf.appendChild(el);
   });
 
-  // Draw player units using player faction colors
+  // Draw player units (PNG or SVG)
   b.lanes.forEach((lane, li) => {
     lane.deployed.forEach(u => {
       const def = UNITS[u.type];
+      const rotation = u.rotation ?? 0;
+
       const el = document.createElement('div');
       el.className = 'unit';
       el.style.left = `${li * laneW + (laneW - 50) / 2}px`;
       el.style.top = `${u.y}px`;
+      el.style.transform = `rotate(${rotation}deg)`;
 
       // Show health bar if unit has taken damage
       const hpPercent = u.hp && u.maxHp ? (u.hp / u.maxHp) * 100 : 100;
       const showHealthBar = u.hp && u.hp < u.maxHp;
 
+      // Counter-rotate health bar so it stays upright
       el.innerHTML = `
-        ${getUnitSvg(def, 'player')}
-        ${showHealthBar ? `<div class="health-pip player-hp"><div class="health-pip-fill" style="width:${hpPercent}%"></div></div>` : ''}
+        ${getUnitVisual(def, 'player', animFrame)}
+        ${showHealthBar ? `<div class="health-pip player-hp" style="transform: rotate(${-rotation}deg);"><div class="health-pip-fill" style="width:${hpPercent}%"></div></div>` : ''}
       `;
       bf.appendChild(el);
     });
@@ -1305,7 +1358,7 @@ function drawH2H() {
     el.className = 'h2h-unit player-attacker';
     el.style.left = `${a.lane * laneW + (laneW - 40) / 2}px`;
     el.style.top = `${a.y}px`;
-    el.innerHTML = getUnitSvg(unit, 'player');
+    el.innerHTML = getUnitVisual(unit, 'player', animFrame);
     bf.appendChild(el);
   });
 
@@ -1316,7 +1369,7 @@ function drawH2H() {
     el.className = 'h2h-unit ai-attacker';
     el.style.left = `${a.lane * laneW + (laneW - 40) / 2}px`;
     el.style.top = `${a.y}px`;
-    el.innerHTML = getUnitSvg(unit, 'enemy');
+    el.innerHTML = getUnitVisual(unit, 'enemy', animFrame);
     el.style.transform = 'rotate(180deg)';
     bf.appendChild(el);
   });
@@ -1350,6 +1403,14 @@ let campaignLastT = 0;
 
 function startCampaignLoop() {
   if (campaignLoopId) return;
+
+  // Activate initial zone spawning for zone battles
+  const b = Game.campaign?.heroBattle;
+  if (b?.scenario && !b.zoneSpawningStarted) {
+    activateInitialZone(b);
+    b.zoneSpawningStarted = true;
+  }
+
   campaignLastT = performance.now();
   campaignLoopId = requestAnimationFrame(campaignLoop);
 }
@@ -1376,6 +1437,577 @@ function campaignLoop(t) {
   campaignLoopId = requestAnimationFrame(campaignLoop);
 }
 
+// ═══════════════════════════════════════════════════════════════
+// ZONE BATTLE SYSTEM - Spawning, capture, and zone management
+// ═══════════════════════════════════════════════════════════════
+
+// Initialize zone spawning for the active zone
+function beginZoneSpawning(b, zone) {
+  const CELL_SIZE = b.cellSize || 64;
+
+  // Generate spawn schedule
+  zone.spawnSchedule = [];
+  zone.spawnIndex = 0;
+  zone.nextSpawnTime = 2000;  // Initial delay
+
+  let time = 2000;
+  const totalEnemies = zone.enemiesRemaining;
+
+  for (let i = 0; i < totalEnemies; i++) {
+    const spawnPoint = zone.spawnPoints[i % zone.spawnPoints.length];
+
+    zone.spawnSchedule.push({
+      time,
+      x: (spawnPoint.col + 0.5) * CELL_SIZE,
+      y: (zone.startRow + spawnPoint.row + 0.5) * CELL_SIZE,
+      type: selectEnemyType(zone, i)
+    });
+
+    // Cluster spawns in groups of 3-5
+    if ((i + 1) % 4 === 0) {
+      time += 5000 + Math.random() * 3000;  // 5-8 second gap between groups
+    } else {
+      time += 500 + Math.random() * 1000;  // 0.5-1.5 second gap within group
+    }
+  }
+
+  zone.spawnStartTime = Date.now();
+}
+
+// Select enemy type based on zone and progression
+function selectEnemyType(zone, index) {
+  // Later enemies in zone are stronger
+  const progression = index / Math.max(1, zone.enemiesRemaining);
+
+  // Basic distribution - adjust based on zone difficulty
+  const types = ['infantry', 'infantry', 'jeep'];
+  if (progression > 0.3) types.push('infantry', 'jeep');
+  if (progression > 0.5) types.push('sherman');
+  if (progression > 0.7) types.push('sherman', 'tiger');
+
+  return types[Math.floor(Math.random() * types.length)];
+}
+
+// Update zone spawning - spawn enemies on schedule
+function updateZoneSpawning(b, dt) {
+  if (!b.scenario || !b.zones) return;
+
+  const zone = b.zones[b.activeZoneIndex];
+  if (!zone || !zone.spawnSchedule || zone.spawnIndex >= zone.spawnSchedule.length) return;
+
+  const elapsed = Date.now() - zone.spawnStartTime;
+
+  // Spawn enemies that are due
+  while (zone.spawnIndex < zone.spawnSchedule.length) {
+    const spawn = zone.spawnSchedule[zone.spawnIndex];
+    if (elapsed < spawn.time) break;
+
+    // Spawn the enemy
+    spawnZoneEnemy(b, spawn, zone);
+    zone.enemiesRemaining--;
+    zone.spawnIndex++;
+  }
+}
+
+// Spawn a single enemy for zone battle
+function spawnZoneEnemy(b, spawn, zone) {
+  const isArmored = spawn.type === 'sherman' || spawn.type === 'tiger';
+  const baseHp = isArmored ? 60 : 30;
+  const baseDamage = isArmored ? 10 : 5;
+  const baseSpeed = isArmored ? 50 : 70;
+
+  // Scale based on zone (later zones = harder)
+  const zoneScale = 1 + zone.id * 0.2;
+
+  const enemy = {
+    id: `zone${zone.id}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+    x: spawn.x,
+    y: spawn.y,
+    hp: Math.round((baseHp + zone.id * 10) * zoneScale),
+    maxHp: Math.round((baseHp + zone.id * 10) * zoneScale),
+    speed: baseSpeed + Math.random() * 30,
+    damage: Math.round((baseDamage + zone.id * 2) * zoneScale),
+    aiType: selectEnemyAIType(zone),
+    unitId: spawn.type,
+    angle: Math.PI / 2,  // Face downward
+    zoneId: zone.id
+  };
+
+  b.enemies.push(enemy);
+  zone.enemiesActive++;
+}
+
+// Select AI type for enemy based on zone
+function selectEnemyAIType(zone) {
+  const types = ['BASIC', 'BASIC', 'BASIC'];
+  if (zone.id >= 1) types.push('RUSHER');
+  if (zone.id >= 2) types.push('HUNTER', 'CAUTIOUS');
+
+  return types[Math.floor(Math.random() * types.length)];
+}
+
+// Update zone timers
+function updateZoneTimers(b, dt) {
+  if (!b.scenario || !b.zones) return;
+
+  const zone = b.zones[b.activeZoneIndex];
+  if (!zone || zone.timer === null) return;
+
+  if (zone.timerStarted) {
+    zone.timer -= dt;
+
+    if (zone.timer <= 0) {
+      // Timer expired
+      if (b.scenario.type === ScenarioType.ADVANCING) {
+        // Spawn reinforcements, reset timer (harder)
+        zone.enemiesRemaining += 5;
+        beginZoneSpawning(b, zone);
+        zone.timer = 60000;  // Shorter timer next time
+        b.commandFeedback = { text: 'Enemy reinforcements arriving!', time: Date.now() };
+      } else {
+        // Frontline: lose the zone
+        loseZone(b, zone.id);
+      }
+    }
+  }
+}
+
+// Check if active zone is captured
+function checkZoneCapture(b) {
+  if (!b.scenario || !b.zones) return;
+
+  const zone = b.zones[b.activeZoneIndex];
+  if (!zone || zone.owner === ZoneOwner.PLAYER) return;
+
+  // Count live enemies in zone bounds
+  const CELL_SIZE = b.cellSize || 64;
+  const zoneStartY = zone.startRow * CELL_SIZE;
+  const zoneEndY = (zone.endRow + 1) * CELL_SIZE;
+
+  const enemiesInZone = b.enemies.filter(e =>
+    e.y >= zoneStartY && e.y < zoneEndY && !e.dead
+  );
+
+  zone.enemiesActive = enemiesInZone.length;
+
+  // Capture condition: no enemies left AND no more to spawn
+  if (zone.enemiesActive === 0 && zone.enemiesRemaining === 0 &&
+      (!zone.spawnSchedule || zone.spawnIndex >= zone.spawnSchedule.length)) {
+    captureZone(b, zone.id);
+  }
+}
+
+// Handle zone capture
+function captureZone(b, zoneIndex) {
+  const zone = b.zones[zoneIndex];
+  zone.owner = ZoneOwner.PLAYER;
+  zone.captureProgress = 0;
+
+  // Award rewards
+  if (zone.rewards) {
+    Game.resources.scrap += zone.rewards.scrap || 0;
+    Game.resources.parts += zone.rewards.parts || 0;
+  }
+
+  // Trigger celebration animation
+  b.zoneTransition = {
+    type: 'capture',
+    zoneIndex,
+    zoneName: zone.name,
+    rewards: zone.rewards,
+    progress: 0,
+    duration: 2000
+  };
+
+  sound('victory');
+  b.commandFeedback = { text: `Zone captured: ${zone.name}!`, time: Date.now() };
+
+  // Advance to next zone if exists
+  const nextZoneIndex = zoneIndex + 1;
+  if (nextZoneIndex < b.zones.length) {
+    b.activeZoneIndex = nextZoneIndex;
+    const nextZone = b.zones[nextZoneIndex];
+
+    // Start spawning and timer for next zone
+    beginZoneSpawning(b, nextZone);
+    nextZone.timerStarted = true;
+  } else {
+    // All zones captured - victory!
+    checkZoneVictory(b);
+  }
+}
+
+// Check zone loss (for frontline mode)
+function checkZoneLoss(b) {
+  if (!b.scenario || !b.scenario.allowZoneLoss) return;
+
+  const CELL_SIZE = b.cellSize || 64;
+
+  // Check player-owned zones for enemy presence
+  for (const zone of b.zones) {
+    if (zone.owner !== ZoneOwner.PLAYER) continue;
+
+    const zoneStartY = zone.startRow * CELL_SIZE;
+    const zoneEndY = (zone.endRow + 1) * CELL_SIZE;
+
+    const enemiesInZone = b.enemies.filter(e =>
+      e.y >= zoneStartY && e.y < zoneEndY && !e.dead
+    ).length;
+
+    const alliesInZone = b.units.filter(u =>
+      u.y >= zoneStartY && u.y < zoneEndY && !u.dead
+    ).length;
+
+    // Hero counts as ally if in zone
+    const heroInZone = b.hero.y >= zoneStartY && b.hero.y < zoneEndY;
+
+    // Enemies holding zone with no resistance
+    if (enemiesInZone >= 3 && alliesInZone === 0 && !heroInZone) {
+      zone.captureProgress += 0.02;  // ~50 seconds to lose at 60fps
+
+      if (zone.captureProgress >= 100) {
+        loseZone(b, zone.id);
+      }
+    } else {
+      zone.captureProgress = Math.max(0, zone.captureProgress - 0.01);
+    }
+  }
+}
+
+// Handle zone loss
+function loseZone(b, zoneIndex) {
+  const zone = b.zones[zoneIndex];
+  zone.owner = ZoneOwner.ENEMY;
+  zone.captureProgress = 0;
+
+  // Trigger loss animation
+  b.zoneTransition = {
+    type: 'loss',
+    zoneIndex,
+    zoneName: zone.name,
+    progress: 0,
+    duration: 1500
+  };
+
+  sound('defeat');
+  b.commandFeedback = { text: `Zone lost: ${zone.name}!`, time: Date.now() };
+
+  // Check defeat condition
+  if (zoneIndex === 0 && b.scenario.defeatCondition === 'lose_home_zone') {
+    b.result = 'defeat';
+    goto(State.CAMPAIGN_RESULT);
+  }
+
+  // Enemies will now spawn from this zone
+  zone.enemiesRemaining = 8 + zoneIndex * 3;
+  beginZoneSpawning(b, zone);
+}
+
+// Check victory conditions for zone battle
+function checkZoneVictory(b) {
+  if (!b.scenario) return;
+
+  const allCaptured = b.zones.every(z => z.owner === ZoneOwner.PLAYER);
+
+  if (allCaptured && b.scenario.victoryCondition === 'capture_all') {
+    b.result = 'victory';
+    goto(State.CAMPAIGN_RESULT);
+  }
+}
+
+// Update zone transition animation
+function updateZoneTransition(b, dt) {
+  if (!b.zoneTransition) return;
+
+  b.zoneTransition.progress += dt;
+
+  if (b.zoneTransition.progress >= b.zoneTransition.duration) {
+    b.zoneTransition = null;
+  }
+}
+
+// Activate zone spawning when battle starts
+function activateInitialZone(b) {
+  if (!b.scenario || !b.zones) return;
+
+  const zone = b.zones[b.activeZoneIndex];
+  if (zone && zone.owner !== ZoneOwner.PLAYER) {
+    beginZoneSpawning(b, zone);
+    zone.timerStarted = true;
+  }
+}
+
+// Draw zone-specific UI elements
+function drawZoneUI(bf, b) {
+  // Get or create zone UI container
+  let zoneUI = bf.querySelector('.zone-ui');
+  if (!zoneUI) {
+    zoneUI = document.createElement('div');
+    zoneUI.className = 'zone-ui';
+    zoneUI.style.cssText = `
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      width: 40px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      z-index: 100;
+    `;
+    bf.appendChild(zoneUI);
+  }
+
+  // Draw zone progress bar
+  drawZoneProgressBar(zoneUI, b);
+
+  // Draw zone timer
+  drawZoneTimer(bf, b);
+
+  // Draw zone boundaries on the map
+  drawZoneBoundaries(bf, b);
+
+  // Draw zone transition overlay
+  if (b.zoneTransition) {
+    drawZoneTransitionOverlay(bf, b);
+  }
+}
+
+// Draw vertical zone progress bar
+function drawZoneProgressBar(container, b) {
+  let progressBar = container.querySelector('.zone-progress-bar');
+
+  if (!progressBar) {
+    progressBar = document.createElement('div');
+    progressBar.className = 'zone-progress-bar';
+    progressBar.style.cssText = `
+      background: rgba(0, 0, 0, 0.7);
+      border: 2px solid #555;
+      border-radius: 5px;
+      padding: 5px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    `;
+    container.appendChild(progressBar);
+  }
+
+  // Clear and rebuild
+  progressBar.innerHTML = '';
+
+  // Draw zones from top (enemy) to bottom (player)
+  for (let i = b.zones.length - 1; i >= 0; i--) {
+    const zone = b.zones[i];
+    const isActive = i === b.activeZoneIndex;
+
+    const segment = document.createElement('div');
+    segment.style.cssText = `
+      width: 25px;
+      height: 20px;
+      border-radius: 3px;
+      border: ${isActive ? '2px solid #fff' : '1px solid #333'};
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: bold;
+      color: #fff;
+      position: relative;
+    `;
+
+    // Color based on ownership
+    if (zone.owner === ZoneOwner.PLAYER) {
+      segment.style.background = '#3a7a3a';
+    } else if (zone.owner === ZoneOwner.ENEMY) {
+      segment.style.background = '#7a3a3a';
+    } else {
+      segment.style.background = '#7a7a3a';
+    }
+
+    // Show capture progress for contested zones
+    if (zone.captureProgress > 0 && zone.captureProgress < 100) {
+      const progress = document.createElement('div');
+      progress.style.cssText = `
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        height: ${zone.captureProgress}%;
+        background: rgba(255, 255, 0, 0.5);
+        border-radius: 0 0 2px 2px;
+      `;
+      segment.appendChild(progress);
+    }
+
+    segment.textContent = i + 1;
+    segment.title = zone.name;
+    progressBar.appendChild(segment);
+  }
+
+  // Hero position indicator
+  const heroZoneProgress = 1 - (b.hero.y / b.mapHeight);
+  const indicator = document.createElement('div');
+  indicator.style.cssText = `
+    position: absolute;
+    left: -8px;
+    top: ${(1 - heroZoneProgress) * 100}%;
+    width: 0;
+    height: 0;
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+    border-left: 8px solid #4a9eff;
+  `;
+  progressBar.style.position = 'relative';
+  progressBar.appendChild(indicator);
+}
+
+// Draw zone timer in top center
+function drawZoneTimer(bf, b) {
+  const zone = b.zones[b.activeZoneIndex];
+  if (!zone || zone.timer === null) return;
+
+  let timerEl = bf.querySelector('.zone-timer');
+  if (!timerEl) {
+    timerEl = document.createElement('div');
+    timerEl.className = 'zone-timer';
+    timerEl.style.cssText = `
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.8);
+      padding: 8px 15px;
+      border-radius: 5px;
+      text-align: center;
+      z-index: 100;
+    `;
+    bf.appendChild(timerEl);
+  }
+
+  const seconds = Math.ceil(zone.timer / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+
+  // Color based on urgency
+  let color = '#fff';
+  if (zone.timer < 30000) color = '#f44';
+  else if (zone.timer < 60000) color = '#fa4';
+
+  timerEl.innerHTML = `
+    <div style="font-size: 12px; color: #aaa;">${zone.name}</div>
+    <div style="font-size: 20px; font-weight: bold; color: ${color};">
+      ${minutes}:${secs.toString().padStart(2, '0')}
+    </div>
+    <div style="font-size: 11px; color: #aaa;">
+      ${zone.enemiesActive} enemies remaining
+    </div>
+  `;
+}
+
+// Draw zone boundary lines on the map
+function drawZoneBoundaries(bf, b) {
+  // Remove old boundaries
+  bf.querySelectorAll('.zone-boundary').forEach(el => el.remove());
+
+  const CELL_SIZE = b.cellSize || 64;
+
+  for (const zone of b.zones) {
+    const boundaryY = zone.startRow * CELL_SIZE - b.camera.y;
+
+    // Only draw if boundary is on screen
+    if (boundaryY < -20 || boundaryY > bf.offsetHeight + 20) continue;
+
+    const line = document.createElement('div');
+    line.className = 'zone-boundary campaign-entity';
+    line.style.cssText = `
+      position: absolute;
+      left: 0;
+      top: ${boundaryY}px;
+      width: 100%;
+      height: 3px;
+      background: ${zone.owner === ZoneOwner.PLAYER ? 'rgba(74, 180, 74, 0.6)' :
+                    zone.owner === ZoneOwner.ENEMY ? 'rgba(180, 74, 74, 0.6)' :
+                    'rgba(180, 180, 74, 0.6)'};
+      pointer-events: none;
+      z-index: 50;
+    `;
+
+    // Zone name label
+    const label = document.createElement('div');
+    label.style.cssText = `
+      position: absolute;
+      left: 10px;
+      top: -18px;
+      font-size: 11px;
+      color: #fff;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 2px 6px;
+      border-radius: 3px;
+    `;
+    label.textContent = zone.name;
+    line.appendChild(label);
+
+    bf.appendChild(line);
+  }
+}
+
+// Draw zone capture/loss celebration overlay
+function drawZoneTransitionOverlay(bf, b) {
+  const transition = b.zoneTransition;
+
+  let overlay = bf.querySelector('.zone-transition-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.className = 'zone-transition-overlay';
+    overlay.style.cssText = `
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      z-index: 200;
+    `;
+    bf.appendChild(overlay);
+  }
+
+  const progress = transition.progress / transition.duration;
+  const opacity = Math.max(0, 1 - progress);
+
+  if (transition.type === 'capture') {
+    overlay.style.background = `rgba(0, 100, 0, ${0.4 * opacity})`;
+    overlay.innerHTML = `
+      <div style="font-size: 32px; font-weight: bold; color: #fff; text-shadow: 2px 2px 4px #000;">
+        ZONE CAPTURED
+      </div>
+      <div style="font-size: 24px; color: #4f4; margin-top: 10px;">
+        ${transition.zoneName}
+      </div>
+      <div style="font-size: 18px; color: #fc0; margin-top: 15px;">
+        +${transition.rewards?.scrap || 0} Scrap
+      </div>
+    `;
+  } else if (transition.type === 'loss') {
+    overlay.style.background = `rgba(100, 0, 0, ${0.4 * opacity})`;
+    overlay.innerHTML = `
+      <div style="font-size: 32px; font-weight: bold; color: #fff; text-shadow: 2px 2px 4px #000;">
+        ZONE LOST
+      </div>
+      <div style="font-size: 24px; color: #f44; margin-top: 10px;">
+        ${transition.zoneName}
+      </div>
+    `;
+  }
+
+  // Remove overlay when transition is complete
+  if (progress >= 1) {
+    overlay.remove();
+  }
+}
+
 function updateCampaignBattle(dt) {
   const b = Game.campaign.heroBattle;
   if (!b || b.result) return;
@@ -1391,19 +2023,26 @@ function updateCampaignBattle(dt) {
     return;
   }
 
-  // --- HERO MOVEMENT (WASD) ---
+  // --- HERO MOVEMENT (WASD or Analog Joystick) ---
   const hero = b.hero;
   let dx = 0, dy = 0;
 
-  if (b.keys.w) dy -= 1;
-  if (b.keys.s) dy += 1;
-  if (b.keys.a) dx -= 1;
-  if (b.keys.d) dx += 1;
+  // Check for analog joystick input first (smoother mobile controls)
+  if (b.joystickInput && (b.joystickInput.dx !== 0 || b.joystickInput.dy !== 0)) {
+    dx = b.joystickInput.dx;
+    dy = b.joystickInput.dy;
+  } else {
+    // Fall back to discrete WASD
+    if (b.keys.w) dy -= 1;
+    if (b.keys.s) dy += 1;
+    if (b.keys.a) dx -= 1;
+    if (b.keys.d) dx += 1;
 
-  // Normalize diagonal movement
-  if (dx !== 0 && dy !== 0) {
-    dx *= 0.707;
-    dy *= 0.707;
+    // Normalize diagonal movement for WASD only
+    if (dx !== 0 && dy !== 0) {
+      dx *= 0.707;
+      dy *= 0.707;
+    }
   }
 
   // Get terrain speed modifier
@@ -1440,8 +2079,33 @@ function updateCampaignBattle(dt) {
     hero.angle = Math.atan2(worldMouseY - hero.y, worldMouseX - hero.x);
   }
 
+  // --- HERO AUTO-ATTACK TARGET ---
+  let autoAttacking = false;
+  if (hero.autoAttackTarget) {
+    const target = b.enemies.find(e => e.id === hero.autoAttackTarget && !e.dead);
+    if (target) {
+      // Aim at target
+      hero.angle = Math.atan2(target.y - hero.y, target.x - hero.x);
+      autoAttacking = true;
+
+      // Check if target is in range (400px)
+      const dx = target.x - hero.x;
+      const dy = target.y - hero.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > 400) {
+        // Target too far, clear it
+        hero.autoAttackTarget = null;
+        autoAttacking = false;
+      }
+    } else {
+      // Target dead or gone, clear it
+      hero.autoAttackTarget = null;
+    }
+  }
+
   // --- HERO SHOOTING ---
-  if (b.mouse.down && now - hero.lastShot > hero.fireRate) {
+  // Fire if: manual shooting (mouse down) OR auto-attacking a target
+  if ((b.mouse.down || autoAttacking) && now - hero.lastShot > hero.fireRate) {
     hero.lastShot = now;
 
     // Create projectile moving in aim direction
@@ -1485,16 +2149,25 @@ function updateCampaignBattle(dt) {
   b.camera.lookX += (lookX - b.camera.lookX) * lookSmooth;
   b.camera.lookY += (lookY - b.camera.lookY) * lookSmooth;
 
-  // Center camera on hero with look-ahead offset
+  // Position camera with hero in lower 1/4 of screen (see more ahead)
   const targetX = hero.x + b.camera.lookX - screenW / 2;
-  const targetY = hero.y + b.camera.lookY - screenH / 2;
+  const targetY = hero.y + b.camera.lookY - screenH * 0.75;
   b.camera.x = Math.max(0, Math.min(b.mapWidth - screenW, targetX));
   b.camera.y = Math.max(0, Math.min(b.mapHeight - screenH, targetY));
 
   // --- SPAWN ENEMIES ---
-  // Simple wave spawning for now
-  if (b.enemies.length === 0 && b.enemiesRemaining === 0) {
-    spawnCampaignWave(b);
+  if (b.scenario) {
+    // Zone-based spawning
+    updateZoneSpawning(b, dt);
+    updateZoneTimers(b, dt);
+    checkZoneCapture(b);
+    checkZoneLoss(b);
+    updateZoneTransition(b, dt);
+  } else {
+    // Simple wave spawning for non-zone battles
+    if (b.enemies.length === 0 && b.enemiesRemaining === 0) {
+      spawnCampaignWave(b);
+    }
   }
 
   // --- UPDATE ENEMIES (using modular AI) ---
@@ -1534,14 +2207,35 @@ function updateCampaignBattle(dt) {
         // Use actual entity radius for hit detection (projectile + enemy)
         const hitRadius = ENTITY_RADIUS.projectile + ENTITY_RADIUS.enemy;
         if (dx * dx + dy * dy < hitRadius * hitRadius) {
-          e.hp -= p.damage;
+          // Apply stance modifiers to damage
+          let attackerStance = 'autonomous';
+
+          // Get attacker stance
+          if (p.owner === 'ally' && p.sourceUnitId) {
+            const sourceUnit = b.units.find(u => u.id === p.sourceUnitId);
+            if (sourceUnit) {
+              attackerStance = sourceUnit.stance || 'autonomous';
+            }
+          } else if (p.owner === 'player') {
+            // Hero uses aggressive stance by default
+            attackerStance = 'aggressive';
+          }
+
+          // Get target stance from enemy AI type
+          const targetStance = getEnemyStance(e.aiType);
+
+          // Apply stance modifier
+          const stanceMod = getStanceModifier(attackerStance, targetStance);
+          const finalDamage = Math.round(p.damage * stanceMod.damageMod);
+
+          e.hp -= finalDamage;
           p.hit = true;
 
           // Record damage for aggro system
           if (p.owner === 'player') {
-            recordDamage(e, 'hero', p.damage);
+            recordDamage(e, 'hero', finalDamage);
           } else if (p.owner === 'ally' && p.sourceUnitId) {
-            recordDamage(e, p.sourceUnitId, p.damage);
+            recordDamage(e, p.sourceUnitId, finalDamage);
           }
 
           if (e.hp <= 0) {
@@ -1558,6 +2252,15 @@ function updateCampaignBattle(dt) {
 
   // Remove hit projectiles
   b.projectiles = b.projectiles.filter(p => !p.hit);
+
+  // Clear concentrate target if enemy is dead
+  if (b.squad?.concentrateTarget) {
+    const target = b.enemies.find(e => e.id === b.squad.concentrateTarget);
+    if (!target || target.dead) {
+      b.squad.concentrateTarget = null;
+      b.commandFeedback = { text: 'Target eliminated!', time: Date.now() };
+    }
+  }
 
   // Remove dead enemies
   b.enemies = b.enemies.filter(e => !e.dead);
@@ -1629,9 +2332,9 @@ function drawCampaignBattle() {
   const screenH = bf.offsetHeight;
   const cellSize = b.cellSize;
 
-  // Update camera with actual screen size
+  // Update camera with hero in lower 1/4 of screen
   b.camera.x = Math.max(0, Math.min(b.mapWidth - screenW, b.hero.x - screenW / 2));
-  b.camera.y = Math.max(0, Math.min(b.mapHeight - screenH, b.hero.y - screenH / 2));
+  b.camera.y = Math.max(0, Math.min(b.mapHeight - screenH, b.hero.y - screenH * 0.75));
 
   // Clear previous entities (but keep terrain if already drawn)
   bf.querySelectorAll('.campaign-entity').forEach(el => el.remove());
@@ -1676,15 +2379,20 @@ function drawCampaignBattle() {
   // Draw player units
   b.units.forEach(unit => {
     const el = document.createElement('div');
-    el.className = 'campaign-entity campaign-unit';
+    const isSelected = b.squad?.selectedUnitId === unit.id;
+    el.className = `campaign-entity campaign-unit ${isSelected ? 'selected' : ''}`;
     el.style.left = `${unit.x - b.camera.x - 20}px`;
     el.style.top = `${unit.y - b.camera.y - 20}px`;
     el.style.width = '40px';
     el.style.height = '40px';
     el.style.transform = `rotate(${unit.angle + Math.PI / 2}rad)`;
-    el.style.backgroundColor = '#5a8a5a';
+    el.style.backgroundColor = isSelected ? '#7ab87a' : '#5a8a5a';
     el.style.borderRadius = '5px';
-    el.style.border = '2px solid #3a6a3a';
+    el.style.border = isSelected ? '3px solid #4a9eff' : '2px solid #3a6a3a';
+    if (isSelected) {
+      el.style.boxShadow = '0 0 15px #4a9eff, 0 0 25px rgba(74, 158, 255, 0.5)';
+      el.style.animation = 'pulse-selected 1s ease-in-out infinite';
+    }
     el.dataset.unitId = unit.unitId;
     bf.appendChild(el);
   });
@@ -1715,9 +2423,39 @@ function drawCampaignBattle() {
     el.style.height = '30px';
     el.style.backgroundColor = '#ff4444';
     el.style.borderRadius = '50%';
-    el.style.border = '2px solid #aa0000';
+
+    // Check if this is the concentrate target
+    const isConcentrateTarget = b.squad?.concentrateTarget === e.id;
+    if (isConcentrateTarget) {
+      el.style.border = '3px solid #ffff00';
+      el.style.boxShadow = '0 0 15px #ffff00, 0 0 30px rgba(255, 255, 0, 0.5)';
+      el.style.animation = 'pulse-target 0.8s ease-in-out infinite';
+    } else {
+      el.style.border = '2px solid #aa0000';
+    }
+
     bf.appendChild(el);
   });
+
+  // Draw targeting mode indicator
+  if (b.commandMode === 'selectTarget') {
+    const indicator = document.createElement('div');
+    indicator.className = 'campaign-entity targeting-indicator';
+    indicator.style.position = 'fixed';
+    indicator.style.top = '50%';
+    indicator.style.left = '50%';
+    indicator.style.transform = 'translate(-50%, -50%)';
+    indicator.style.padding = '10px 20px';
+    indicator.style.background = 'rgba(255, 100, 100, 0.9)';
+    indicator.style.color = '#fff';
+    indicator.style.borderRadius = '8px';
+    indicator.style.fontWeight = 'bold';
+    indicator.style.zIndex = '500';
+    indicator.style.border = '2px solid #ff4444';
+    indicator.style.boxShadow = '0 0 20px rgba(255, 68, 68, 0.5)';
+    indicator.textContent = '🎯 TAP AN ENEMY TO TARGET';
+    bf.appendChild(indicator);
+  }
 
   // Draw projectiles
   b.projectiles.forEach(p => {
@@ -1747,6 +2485,11 @@ function drawCampaignBattle() {
   const killsEl = bf.querySelector('.campaign-kills');
   if (killsEl) {
     killsEl.textContent = `Kills: ${b.kills}`;
+  }
+
+  // Draw zone-specific UI if this is a zone battle
+  if (b.scenario && b.zones) {
+    drawZoneUI(bf, b);
   }
 
   // Draw minimap
@@ -1796,11 +2539,22 @@ function drawMinimap(b) {
     }
   }
 
-  // Draw player units (green dots)
-  ctx.fillStyle = '#5a8a5a';
+  // Draw player units (green dots, selected = blue ring)
   b.units.forEach(unit => {
     const x = unit.x * scaleX;
     const y = unit.y * scaleY;
+    const isSelected = b.squad?.selectedUnitId === unit.id;
+
+    if (isSelected) {
+      // Draw selection ring first
+      ctx.strokeStyle = '#4a9eff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, y, 5, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = isSelected ? '#7ab87a' : '#5a8a5a';
     ctx.beginPath();
     ctx.arc(x, y, 3, 0, Math.PI * 2);
     ctx.fill();
@@ -1876,6 +2630,23 @@ export function campaignKeyDown(key) {
     b.units.forEach(u => setUnitBehavior(u, 'DEFENSIVE'));
     b.commandFeedback = { text: '🛡️ Defensive Mode', time: Date.now() };
   }
+
+  // Front Line Commands (Z, X, C keys)
+  if (key === 'z' || key === 'Z') {
+    issueFrontLineCommand(b.units, 'advance');
+    b.frontLineState = 'advance';
+    b.commandFeedback = { text: '⚔️ ADVANCE!', time: Date.now() };
+  }
+  if (key === 'x' || key === 'X') {
+    issueFrontLineCommand(b.units, 'hold');
+    b.frontLineState = 'hold';
+    b.commandFeedback = { text: '🛡️ FALL BACK!', time: Date.now() };
+  }
+  if (key === 'c' || key === 'C') {
+    issueFrontLineCommand(b.units, 'retreat');
+    b.frontLineState = 'retreat';
+    b.commandFeedback = { text: '🏃 RETREAT!', time: Date.now() };
+  }
 }
 
 export function campaignKeyUp(key) {
@@ -1913,7 +2684,64 @@ export function campaignMouseDown() {
     return; // Don't fire weapon when issuing move command
   }
 
+  // Handle concentrate fire targeting mode
+  if (b.commandMode === 'selectTarget' && b.commandAction === 'concentrate') {
+    const worldX = b.mouse.x + b.camera.x;
+    const worldY = b.mouse.y + b.camera.y;
+
+    // Find enemy at click position (check within 40px radius for easier targeting)
+    const targetEnemy = findEnemyAtPosition(b, worldX, worldY, 40);
+
+    if (targetEnemy) {
+      // Set as concentrate target
+      b.squad.concentrateTarget = targetEnemy.id;
+      b.commandFeedback = { text: '🎯 FOCUS FIRE!', time: Date.now() };
+
+      // Add to spotted enemies if not already there
+      if (!b.spottedEnemies.find(se => se.enemyId === targetEnemy.id)) {
+        b.spottedEnemies.push({
+          enemyId: targetEnemy.id,
+          lastSeenX: targetEnemy.x,
+          lastSeenY: targetEnemy.y,
+          lastSeenTime: Date.now(),
+          isVisible: true
+        });
+      }
+    } else {
+      // No enemy found, cancel targeting
+      b.commandFeedback = { text: 'No target found', time: Date.now() };
+    }
+
+    // Exit targeting mode
+    b.commandMode = null;
+    b.commandAction = null;
+
+    // Need to re-render UI to update button state
+    import('./ui.js').then(ui => ui.render());
+    return;
+  }
+
   b.mouse.down = true;
+}
+
+// Helper: Find enemy at given world position
+function findEnemyAtPosition(battle, x, y, radius = 30) {
+  if (!battle || !battle.enemies) return null;
+
+  for (const enemy of battle.enemies) {
+    if (enemy.hp <= 0) continue; // Skip dead enemies
+
+    const dx = enemy.x - x;
+    const dy = enemy.y - y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    // Use enemy's size or default radius for hit detection
+    const hitRadius = enemy.size || radius;
+    if (dist <= hitRadius) {
+      return enemy;
+    }
+  }
+  return null;
 }
 
 export function campaignMouseUp() {
@@ -1937,4 +2765,36 @@ export function campaignClearAimAngle() {
   if (!b) return;
 
   b.aimAngle = null;
+}
+
+// Set analog joystick input for smooth movement
+export function campaignSetJoystick(dx, dy) {
+  const b = Game.campaign?.heroBattle;
+  if (!b) return;
+
+  // Initialize joystickInput if needed
+  if (!b.joystickInput) {
+    b.joystickInput = { dx: 0, dy: 0 };
+  }
+
+  // Normalize if magnitude > 1
+  const mag = Math.sqrt(dx * dx + dy * dy);
+  if (mag > 1) {
+    dx /= mag;
+    dy /= mag;
+  }
+
+  b.joystickInput.dx = dx;
+  b.joystickInput.dy = dy;
+}
+
+// Clear joystick input
+export function campaignClearJoystick() {
+  const b = Game.campaign?.heroBattle;
+  if (!b) return;
+
+  if (b.joystickInput) {
+    b.joystickInput.dx = 0;
+    b.joystickInput.dy = 0;
+  }
 }

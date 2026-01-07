@@ -1,0 +1,43 @@
+{
+  "id": "default",
+  "objectType": "units",
+  "objectId": "abrams",
+  "name": "Default",
+  "author": "Artist",
+  "createdAt": "2026-01-07T16:17:49.903Z",
+  "currentVersion": 5,
+  "versions": [
+    {
+      "version": 1,
+      "author": "Artist",
+      "timestamp": "2026-01-07T16:17:49.903Z",
+      "note": "Initial version"
+    },
+    {
+      "version": 2,
+      "author": "Artist",
+      "timestamp": "2026-01-07T18:37:08.890Z",
+      "note": "Updated"
+    },
+    {
+      "version": 3,
+      "author": "Artist",
+      "timestamp": "2026-01-07T18:37:16.588Z",
+      "note": "Updated"
+    },
+    {
+      "version": 4,
+      "author": "Artist",
+      "timestamp": "2026-01-07T19:53:43.941Z",
+      "note": "Updated"
+    },
+    {
+      "version": 5,
+      "author": "Artist",
+      "timestamp": "2026-01-07T19:58:57.599Z",
+      "note": "Updated"
+    }
+  ],
+  "canvasWidth": 256,
+  "canvasHeight": 256
+}

@@ -2,13 +2,74 @@
 // MAIN - Entry point, event handlers, initialization
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, UNITS, PROJECTILES, UNIT_PROJECTILES } from './constants.js';
-import { Game, newBattlePlan } from './state.js';
+import { State, SubState, HQTab, UNITS, PROJECTILES, UNIT_PROJECTILES, SquadOrder } from './constants.js';
+import { Game, newBattlePlan, newCampaign, createAdvancingScenario, createFrontlineScenario, newZoneBattle } from './state.js';
 import { initAudio, sound } from './audio.js';
 import { save, load } from './storage.js';
-import { goto, deploy, switchUnit, stopLoop, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, campaignMouseDown, campaignMouseUp, campaignSetAimAngle, campaignClearAimAngle } from './game.js';
+import { goto, deploy, switchUnit, stopLoop, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, campaignMouseDown, campaignMouseUp, campaignSetAimAngle, campaignClearAimAngle, campaignSetJoystick, campaignClearJoystick } from './game.js';
 import { render, setSubState } from './ui.js';
 import { initController, getControllerInput, updateButtonStates, setControllerCallbacks, isControllerConnected } from './controller.js';
+import { initGestures, setResetJoysticksCallback } from './gestures.js';
+import { moveJoystick, shootJoystick, getNearJoystickAnchor, setJoystickAnchor, getClosestJoystickSide, getDragThreshold } from './joystick.js';
+import * as sprites from './sprites.js';
+const { initSprites } = sprites;
+
+// Expose sprites module for console testing
+window.sprites = sprites;
+
+// ═══════════════════════════════════════════════════════════════
+// SQUAD COMMAND HELPERS
+// ═══════════════════════════════════════════════════════════════
+
+// Order icon/label mapping
+const ORDER_INFO = {
+  hold: { icon: '🛡️', label: 'HOLD' },
+  advance: { icon: '⚔️', label: 'ADVANCE' },
+  fallback: { icon: '🏃', label: 'FALLBACK' },
+  suppress: { icon: '🔥', label: 'SUPPRESS' },
+  flank: { icon: '↩️', label: 'FLANK' },
+  digIn: { icon: '⛏️', label: 'DIG IN' },
+  search: { icon: '🔍', label: 'SEARCH' }
+};
+
+// Set squad-wide or individual unit order
+function setSquadOrder(battle, order) {
+  if (!battle || !ORDER_INFO[order]) return;
+
+  const info = ORDER_INFO[order];
+
+  if (battle.squad.selectedUnitId) {
+    // Apply to individual unit only
+    const unit = battle.units.find(u => u.id === battle.squad.selectedUnitId);
+    if (unit && unit.hp > 0) {
+      unit.currentOrder = order;
+      unit.hasIndividualOrder = true;
+      battle.commandFeedback = { text: `${info.icon} Unit: ${info.label}`, time: Date.now() };
+      console.log(`[ORDER] Unit ${unit.id} order set to: ${order}`);
+    }
+  } else {
+    // Apply to entire squad
+    battle.squad.currentOrder = order;
+    battle.units.forEach(u => {
+      if (u.hp > 0 && !u.hasIndividualOrder) {
+        u.currentOrder = order;
+        console.log(`[ORDER] Unit ${u.id} order set to: ${order}`);
+      }
+    });
+    battle.commandFeedback = { text: `${info.icon} Squad: ${info.label}!`, time: Date.now() };
+  }
+}
+
+// Set target priority for selected unit
+function setUnitPriority(battle, priority) {
+  if (!battle || !battle.squad.selectedUnitId) return;
+
+  const unit = battle.units.find(u => u.id === battle.squad.selectedUnitId);
+  if (unit && unit.hp > 0) {
+    unit.targetPriority = priority;
+    battle.commandFeedback = { text: `🎯 Priority: ${priority.toUpperCase()}`, time: Date.now() };
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════
 // PASSWORD PROTECTION
@@ -93,13 +154,17 @@ function checkAuth() {
   return false;
 }
 
-function initApp() {
-  // Load saved data and render initial state
+async function initApp() {
+  // Load saved data
   load();
+  // Preload PNG sprites (non-blocking, falls back to SVG if missing)
+  initSprites();
+  // Render initial state
   render();
   setupEventHandlers();
   setupController();
   setupWakeLock();
+  initGestures(); // Initialize touch gesture system
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -250,7 +315,86 @@ function setupEventHandlers() {
 // ═══════════════════════════════════════════════════════════════
 
 document.getElementById('app').addEventListener('click', e => {
-  // Front line command buttons
+  // Toggle minimap expand/collapse
+  if (e.target.closest('[data-action="toggle-minimap"]') && Game.state === State.CAMPAIGN_BATTLE) {
+    const minimap = document.querySelector('.campaign-minimap');
+    const overlay = document.querySelector('.minimap-overlay');
+    if (minimap && overlay) {
+      minimap.classList.toggle('expanded');
+      overlay.classList.toggle('visible');
+    }
+    return;
+  }
+
+  // === RADIO PANEL HANDLERS ===
+  if (Game.state === State.CAMPAIGN_BATTLE) {
+    const b = Game.campaign?.heroBattle;
+    if (!b) return;
+
+    // Select entire squad (deselect individual unit)
+    if (e.target.closest('[data-action="select-squad"]')) {
+      b.squad.selectedUnitId = null;
+      b.squad.selectionMode = 'squad';
+      // Don't auto-open radio - require swipe
+      render();
+      return;
+    }
+
+    // Select individual unit - tap only selects (swipe opens radio)
+    const unitSelectBtn = e.target.closest('[data-action="select-unit"]');
+    if (unitSelectBtn) {
+      const unitId = unitSelectBtn.dataset.unitId;
+      const unit = b.units.find(u => u.id === unitId);
+      if (unit && unit.hp > 0) {
+        if (b.squad.selectedUnitId === unitId) {
+          // Tapping same unit - deselect
+          b.squad.selectedUnitId = null;
+          b.squad.selectionMode = 'squad';
+        } else {
+          // Tapping different unit - select (no radio)
+          b.squad.selectedUnitId = unitId;
+          b.squad.selectionMode = 'unit';
+        }
+        // Close radio on any tap - swipe to open
+        b.radioOpen = false;
+        render();
+      }
+      return;
+    }
+
+    // Squad order buttons
+    const orderBtn = e.target.closest('[data-squad-order]');
+    if (orderBtn) {
+      const order = orderBtn.dataset.squadOrder;
+      setSquadOrder(b, order);
+      render();
+      return;
+    }
+
+    // Concentrate fire button
+    if (e.target.closest('[data-action="concentrate-fire"]')) {
+      if (b.squad.concentrateTarget) {
+        // Cancel targeting
+        b.squad.concentrateTarget = null;
+        b.commandMode = null;
+      } else {
+        // Enter targeting mode
+        b.commandMode = 'selectTarget';
+        b.commandAction = 'concentrate';
+      }
+      render();
+      return;
+    }
+
+    // Priority dropdown
+    const prioritySelect = e.target.closest('[data-action="set-priority"]');
+    if (prioritySelect && prioritySelect.tagName === 'SELECT') {
+      // Handle in change event instead
+      return;
+    }
+  }
+
+  // Front line command buttons (legacy - keep for now)
   const frontLineBtn = e.target.closest('[data-front-line]');
   if (frontLineBtn && Game.state === State.CAMPAIGN_BATTLE) {
     const cmd = frontLineBtn.dataset.frontLine;
@@ -261,7 +405,7 @@ document.getElementById('app').addEventListener('click', e => {
     return;
   }
 
-  // Mobile command buttons
+  // Mobile command buttons (legacy - keep for now)
   const cmdBtn = e.target.closest('[data-cmd]');
   if (cmdBtn && Game.state === State.CAMPAIGN_BATTLE) {
     const cmd = cmdBtn.dataset.cmd;
@@ -285,7 +429,7 @@ document.getElementById('app').addEventListener('click', e => {
     else if (a === 'settings') goto(State.SETTINGS);
     else if (a === 'stats') goto(State.STATS);
     else if (a === 'hq') goto(State.HQ);
-    else if (a === 'sprite-editor') goto(State.SPRITE_EDITOR);
+    else if (a === 'sprite-editor') window.open('/sprite-editor.html', '_blank');
     else if (a === 'menu') { stopLoop(); Game.h2h = null; Game.h2hDefenseSlot = undefined; Game.h2hWaveLane = undefined; goto(State.MENU); }
     else if (a === 'pause') goto(State.PAUSED);
     else if (a === 'resume') goto(State.BATTLE);
@@ -317,6 +461,27 @@ document.getElementById('app').addEventListener('click', e => {
       // Create battle plan for placement
       Game.campaign.battlePlan = newBattlePlan(Game.campaign.era, mos);
       goto(State.CAMPAIGN_PLANNING);
+    }
+    // Test zone battle buttons
+    else if (a === 'test-zone-battle') {
+      // Initialize campaign if needed
+      if (!Game.campaign) Game.campaign = newCampaign();
+      Game.campaign.era = 1;
+      Game.campaign.mos = 'infantry';
+      // Create 3-zone advancing scenario
+      const scenario = createAdvancingScenario('Test Advance', 3);
+      Game.campaign.heroBattle = newZoneBattle(1, 'infantry', scenario);
+      goto(State.CAMPAIGN_BATTLE);
+    }
+    else if (a === 'test-frontline-battle') {
+      // Initialize campaign if needed
+      if (!Game.campaign) Game.campaign = newCampaign();
+      Game.campaign.era = 1;
+      Game.campaign.mos = 'infantry';
+      // Create 5-zone frontline scenario
+      const scenario = createFrontlineScenario('Test Frontline', 5);
+      Game.campaign.heroBattle = newZoneBattle(1, 'infantry', scenario);
+      goto(State.CAMPAIGN_BATTLE);
     }
     // Planning screen actions
     else if (a === 'select-plan-unit') {
@@ -1126,9 +1291,38 @@ document.getElementById('app').addEventListener('click', e => {
   }
 });
 
+// Change events (for dropdowns)
+document.getElementById('app').addEventListener('change', e => {
+  // Priority dropdown in radio panel
+  if (e.target.closest('.priority-dropdown') && Game.state === State.CAMPAIGN_BATTLE) {
+    const b = Game.campaign?.heroBattle;
+    if (b) {
+      setUnitPriority(b, e.target.value);
+      render();
+    }
+    return;
+  }
+});
+
+// Input events (for range sliders)
+document.getElementById('app').addEventListener('input', e => {
+  // Control settings sliders
+  const slider = e.target.closest('[data-control]');
+  if (slider && Game.state === State.SETTINGS) {
+    const key = slider.dataset.control;
+    const value = parseInt(slider.value);
+    Game.settings.controls = Game.settings.controls || {};
+    Game.settings.controls[key] = value;
+    save();
+    render();
+    return;
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════
 // CAMPAIGN INPUT HANDLERS
 // ═══════════════════════════════════════════════════════════════
+// NOTE: Touch gestures moved to gestures.js module
 
 // Keyboard events for campaign battle
 document.addEventListener('keydown', e => {
@@ -1178,58 +1372,67 @@ document.addEventListener('mouseup', e => {
 // Detect mobile
 const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
 
-// Virtual joystick state (movement - left side)
-const joystick = {
-  active: false,
-  startX: 0,
-  startY: 0,
-  currentX: 0,
-  currentY: 0,
-  touchId: null
-};
-
-// Shoot joystick state (aiming - right side)
-const shootJoystick = {
-  active: false,
-  startX: 0,
-  startY: 0,
-  currentX: 0,
-  currentY: 0,
-  touchId: null,
-  firing: false
-};
-
 // Minimum drag distance to start firing (in pixels)
 const SHOOT_DEADZONE = 20;
 
-// Handle joystick touch start
+// Hold timer for repositioning joysticks
+let joystickHoldTimer = null;
+let joystickHoldTouchId = null;
+let joystickHoldX = 0;
+let joystickHoldY = 0;
+const JOYSTICK_HOLD_MS = 1000;  // 1 second hold to reposition
+
+// Handle joystick touch start - set PENDING if near anchor (activate on drag)
 document.addEventListener('touchstart', e => {
   if (Game.state !== State.CAMPAIGN_BATTLE) return;
 
   for (const touch of e.changedTouches) {
-    const x = touch.clientX;
-    const screenMid = window.innerWidth / 2;
+    const nearAnchor = getNearJoystickAnchor(touch.clientX, touch.clientY);
 
-    // Left side = movement joystick
-    if (x < screenMid && !joystick.active) {
-      joystick.active = true;
-      joystick.startX = touch.clientX;
-      joystick.startY = touch.clientY;
-      joystick.currentX = touch.clientX;
-      joystick.currentY = touch.clientY;
-      joystick.touchId = touch.identifier;
-      updateJoystickInput();
-    }
-    // Right side = shoot joystick
-    else if (x >= screenMid && !shootJoystick.active) {
-      shootJoystick.active = true;
+    if (nearAnchor === 'move' && !moveJoystick.active && !moveJoystick.pending) {
+      // Set pending - will activate if user drags
+      moveJoystick.pending = true;
+      moveJoystick.startX = touch.clientX;
+      moveJoystick.startY = touch.clientY;
+      moveJoystick.currentX = touch.clientX;
+      moveJoystick.currentY = touch.clientY;
+      moveJoystick.touchId = touch.identifier;
+      // Don't preventDefault - let gesture system also see this touch
+    } else if (nearAnchor === 'shoot' && !shootJoystick.active && !shootJoystick.pending) {
+      // Set pending - will activate if user drags
+      shootJoystick.pending = true;
       shootJoystick.startX = touch.clientX;
       shootJoystick.startY = touch.clientY;
       shootJoystick.currentX = touch.clientX;
       shootJoystick.currentY = touch.clientY;
       shootJoystick.touchId = touch.identifier;
       shootJoystick.firing = false;
-      // Don't start firing yet - wait for drag
+      // Don't preventDefault - let gesture system also see this touch
+    } else if (!nearAnchor && !joystickHoldTimer) {
+      // Not near a joystick - start hold timer for repositioning
+      joystickHoldTouchId = touch.identifier;
+      joystickHoldX = touch.clientX;
+      joystickHoldY = touch.clientY;
+      joystickHoldTimer = setTimeout(() => {
+        // Determine which joystick to move based on screen side
+        const which = getClosestJoystickSide(joystickHoldX);
+        setJoystickAnchor(which, joystickHoldX, joystickHoldY);
+
+        // Visual feedback
+        if (navigator.vibrate) navigator.vibrate([50, 30, 50]);
+
+        // Show brief feedback
+        const b = Game.campaign?.heroBattle;
+        if (b) {
+          b.commandFeedback = {
+            text: which === 'move' ? '🕹️ Move joystick placed' : '🎯 Aim joystick placed',
+            time: Date.now()
+          };
+        }
+
+        joystickHoldTimer = null;
+        joystickHoldTouchId = null;
+      }, JOYSTICK_HOLD_MS);
     }
   }
 }, { passive: false });
@@ -1238,10 +1441,51 @@ document.addEventListener('touchmove', e => {
   if (Game.state !== State.CAMPAIGN_BATTLE) return;
 
   for (const touch of e.changedTouches) {
+    // Cancel joystick repositioning if touch moves
+    if (joystickHoldTimer && touch.identifier === joystickHoldTouchId) {
+      const dx = touch.clientX - joystickHoldX;
+      const dy = touch.clientY - joystickHoldY;
+      if (Math.sqrt(dx * dx + dy * dy) > 15) {
+        clearTimeout(joystickHoldTimer);
+        joystickHoldTimer = null;
+        joystickHoldTouchId = null;
+      }
+    }
+
+    // Check if pending move joystick should activate (dragged enough)
+    if (moveJoystick.pending && touch.identifier === moveJoystick.touchId) {
+      const dx = touch.clientX - moveJoystick.startX;
+      const dy = touch.clientY - moveJoystick.startY;
+      if (Math.sqrt(dx * dx + dy * dy) > getDragThreshold()) {
+        // Activate the joystick
+        moveJoystick.pending = false;
+        moveJoystick.active = true;
+        moveJoystick.currentX = touch.clientX;
+        moveJoystick.currentY = touch.clientY;
+        updateJoystickInput();
+        e.preventDefault();
+      }
+    }
+
+    // Check if pending shoot joystick should activate (dragged enough)
+    if (shootJoystick.pending && touch.identifier === shootJoystick.touchId) {
+      const dx = touch.clientX - shootJoystick.startX;
+      const dy = touch.clientY - shootJoystick.startY;
+      if (Math.sqrt(dx * dx + dy * dy) > getDragThreshold()) {
+        // Activate the joystick
+        shootJoystick.pending = false;
+        shootJoystick.active = true;
+        shootJoystick.currentX = touch.clientX;
+        shootJoystick.currentY = touch.clientY;
+        updateShootJoystickVisual();
+        e.preventDefault();
+      }
+    }
+
     // Update movement joystick
-    if (joystick.active && touch.identifier === joystick.touchId) {
-      joystick.currentX = touch.clientX;
-      joystick.currentY = touch.clientY;
+    if (moveJoystick.active && touch.identifier === moveJoystick.touchId) {
+      moveJoystick.currentX = touch.clientX;
+      moveJoystick.currentY = touch.clientY;
       updateJoystickInput();
       e.preventDefault();
     }
@@ -1250,6 +1494,7 @@ document.addEventListener('touchmove', e => {
     if (shootJoystick.active && touch.identifier === shootJoystick.touchId) {
       shootJoystick.currentX = touch.clientX;
       shootJoystick.currentY = touch.clientY;
+      updateShootJoystickVisual();
       e.preventDefault();
 
       // Calculate drag distance and angle
@@ -1281,15 +1526,24 @@ document.addEventListener('touchend', e => {
   if (Game.state !== State.CAMPAIGN_BATTLE) return;
 
   for (const touch of e.changedTouches) {
-    // Release movement joystick
-    if (touch.identifier === joystick.touchId) {
-      joystick.active = false;
-      joystick.touchId = null;
+    // Cancel joystick repositioning
+    if (joystickHoldTimer && touch.identifier === joystickHoldTouchId) {
+      clearTimeout(joystickHoldTimer);
+      joystickHoldTimer = null;
+      joystickHoldTouchId = null;
+    }
+
+    // Release movement joystick (pending or active)
+    if (touch.identifier === moveJoystick.touchId) {
+      moveJoystick.pending = false;
+      moveJoystick.active = false;
+      moveJoystick.touchId = null;
       updateJoystickInput();
     }
 
-    // Release shoot joystick
+    // Release shoot joystick (pending or active)
     if (touch.identifier === shootJoystick.touchId) {
+      shootJoystick.pending = false;
       shootJoystick.active = false;
       shootJoystick.touchId = null;
       if (shootJoystick.firing) {
@@ -1297,17 +1551,27 @@ document.addEventListener('touchend', e => {
         campaignMouseUp();
       }
       campaignClearAimAngle();
+      updateShootJoystickVisual();
     }
   }
 });
 
 document.addEventListener('touchcancel', e => {
+  // Cancel joystick repositioning
+  if (joystickHoldTimer) {
+    clearTimeout(joystickHoldTimer);
+    joystickHoldTimer = null;
+    joystickHoldTouchId = null;
+  }
+
   // Reset movement joystick
-  joystick.active = false;
-  joystick.touchId = null;
+  moveJoystick.pending = false;
+  moveJoystick.active = false;
+  moveJoystick.touchId = null;
   updateJoystickInput();
 
   // Reset shoot joystick
+  shootJoystick.pending = false;
   shootJoystick.active = false;
   shootJoystick.touchId = null;
   if (shootJoystick.firing) {
@@ -1315,47 +1579,150 @@ document.addEventListener('touchcancel', e => {
     campaignMouseUp();
   }
   campaignClearAimAngle();
+  updateShootJoystickVisual();
 });
 
-// Convert joystick position to WASD-style input
-function updateJoystickInput() {
-  if (!joystick.active) {
-    // Release all keys
-    campaignKeyUp('w');
-    campaignKeyUp('a');
-    campaignKeyUp('s');
-    campaignKeyUp('d');
+// Visual joystick elements
+let moveJoystickEl = null;
+let shootJoystickEl = null;
+
+function createJoystickVisual(isShoot = false) {
+  const el = document.createElement('div');
+  el.className = isShoot ? 'joystick-visual shoot-joystick' : 'joystick-visual move-joystick';
+  el.innerHTML = `
+    <div class="joystick-base"></div>
+    <div class="joystick-knob"></div>
+  `;
+  el.style.cssText = `
+    position: fixed;
+    pointer-events: none;
+    z-index: 1000;
+    display: none;
+  `;
+
+  const base = el.querySelector('.joystick-base');
+  base.style.cssText = `
+    position: absolute;
+    width: 100px;
+    height: 100px;
+    border-radius: 50%;
+    background: ${isShoot ? 'rgba(255,100,100,0.2)' : 'rgba(100,150,255,0.2)'};
+    border: 2px solid ${isShoot ? 'rgba(255,100,100,0.5)' : 'rgba(100,150,255,0.5)'};
+    transform: translate(-50%, -50%);
+  `;
+
+  const knob = el.querySelector('.joystick-knob');
+  knob.style.cssText = `
+    position: absolute;
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    background: ${isShoot ? 'rgba(255,100,100,0.6)' : 'rgba(100,150,255,0.6)'};
+    border: 2px solid ${isShoot ? 'rgba(255,150,150,0.8)' : 'rgba(150,180,255,0.8)'};
+    transform: translate(-50%, -50%);
+    transition: transform 0.05s ease-out;
+  `;
+
+  document.body.appendChild(el);
+  return el;
+}
+
+function updateJoystickVisual(el, startX, startY, currentX, currentY, active) {
+  if (!el) return;
+
+  if (!active) {
+    el.style.display = 'none';
     return;
   }
 
-  const dx = joystick.currentX - joystick.startX;
-  const dy = joystick.currentY - joystick.startY;
-  const deadzone = 15;
+  el.style.display = 'block';
+  el.style.left = startX + 'px';
+  el.style.top = startY + 'px';
 
-  // Horizontal
-  if (dx < -deadzone) {
-    campaignKeyDown('a');
-    campaignKeyUp('d');
-  } else if (dx > deadzone) {
-    campaignKeyDown('d');
-    campaignKeyUp('a');
-  } else {
-    campaignKeyUp('a');
-    campaignKeyUp('d');
+  // Limit knob movement to base radius
+  const dx = currentX - startX;
+  const dy = currentY - startY;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const maxDist = 40;
+
+  let knobX = dx;
+  let knobY = dy;
+  if (dist > maxDist) {
+    knobX = (dx / dist) * maxDist;
+    knobY = (dy / dist) * maxDist;
   }
 
-  // Vertical
-  if (dy < -deadzone) {
-    campaignKeyDown('w');
-    campaignKeyUp('s');
-  } else if (dy > deadzone) {
-    campaignKeyDown('s');
-    campaignKeyUp('w');
-  } else {
-    campaignKeyUp('w');
-    campaignKeyUp('s');
+  const knob = el.querySelector('.joystick-knob');
+  if (knob) {
+    knob.style.left = knobX + 'px';
+    knob.style.top = knobY + 'px';
   }
 }
+
+// Convert joystick position to smooth analog movement
+function updateJoystickInput() {
+  // Update visual
+  if (!moveJoystickEl) moveJoystickEl = createJoystickVisual(false);
+  updateJoystickVisual(moveJoystickEl, moveJoystick.startX, moveJoystick.startY, moveJoystick.currentX, moveJoystick.currentY, moveJoystick.active);
+
+  if (!moveJoystick.active) {
+    // Clear joystick input
+    campaignClearJoystick();
+    return;
+  }
+
+  const rawDx = moveJoystick.currentX - moveJoystick.startX;
+  const rawDy = moveJoystick.currentY - moveJoystick.startY;
+  const deadzone = 15;
+  const maxDistance = 60;  // Maximum drag distance for full speed
+
+  // Apply deadzone
+  let dx = 0, dy = 0;
+  const dist = Math.sqrt(rawDx * rawDx + rawDy * rawDy);
+
+  if (dist > deadzone) {
+    // Normalize to -1 to 1 range based on distance
+    const adjustedDist = Math.min(dist - deadzone, maxDistance - deadzone);
+    const magnitude = adjustedDist / (maxDistance - deadzone);
+
+    // Get direction and apply magnitude
+    dx = (rawDx / dist) * magnitude;
+    dy = (rawDy / dist) * magnitude;
+  }
+
+  // Send analog values to game
+  campaignSetJoystick(dx, dy);
+}
+
+// Update shoot joystick visual
+function updateShootJoystickVisual() {
+  if (!shootJoystickEl) shootJoystickEl = createJoystickVisual(true);
+  updateJoystickVisual(shootJoystickEl, shootJoystick.startX, shootJoystick.startY, shootJoystick.currentX, shootJoystick.currentY, shootJoystick.active);
+}
+
+// Force reset all joysticks (call when other touch actions take over)
+function resetAllJoysticks() {
+  // Reset movement joystick
+  moveJoystick.pending = false;
+  moveJoystick.active = false;
+  moveJoystick.touchId = null;
+  campaignClearJoystick();
+  if (moveJoystickEl) moveJoystickEl.style.display = 'none';
+
+  // Reset shoot joystick
+  if (shootJoystick.firing) {
+    campaignMouseUp();
+  }
+  shootJoystick.pending = false;
+  shootJoystick.active = false;
+  shootJoystick.touchId = null;
+  shootJoystick.firing = false;
+  campaignClearAimAngle();
+  if (shootJoystickEl) shootJoystickEl.style.display = 'none';
+}
+
+// Register the callback with gestures module
+setResetJoysticksCallback(resetAllJoysticks);
 
 // ═══════════════════════════════════════════════════════════════
 // PLANNING GRID - ZOOM & PAN

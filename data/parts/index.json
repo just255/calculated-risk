@@ -1,0 +1,40 @@
+{
+  "parts": [
+    {
+      "id": "abrams-cannon-default",
+      "unitId": "abrams",
+      "partType": "cannon",
+      "name": "abrams-cannon-default",
+      "author": "Artist",
+      "file": "abrams-cannon-default.png",
+      "createdAt": "2026-01-03T06:29:48.363Z"
+    },
+    {
+      "id": "abrams-turret-default",
+      "unitId": "abrams",
+      "partType": "turret",
+      "name": "abrams-turret-default",
+      "author": "Artist",
+      "file": "abrams-turret-default.png",
+      "createdAt": "2026-01-03T06:43:39.193Z"
+    },
+    {
+      "id": "abrams-hull-default",
+      "unitId": "abrams",
+      "partType": "turret",
+      "name": "abrams-hull-default",
+      "author": "Artist",
+      "file": "abrams-hull-default.png",
+      "createdAt": "2026-01-03T06:46:13.606Z"
+    },
+    {
+      "id": "abrams-hull-default",
+      "unitId": "abrams",
+      "partType": "hull",
+      "name": "abrams-hull-default",
+      "author": "Artist",
+      "file": "abrams-hull-default.png",
+      "createdAt": "2026-01-04T20:35:39.521Z"
+    }
+  ]
+}

@@ -1,0 +1,1364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sprite Editor - Calculated Risk</title>
+  <link rel="stylesheet" href="css/sprite-editor.css">
+</head>
+<body>
+  <!-- Auth Overlay -->
+  <div class="overlay" id="authOverlay">
+    <div class="modal-box">
+      <h1>Sprite Editor</h1>
+      <p>Enter the artist password to access the editor</p>
+      <input type="password" id="authPassword" placeholder="Password..." autofocus>
+      <button onclick="spriteEditor.authenticate()">Enter Editor</button>
+      <div class="auth-error" id="authError">Incorrect password</div>
+    </div>
+  </div>
+
+  <!-- Mode Selection Overlay (shown after selecting object) -->
+  <div class="overlay hidden" id="modeSelectOverlay">
+    <div class="modal-box">
+      <h2>What would you like to do with <span id="selectedObjectName">Infantry</span>?</h2>
+
+      <div class="mode-cards">
+        <div class="mode-card" id="modeCardPart" onclick="spriteEditor.selectMode('part-editor')">
+          <div class="mode-card-icon">✏️</div>
+          <div class="mode-card-title">Part Editor</div>
+          <div class="mode-card-desc">Create new or edit existing parts (helmet, body, turret, etc.)</div>
+        </div>
+        <div class="mode-card" id="modeCardVariant" onclick="spriteEditor.selectMode('variant-builder')">
+          <div class="mode-card-icon">🧩</div>
+          <div class="mode-card-title">Variant Builder</div>
+          <div class="mode-card-desc">Compose existing parts into a complete unit skin</div>
+        </div>
+      </div>
+
+      <!-- Part Type Selection (shown when Part mode selected) -->
+      <div id="partTypeSection" class="hidden">
+        <p style="margin-bottom: 10px; color: var(--text-secondary);">Select the part type:</p>
+        <div class="part-type-grid" id="partTypeGrid">
+          <!-- Populated by JS based on object type -->
+        </div>
+      </div>
+
+      <!-- Part Selection (shown after selecting part type) -->
+      <div id="partSelectSection" class="hidden">
+        <p id="partSelectTitle" style="margin-bottom: 10px; color: var(--text-secondary);">Select a part to edit or create new</p>
+        <div class="part-select-grid" id="partSelectGrid">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <button id="modeConfirmBtn" onclick="spriteEditor.confirmModeSelection()" disabled>Continue</button>
+      <button onclick="spriteEditor.cancelModeSelection()" style="margin-top: 10px; background: transparent; color: var(--text-secondary);">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Part Name Input Modal -->
+  <div class="overlay hidden" id="partNameOverlay">
+    <div class="modal-box" style="max-width: 400px;">
+      <h2>Save Selection as Part</h2>
+      <p style="color: var(--text-secondary); margin-bottom: 16px;">
+        Enter a name for the new part.<br>
+        <span style="font-size: 0.85rem; color: var(--text-muted);">Format: {unit}-{part}-{variant}</span>
+      </p>
+      <input type="text" id="partNameInput" placeholder="e.g., abrams-cannon-default"
+        style="width: 100%; padding: 10px 12px; background: var(--bg-darker); border: 1px solid var(--border);
+        border-radius: 4px; color: var(--text-primary); font-size: 1rem; margin-bottom: 8px;">
+      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+        <input type="checkbox" id="setAsDefaultCheck" style="width: 16px; height: 16px;">
+        <label for="setAsDefaultCheck" style="color: var(--text-secondary); font-size: 0.9rem; cursor: pointer;">
+          Set as default for this part type
+        </label>
+      </div>
+      <div style="display: flex; gap: 12px; justify-content: flex-end;">
+        <button class="header-btn" onclick="spriteEditor.cancelPartName()" style="padding: 10px 24px;">Cancel</button>
+        <button class="header-btn primary" onclick="spriteEditor.confirmPartName()" style="padding: 10px 24px;">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Save Confirmation Modal (Enhanced Comparison) -->
+  <div class="overlay hidden" id="saveConfirmOverlay">
+    <div class="modal-box compare-modal">
+      <h2 id="saveConfirmTitle">Overwrite Existing Part?</h2>
+      <p id="saveConfirmMessage">A part with this name already exists. Do you want to replace it?</p>
+
+      <!-- Comparison Container -->
+      <div class="compare-container" id="compareContainer">
+        <!-- Left: Existing Image -->
+        <div class="compare-panel">
+          <div class="compare-label">Existing (will be replaced)</div>
+          <div class="compare-viewport" id="existingViewport">
+            <div class="compare-viewport-inner">
+              <img id="existingImage" class="compare-image">
+            </div>
+          </div>
+          <div class="compare-info">
+            <span id="existingDimensions">-</span>
+          </div>
+        </div>
+
+        <!-- Divider -->
+        <div class="compare-divider"></div>
+
+        <!-- Right: New Image -->
+        <div class="compare-panel">
+          <div class="compare-label">New (replacement)</div>
+          <div class="compare-viewport" id="newViewport">
+            <div class="compare-viewport-inner">
+              <img id="newImage" class="compare-image">
+            </div>
+          </div>
+          <div class="compare-info">
+            <span id="newDimensions">-</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Zoom Controls -->
+      <div class="compare-controls">
+        <div class="zoom-control-group">
+          <button class="icon-btn" onclick="spriteEditor.zoomCompareOut()" title="Zoom out">−</button>
+          <input type="range" id="compareZoom" min="1" max="20" value="4" step="0.5"
+            oninput="spriteEditor.updateCompareZoom(this.value)">
+          <button class="icon-btn" onclick="spriteEditor.zoomCompareIn()" title="Zoom in">+</button>
+          <span class="zoom-label" id="compareZoomLabel">400%</span>
+          <button class="text-btn" onclick="spriteEditor.fitCompareZoom()">Fit</button>
+          <button class="text-btn" onclick="spriteEditor.resetCompareZoom()">1:1</button>
+        </div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div style="display: flex; gap: 12px; justify-content: center; margin-top: 16px;">
+        <button class="header-btn" onclick="spriteEditor.cancelSaveConfirm()" style="padding: 10px 24px;">Cancel</button>
+        <button class="header-btn primary" onclick="spriteEditor.confirmSaveOverwrite()" style="padding: 10px 24px;">Replace</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recovery Prompt Modal -->
+  <div class="overlay hidden" id="recoveryOverlay">
+    <div class="modal-box" style="max-width: 450px;">
+      <h2>Recover Unsaved Work?</h2>
+      <p>Found unsaved changes from a previous session:</p>
+      <p style="text-align: center; font-family: monospace; color: var(--accent-green);" id="recoveryTime">-</p>
+      <p>Would you like to recover this work or start fresh?</p>
+      <div style="display: flex; gap: 12px; justify-content: center; margin-top: 20px;">
+        <button class="header-btn" onclick="spriteEditor.discardAutosave()">Discard</button>
+        <button class="header-btn primary" onclick="spriteEditor.recoverAutosave()">Recover</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main App -->
+  <div class="app" id="app">
+    <!-- Header Bar -->
+    <div class="header-bar">
+      <div class="header-title">Sprite Editor</div>
+      <div class="header-breadcrumb" id="headerBreadcrumb">
+        <!-- e.g., Infantry > Helmet > "Desert" -->
+      </div>
+      <div class="header-spacer"></div>
+      <span class="save-status" id="saveStatus"></span>
+      <div class="mode-indicator hidden" id="modeIndicator">Part Editor</div>
+      <div class="header-actions">
+        <button class="header-btn" onclick="spriteEditor.changeObject()">Change Object</button>
+        <button class="header-btn primary hidden" id="saveBtn">Save</button>
+      </div>
+    </div>
+
+    <!-- Menu Bar -->
+    <div class="menu-bar hidden" id="menuBar">
+      <div class="menu-item">
+        <button class="menu-trigger">File</button>
+        <div class="menu-dropdown">
+          <button onclick="spriteEditor.newFile()">New Part...</button>
+          <button onclick="spriteEditor.openProject()">Open Working... <span class="shortcut">Ctrl+O</span></button>
+          <div class="menu-divider"></div>
+          <button onclick="spriteEditor.save()">Save (Browser) <span class="shortcut">Ctrl+S</span></button>
+          <button onclick="spriteEditor.saveAs()">Save As...</button>
+          <div class="menu-divider"></div>
+          <button onclick="spriteEditor.publish()" class="part-editor-only">Publish to Server (Dev)</button>
+          <div class="menu-divider"></div>
+          <button onclick="spriteEditor.exportPng()">Download PNG</button>
+          <button onclick="spriteEditor.exportSpritesheet()" class="part-editor-only">Export Spritesheet</button>
+          <div class="menu-divider part-editor-only"></div>
+          <button onclick="spriteEditor.importImageToLayer()" class="part-editor-only">Import Image to Layer...</button>
+          <div class="menu-divider"></div>
+          <button onclick="spriteEditor.rescanSprites()">Rescan Sprites</button>
+          <button onclick="spriteEditor.changeObject()">Change Object</button>
+        </div>
+      </div>
+      <div class="menu-item">
+        <button class="menu-trigger">Edit</button>
+        <div class="menu-dropdown">
+          <button onclick="spriteEditor.undo()">Undo <span class="shortcut">Ctrl+Z</span></button>
+          <button onclick="spriteEditor.redo()">Redo <span class="shortcut">Ctrl+Y</span></button>
+          <div class="menu-divider"></div>
+          <button onclick="spriteEditor.cut()" class="part-editor-only">Cut <span class="shortcut">Ctrl+X</span></button>
+          <button onclick="spriteEditor.copy()" class="part-editor-only">Copy <span class="shortcut">Ctrl+C</span></button>
+          <button onclick="spriteEditor.paste()" class="part-editor-only">Paste <span class="shortcut">Ctrl+V</span></button>
+          <button onclick="spriteEditor.deleteSelection()">Delete <span class="shortcut">Del</span></button>
+          <div class="menu-divider"></div>
+          <button onclick="spriteEditor.selectAll()">Select All <span class="shortcut">Ctrl+A</span></button>
+        </div>
+      </div>
+      <div class="menu-item">
+        <button class="menu-trigger">View</button>
+        <div class="menu-dropdown">
+          <button onclick="spriteEditor.zoomIn()">Zoom In <span class="shortcut">Ctrl++</span></button>
+          <button onclick="spriteEditor.zoomOut()">Zoom Out <span class="shortcut">Ctrl+-</span></button>
+          <button onclick="spriteEditor.resetZoom()">Reset Zoom <span class="shortcut">Ctrl+0</span></button>
+          <div class="menu-divider"></div>
+          <button onclick="spriteEditor.toggleGrid()">Toggle Grid</button>
+          <button onclick="spriteEditor.toggleContextParts()" class="part-editor-only">Toggle Context Parts</button>
+          <button onclick="spriteEditor.importRefImage()" class="part-editor-only">Import Reference Image...</button>
+          <button onclick="spriteEditor.toggleRef()" class="part-editor-only">Toggle Reference Image</button>
+          <button onclick="spriteEditor.clearRefImage()" class="part-editor-only">Clear Reference Image</button>
+          <div class="menu-divider part-editor-only"></div>
+          <button onclick="spriteEditor.toggleOnion()" class="part-editor-only">Toggle Onion Skin</button>
+          <div class="menu-divider"></div>
+          <button onclick="spriteEditor.toggleDebug()">Debug Console <span class="shortcut">F12</span></button>
+          <div class="menu-divider"></div>
+          <div class="menu-submenu">
+            <button>UI Scale <span id="currentScaleLabel" style="color: var(--text-muted); margin-left: 8px;">100%</span> <span class="submenu-arrow">▶</span></button>
+            <div class="menu-dropdown submenu" id="scaleMenu">
+              <button data-scale="70" onclick="spriteEditor.setUIScale(70)">70%</button>
+              <button data-scale="80" onclick="spriteEditor.setUIScale(80)">80%</button>
+              <button data-scale="90" onclick="spriteEditor.setUIScale(90)">90%</button>
+              <button data-scale="100" onclick="spriteEditor.setUIScale(100)" class="scale-active">100%</button>
+              <button data-scale="110" onclick="spriteEditor.setUIScale(110)">110%</button>
+              <button data-scale="120" onclick="spriteEditor.setUIScale(120)">120%</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="menu-item part-editor-only">
+        <button class="menu-trigger">Layer</button>
+        <div class="menu-dropdown">
+          <button onclick="spriteEditor.addLayer()">New Layer</button>
+          <button onclick="spriteEditor.duplicateLayer()">Duplicate Layer</button>
+          <button onclick="spriteEditor.deleteLayer()">Delete Layer</button>
+          <div class="menu-divider"></div>
+          <button onclick="spriteEditor.moveLayerUp()">Bring Forward</button>
+          <button onclick="spriteEditor.moveLayerDown()">Send Backward</button>
+          <div class="menu-divider"></div>
+          <button onclick="spriteEditor.mergeDown()">Merge Down</button>
+          <button onclick="spriteEditor.flattenLayers()">Flatten All</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content" id="mainContent">
+      <!-- Welcome Screen (shown when no object selected) -->
+      <div class="welcome-screen" id="welcomeScreen">
+        <h2>Select an Object to Edit</h2>
+        <p>Choose a unit or terrain type to create parts or build variants</p>
+        <div class="object-selector" id="objectSelector">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <!-- Editor View (hidden until object+mode selected) -->
+      <div class="hidden" id="editorView" style="display: none; flex: 1;">
+        <!-- This will be shown as flex when active -->
+
+        <!-- Left Panel: Browser -->
+        <div class="browser-panel">
+          <!-- Part Library Section (Variant Builder only) -->
+          <div class="panel-section variant-builder-only-block">
+            <div class="panel-section-header">
+              <span id="libraryTitle">Part Library</span>
+              <button onclick="spriteEditor.refreshLibrary()" title="Refresh">🔄</button>
+            </div>
+            <div class="panel-section-content">
+              <input type="text" class="search-input" placeholder="Search parts..." id="partSearch" oninput="spriteEditor.filterParts()">
+              <div class="tree-list" id="partLibrary">
+                <!-- Populated by JS -->
+              </div>
+            </div>
+          </div>
+
+          <!-- Layers Section (Part Editor) -->
+          <div class="panel-section part-editor-only-block">
+            <div class="panel-section-header">
+              <span>Layers</span>
+              <div class="header-buttons">
+                <button onclick="spriteEditor.toggleAllLayers()" id="toggleAllLayersBtn" title="Toggle all">👁</button>
+                <button onclick="spriteEditor.addLayer()" title="New Layer">+</button>
+              </div>
+            </div>
+            <div class="panel-section-content scrollable">
+              <div class="layer-list" id="layerList">
+                <!-- Populated by JS -->
+              </div>
+            </div>
+            <div class="layer-buttons">
+              <button onclick="spriteEditor.moveLayerUp()">▲</button>
+              <button onclick="spriteEditor.moveLayerDown()">▼</button>
+              <button onclick="spriteEditor.duplicateLayer()">📋</button>
+              <button onclick="spriteEditor.deleteLayer()">🗑</button>
+            </div>
+          </div>
+
+          <!-- Context Parts Section (Part Editor) -->
+          <div class="panel-section part-editor-only-block">
+            <div class="panel-section-header">
+              <span>Context</span>
+              <button onclick="spriteEditor.toggleAllContext()" id="toggleAllContextBtn" title="Toggle all">👁</button>
+            </div>
+            <div class="panel-section-content">
+              <div class="context-variant-selector">
+                <label>Variant:</label>
+                <select id="contextVariantSelect" onchange="spriteEditor.selectContextVariant(this.value)">
+                  <!-- Populated by JS -->
+                </select>
+              </div>
+              <div class="layer-list" id="contextPartsList">
+                <!-- Populated by JS - shows other parts as ghost reference -->
+              </div>
+            </div>
+          </div>
+
+          <!-- Variant Selector (Variant Builder) -->
+          <div class="panel-section variant-builder-only-block">
+            <div class="panel-section-header">
+              <span>Variant</span>
+            </div>
+            <div class="panel-section-content" style="padding: 8px;">
+              <div style="display: flex; gap: 4px; margin-bottom: 8px;">
+                <select id="variantSelector" style="flex: 1; padding: 6px; background: var(--bg-dark); border: 1px solid var(--border); border-radius: 4px; color: var(--text-primary);">
+                  <option value="">-- New Variant --</option>
+                </select>
+                <button onclick="spriteEditor.loadSelectedVariant()" class="header-btn" title="Load selected variant">Load</button>
+              </div>
+              <div style="display: flex; gap: 4px;">
+                <input type="text" id="variantName" placeholder="Variant name" value="Untitled" style="flex: 1; padding: 6px; background: var(--bg-dark); border: 1px solid var(--border); border-radius: 4px; color: var(--text-primary);">
+                <button onclick="spriteEditor.saveVariant()" class="header-btn" title="Save variant">Save</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Parts In Use Section (Variant Builder) -->
+          <div class="panel-section variant-builder-only-block">
+            <div class="panel-section-header">
+              <span>Parts In Variant</span>
+              <button onclick="spriteEditor.toggleAllParts()" id="toggleAllPartsBtn" title="Toggle all">👁</button>
+            </div>
+            <div class="panel-section-content scrollable">
+              <div class="layer-list" id="partsInUse">
+                <!-- Populated by JS -->
+              </div>
+            </div>
+            <div class="layer-buttons">
+              <button onclick="spriteEditor.movePartUp()">▲ Front</button>
+              <button onclick="spriteEditor.movePartDown()">▼ Back</button>
+              <button onclick="spriteEditor.removePart()">Remove</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Toolbar (Part Editor Only) -->
+        <div class="toolbar part-editor-only" id="toolbar">
+          <button class="tool-btn active" data-tool="select" title="Select (V)">▢</button>
+          <button class="tool-btn" data-tool="marquee" title="Marquee (Shift+M) - Rectangle selection">⬚</button>
+          <button class="tool-btn" data-tool="wand" title="Magic Wand (W)">✦</button>
+          <button class="tool-btn" data-tool="lasso" title="Lasso (Shift+L)">⌇</button>
+          <button class="tool-btn" data-tool="selection-brush" title="Selection Brush (Shift+B) - Paint selection, Alt to erase">◎</button>
+          <button class="tool-btn" data-tool="pencil" title="Pencil (P)">✏</button>
+          <button class="tool-btn" data-tool="eraser" title="Eraser (E)">🧹</button>
+          <button class="tool-btn" data-tool="bucket" title="Bucket Fill (B)">🪣</button>
+          <button class="tool-btn" data-tool="edge-fill" title="Edge Fill (G) - Fill transparent gaps from edges">🌊</button>
+          <button class="tool-btn" data-tool="spray" title="Spray (S)">🌫</button>
+          <button class="tool-btn" data-tool="blend" title="Blend Brush (Shift+D) - Average colors in radius">🫧</button>
+          <button class="tool-btn" data-tool="pixelate" title="Pixelate (Shift+X) - Chunky color averaging">🧊</button>
+          <div class="tool-divider"></div>
+          <button class="tool-btn" data-tool="line" title="Line (L)">╱</button>
+          <button class="tool-btn" data-tool="rect" title="Rectangle (R)">▭</button>
+          <button class="tool-btn" data-tool="circle" title="Circle (C)">○</button>
+          <button class="tool-btn" data-tool="ellipse" title="Ellipse">⬭</button>
+          <button class="tool-btn" data-tool="path" title="Path">〰</button>
+          <div class="tool-divider"></div>
+          <button class="tool-btn" data-tool="measure" title="Measure Tool (M) - Click two points to measure distance and find midpoint">📏</button>
+          <button class="tool-btn" data-tool="move" title="Move">✥</button>
+          <button class="tool-btn" data-tool="eyedropper" title="Eyedropper (I)">💧</button>
+          <button class="tool-btn" data-tool="stamp" title="Stamp (T) - Paste selection. Shift=flip H, Alt=flip V, Ctrl+Shift=random">🔖</button>
+          <button class="tool-btn" data-tool="clone-stamp" title="Clone Stamp (Shift+T) - Alt+Click to set source, then paint to clone">🖌</button>
+          <button class="tool-btn" data-tool="delete" title="Delete">✕</button>
+          <div class="tool-divider"></div>
+          <button class="tool-btn" onclick="spriteEditor.undo()" title="Undo (Ctrl+Z)">↩</button>
+          <button class="tool-btn" onclick="spriteEditor.redo()" title="Redo (Ctrl+Y)">↪</button>
+        </div>
+
+        <!-- Canvas Area -->
+        <div class="canvas-area">
+          <div class="canvas-wrapper" id="canvasWrapper">
+            <canvas id="canvas" width="256" height="256"></canvas>
+            <!-- HTML Overlays - crisp elements positioned over canvas -->
+            <div id="snapPointOverlay" class="snap-point-overlay"></div>
+            <div id="gizmoOverlay" class="gizmo-overlay"></div>
+            <div id="selectionOverlay" class="selection-overlay"></div>
+          </div>
+          <div class="canvas-controls">
+            <button onclick="spriteEditor.zoomOut()">−</button>
+            <span class="zoom-display" id="zoomDisplay">100%</span>
+            <button onclick="spriteEditor.zoomIn()">+</button>
+            <button onclick="spriteEditor.toggleGrid()" id="gridBtn">Grid</button>
+            <button onclick="spriteEditor.toggleContextParts()" id="contextBtn" class="part-editor-only" title="Toggle context parts">Context</button>
+            <button id="refBtn" class="part-editor-only has-context-menu" title="Click to toggle, right-click for options"
+              onmousedown="spriteEditor.refMouseDown(event)"
+              onmouseup="spriteEditor.refMouseUp()"
+              oncontextmenu="spriteEditor.refContextMenu(event)">Ref</button>
+            <button onclick="spriteEditor.toggleOnion()" id="onionBtn" class="part-editor-only">Onion</button>
+          </div>
+          <!-- Hidden file input for reference image -->
+          <input type="file" id="refImageInput" accept="image/*" style="display:none" onchange="spriteEditor.handleRefImageSelect(event)">
+          <!-- Hidden file input for importing image to layer -->
+          <input type="file" id="layerImageInput" accept="image/*" style="display:none" onchange="spriteEditor.handleLayerImageSelect(event)">
+        </div>
+
+        <!-- Right Panel: Properties -->
+        <div class="properties-panel">
+          <!-- Selected Layer Properties (Part Editor) -->
+          <div class="prop-section part-editor-only-block" id="layerPropsSection">
+            <div class="prop-section-title">Selected Layer</div>
+            <div class="prop-row">
+              <span class="prop-label">Name</span>
+              <input type="text" class="prop-input" id="layerName" placeholder="Layer name">
+            </div>
+            <div class="prop-row">
+              <span class="prop-label">Opacity</span>
+              <input type="range" class="prop-slider" id="layerOpacity" min="0" max="100" value="100">
+              <div class="num-input-group">
+                <button class="num-btn" data-input="layerOpacityNum" data-delta="-1" data-slider="layerOpacity" data-min="0" data-max="100">−</button>
+                <input type="number" class="prop-input num-input" id="layerOpacityNum" min="0" max="100" value="100">
+                <button class="num-btn" data-input="layerOpacityNum" data-delta="1" data-slider="layerOpacity" data-min="0" data-max="100">+</button>
+              </div>
+              <span class="prop-unit">%</span>
+            </div>
+            <div class="prop-row">
+              <span class="prop-label">Blend</span>
+              <select class="prop-select" id="layerBlend">
+                <option value="normal">Normal</option>
+                <option value="multiply">Multiply</option>
+                <option value="screen">Screen</option>
+                <option value="overlay">Overlay</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Magic Wand Options (Part Editor) -->
+          <div class="prop-section part-editor-only-block hidden" id="wandOptionsSection">
+            <div class="prop-section-title">Magic Wand</div>
+            <div class="prop-row">
+              <span class="prop-label">Tolerance</span>
+              <input type="range" class="prop-slider" id="wandTolerance" min="0" max="255" value="32">
+              <div class="num-input-group">
+                <button class="num-btn" data-input="wandToleranceNum" data-delta="-5" data-slider="wandTolerance" data-min="0" data-max="255">−</button>
+                <input type="number" class="prop-input num-input" id="wandToleranceNum" min="0" max="255" value="32">
+                <button class="num-btn" data-input="wandToleranceNum" data-delta="5" data-slider="wandTolerance" data-min="0" data-max="255">+</button>
+              </div>
+            </div>
+            <div class="prop-row" style="gap: 8px;">
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.selectAll()">Select All</button>
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.invertSelection()">Invert</button>
+            </div>
+            <div class="prop-row">
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.clearSelection()">Clear Selection</button>
+            </div>
+            <div class="prop-section-title" style="margin-top: 12px;">Export Selection</div>
+            <div class="prop-row" style="gap: 8px;">
+              <button class="header-btn primary" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.exportSelectionPng()">Export PNG</button>
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.selectionToLayer()">To Layer</button>
+            </div>
+            <div class="prop-row" style="margin-top: 4px;">
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.selectionAsPart()">Save as Part</button>
+            </div>
+            <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 8px;">
+              Shift+click to add to selection. Press Escape to clear.
+            </p>
+          </div>
+
+          <!-- Target Colors Panel (Part Editor - Lasso Tool) -->
+          <div class="prop-section part-editor-only-block hidden" id="targetColorsSection">
+            <div class="prop-section-title">Target Colors</div>
+            <div id="targetColorsList" class="target-colors-list">
+              <!-- Color items populated by JS -->
+              <div class="no-colors-hint" style="color: var(--text-muted); font-size: 0.85rem; padding: 8px 0;">
+                No target colors. Click "Add Color" or draw with lasso to auto-sample.
+              </div>
+            </div>
+            <div class="prop-row" style="gap: 8px; margin-top: 8px;">
+              <button class="header-btn primary" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.addTargetColor()">+ Add Color</button>
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.clearTargetColors()">Clear All</button>
+            </div>
+            <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 8px;">
+              Pre-select colors to match, each with its own tolerance. If none set, colors are sampled from lasso area.
+            </p>
+          </div>
+
+          <!-- Selection Brush Options (Part Editor) -->
+          <div class="prop-section part-editor-only-block hidden" id="selectionBrushOptionsSection">
+            <div class="prop-section-title">Selection Brush</div>
+            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 8px;">
+              Paint to add selection. Hold Alt to erase selection.
+            </p>
+            <div class="prop-row" style="gap: 8px;">
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.selectAll()">Select All</button>
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.invertSelection()">Invert</button>
+            </div>
+            <div class="prop-row">
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.clearSelection()">Clear Selection</button>
+            </div>
+            <div class="prop-section-title" style="margin-top: 12px;">Export Selection</div>
+            <div class="prop-row" style="gap: 8px;">
+              <button class="header-btn primary" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.exportSelectionPng()">Export PNG</button>
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.selectionToLayer()">To Layer</button>
+            </div>
+            <div class="prop-row" style="margin-top: 4px;">
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.selectionAsPart()">Save as Part</button>
+            </div>
+          </div>
+
+          <!-- Measure Tool Options (Part Editor) -->
+          <div class="prop-section part-editor-only-block hidden" id="measureOptionsSection">
+            <div class="prop-section-title">Measure Tool</div>
+            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 8px;">
+              Click to place points. Shows distance and midpoint.
+            </p>
+            <div id="measureInfo" style="font-family: monospace; font-size: 0.85rem; margin-bottom: 8px;">
+              <div id="measurePoint1" style="color: var(--text-muted);">Point 1: -</div>
+              <div id="measurePoint2" style="color: var(--text-muted);">Point 2: -</div>
+              <div id="measureDistance" style="color: var(--accent-green); margin-top: 4px;">Distance: -</div>
+              <div id="measureMidpoint" style="color: var(--accent-blue); margin-top: 4px;">Midpoint: -</div>
+            </div>
+            <div class="prop-row" style="gap: 8px;">
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.addMeasureGuide()">+ Add Guide</button>
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.clearMeasure()">Clear</button>
+            </div>
+            <div class="prop-row" style="margin-top: 8px;">
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.clearAllGuides()">Clear All Guides</button>
+            </div>
+            <p style="font-size: 0.7rem; color: var(--text-muted); margin-top: 8px;">
+              Tip: Use "Add Guide" to keep the measurement line visible while working.
+            </p>
+          </div>
+
+          <!-- Clone Stamp Options (Part Editor) -->
+          <div class="prop-section part-editor-only-block hidden" id="cloneStampOptionsSection">
+            <div class="prop-section-title">Clone Stamp</div>
+            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 8px;">
+              Alt+Click to set source, then paint to clone.
+            </p>
+            <div class="prop-row">
+              <span class="prop-label">Brush Size</span>
+              <input type="range" class="prop-slider" id="cloneBrushSize" min="1" max="64" value="8">
+              <div class="num-input-group">
+                <button class="num-btn" data-input="cloneBrushSizeNum" data-delta="-1" data-slider="cloneBrushSize" data-min="1" data-max="64">−</button>
+                <input type="number" class="prop-input num-input" id="cloneBrushSizeNum" min="1" max="64" value="8">
+                <button class="num-btn" data-input="cloneBrushSizeNum" data-delta="1" data-slider="cloneBrushSize" data-min="1" data-max="64">+</button>
+              </div>
+              <span class="prop-unit">px</span>
+            </div>
+            <div class="prop-row">
+              <label class="prop-checkbox">
+                <input type="checkbox" id="cloneAligned" checked>
+                <span>Aligned mode</span>
+              </label>
+            </div>
+            <div class="prop-row" style="gap: 12px;">
+              <label class="prop-checkbox">
+                <input type="checkbox" id="cloneFlipH">
+                <span>Flip H</span>
+              </label>
+              <label class="prop-checkbox">
+                <input type="checkbox" id="cloneFlipV">
+                <span>Flip V</span>
+              </label>
+            </div>
+            <div class="prop-row" style="margin-top: 8px;">
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.clearCloneSource()">Clear Source</button>
+            </div>
+          </div>
+
+          <!-- Blend Brush Options (Part Editor) -->
+          <div class="prop-section part-editor-only-block hidden" id="blendOptionsSection">
+            <div class="prop-section-title">Blend Brush</div>
+            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 8px;">
+              Paint to average colors together. Use stroke width for radius.
+            </p>
+            <div class="prop-row">
+              <span class="prop-label">Hardness</span>
+              <input type="range" class="prop-slider" id="blendHardness" min="10" max="100" value="80">
+              <div class="num-input-group">
+                <button class="num-btn" data-input="blendHardnessNum" data-delta="-10" data-slider="blendHardness" data-min="10" data-max="100">−</button>
+                <input type="number" class="prop-input num-input" id="blendHardnessNum" min="10" max="100" value="80">
+                <button class="num-btn" data-input="blendHardnessNum" data-delta="10" data-slider="blendHardness" data-min="10" data-max="100">+</button>
+              </div>
+              <span class="prop-unit">%</span>
+            </div>
+            <p style="font-size: 0.7rem; color: var(--text-muted); margin-top: 4px;">
+              100% = full replacement with average color
+            </p>
+          </div>
+
+          <!-- Pixelate Brush Options (Part Editor) -->
+          <div class="prop-section part-editor-only-block hidden" id="pixelateOptionsSection">
+            <div class="prop-section-title">Pixelate Brush</div>
+            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 8px;">
+              Chunky color blending. Use stroke width for radius.
+            </p>
+            <div class="prop-row">
+              <span class="prop-label">Cell Size</span>
+              <input type="range" class="prop-slider" id="pixelateSize" min="2" max="16" value="4">
+              <div class="num-input-group">
+                <button class="num-btn" data-input="pixelateSizeNum" data-delta="-1" data-slider="pixelateSize" data-min="2" data-max="16">−</button>
+                <input type="number" class="prop-input num-input" id="pixelateSizeNum" min="2" max="16" value="4">
+                <button class="num-btn" data-input="pixelateSizeNum" data-delta="1" data-slider="pixelateSize" data-min="2" data-max="16">+</button>
+              </div>
+              <span class="prop-unit">px</span>
+            </div>
+            <p style="font-size: 0.7rem; color: var(--text-muted); margin-top: 4px;">
+              Larger cells = blockier result
+            </p>
+          </div>
+
+          <!-- Lasso Options (Part Editor) -->
+          <div class="prop-section part-editor-only-block hidden" id="lassoOptionsSection">
+            <div class="prop-section-title">Lasso Selection</div>
+            <div class="prop-row">
+              <label class="prop-checkbox">
+                <input type="checkbox" id="lassoExpandColors">
+                <span>Expand to similar colors</span>
+              </label>
+            </div>
+            <div class="prop-row">
+              <span class="prop-label">Tolerance</span>
+              <input type="range" class="prop-slider" id="lassoTolerance" min="0" max="100" value="10" step="1">
+              <div class="num-input-group">
+                <button class="num-btn" data-input="lassoToleranceNum" data-delta="-1" data-slider="lassoTolerance" data-min="0" data-max="100">−</button>
+                <input type="number" class="prop-input num-input" id="lassoToleranceNum" min="0" max="100" value="10">
+                <button class="num-btn" data-input="lassoToleranceNum" data-delta="1" data-slider="lassoTolerance" data-min="0" data-max="100">+</button>
+              </div>
+            </div>
+            <div class="prop-row" style="gap: 8px;">
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.selectAll()">Select All</button>
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.invertSelection()">Invert</button>
+            </div>
+            <div class="prop-row">
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.clearSelection()">Clear Selection</button>
+            </div>
+            <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 8px;">
+              Expand: sample colors inside lasso, select all matching.<br>
+              Off: select only pixels inside lasso outline.
+            </p>
+            <div class="prop-section-title" style="margin-top: 12px;">Export Selection</div>
+            <div class="prop-row" style="gap: 8px;">
+              <button class="header-btn primary" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.exportSelectionPng()">Export PNG</button>
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.selectionToLayer()">To Layer</button>
+            </div>
+            <div class="prop-row" style="margin-top: 4px;">
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.selectionAsPart()">Save as Part</button>
+            </div>
+          </div>
+
+          <!-- Shape Transform Options (Part Editor - Select Tool) -->
+          <div class="prop-section part-editor-only-block hidden" id="shapeOptionsSection">
+            <div class="prop-section-title">Selected Shape</div>
+            <!-- Opacity - all shapes -->
+            <div class="prop-row">
+              <span class="prop-label">Opacity</span>
+              <input type="range" class="prop-slider" id="shapeOpacity" min="0" max="100" value="100">
+              <div class="num-input-group">
+                <button class="num-btn" data-shape="opacity" data-delta="-1">-</button>
+                <input type="number" class="prop-input num-input" id="shapeOpacityNum" min="0" max="100" value="100">
+                <button class="num-btn" data-shape="opacity" data-delta="1">+</button>
+              </div>
+              <span class="prop-unit">%</span>
+            </div>
+            <!-- Stroke - drawn shapes only -->
+            <div class="prop-row" id="shapeStrokeRow">
+              <span class="prop-label">Stroke</span>
+              <input type="color" class="prop-color" id="shapeStrokeColor" value="#4ade80">
+              <div class="num-input-group">
+                <button class="num-btn" data-shape="strokeWidth" data-delta="-1">-</button>
+                <input type="number" class="prop-input num-input" id="shapeStrokeWidth" min="1" max="50" value="2">
+                <button class="num-btn" data-shape="strokeWidth" data-delta="1">+</button>
+              </div>
+              <span class="prop-unit">px</span>
+            </div>
+            <!-- Fill - shapes that support fill -->
+            <div id="shapeFillSection">
+              <div class="prop-section-title" style="margin-top: 8px;">Fill</div>
+              <div class="prop-row">
+                <label class="prop-checkbox">
+                  <input type="checkbox" id="shapeHasFill">
+                  <span>Enable Fill</span>
+                </label>
+              </div>
+              <div class="prop-row" id="shapeFillTypeRow">
+                <span class="prop-label">Type</span>
+                <select class="prop-select" id="shapeFillType">
+                  <option value="solid">Solid</option>
+                  <option value="linear">Linear Gradient</option>
+                  <option value="radial">Radial Gradient</option>
+                </select>
+              </div>
+              <div class="prop-row">
+                <span class="prop-label">Color 1</span>
+                <input type="color" class="prop-color" id="shapeFillColor" value="#000000">
+              </div>
+              <div class="prop-row" id="shapeFillColor2Row">
+                <span class="prop-label">Color 2</span>
+                <input type="color" class="prop-color" id="shapeFillColor2" value="#333333">
+              </div>
+              <div class="prop-row" id="shapeFillAngleRow">
+                <span class="prop-label">Angle</span>
+                <input type="range" class="prop-slider" id="shapeFillAngle" min="0" max="360" value="0">
+                <div class="num-input-group">
+                  <button class="num-btn" data-input="shapeFillAngleNum" data-delta="-5" data-slider="shapeFillAngle" data-min="0" data-max="360">−</button>
+                  <input type="number" class="prop-input num-input" id="shapeFillAngleNum" min="0" max="360" value="0">
+                  <button class="num-btn" data-input="shapeFillAngleNum" data-delta="5" data-slider="shapeFillAngle" data-min="0" data-max="360">+</button>
+                </div>
+                <span class="prop-unit">°</span>
+              </div>
+            </div>
+            <!-- Crisp edges - drawn shapes -->
+            <div class="prop-row" id="shapeCrispRow">
+              <label class="prop-checkbox">
+                <input type="checkbox" id="shapeCrispEdges">
+                <span>Crisp edges</span>
+              </label>
+            </div>
+            <!-- Scale - images only -->
+            <div id="shapeScaleRows">
+              <div class="prop-row">
+                <label class="prop-checkbox">
+                  <input type="checkbox" id="shapeScaleLock" checked>
+                  <span>Lock scale</span>
+                </label>
+              </div>
+              <div class="prop-row">
+                <span class="prop-label">Scale X</span>
+                <input type="range" class="prop-slider" id="shapeScaleX" min="1" max="500" value="100">
+                <div class="num-input-group">
+                  <button class="num-btn" data-shape="scaleX" data-delta="-1">-</button>
+                  <input type="number" class="prop-input num-input" id="shapeScaleXNum" min="1" max="500" value="100">
+                  <button class="num-btn" data-shape="scaleX" data-delta="1">+</button>
+                </div>
+                <span class="prop-unit">%</span>
+              </div>
+              <div class="prop-row">
+                <span class="prop-label">Scale Y</span>
+                <input type="range" class="prop-slider" id="shapeScaleY" min="1" max="500" value="100">
+                <div class="num-input-group">
+                  <button class="num-btn" data-shape="scaleY" data-delta="-1">-</button>
+                  <input type="number" class="prop-input num-input" id="shapeScaleYNum" min="1" max="500" value="100">
+                  <button class="num-btn" data-shape="scaleY" data-delta="1">+</button>
+                </div>
+                <span class="prop-unit">%</span>
+              </div>
+            </div>
+            <!-- Position - shapes with x/y -->
+            <div id="shapePositionRows">
+              <div class="prop-row">
+                <span class="prop-label">X</span>
+                <div class="num-input-group">
+                  <button class="num-btn" data-input="shapeX" data-delta="-1">−</button>
+                  <input type="number" class="prop-input num-input" id="shapeX" value="0">
+                  <button class="num-btn" data-input="shapeX" data-delta="1">+</button>
+                </div>
+                <span class="prop-unit">px</span>
+              </div>
+              <div class="prop-row">
+                <span class="prop-label">Y</span>
+                <div class="num-input-group">
+                  <button class="num-btn" data-input="shapeY" data-delta="-1">−</button>
+                  <input type="number" class="prop-input num-input" id="shapeY" value="0">
+                  <button class="num-btn" data-input="shapeY" data-delta="1">+</button>
+                </div>
+                <span class="prop-unit">px</span>
+              </div>
+            </div>
+            <!-- Image-only buttons -->
+            <div class="prop-row" id="shapeImageButtons" style="gap: 8px; margin-top: 8px;">
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.fitShapeToCanvas()">Fit</button>
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.centerShape()">Center</button>
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.resetShapeTransform()">Reset</button>
+            </div>
+            <!-- Delete - all shapes -->
+            <div class="prop-row" style="margin-top: 8px;">
+              <button class="header-btn danger" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.deleteSelectedShape()">Delete</button>
+            </div>
+          </div>
+
+          <!-- Drawing Defaults - hidden when shape is selected -->
+          <div id="drawingDefaultsSection" class="part-editor-only-block">
+            <div class="prop-section">
+              <div class="prop-section-title">Stroke</div>
+              <div class="prop-row">
+                <span class="prop-label">Color</span>
+                <input type="color" class="prop-color" id="strokeColor" value="#4ade80">
+                <div class="num-input-group">
+                  <button class="num-btn" data-input="strokeWidth" data-delta="-1" data-state="strokeWidth" data-min="1" data-max="50">−</button>
+                  <input type="number" class="prop-input num-input" id="strokeWidth" value="2" min="1" max="50">
+                  <button class="num-btn" data-input="strokeWidth" data-delta="1" data-state="strokeWidth" data-min="1" data-max="50">+</button>
+                </div>
+                <span class="prop-unit">px</span>
+              </div>
+            </div>
+
+            <div class="prop-section">
+              <div class="prop-row">
+                <label class="prop-checkbox">
+                  <input type="checkbox" id="pixelPerfect" checked>
+                  <span>Crisp pixels</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="prop-section">
+              <div class="prop-section-title">Fill</div>
+              <div class="prop-row">
+                <label class="prop-checkbox">
+                  <input type="checkbox" id="fillEnabled">
+                  <span>Enable Fill</span>
+                </label>
+              </div>
+              <div class="prop-row">
+                <span class="prop-label">Type</span>
+                <select class="prop-select" id="fillType">
+                  <option value="solid">Solid</option>
+                  <option value="linear">Linear Gradient</option>
+                  <option value="radial">Radial Gradient</option>
+                </select>
+              </div>
+              <div class="prop-row">
+                <span class="prop-label">Color 1</span>
+                <input type="color" class="prop-color" id="fillColor1" value="#22c55e">
+              </div>
+              <div class="prop-row" id="fillColor2Row">
+                <span class="prop-label">Color 2</span>
+                <input type="color" class="prop-color" id="fillColor2" value="#166534">
+              </div>
+              <div class="prop-row" id="gradientAngleRow">
+                <span class="prop-label">Angle</span>
+                <input type="range" class="prop-slider" id="gradientAngle" min="0" max="360" value="0">
+                <div class="num-input-group">
+                  <button class="num-btn" data-input="gradientAngleNum" data-delta="-1" data-slider="gradientAngle" data-min="0" data-max="360">−</button>
+                  <input type="number" class="prop-input num-input" id="gradientAngleNum" min="0" max="360" value="0">
+                  <button class="num-btn" data-input="gradientAngleNum" data-delta="1" data-slider="gradientAngle" data-min="0" data-max="360">+</button>
+                </div>
+                <span class="prop-unit">°</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Reference Image Controls (Part Editor) -->
+          <div class="prop-section part-editor-only-block hidden" id="refImageSection">
+            <div class="prop-section-title">Reference Image</div>
+            <div class="prop-row">
+              <span class="prop-label">Opacity</span>
+              <input type="range" class="prop-slider" id="refOpacity" min="0" max="100" value="40">
+              <div class="num-input-group">
+                <button class="num-btn" data-input="refOpacityNum" data-delta="-1" data-state="refOpacity" data-slider="refOpacity" data-min="0" data-max="100">−</button>
+                <input type="number" class="prop-input num-input" id="refOpacityNum" min="0" max="100" value="40">
+                <button class="num-btn" data-input="refOpacityNum" data-delta="1" data-state="refOpacity" data-slider="refOpacity" data-min="0" data-max="100">+</button>
+              </div>
+              <span class="prop-unit">%</span>
+            </div>
+            <div class="prop-row">
+              <span class="prop-label">Scale</span>
+              <input type="range" class="prop-slider" id="refScale" min="10" max="500" value="100">
+              <div class="num-input-group">
+                <button class="num-btn" data-input="refScaleNum" data-delta="-1" data-state="refScale" data-slider="refScale" data-min="1">−</button>
+                <input type="number" class="prop-input num-input" id="refScaleNum" min="1" value="100">
+                <button class="num-btn" data-input="refScaleNum" data-delta="1" data-state="refScale" data-slider="refScale" data-min="1">+</button>
+              </div>
+              <span class="prop-unit">%</span>
+            </div>
+            <div class="prop-row">
+              <span class="prop-label">Offset X</span>
+              <div class="num-input-group">
+                <button class="num-btn" data-input="refX" data-delta="-1" data-state="refX">−</button>
+                <input type="number" class="prop-input num-input" id="refX" value="0">
+                <button class="num-btn" data-input="refX" data-delta="1" data-state="refX">+</button>
+              </div>
+              <span class="prop-unit">px</span>
+            </div>
+            <div class="prop-row">
+              <span class="prop-label">Offset Y</span>
+              <div class="num-input-group">
+                <button class="num-btn" data-input="refY" data-delta="-1" data-state="refY">−</button>
+                <input type="number" class="prop-input num-input" id="refY" value="0">
+                <button class="num-btn" data-input="refY" data-delta="1" data-state="refY">+</button>
+              </div>
+              <span class="prop-unit">px</span>
+            </div>
+            <div class="prop-row">
+              <button onclick="spriteEditor.resetRefTransform()" style="flex: 1;">Reset</button>
+              <button onclick="spriteEditor.clearRefImage()" style="flex: 1; background: #dc2626; color: #fff;">Remove</button>
+            </div>
+          </div>
+
+          <!-- Canvas Size Controls (Part Editor) -->
+          <div class="prop-section part-editor-only-block">
+            <div class="prop-section-title">Canvas Size</div>
+            <div class="prop-row">
+              <span class="prop-label">Width</span>
+              <div class="num-input-group">
+                <button class="num-btn" data-input="canvasWidthInput" data-delta="-1" data-min="1" data-max="1024">−</button>
+                <input type="number" class="prop-input num-input" id="canvasWidthInput" value="256">
+                <button class="num-btn" data-input="canvasWidthInput" data-delta="1" data-min="1" data-max="1024">+</button>
+              </div>
+              <span class="prop-unit">px</span>
+            </div>
+            <div class="prop-row">
+              <span class="prop-label">Height</span>
+              <div class="num-input-group">
+                <button class="num-btn" data-input="canvasHeightInput" data-delta="-1" data-min="1" data-max="1024">−</button>
+                <input type="number" class="prop-input num-input" id="canvasHeightInput" value="256">
+                <button class="num-btn" data-input="canvasHeightInput" data-delta="1" data-min="1" data-max="1024">+</button>
+              </div>
+              <span class="prop-unit">px</span>
+            </div>
+            <div class="prop-row" style="gap: 8px;">
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.setCanvasSize(64, 64)">64²</button>
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.setCanvasSize(128, 128)">128²</button>
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.setCanvasSize(256, 256)">256²</button>
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.setCanvasSize(512, 512)">512²</button>
+            </div>
+          </div>
+
+          <!-- Part Category (Part Editor) -->
+          <div class="prop-section part-editor-only-block">
+            <div class="prop-section-title">Part Properties</div>
+            <div class="prop-row">
+              <span class="prop-label">Category</span>
+              <select class="prop-select" id="partCategorySelect" style="flex: 1;">
+                <option value="">None (root part)</option>
+              </select>
+            </div>
+            <p style="font-size: 0.7rem; color: var(--text-muted); margin-top: 4px;">
+              Determines which snap points this part can attach to.
+            </p>
+          </div>
+
+          <!-- Snap Points (Part Editor) -->
+          <div class="prop-section part-editor-only-block">
+            <div class="prop-section-title" style="display: flex; justify-content: space-between; align-items: center;">
+              <span>Snap Points</span>
+              <label class="prop-checkbox" style="font-size: 0.75rem;">
+                <input type="checkbox" id="showSnapPoints" checked>
+                <span>Show</span>
+              </label>
+            </div>
+            <div class="prop-row" style="gap: 4px;">
+              <button class="header-btn" style="flex: 1;" id="addSnapPointBtn" onclick="spriteEditor.startSnapPointPlacement()">+ Add Point</button>
+              <button class="header-btn" style="flex: 0.6;" id="deleteSnapPointBtn" onclick="spriteEditor.deleteSelectedSnapPoint()" disabled>Delete</button>
+            </div>
+            <div id="snapPointsList" class="layer-list" style="max-height: 120px; margin-top: 8px;">
+              <div class="empty-list-message" style="color: var(--text-muted); font-size: 0.8rem; padding: 8px;">
+                No snap points defined. Click + Add to place one.
+              </div>
+            </div>
+            <!-- Selected snap point properties -->
+            <div id="snapPointProps" class="hidden" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-color);">
+              <div class="prop-row">
+                <span class="prop-label">Name</span>
+                <input type="text" class="prop-input" id="snapPointName" style="flex: 1;" placeholder="e.g., turret_ring">
+              </div>
+              <div class="prop-row">
+                <span class="prop-label">Type</span>
+                <select class="prop-select" id="snapPointType" style="flex: 1;">
+                </select>
+              </div>
+              <div class="prop-row">
+                <span class="prop-label">X</span>
+                <div class="num-input-group">
+                  <button class="num-btn" data-input="snapPointX" data-delta="-0.5">−</button>
+                  <input type="number" class="prop-input num-input" id="snapPointX" step="0.5">
+                  <button class="num-btn" data-input="snapPointX" data-delta="0.5">+</button>
+                </div>
+              </div>
+              <div class="prop-row">
+                <span class="prop-label">Y</span>
+                <div class="num-input-group">
+                  <button class="num-btn" data-input="snapPointY" data-delta="-0.5">−</button>
+                  <input type="number" class="prop-input num-input" id="snapPointY" step="0.5">
+                  <button class="num-btn" data-input="snapPointY" data-delta="0.5">+</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Rotation Preview (Part Editor) -->
+          <div class="prop-section part-editor-only-block">
+            <div class="prop-section-title" style="display: flex; justify-content: space-between; align-items: center;">
+              <span>Rotation Preview</span>
+              <button class="header-btn" id="rotationPreviewBtn" onclick="spriteEditor.toggleRotationPreview()" style="padding: 2px 8px; font-size: 0.75rem;">
+                ▶ Play
+              </button>
+            </div>
+            <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 8px;">
+              Preview how snap points look when the part rotates.
+            </p>
+            <div class="prop-row">
+              <span class="prop-label">Speed</span>
+              <input type="range" class="prop-slider" id="rotationSpeed" min="10" max="180" value="45">
+              <div class="num-input-group">
+                <button class="num-btn" data-input="rotationSpeedNum" data-delta="-5" data-slider="rotationSpeed" data-min="10" data-max="180">−</button>
+                <input type="number" class="prop-input num-input" id="rotationSpeedNum" min="10" max="180" value="45">
+                <button class="num-btn" data-input="rotationSpeedNum" data-delta="5" data-slider="rotationSpeed" data-min="10" data-max="180">+</button>
+              </div>
+              <span class="prop-unit">°/s</span>
+            </div>
+            <div class="prop-row">
+              <span class="prop-label">Pivot</span>
+              <select class="prop-input" id="rotationPivot" style="flex: 1;">
+                <option value="center">Center</option>
+              </select>
+            </div>
+            <div class="prop-row" style="margin-top: 4px;">
+              <span class="prop-label">Angle</span>
+              <input type="range" class="prop-slider" id="rotationAngle" min="0" max="360" value="0">
+              <div class="num-input-group">
+                <button class="num-btn" data-input="rotationAngleNum" data-delta="-5" data-slider="rotationAngle" data-min="0" data-max="360">−</button>
+                <input type="number" class="prop-input num-input" id="rotationAngleNum" min="0" max="360" value="0">
+                <button class="num-btn" data-input="rotationAngleNum" data-delta="5" data-slider="rotationAngle" data-min="0" data-max="360">+</button>
+              </div>
+              <span class="prop-unit">°</span>
+            </div>
+            <div class="prop-row" style="margin-top: 8px; gap: 8px;">
+              <button class="header-btn" style="flex: 1; font-size: 0.8rem;" onclick="spriteEditor.resetRotationPreview()">Reset</button>
+            </div>
+          </div>
+
+          <!-- Transform Controls (Variant Builder) -->
+          <div class="prop-section variant-builder-only-block" id="partPropsSection">
+            <div class="prop-section-title">Selected Part</div>
+            <div id="noPartSelected" style="color: var(--text-muted); font-size: 0.9rem;">
+              Click a part on canvas or in list to select it
+            </div>
+            <div id="partTransform" class="hidden">
+              <div class="prop-row">
+                <span class="prop-label">X</span>
+                <div class="num-input-group">
+                  <button class="num-btn" data-input="partX" data-delta="-1">−</button>
+                  <input type="number" class="prop-input num-input" id="partX">
+                  <button class="num-btn" data-input="partX" data-delta="1">+</button>
+                </div>
+              </div>
+              <div class="prop-row">
+                <span class="prop-label">Y</span>
+                <div class="num-input-group">
+                  <button class="num-btn" data-input="partY" data-delta="-1">−</button>
+                  <input type="number" class="prop-input num-input" id="partY">
+                  <button class="num-btn" data-input="partY" data-delta="1">+</button>
+                </div>
+              </div>
+              <div class="prop-row">
+                <span class="prop-label">Rotation</span>
+                <input type="range" class="prop-slider" id="partRotation" min="0" max="360" value="0">
+                <div class="num-input-group">
+                  <button class="num-btn" data-input="partRotationNum" data-delta="-1" data-slider="partRotation" data-min="0" data-max="360">−</button>
+                  <input type="number" class="prop-input num-input" id="partRotationNum" min="0" max="360" value="0">
+                  <button class="num-btn" data-input="partRotationNum" data-delta="1" data-slider="partRotation" data-min="0" data-max="360">+</button>
+                </div>
+                <span class="prop-unit">°</span>
+              </div>
+              <div class="prop-row">
+                <span class="prop-label">Pivot X</span>
+                <div class="num-input-group">
+                  <button class="num-btn" data-input="partPivotX" data-delta="-1">−</button>
+                  <input type="number" class="prop-input num-input" id="partPivotX" placeholder="auto">
+                  <button class="num-btn" data-input="partPivotX" data-delta="1">+</button>
+                </div>
+                <span class="prop-unit">px</span>
+              </div>
+              <div class="prop-row">
+                <span class="prop-label">Pivot Y</span>
+                <div class="num-input-group">
+                  <button class="num-btn" data-input="partPivotY" data-delta="-1">−</button>
+                  <input type="number" class="prop-input num-input" id="partPivotY" placeholder="auto">
+                  <button class="num-btn" data-input="partPivotY" data-delta="1">+</button>
+                </div>
+                <span class="prop-unit">px</span>
+              </div>
+              <div class="prop-row">
+                <span class="prop-label"></span>
+                <button class="header-btn" style="flex: 1; font-size: 0.75rem;" onclick="spriteEditor.setPivotToCenter()">Canvas Center</button>
+                <button class="header-btn" style="flex: 1; font-size: 0.75rem;" onclick="spriteEditor.clearPivot()">Clear</button>
+              </div>
+              <div class="prop-row">
+                <span class="prop-label">Scale</span>
+                <input type="range" class="prop-slider" id="partScale" min="10" max="300" value="100">
+                <div class="num-input-group">
+                  <button class="num-btn" data-input="partScaleNum" data-delta="-1" data-slider="partScale" data-min="1">−</button>
+                  <input type="number" class="prop-input num-input" id="partScaleNum" min="1" value="100">
+                  <button class="num-btn" data-input="partScaleNum" data-delta="1" data-slider="partScale" data-min="1">+</button>
+                </div>
+                <span class="prop-unit">%</span>
+              </div>
+              <div class="prop-row">
+                <span class="prop-label">Opacity</span>
+                <input type="range" class="prop-slider" id="partOpacity" min="0" max="100" value="100">
+                <div class="num-input-group">
+                  <button class="num-btn" data-input="partOpacityNum" data-delta="-1" data-slider="partOpacity" data-min="0" data-max="100">−</button>
+                  <input type="number" class="prop-input num-input" id="partOpacityNum" min="0" max="100" value="100">
+                  <button class="num-btn" data-input="partOpacityNum" data-delta="1" data-slider="partOpacity" data-min="0" data-max="100">+</button>
+                </div>
+                <span class="prop-unit">%</span>
+              </div>
+              <!-- Parent selector for hierarchy without snap points -->
+              <div class="prop-row" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);">
+                <span class="prop-label">Parent</span>
+                <select class="prop-select" id="partParentSelect" style="flex: 1;" onchange="spriteEditor.setPartParent(this.value)">
+                  <option value="">None (root)</option>
+                </select>
+              </div>
+              <p id="parentHint" style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px;">
+                Set parent for hierarchy animations. X/Y becomes offset from parent.
+              </p>
+            </div>
+          </div>
+
+          <!-- Snap Point Attachment Panel (Variant Builder) -->
+          <div class="prop-section variant-builder-only-block hidden" id="snapAttachPanel">
+            <div class="prop-section-title">
+              <span id="snapAttachTitle">Attach to Snap Point</span>
+              <button onclick="spriteEditor.closeSnapAttachPanel()" title="Close" style="float:right; background:none; border:none; cursor:pointer; color: var(--text-muted);">✕</button>
+            </div>
+            <div id="snapAttachInfo" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;"></div>
+            <div id="snapAttachList" class="snap-attach-list"></div>
+            <div id="snapAttachEmpty" class="hidden" style="color: var(--text-muted); font-size: 0.85rem;">
+              No compatible parts in library
+            </div>
+            <div id="snapAttachOccupied" class="hidden" style="margin-top: 8px;">
+              <button onclick="spriteEditor.detachFromSnapPoint()" class="btn-secondary" style="width: 100%;">Detach Current Part</button>
+            </div>
+          </div>
+
+          <!-- Scale Reference Overlay (Variant Builder) -->
+          <div class="prop-section variant-builder-only-block">
+            <div class="prop-section-title">Scale Reference</div>
+            <div class="prop-row">
+              <label class="prop-checkbox">
+                <input type="checkbox" id="showScaleOverlay">
+                <span>Show dimension guide</span>
+              </label>
+            </div>
+            <div class="prop-row">
+              <span class="prop-label">Unit Type</span>
+              <select class="prop-select" id="scaleOverlayType">
+                <option value="">Auto (from object)</option>
+                <option value="soldier">Soldier (32×40)</option>
+                <option value="light_vehicle">Light Vehicle (64×96)</option>
+                <option value="medium_tank">Medium Tank Hull (80×112)</option>
+                <option value="heavy_tank">Heavy Tank Hull (96×128)</option>
+                <option value="super_heavy">Super Heavy Hull (112×144)</option>
+                <option value="terrain">Terrain (192×192)</option>
+              </select>
+            </div>
+            <p style="font-size: 0.7rem; color: var(--text-muted); margin-top: 4px;">
+              Shows hull bounding box for proper in-game scaling. Cannon/turret extend beyond this.
+            </p>
+          </div>
+
+          <!-- Reference Image (Variant Builder) -->
+          <div class="prop-section variant-builder-only-block">
+            <div class="prop-section-title">Reference Image</div>
+            <div class="prop-row">
+              <label class="prop-checkbox">
+                <input type="checkbox" id="showReferenceImage">
+                <span>Show reference</span>
+              </label>
+            </div>
+            <div class="prop-row">
+              <span class="prop-label">Source</span>
+              <select class="prop-select" id="referenceSource" style="flex: 1;">
+                <option value="">Select unit...</option>
+              </select>
+            </div>
+            <div class="prop-row">
+              <span class="prop-label">Opacity</span>
+              <input type="range" class="prop-slider" id="referenceOpacity" min="10" max="100" value="50">
+              <span class="slider-value" id="referenceOpacityValue">50%</span>
+            </div>
+            <div class="prop-row">
+              <span class="prop-label">Scale</span>
+              <div class="num-input-group">
+                <button class="num-btn" data-input="referenceScale" data-delta="-10">−</button>
+                <input type="number" class="prop-input num-input" id="referenceScale" min="10" max="200" value="100">
+                <button class="num-btn" data-input="referenceScale" data-delta="10">+</button>
+              </div>
+              <span style="color: var(--text-muted);">%</span>
+            </div>
+            <div class="prop-row">
+              <span class="prop-label">Offset X</span>
+              <div class="num-input-group">
+                <button class="num-btn" data-input="referenceX" data-delta="-1">−</button>
+                <input type="number" class="prop-input num-input" id="referenceX" value="0">
+                <button class="num-btn" data-input="referenceX" data-delta="1">+</button>
+              </div>
+            </div>
+            <div class="prop-row">
+              <span class="prop-label">Offset Y</span>
+              <div class="num-input-group">
+                <button class="num-btn" data-input="referenceY" data-delta="-1">−</button>
+                <input type="number" class="prop-input num-input" id="referenceY" value="0">
+                <button class="num-btn" data-input="referenceY" data-delta="1">+</button>
+              </div>
+            </div>
+            <p style="font-size: 0.7rem; color: var(--text-muted); margin-top: 4px;">
+              Overlay another unit for scale comparison.
+            </p>
+          </div>
+
+          <!-- Animation Config (Variant Builder) -->
+          <div class="prop-section variant-builder-only-block" id="animationSection">
+            <div class="prop-section-title">Part Animation</div>
+            <!-- Trigger Tabs -->
+            <div class="animation-trigger-tabs" id="animationTriggerTabs">
+              <button class="trigger-tab active" data-trigger="idle">Idle</button>
+              <button class="trigger-tab" data-trigger="move">Move</button>
+              <button class="trigger-tab" data-trigger="aim">Aim</button>
+              <button class="trigger-tab" data-trigger="fire">Fire</button>
+              <button class="trigger-tab" data-trigger="hit">Hit</button>
+            </div>
+            <!-- Animation Type for selected trigger -->
+            <div class="prop-row" style="margin-top: 8px;">
+              <span class="prop-label">Type</span>
+              <select class="prop-select" id="animationType">
+                <option value="none">None</option>
+                <option value="aim">Aim (tracks target)</option>
+                <option value="rotation">Rotation (oscillate)</option>
+                <option value="oscillate">Oscillate (position)</option>
+                <option value="recoil">Recoil</option>
+                <option value="scale-pulse">Scale Pulse</option>
+                <option value="frame-cycle">Frame Cycle</option>
+              </select>
+            </div>
+            <!-- Dynamic params based on type -->
+            <div id="animationParams">
+              <!-- Populated based on animation type -->
+            </div>
+            <!-- Preview button for this trigger -->
+            <div class="prop-row" style="margin-top: 8px;">
+              <button class="header-btn" style="flex: 1;" id="previewTriggerBtn" onclick="spriteEditor.previewCurrentTrigger()">Preview <span id="previewTriggerName">Idle</span></button>
+            </div>
+          </div>
+
+          <!-- Preview -->
+          <div class="prop-section">
+            <div class="prop-section-title">Preview</div>
+            <div class="preview-box">
+              <canvas id="previewCanvas" class="preview-canvas" width="100" height="100"></canvas>
+            </div>
+            <div style="display: flex; gap: 10px; margin-top: 10px;">
+              <button class="header-btn" style="flex: 1;" onclick="spriteEditor.playPreview()">▶ Play</button>
+              <button class="header-btn" style="flex: 0.6;" onclick="spriteEditor.resetPreview()">⏹ Reset</button>
+              <div class="fps-control">
+                <span>FPS:</span>
+                <div class="num-input-group">
+                  <button class="num-btn" data-input="previewFps" data-delta="-1" data-min="1" data-max="60">−</button>
+                  <input type="number" class="num-input" id="previewFps" value="12" min="1" max="60">
+                  <button class="num-btn" data-input="previewFps" data-delta="1" data-min="1" data-max="60">+</button>
+                </div>
+              </div>
+            </div>
+            <!-- Aim angle for preview -->
+            <div class="prop-row" style="margin-top: 8px;">
+              <span class="prop-label">Aim °</span>
+              <input type="range" id="previewAimAngle" min="-180" max="180" value="0" style="flex: 1;" oninput="spriteEditor.setPreviewAimAngle(this.value)">
+              <input type="number" class="prop-input" id="previewAimAngleValue" value="0" min="-180" max="180" style="width: 50px;" onchange="spriteEditor.setPreviewAimAngle(this.value)">
+            </div>
+            <!-- Loop controls -->
+            <div class="prop-row" style="margin-top: 8px;">
+              <label class="prop-checkbox">
+                <input type="checkbox" id="previewLoop" checked onchange="spriteEditor.setLoopAnimation(this.checked)">
+                <span>Loop</span>
+              </label>
+              <span class="prop-label" style="margin-left: 12px;">Duration</span>
+              <input type="number" class="prop-input" id="previewLoopDuration" value="1" min="0.1" max="10" step="0.1" style="width: 50px;" onchange="spriteEditor.setLoopDuration(this.value)">
+              <span class="prop-unit">s</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Animation Timeline (Part Editor) -->
+    <div class="timeline-panel part-editor-only hidden" id="timelinePanel">
+      <span class="timeline-label">Frames</span>
+      <div class="frame-list" id="frameList">
+        <div class="frame-thumb selected">1</div>
+        <div class="frame-thumb add-frame" onclick="spriteEditor.addFrame()">+</div>
+      </div>
+      <div class="timeline-controls">
+        <button onclick="spriteEditor.prevFrame()">◀</button>
+        <button onclick="spriteEditor.togglePlayback()">▶</button>
+        <button onclick="spriteEditor.nextFrame()">▶</button>
+        <div class="fps-control">
+          <span>FPS:</span>
+          <div class="num-input-group">
+            <button class="num-btn" data-input="timelineFps" data-delta="-1" data-min="1" data-max="60">−</button>
+            <input type="number" class="num-input" id="timelineFps" value="12" min="1" max="60">
+            <button class="num-btn" data-input="timelineFps" data-delta="1" data-min="1" data-max="60">+</button>
+          </div>
+        </div>
+        <label class="prop-checkbox">
+          <input type="checkbox" id="loopCheckbox" checked>
+          <span>Loop</span>
+        </label>
+        <label class="prop-checkbox">
+          <input type="checkbox" id="onionCheckbox">
+          <span>Onion</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Animation State Preview (Variant Builder) -->
+    <div class="animation-preview-bar variant-builder-only hidden" id="animationPreviewBar">
+      <span class="timeline-label">Animation State:</span>
+      <button class="animation-state-btn active" data-state="idle">Idle</button>
+      <button class="animation-state-btn" data-state="move">Move</button>
+      <button class="animation-state-btn" data-state="aim">Aim</button>
+      <button class="animation-state-btn" data-state="fire">Fire</button>
+      <button class="animation-state-btn" data-state="hit">Hit</button>
+    </div>
+
+    <!-- Debug Console -->
+    <div class="debug-console hidden" id="debugConsole">
+      <div class="debug-header">
+        <span>Debug Console</span>
+        <div class="debug-actions">
+          <button onclick="spriteEditor.copyDebugLogs()" title="Copy to clipboard">Copy</button>
+          <button onclick="spriteEditor.clearDebugLogs()" title="Clear logs">Clear</button>
+          <button onclick="spriteEditor.toggleDebug()" title="Close">×</button>
+        </div>
+      </div>
+      <div class="debug-content" id="debugContent">
+        <!-- Log entries appear here -->
+      </div>
+    </div>
+
+    <!-- Status Bar -->
+    <div class="status-bar">
+      <div class="status-item">Status: <span id="statusText">Ready</span></div>
+      <div class="status-item part-editor-only">Layer: <span id="statusLayer">-</span></div>
+      <div class="status-item part-editor-only">Frame: <span id="statusFrame">1/1</span></div>
+      <div class="status-item variant-builder-only">Parts: <span id="statusParts">0</span></div>
+      <div class="status-item">Pos: <span id="statusPos">0, 0</span></div>
+      <div class="status-item">Zoom: <span id="statusZoom">100%</span></div>
+    </div>
+  </div>
+
+  <script type="module" src="js/sprite-editor/main.js"></script>
+</body>
+</html>

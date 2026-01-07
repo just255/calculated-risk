@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 140" width="100" height="140">
+  <!-- M1 Abrams Accessories - Outline style -->
+  <defs>
+    <style>
+      .outline { fill: none; stroke: #1a1a1a; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+      .detail { fill: none; stroke: #1a1a1a; stroke-width: 1; stroke-linecap: round; stroke-linejoin: round; }
+    </style>
+  </defs>
+
+  <!-- Antenna (on turret rear) -->
+  <g id="antenna">
+    <line class="detail" x1="62" y1="88" x2="62" y2="78"/>
+    <rect class="detail" x="60" y="76" width="4" height="4" rx="1"/>
+  </g>
+
+  <!-- Smoke launchers - left side of turret -->
+  <g id="smoke-left" transform="translate(26, 60)">
+    <rect class="detail" x="-3" y="-4" width="6" height="8" rx="1"/>
+  </g>
+
+  <!-- Smoke launchers - right side of turret -->
+  <g id="smoke-right" transform="translate(74, 60)">
+    <rect class="detail" x="-3" y="-4" width="6" height="8" rx="1"/>
+  </g>
+
+  <!-- Tow hooks (front) -->
+  <circle class="detail" cx="28" cy="24" r="2"/>
+  <circle class="detail" cx="72" cy="24" r="2"/>
+</svg>

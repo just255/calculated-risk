@@ -2,9 +2,11 @@
 // UI - HTML rendering functions
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, UnitType, UNITS, UNIT_COSTS, H2H_BUDGET, VEHICLE_UNITS, TYPE_CHART, UNIT_PROJECTILES, PROJECTILES, UNIT_DESCRIPTIONS, CAMPAIGN_ERAS, CAMPAIGN_MOS } from './constants.js';
+import { State, SubState, HQTab, UnitType, UNITS, UNIT_COSTS, H2H_BUDGET, VEHICLE_UNITS, TYPE_CHART, UNIT_PROJECTILES, PROJECTILES, UNIT_DESCRIPTIONS, CAMPAIGN_ERAS, CAMPAIGN_MOS, SquadOrder, TargetPriority, Formation } from './constants.js';
 import { Game } from './state.js';
 import { save } from './storage.js';
+import { getSkinSelectorData, setSkinPref, clearCache as clearSkinCache } from './skins.js';
+import { getSprite, hasSprite, loadPartSprites, compositeUnitSprite, getPartImage } from './sprites.js';
 
 // Mobile detection
 const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
@@ -106,7 +108,7 @@ export function render() {
   switch (Game.state) {
     case State.MENU: app.innerHTML = menuHTML(); break;
     case State.HQ: app.innerHTML = headquartersHTML(); startUIAnimation(); break;
-    case State.SETTINGS: app.innerHTML = settingsHTML(); break;
+    case State.SETTINGS: app.innerHTML = settingsHTML(); loadSkinsUI(); break;
     case State.STATS: app.innerHTML = statsHTML(); break;
     case State.MATCHMAKING: app.innerHTML = matchmakingHTML(); break;
     case State.COUNTDOWN: app.innerHTML = countdownHTML(); break;
@@ -139,21 +141,24 @@ const GAME_VERSION = '0.5.0';
 function menuHTML() {
   return `
     <div class="screen menu-screen">
-      <div class="menu-header">
-        <h1 class="game-title"><span>CALCULATED</span> RISK</h1>
-        <p class="game-subtitle">TACTICAL DEFENSE</p>
-        <div style="margin-top:10px;font-size:0.85rem;color:var(--text-secondary)">
-          <span style="color:var(--accent-yellow)">⬡ ${Game.resources.scrap}</span> ·
-          <span style="color:var(--accent-blue)">◈ ${Game.resources.parts}</span>
+      <div class="menu-content">
+        <div class="menu-header">
+          <h1 class="game-title"><span>CALCULATED</span> RISK</h1>
+          <p class="game-subtitle">TACTICAL DEFENSE</p>
+          <div class="menu-resources">
+            <span class="res-scrap">⬡ ${Game.resources.scrap}</span>
+            <span class="res-parts">◈ ${Game.resources.parts}</span>
+          </div>
         </div>
-      </div>
-      <div class="menu-buttons">
-        <button class="menu-btn" data-action="campaign">Campaign</button>
-        <button class="menu-btn" data-action="endless">Endless</button>
-        <button class="menu-btn" data-action="versus">Head 2 Head</button>
-        <button class="menu-btn" data-action="hq">Headquarters</button>
-        <button class="menu-btn secondary" data-action="settings">Settings</button>
-        <button class="menu-btn secondary" data-action="stats">Statistics</button>
+        <div class="menu-buttons">
+          <button class="menu-btn" data-action="campaign">Campaign</button>
+          <button class="menu-btn" data-action="endless">Endless</button>
+          <button class="menu-btn" data-action="versus">Head 2 Head</button>
+          <button class="menu-btn" data-action="hq">Headquarters</button>
+          <button class="menu-btn secondary" data-action="settings">Settings</button>
+          <button class="menu-btn secondary" data-action="stats">Statistics</button>
+          <button class="menu-btn secondary" data-action="sprite-editor">Sprite Editor</button>
+        </div>
       </div>
       <div class="menu-version">v${GAME_VERSION}</div>
     </div>
@@ -162,6 +167,7 @@ function menuHTML() {
 
 function settingsHTML() {
   const s = Game.settings;
+  const c = s.controls || {};
   return `
     <div class="screen settings-screen">
       <div class="settings-header">
@@ -182,8 +188,91 @@ function settingsHTML() {
           <div class="toggle ${s.sound?'active':''}" data-toggle="sound"></div>
         </div>
       </div>
+      <div class="setting-group">
+        <div class="setting-label">Controls</div>
+        <div class="control-sliders">
+          <div class="slider-row">
+            <label>Joystick Drag (${c.joystickDragThreshold || 8}px)</label>
+            <input type="range" min="3" max="20" value="${c.joystickDragThreshold || 8}"
+                   data-control="joystickDragThreshold" class="control-slider">
+          </div>
+          <div class="slider-row">
+            <label>Joystick Radius (${c.joystickActivationRadius || 80}px)</label>
+            <input type="range" min="40" max="150" value="${c.joystickActivationRadius || 80}"
+                   data-control="joystickActivationRadius" class="control-slider">
+          </div>
+          <div class="slider-row">
+            <label>Hold Time (${(c.gestureHoldTime || 1000) / 1000}s)</label>
+            <input type="range" min="300" max="2000" step="100" value="${c.gestureHoldTime || 1000}"
+                   data-control="gestureHoldTime" class="control-slider">
+          </div>
+          <div class="slider-row">
+            <label>Tap Interval (${c.gestureTapInterval || 300}ms)</label>
+            <input type="range" min="150" max="500" step="50" value="${c.gestureTapInterval || 300}"
+                   data-control="gestureTapInterval" class="control-slider">
+          </div>
+        </div>
+      </div>
+      <div class="setting-group">
+        <div class="setting-label">Unit Skins</div>
+        <div class="skins-container" id="skinsContainer">
+          <p style="color:var(--text-secondary);font-size:0.85rem;">Loading skins...</p>
+        </div>
+      </div>
     </div>
   `;
+}
+
+// Load and render skins selector UI
+async function loadSkinsUI() {
+  const container = document.getElementById('skinsContainer');
+  if (!container) return;
+
+  try {
+    const skinData = await getSkinSelectorData();
+
+    // Filter to only show units that have custom variants
+    const unitsWithSkins = skinData.filter(u => u.variants.length > 1);
+
+    if (unitsWithSkins.length === 0) {
+      container.innerHTML = `
+        <p style="color:var(--text-secondary);font-size:0.85rem;">
+          No custom skins available yet.<br>
+          <a href="/sprite-editor.html" target="_blank" style="color:var(--accent-blue);">Open Sprite Editor</a>
+        </p>
+      `;
+      return;
+    }
+
+    container.innerHTML = unitsWithSkins.map(unit => `
+      <div class="skin-row">
+        <span class="skin-unit-name">${unit.name}</span>
+        <select class="skin-selector" data-unit="${unit.id}">
+          ${unit.variants.map(v => `
+            <option value="${v.id}" ${v.id === unit.selectedSkin ? 'selected' : ''}>
+              ${v.name}${v.author ? ` (by ${v.author})` : ''}
+            </option>
+          `).join('')}
+        </select>
+      </div>
+    `).join('');
+
+    // Add event listeners for skin selection
+    container.querySelectorAll('.skin-selector').forEach(select => {
+      select.addEventListener('change', (e) => {
+        const unitId = e.target.dataset.unit;
+        const variantId = e.target.value;
+        setSkinPref(unitId, variantId);
+      });
+    });
+  } catch (err) {
+    console.warn('Failed to load skins:', err);
+    container.innerHTML = `
+      <p style="color:var(--text-secondary);font-size:0.85rem;">
+        Could not load skins (server may be offline)
+      </p>
+    `;
+  }
 }
 
 function statsHTML() {
@@ -1110,7 +1199,7 @@ function spriteEditorHTML() {
       <!-- Unit Customizer -->
       <div class="unit-customizer" id="unitCustomizer">
         <div class="uc-header">
-          <h3>Unit Color Customizer</h3>
+          <h3>Unit Customizer</h3>
           <button class="uc-toggle" id="ucToggle">▼</button>
         </div>
         <div class="uc-content" id="ucContent">
@@ -1121,10 +1210,27 @@ function spriteEditorHTML() {
             </select>
           </div>
           <div class="uc-preview" id="ucPreview"></div>
-          <div class="uc-parts" id="ucParts"></div>
+
+          <!-- Sprite Variants Section -->
+          <div class="uc-section">
+            <div class="uc-section-title">Sprite Variants</div>
+            <div class="uc-sprite-variants" id="ucSpriteVariants">
+              <div class="uc-loading">Loading variants...</div>
+            </div>
+            <div class="uc-sprite-actions">
+              <button class="se-btn-full" id="ucUseSvg">Use Default SVG</button>
+            </div>
+          </div>
+
+          <!-- Color Customization Section -->
+          <div class="uc-section">
+            <div class="uc-section-title">Color Override</div>
+            <div class="uc-parts" id="ucParts"></div>
+          </div>
+
           <div class="uc-actions">
-            <button class="se-btn-full" id="ucReset">Reset to Default</button>
-            <button class="se-btn-full se-primary" id="ucSave">Save Colors</button>
+            <button class="se-btn-full" id="ucReset">Reset All</button>
+            <button class="se-btn-full se-primary" id="ucSave">Save Changes</button>
           </div>
         </div>
       </div>
@@ -1992,6 +2098,8 @@ function floodFill(startX, startY, fillColor) {
 let ucState = {
   selectedUnit: null,
   tempColors: {},
+  tempSpriteSelections: {},  // { partId: variantName }
+  availableVariants: {},     // { partId: [variant1, variant2, ...] }
   collapsed: false
 };
 
@@ -2001,6 +2109,7 @@ function initUnitCustomizer() {
   const unitSelect = document.getElementById('ucUnitSelect');
   const resetBtn = document.getElementById('ucReset');
   const saveBtn = document.getElementById('ucSave');
+  const useSvgBtn = document.getElementById('ucUseSvg');
 
   if (!customizer) return;
 
@@ -2016,35 +2125,56 @@ function initUnitCustomizer() {
   });
 
   // Unit selection
-  unitSelect.addEventListener('change', () => {
+  unitSelect.addEventListener('change', async () => {
     ucState.selectedUnit = unitSelect.value;
     loadUnitColors(ucState.selectedUnit);
+    loadUnitSpriteSelections(ucState.selectedUnit);
+    await loadUnitVariants(ucState.selectedUnit);
     renderUCPreview();
     renderUCParts();
+    renderUCSpriteVariants();
   });
 
-  // Reset button
+  // Use Default SVG button
+  if (useSvgBtn) {
+    useSvgBtn.addEventListener('click', () => {
+      if (!ucState.selectedUnit) return;
+      ucState.tempSpriteSelections = {};
+      renderUCSpriteVariants();
+      renderUCPreview();
+    });
+  }
+
+  // Reset button - resets both colors and sprite selections
   resetBtn.addEventListener('click', () => {
     if (!ucState.selectedUnit) return;
     const unit = UNITS.find(u => u.id === ucState.selectedUnit);
     if (unit && unit.defaultColors) {
       ucState.tempColors = { ...unit.defaultColors };
-      renderUCPreview();
-      renderUCParts();
     }
+    ucState.tempSpriteSelections = {};
+    renderUCPreview();
+    renderUCParts();
+    renderUCSpriteVariants();
   });
 
-  // Save button
+  // Save button - saves both colors and sprite selections
   saveBtn.addEventListener('click', () => {
     if (!ucState.selectedUnit) return;
-    // Save to Game.player.unitColors
+    // Save colors
     Game.player.unitColors[ucState.selectedUnit] = { ...ucState.tempColors };
+    // Save sprite selections (null if empty to use SVG)
+    if (Object.keys(ucState.tempSpriteSelections).length > 0) {
+      Game.player.spriteSelections[ucState.selectedUnit] = { ...ucState.tempSpriteSelections };
+    } else {
+      Game.player.spriteSelections[ucState.selectedUnit] = null;
+    }
     save();
     // Visual feedback
     saveBtn.textContent = 'Saved!';
     saveBtn.style.background = 'var(--accent-green)';
     setTimeout(() => {
-      saveBtn.textContent = 'Save Colors';
+      saveBtn.textContent = 'Save Changes';
       saveBtn.style.background = '';
     }, 1000);
   });
@@ -2052,8 +2182,12 @@ function initUnitCustomizer() {
   // Initialize with first unit
   ucState.selectedUnit = UNITS[0].id;
   loadUnitColors(ucState.selectedUnit);
-  renderUCPreview();
-  renderUCParts();
+  loadUnitSpriteSelections(ucState.selectedUnit);
+  loadUnitVariants(ucState.selectedUnit).then(() => {
+    renderUCPreview();
+    renderUCParts();
+    renderUCSpriteVariants();
+  });
 }
 
 function loadUnitColors(unitId) {
@@ -2069,6 +2203,97 @@ function loadUnitColors(unitId) {
   }
 }
 
+function loadUnitSpriteSelections(unitId) {
+  // Load saved sprite selections for this unit
+  const saved = Game.player.spriteSelections[unitId];
+  if (saved && typeof saved === 'object') {
+    ucState.tempSpriteSelections = { ...saved };
+  } else {
+    ucState.tempSpriteSelections = {};
+  }
+}
+
+async function loadUnitVariants(unitId) {
+  // Fetch available variants from server
+  ucState.availableVariants = {};
+
+  try {
+    const response = await fetch(`/api/sprites/${unitId}`);
+    if (!response.ok) {
+      console.log(`[ui] No sprite variants for ${unitId}`);
+      return;
+    }
+    const manifest = await response.json();
+    if (manifest && manifest.parts) {
+      ucState.availableVariants = manifest.parts;
+      console.log(`[ui] Loaded variants for ${unitId}:`, manifest.parts);
+    }
+  } catch (error) {
+    console.log(`[ui] Failed to load variants for ${unitId}:`, error.message);
+  }
+}
+
+function renderUCSpriteVariants() {
+  const container = document.getElementById('ucSpriteVariants');
+  if (!container || !ucState.selectedUnit) return;
+
+  const unit = UNITS.find(u => u.id === ucState.selectedUnit);
+  if (!unit || !unit.parts) {
+    container.innerHTML = '<div class="uc-no-variants">No parts defined for this unit</div>';
+    return;
+  }
+
+  const hasAnyVariants = Object.keys(ucState.availableVariants).length > 0;
+
+  if (!hasAnyVariants) {
+    container.innerHTML = '<div class="uc-no-variants">No sprite variants available yet. Create some in the Sprite Editor!</div>';
+    return;
+  }
+
+  // Render dropdowns for each part that has variants
+  container.innerHTML = unit.parts.map(partId => {
+    const variants = ucState.availableVariants[partId] || [];
+    const currentSelection = ucState.tempSpriteSelections[partId] || '';
+
+    if (variants.length === 0) {
+      return `
+        <div class="uc-variant-row">
+          <span class="uc-part-name">${partId}</span>
+          <span class="uc-no-variant-hint">No variants</span>
+        </div>
+      `;
+    }
+
+    return `
+      <div class="uc-variant-row">
+        <span class="uc-part-name">${partId}</span>
+        <select class="uc-variant-select" data-part="${partId}">
+          <option value="">Default</option>
+          ${variants.map(v => `<option value="${v}" ${v === currentSelection ? 'selected' : ''}>${v}</option>`).join('')}
+        </select>
+      </div>
+    `;
+  }).join('');
+
+  // Add event listeners for variant selects
+  container.querySelectorAll('.uc-variant-select').forEach(select => {
+    select.addEventListener('change', async (e) => {
+      const partId = e.target.dataset.part;
+      const variant = e.target.value;
+
+      if (variant) {
+        ucState.tempSpriteSelections[partId] = variant;
+        // Preload the part image
+        await loadPartSprites(ucState.selectedUnit, { [partId]: variant });
+      } else {
+        delete ucState.tempSpriteSelections[partId];
+      }
+
+      renderUCPreview();
+    });
+  });
+}
+
 function renderUCPreview() {
   const preview = document.getElementById('ucPreview');
   if (!preview || !ucState.selectedUnit) return;
@@ -2076,7 +2301,27 @@ function renderUCPreview() {
   const unit = UNITS.find(u => u.id === ucState.selectedUnit);
   if (!unit) return;
 
-  // Get the SVG and apply custom colors
+  // Check if we have sprite selections - show composite sprite preview
+  const hasSelections = Object.keys(ucState.tempSpriteSelections).length > 0;
+
+  if (hasSelections) {
+    // Create canvas for composite preview
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    canvas.className = 'uc-preview-canvas';
+
+    // Try to composite the sprite
+    const success = compositeUnitSprite(unit, ucState.tempSpriteSelections, canvas);
+
+    if (success) {
+      preview.innerHTML = '';
+      preview.appendChild(canvas);
+      return;
+    }
+  }
+
+  // Fallback: Get the SVG and apply custom colors
   let svg = unit.svg;
   svg = applyColorsToSvg(svg, unit, ucState.tempColors);
 
@@ -2243,6 +2488,104 @@ export function getEntitySvgFrames(unit, faction = 'player') {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// PNG SPRITE RENDERING
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Get unit HTML content - uses PNG sprite if available, falls back to SVG
+ * @param {Object} unit - Unit definition from UNITS
+ * @param {string} faction - 'player' or 'enemy'
+ * @param {number} frameIndex - Animation frame index (for spritesheet)
+ * @returns {string} HTML string for unit visual
+ */
+export function getUnitVisual(unit, faction = 'player', frameIndex = 0) {
+  if (hasSprite(unit.id)) {
+    return getSpriteHTML(unit, faction, frameIndex);
+  }
+  // Fallback to SVG
+  const frames = getEntitySvgFrames(unit, faction);
+  if (frames && frames.length > 0) {
+    return frames[frameIndex % frames.length];
+  }
+  return getEntitySvg(unit, faction);
+}
+
+/**
+ * Get shadow HTML for a unit (silhouette version)
+ */
+export function getUnitShadow(unit, frameIndex = 0) {
+  if (hasSprite(unit.id)) {
+    const sprite = getSprite(unit.id);
+    if (!sprite) return '';
+    const { img, frameWidth, frameHeight } = sprite;
+    const maxSize = 50;
+    const aspectRatio = frameWidth / frameHeight;
+    const displayWidth = aspectRatio >= 1 ? maxSize : maxSize * aspectRatio;
+    const displayHeight = aspectRatio >= 1 ? maxSize / aspectRatio : maxSize;
+    // Use pre-baked shadow PNG (black silhouette with alpha)
+    // Replace filename with shadow version (e.g., test-star.png -> test-star-shadow.png)
+    const shadowSrc = img.src.replace(/\.png$/, '-shadow.png');
+    return `<img class="shadow-sprite" src="${shadowSrc}" style="
+      width: ${displayWidth}px;
+      height: ${displayHeight}px;
+      object-fit: contain;
+      opacity: 0.4;
+    " />`;
+  }
+  // SVG - just return the visual, CSS will handle the filter
+  const frames = getEntitySvgFrames(unit, 'player');
+  if (frames && frames.length > 0) {
+    return frames[frameIndex % frames.length];
+  }
+  return getEntitySvg(unit, 'player');
+}
+
+/**
+ * Generate HTML for PNG sprite with spritesheet animation support
+ * @param {Object} unit - Unit definition
+ * @param {string} faction - 'player' or 'enemy'
+ * @param {number} frameIndex - Animation frame index
+ * @returns {string} HTML div with sprite background
+ */
+function getSpriteHTML(unit, faction, frameIndex) {
+  const sprite = getSprite(unit.id);
+  if (!sprite) return '';
+
+  const { img, frameCount, frameWidth, frameHeight } = sprite;
+
+  // Calculate background position for current frame
+  const frameX = (frameIndex % frameCount) * frameWidth;
+  const bgPosPercent = frameCount > 1 ? (frameX / (frameWidth * (frameCount - 1))) * 100 : 0;
+
+  // Enemy units get CSS filter for color tinting
+  const enemyFilter = faction === 'enemy'
+    ? 'filter: hue-rotate(180deg) saturate(0.8) brightness(0.9);'
+    : '';
+
+  // Calculate display size maintaining aspect ratio (fit within 50px)
+  const maxSize = 50;
+  const aspectRatio = frameWidth / frameHeight;
+  let displayWidth, displayHeight;
+  if (aspectRatio >= 1) {
+    // Wider than tall
+    displayWidth = maxSize;
+    displayHeight = maxSize / aspectRatio;
+  } else {
+    // Taller than wide
+    displayHeight = maxSize;
+    displayWidth = maxSize * aspectRatio;
+  }
+
+  // Use <img> tag for proper transparency support with CSS filters (shadows)
+  return `<img class="unit-sprite" src="${img.src}" style="
+    width: ${displayWidth}px;
+    height: ${displayHeight}px;
+    object-fit: contain;
+    ${enemyFilter}
+  " />`;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // CAMPAIGN MODE UI
 // ═══════════════════════════════════════════════════════════════
 
@@ -2256,12 +2599,22 @@ function campaignEraSelectHTML() {
 
   return `
     <div class="screen campaign-screen">
-      <h2>SELECT ERA</h2>
-      <p class="subtitle">Choose your generation's war</p>
-      <div class="era-list">
-        ${erasHTML}
+      <button class="back-btn-subtle" data-action="menu">← Back</button>
+      <div class="campaign-content">
+        <h2>SELECT ERA</h2>
+        <p class="subtitle">Choose your generation's war</p>
+        <div class="era-grid">
+          ${erasHTML}
+        </div>
+        <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #444;">
+          <button class="menu-btn" data-action="test-zone-battle" style="background: #654; margin-bottom: 10px;">
+            Test Zone Battle (3 zones)
+          </button>
+          <button class="menu-btn" data-action="test-frontline-battle" style="background: #456;">
+            Test Frontline Battle (5 zones)
+          </button>
+        </div>
       </div>
-      <button class="menu-btn secondary" data-action="menu">Back</button>
     </div>
   `;
 }
@@ -2290,12 +2643,14 @@ function campaignMOSSelectHTML() {
 
   return `
     <div class="screen campaign-screen">
-      <h2>${era?.name || 'Unknown Era'}</h2>
-      <p class="subtitle">Select your Military Occupation</p>
-      <div class="mos-list">
-        ${mosHTML}
+      <button class="back-btn-subtle" data-action="campaign">← Back</button>
+      <div class="campaign-content">
+        <h2>${era?.name || 'Unknown Era'}</h2>
+        <p class="subtitle">Select your Military Occupation</p>
+        <div class="mos-grid">
+          ${mosHTML}
+        </div>
       </div>
-      <button class="menu-btn secondary" data-action="campaign">Back</button>
     </div>
   `;
 }
@@ -3088,64 +3443,133 @@ function campaignBattleHTML() {
 
   if (!b) return '<div class="screen">Loading battle...</div>';
 
+  // Get current squad state
+  const squad = b.squad || { currentOrder: 'hold', selectedUnitId: null, concentrateTarget: null };
+  const selectedUnit = squad.selectedUnitId ? b.units.find(u => u.id === squad.selectedUnitId) : null;
+  const radioOpen = b.radioOpen || false;
+
+  // Orders for the popup panel (2 columns)
+  const orders = [
+    { id: 'hold', icon: '🛡️', label: 'HOLD' },
+    { id: 'advance', icon: '⚔️', label: 'ADVANCE' },
+    { id: 'fallback', icon: '🏃', label: 'FALL BACK' },
+    { id: 'suppress', icon: '🔥', label: 'SUPPRESS' },
+    { id: 'flank', icon: '↩️', label: 'FLANK' },
+    { id: 'digIn', icon: '⛏️', label: 'DIG IN' },
+    { id: 'search', icon: '🔍', label: 'SEARCH' }
+  ];
+
   return `
     <div class="screen campaign-battle-screen">
+      <div class="minimap-overlay" data-action="toggle-minimap"></div>
       <div class="campaign-top-bar">
-        <div class="campaign-minimap">
-          <canvas class="minimap-canvas" width="120" height="120"></canvas>
+        <div class="campaign-minimap" data-action="toggle-minimap">
+          <canvas class="minimap-canvas" width="60" height="60"></canvas>
           <div class="minimap-legend">
             <span class="legend-hero">●</span> You
             <span class="legend-unit">●</span> Allies
             <span class="legend-enemy">●</span> Enemy
           </div>
         </div>
-        <div class="front-line-commands">
-          <button class="front-line-btn advance ${b.frontLineState === 'advance' ? 'active' : ''}" data-front-line="advance" title="Move to advance positions">
-            <span class="fl-icon">⚔️</span>
-            <span class="fl-label">ADVANCE</span>
-            <span class="fl-key">Z</span>
-          </button>
-          <button class="front-line-btn hold ${b.frontLineState === 'hold' ? 'active' : ''}" data-front-line="hold" title="Fall back and hold (staged)">
-            <span class="fl-icon">🛡️</span>
-            <span class="fl-label">FALL BACK</span>
-            <span class="fl-key">X</span>
-          </button>
-          <button class="front-line-btn retreat ${b.frontLineState === 'retreat' ? 'active' : ''}" data-front-line="retreat" title="Full retreat to fallback positions">
-            <span class="fl-icon">🏃</span>
-            <span class="fl-label">RETREAT</span>
-            <span class="fl-key">C</span>
-          </button>
-        </div>
         <div class="campaign-hud">
           <div class="campaign-hp-bar">
-            <div class="campaign-hp-fill" style="width: ${(b.hero.hp / b.hero.maxHP) * 100}%"></div>
-            <span class="campaign-hp-text">${Math.ceil(b.hero.hp)} / ${b.hero.maxHP}</span>
+            <div class="campaign-hp-fill" style="width: ${(b.hero.hp / b.hero.maxHp) * 100}%"></div>
+            <span class="campaign-hp-text">${Math.ceil(b.hero.hp)} / ${b.hero.maxHp}</span>
           </div>
+          ${b.zones ? (() => {
+            // Zone battle HUD
+            const activeZone = b.zones[b.activeZoneIndex];
+            const timerSec = activeZone?.timer ? Math.ceil(activeZone.timer / 1000) : 0;
+            const timerMin = Math.floor(timerSec / 60);
+            const timerRemSec = timerSec % 60;
+            const timerStr = `${timerMin}:${timerRemSec.toString().padStart(2, '0')}`;
+            const enemiesLeft = activeZone?.enemiesRemaining ?? 0;
+            return `
+            <div class="campaign-stats zone-stats">
+              <span class="zone-name">${activeZone?.name || 'Zone'}</span>
+              <span class="campaign-timer">${timerStr}</span>
+              <span class="campaign-kills">Kills: ${b.kills || 0}</span>
+              <span class="zone-enemies">${enemiesLeft} enemies</span>
+            </div>`;
+          })() : `
           <div class="campaign-stats">
-            <span class="campaign-timer">${Math.ceil(b.timer)}s</span>
-            <span class="campaign-kills">Kills: ${b.kills}</span>
-            <span class="campaign-wave">Wave: ${b.wave}</span>
-          </div>
+            <span class="campaign-timer">${Math.ceil(b.timer || 0)}s</span>
+            <span class="campaign-kills">Kills: ${b.kills || 0}</span>
+            <span class="campaign-wave">Wave: ${b.wave || 1}</span>
+          </div>`}
         </div>
       </div>
       <div class="campaign-battlefield">
         <!-- Entities rendered by game loop -->
       </div>
-      ${isMobile ? `
-      <div class="mobile-controls">
-        <div class="mobile-joystick-zone">
-          <div class="joystick-hint">MOVE</div>
-        </div>
-        <div class="mobile-shoot-zone">
-          <div class="shoot-hint">TAP TO SHOOT</div>
-        </div>
-        <div class="mobile-commands">
-          <button class="mobile-cmd-btn" data-cmd="follow">👥 1</button>
-          <button class="mobile-cmd-btn" data-cmd="hold">🛡️ 2</button>
-          <button class="mobile-cmd-btn" data-cmd="attack">⚔️ 3</button>
-          <button class="mobile-cmd-btn" data-cmd="retreat">↩️ 5</button>
+
+      <!-- Right Side: Unit Strip + Radio Panel -->
+      <div class="squad-strip">
+        <!-- Multi-select toggle at top -->
+        <button class="multiselect-toggle ${squad.multiSelectMode ? 'active' : ''}"
+                data-action="toggle-multiselect" title="Multi-select mode">
+          ${squad.multiSelectMode ? '☑' : '☐'}
+        </button>
+
+        <!-- Unit Icons (vertical) -->
+        <div class="squad-units">
+          <button class="squad-unit-btn ${!squad.selectedUnitId && !squad.multiSelectMode ? 'active' : ''}"
+                  data-action="select-squad" title="All Units">
+            <span class="su-icon">👥</span>
+          </button>
+          ${b.units?.map((u, i) => {
+            const unitDef = UNITS.find(ud => ud.id === u.unitId);
+            const isDead = u.hp <= 0;
+            const isSelected = squad.multiSelectMode
+              ? squad.selectedUnits?.includes(u.id)
+              : squad.selectedUnitId === u.id;
+            return `
+              <button class="squad-unit-btn ${isSelected ? 'active' : ''} ${isDead ? 'dead' : ''}"
+                      data-action="select-unit" data-unit-id="${u.id}"
+                      title="${unitDef?.name || 'Unit'}">
+                <span class="su-icon">${unitDef?.icon || '🪖'}</span>
+                ${squad.multiSelectMode && isSelected ? '<span class="su-check">✓</span>' : ''}
+                <div class="su-hp-bar"><div class="su-hp-fill" style="width: ${(u.hp / u.maxHp) * 100}%"></div></div>
+              </button>
+            `;
+          }).join('') || ''}
         </div>
       </div>
+
+      <!-- Vintage Military Radio Panel (slides from right when unit selected) -->
+      <div class="radio-popup vintage-radio ${radioOpen ? 'open' : ''}">
+        <div class="radio-body">
+          <div class="radio-speaker-grille"></div>
+          <div class="radio-display">
+            <span class="radio-freq">${squad.selectedUnitId ? 'UNIT CMD' : 'SQUAD CMD'}</span>
+          </div>
+          <div class="radio-knobs">
+            <div class="radio-knob"></div>
+            <div class="radio-knob"></div>
+          </div>
+          <div class="radio-popup-orders">
+            ${orders.map(o => {
+              const selectedUnit = b.units?.find(u => u.id === squad.selectedUnitId);
+              const isActive = selectedUnit ? selectedUnit.currentOrder === o.id : squad.currentOrder === o.id;
+              return `
+                <button class="rp-order-btn ${isActive ? 'active' : ''}"
+                        data-squad-order="${o.id}">
+                  <span class="rpo-icon">${o.icon}</span>
+                  <span class="rpo-label">${o.label}</span>
+                </button>
+              `;
+            }).join('')}
+            <button class="rp-order-btn focus ${squad.concentrateTarget ? 'active' : ''}"
+                    data-action="concentrate-fire">
+              <span class="rpo-icon">🎯</span>
+              <span class="rpo-label">${squad.concentrateTarget ? 'CANCEL' : 'FOCUS'}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      ${isMobile ? `
+      <!-- Joystick anchors shown via CSS, activated by touch near corners -->
       ` : `
       <div class="campaign-controls-hint">
         <div class="controls-row">
@@ -3154,16 +3578,6 @@ function campaignBattleHTML() {
           <span class="control-group"><kbd>Mouse</kbd> Aim</span>
           <span class="control-sep">·</span>
           <span class="control-group"><kbd>Click</kbd> Shoot</span>
-        </div>
-        <div class="controls-row commands-row">
-          <span class="control-group"><kbd>1</kbd> Follow</span>
-          <span class="control-group"><kbd>2</kbd> Hold</span>
-          <span class="control-group"><kbd>3</kbd> Attack</span>
-          <span class="control-group"><kbd>4</kbd> Move</span>
-          <span class="control-group"><kbd>5</kbd> Retreat</span>
-          <span class="control-sep">·</span>
-          <span class="control-group"><kbd>Q</kbd> Aggressive</span>
-          <span class="control-group"><kbd>E</kbd> Defensive</span>
         </div>
       </div>
       `}

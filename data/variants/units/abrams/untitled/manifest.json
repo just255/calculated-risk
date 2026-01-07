@@ -1,0 +1,19 @@
+{
+  "id": "untitled",
+  "objectType": "units",
+  "objectId": "abrams",
+  "name": "Untitled",
+  "author": "Artist",
+  "createdAt": "2026-01-07T00:47:18.212Z",
+  "currentVersion": 1,
+  "versions": [
+    {
+      "version": 1,
+      "author": "Artist",
+      "timestamp": "2026-01-07T00:47:18.212Z",
+      "note": "Initial version"
+    }
+  ],
+  "canvasWidth": 256,
+  "canvasHeight": 256
+}

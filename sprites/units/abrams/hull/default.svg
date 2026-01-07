@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 140" width="100" height="140">
+  <!-- M1 Abrams Hull - Outline style -->
+  <defs>
+    <style>
+      .outline { fill: none; stroke: #1a1a1a; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+      .detail { fill: none; stroke: #1a1a1a; stroke-width: 1; stroke-linecap: round; stroke-linejoin: round; }
+    </style>
+  </defs>
+
+  <!-- Main hull body -->
+  <path class="outline" d="
+    M 20 22
+    L 80 22
+    L 80 122
+    L 20 122
+    Z
+  "/>
+
+  <!-- Front glacis (angled armor plate) -->
+  <path class="detail" d="
+    M 24 26
+    L 76 26
+    L 76 36
+    L 24 36
+    Z
+  "/>
+
+  <!-- Side skirt panels - left -->
+  <rect class="detail" x="18" y="38" width="6" height="24"/>
+  <rect class="detail" x="18" y="66" width="6" height="24"/>
+  <rect class="detail" x="18" y="94" width="6" height="18"/>
+
+  <!-- Side skirt panels - right -->
+  <rect class="detail" x="76" y="38" width="6" height="24"/>
+  <rect class="detail" x="76" y="66" width="6" height="24"/>
+  <rect class="detail" x="76" y="94" width="6" height="18"/>
+
+  <!-- Turret ring area -->
+  <ellipse class="detail" cx="50" cy="58" rx="20" ry="16"/>
+
+  <!-- Engine deck area -->
+  <rect class="detail" x="26" y="100" width="48" height="18" rx="2"/>
+
+  <!-- Engine deck grille lines -->
+  <line class="detail" x1="30" y1="106" x2="70" y2="106"/>
+  <line class="detail" x1="30" y1="110" x2="70" y2="110"/>
+  <line class="detail" x1="30" y1="114" x2="70" y2="114"/>
+
+  <!-- Rear panel -->
+  <rect class="detail" x="24" y="120" width="52" height="6" rx="1"/>
+
+  <!-- Small detail box (bottom left) -->
+  <rect class="detail" x="22" y="126" width="6" height="6"/>
+</svg>

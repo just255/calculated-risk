@@ -10,5 +10,9 @@
   "dependencies": {
     "express": "^4.18.2",
     "socket.io": "^4.7.2"
+  },
+  "devDependencies": {
+    "pngjs": "^7.0.0",
+    "sharp": "^0.34.5"
   }
 }

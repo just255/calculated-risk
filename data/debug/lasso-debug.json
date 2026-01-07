@@ -1,0 +1,42 @@
+{
+  "points": [
+    {
+      "x": 96.5,
+      "y": 190.5
+    },
+    {
+      "x": 96.5,
+      "y": 191.5
+    },
+    {
+      "x": 160.5,
+      "y": 191.5
+    },
+    {
+      "x": 160.5,
+      "y": 190.5
+    }
+  ],
+  "options": {
+    "addToSelection": false,
+    "subtractFromSelection": false,
+    "tolerance": 10,
+    "expandColors": false
+  },
+  "bounds": null,
+  "sampledColors": [],
+  "pixelTests": [],
+  "skippedPixels": {
+    "alpha": 0,
+    "colorMismatch": 0,
+    "outsidePolygon": 0
+  },
+  "selectedCount": 0,
+  "finalBounds": {
+    "x": 96,
+    "y": 190,
+    "width": 65,
+    "height": 2
+  },
+  "hasSelection": true
+}

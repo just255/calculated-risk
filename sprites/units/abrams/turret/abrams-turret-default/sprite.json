@@ -1,0 +1,20 @@
+{
+  "id": "abrams-turret-abrams-turret-default",
+  "dimensions": {
+    "width": 110,
+    "height": 122
+  },
+  "animations": {},
+  "snapPoints": [
+    {
+      "id": "snap_1767564609764",
+      "name": "cannon_mount",
+      "x": -0.5,
+      "y": -48,
+      "type": "cannon_mount",
+      "rotation": 0
+    }
+  ],
+  "partCategory": null,
+  "publishedAt": "2026-01-06T18:43:56.746Z"
+}

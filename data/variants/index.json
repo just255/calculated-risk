@@ -1,0 +1,18 @@
+{
+  "variants": [
+    {
+      "id": "abrams-untitled",
+      "objectType": "units",
+      "objectId": "abrams",
+      "name": "Untitled",
+      "author": "Artist"
+    },
+    {
+      "id": "abrams-default",
+      "objectType": "units",
+      "objectId": "abrams",
+      "name": "Default",
+      "author": "Artist"
+    }
+  ]
+}
