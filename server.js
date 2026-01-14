@@ -153,11 +153,6 @@ app.get('/api/objects', (req, res) => {
   res.json(gameObjects);
 });
 
-// GET /api/units - List all units
-app.get('/api/units', (req, res) => {
-  res.json(gameObjects.units);
-});
-
 // GET /api/terrain - List all terrain types
 app.get('/api/terrain', (req, res) => {
   res.json(gameObjects.terrain);
@@ -178,6 +173,38 @@ app.get('/api/variants', (req, res) => {
   const index = loadIndex();
   const variants = index.variants.filter(v => !v.archived);
   res.json({ variants });
+});
+
+// GET /api/units - List all available units from sprites folder
+app.get('/api/units', (req, res) => {
+  const unitsDir = path.join(__dirname, 'sprites', 'units');
+  ensureDir(unitsDir);
+
+  try {
+    const units = fs.readdirSync(unitsDir)
+      .filter(name => {
+        const unitPath = path.join(unitsDir, name);
+        return fs.statSync(unitPath).isDirectory();
+      })
+      .map(id => {
+        // Check for variants
+        const index = loadIndex();
+        const variants = index.variants
+          .filter(v => v.objectType === 'units' && v.objectId === id && !v.archived)
+          .map(v => v.id.replace(`${id}-`, ''));
+
+        return {
+          id,
+          hasVariants: variants.length > 0,
+          variants
+        };
+      });
+
+    res.json({ units });
+  } catch (err) {
+    console.error('Failed to list units:', err);
+    res.json({ units: [] });
+  }
 });
 
 // GET /api/variants/:id - Get variant data (latest version)
