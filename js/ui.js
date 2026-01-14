@@ -4091,18 +4091,25 @@ function endlessLoadoutHTML() {
                     ${statRow('ARM', selectedVehicle.stats.arm, 'arm')}
                   </div>
 
-                  <div class="unit-equipment-row">
-                    <div class="unit-equip-slot" data-slot="armor" title="Armor">
-                      <span class="unit-equip-icon">🛡️</span>
-                    </div>
-                    <div class="unit-equip-slot" data-slot="optics" title="Optics">
-                      <span class="unit-equip-icon">🔭</span>
-                    </div>
-                    <div class="unit-equip-slot" data-slot="ammo" title="Ammo">
-                      <span class="unit-equip-icon">💥</span>
-                    </div>
-                    <div class="unit-equip-slot" data-slot="engine" title="Engine">
-                      <span class="unit-equip-icon">⚙️</span>
+                  <div class="unit-equipment-section">
+                    <div class="unit-equipment-header">EQUIPMENT</div>
+                    <div class="unit-equipment-row">
+                      <div class="unit-equip-slot" data-slot="armor" title="Armor">
+                        <span class="unit-equip-icon">🛡️</span>
+                        <span class="unit-equip-label">ARM</span>
+                      </div>
+                      <div class="unit-equip-slot" data-slot="optics" title="Optics">
+                        <span class="unit-equip-icon">🔭</span>
+                        <span class="unit-equip-label">OPT</span>
+                      </div>
+                      <div class="unit-equip-slot" data-slot="ammo" title="Ammo">
+                        <span class="unit-equip-icon">💥</span>
+                        <span class="unit-equip-label">AMO</span>
+                      </div>
+                      <div class="unit-equip-slot" data-slot="engine" title="Engine">
+                        <span class="unit-equip-icon">⚙️</span>
+                        <span class="unit-equip-label">ENG</span>
+                      </div>
                     </div>
                   </div>
                 </div>

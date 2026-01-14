@@ -7797,11 +7797,12 @@
     }
 
     .stat-label {
-      font-size: 0.55rem;
-      font-weight: 600;
+      font-size: 0.7rem;
+      font-weight: 700;
       text-transform: uppercase;
-      color: var(--text-secondary);
-      width: 26px;
+      color: var(--text-primary);
+      letter-spacing: 0.05em;
+      width: 32px;
     }
 
     .stat-bar {
@@ -7813,7 +7814,7 @@
       position: relative;
     }
 
-    /* Minor ticks every 5% (half thickness of major) */
+    /* Minor ticks every 5% (thinner, subtler) */
     .stat-bar::before {
       content: '';
       position: absolute;
@@ -7824,9 +7825,9 @@
       background: repeating-linear-gradient(
         90deg,
         transparent 0%,
-        transparent calc(5% - 1.5px),
-        rgba(0,0,0,0.35) calc(5% - 1.5px),
-        rgba(0,0,0,0.35) 5%
+        transparent calc(5% - 1px),
+        rgba(0,0,0,0.2) calc(5% - 1px),
+        rgba(0,0,0,0.2) 5%
       );
       pointer-events: none;
       z-index: 1;
@@ -7869,26 +7870,42 @@
       text-align: right;
     }
 
-    /* Equipment Row - Hidden on desktop (Equipment Bay visible), shown on mobile */
-    .unit-equipment-row {
+    /* Equipment Section - Hidden on desktop (Equipment Bay visible), shown on mobile */
+    .unit-equipment-section {
       display: none;
     }
 
     @media (max-width: 800px), (max-height: 600px) {
-      .unit-equipment-row {
+      .unit-equipment-section {
         display: flex;
-        gap: 6px;
+        flex-direction: column;
+        gap: 4px;
         flex-shrink: 0;
-        justify-content: center;
       }
+    }
+
+    .unit-equipment-header {
+      font-size: 0.5rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      letter-spacing: 0.1em;
+      text-align: center;
+    }
+
+    .unit-equipment-row {
+      display: flex;
+      gap: 6px;
+      justify-content: center;
     }
 
     .unit-equip-slot {
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
-      width: 36px;
-      height: 36px;
+      gap: 2px;
+      width: 40px;
+      height: 44px;
       background: var(--bg-dark);
       border: 2px solid var(--bg-light);
       border-radius: 6px;
@@ -7912,7 +7929,10 @@
     }
 
     .unit-equip-label {
-      display: none; /* Hidden - using just icons */
+      font-size: 0.45rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      letter-spacing: 0.05em;
     }
 
     /* Deploy Strip - horizontal bar below detail panel */
@@ -8406,8 +8426,8 @@
       }
 
       .stat-label {
-        font-size: 0.45rem;
-        width: 22px;
+        font-size: 0.55rem;
+        width: 26px;
       }
 
       .stat-value {
@@ -8415,20 +8435,26 @@
         min-width: 16px;
       }
 
+      .unit-equipment-header {
+        font-size: 0.4rem;
+      }
+
       .unit-equipment-row {
-        gap: 4px;
+        gap: 3px;
       }
 
       .unit-equip-slot {
-        padding: 4px 2px;
+        width: 32px;
+        height: 36px;
+        gap: 1px;
       }
 
       .unit-equip-icon {
-        font-size: 0.8rem;
+        font-size: 0.75rem;
       }
 
       .unit-equip-label {
-        font-size: 0.4rem;
+        font-size: 0.35rem;
       }
 
       .unit-deploy-btn {
