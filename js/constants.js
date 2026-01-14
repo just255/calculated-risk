@@ -29,7 +29,14 @@ export const State = {
   CAMPAIGN_PLANNING: 'campaign_planning',
   CAMPAIGN_BATTLE: 'campaign_battle',
   CAMPAIGN_RESULT: 'campaign_result',
-  CAMPAIGN_ERA_END: 'campaign_era_end'
+  CAMPAIGN_ERA_END: 'campaign_era_end',
+  // Vehicle Selection (for test battles)
+  VEHICLE_SELECT: 'vehicle_select',
+  // Endless Mode States
+  ENDLESS_LOADOUT: 'endless_loadout',     // Pre-run: select gear, buy insurance
+  ENDLESS_BATTLE: 'endless_battle',       // Combat (hero control)
+  ENDLESS_BETWEEN: 'endless_between',     // Between waves: exit/continue/repair
+  ENDLESS_RESULT: 'endless_result'        // Run complete: death or extraction
 };
 
 export const HQTab = {
@@ -1446,3 +1453,106 @@ export const SHADOW_CONFIG = {
   // Shadow blur in pixels
   blur: 2
 };
+
+// ═══════════════════════════════════════════════════════════════
+// ENDLESS MODE VEHICLES
+// ═══════════════════════════════════════════════════════════════
+
+export const VEHICLE_CATEGORIES = [
+  { id: 'all', name: 'All', icon: '★' },
+  { id: 'wwii', name: 'WWII', icon: '⭐' },
+  { id: 'modern', name: 'Modern', icon: '🛡️' },
+  { id: 'recon', name: 'Recon', icon: '👁️' },
+  { id: 'heavy', name: 'Heavy', icon: '💪' },
+  { id: 'favorites', name: 'Favs', icon: '❤️' },
+];
+
+export const ENDLESS_VEHICLES = [
+  // WWII Era
+  { id: 'sherman', name: 'M4 Sherman', icon: '⭐', category: 'wwii',
+    desc: 'WWII workhorse. Balanced all-rounder.',
+    stats: { dmg: 35, spd: 5, arm: 50 },
+    variants: ['olive', 'desert', 'winter'],
+    unlocked: true },
+  { id: 'tiger', name: 'Tiger I', icon: '🐯', category: 'wwii',
+    desc: 'German heavy. Fear the 88mm.',
+    stats: { dmg: 50, spd: 2, arm: 80 },
+    variants: ['grey', 'desert'],
+    unlocked: false, unlockReq: 'Reach wave 20' },
+  { id: 'panzer4', name: 'Panzer IV', icon: '✠', category: 'wwii',
+    desc: 'Versatile German medium tank.',
+    stats: { dmg: 40, spd: 4, arm: 55 },
+    variants: ['grey', 'desert'],
+    unlocked: false, unlockReq: 'Reach wave 10' },
+  { id: 't34', name: 'T-34', icon: '☭', category: 'wwii',
+    desc: 'Soviet reliability. Sloped armor.',
+    stats: { dmg: 38, spd: 6, arm: 60 },
+    variants: ['green', 'winter'],
+    unlocked: true },
+  { id: 'pershing', name: 'M26 Pershing', icon: '🦅', category: 'wwii',
+    desc: 'American heavy. Late war beast.',
+    stats: { dmg: 55, spd: 3, arm: 75 },
+    variants: ['olive', 'winter'],
+    unlocked: false, unlockReq: 'Complete 5 runs' },
+
+  // Modern Era
+  { id: 'abrams', name: 'M1 Abrams', icon: '🛡️', category: 'modern',
+    desc: 'Modern MBT. Heavy armor, high damage.',
+    stats: { dmg: 75, spd: 4, arm: 90 },
+    variants: ['default'],
+    unlocked: true },
+  { id: 'leopard', name: 'Leopard 2', icon: '🐆', category: 'modern',
+    desc: 'German precision. Best-in-class accuracy.',
+    stats: { dmg: 70, spd: 5, arm: 85 },
+    variants: ['green', 'desert'],
+    unlocked: false, unlockReq: 'Reach wave 15' },
+  { id: 'challenger', name: 'Challenger 2', icon: '🦁', category: 'modern',
+    desc: 'British fortress. Exceptional armor.',
+    stats: { dmg: 65, spd: 3, arm: 95 },
+    variants: ['desert', 'green'],
+    unlocked: false, unlockReq: 'Exit at wave 25+' },
+  { id: 't90', name: 'T-90', icon: '🔴', category: 'modern',
+    desc: 'Russian modern. Explosive reactive armor.',
+    stats: { dmg: 68, spd: 5, arm: 80 },
+    variants: ['green', 'desert'],
+    unlocked: false, unlockReq: 'Reach wave 30' },
+
+  // Recon
+  { id: 'jeep', name: 'Willys Jeep', icon: '🚙', category: 'recon',
+    desc: 'Fast recon. Hit and run tactics.',
+    stats: { dmg: 15, spd: 9, arm: 10 },
+    variants: ['olive', 'desert'],
+    unlocked: true },
+  { id: 'humvee', name: 'Humvee', icon: '🚗', category: 'recon',
+    desc: 'Modern utility. Versatile platform.',
+    stats: { dmg: 20, spd: 8, arm: 20 },
+    variants: ['desert', 'woodland'],
+    unlocked: true },
+  { id: 'brdm', name: 'BRDM-2', icon: '🔍', category: 'recon',
+    desc: 'Soviet scout. Amphibious capability.',
+    stats: { dmg: 18, spd: 7, arm: 25 },
+    variants: ['green', 'desert'],
+    unlocked: false, unlockReq: 'Scout 100 enemies' },
+  { id: 'fennek', name: 'Fennek', icon: '🦊', category: 'recon',
+    desc: 'German recon. Advanced sensors.',
+    stats: { dmg: 22, spd: 8, arm: 30 },
+    variants: ['green', 'desert'],
+    unlocked: false, unlockReq: 'Exit 10 runs' },
+
+  // Heavy
+  { id: 'maus', name: 'Panzer VIII Maus', icon: '🐘', category: 'heavy',
+    desc: 'Super-heavy. Slow but devastating.',
+    stats: { dmg: 90, spd: 1, arm: 100 },
+    variants: ['grey'],
+    unlocked: false, unlockReq: 'Reach wave 50' },
+  { id: 'tog2', name: 'TOG II', icon: '🚂', category: 'heavy',
+    desc: 'British landship. Meme machine.',
+    stats: { dmg: 45, spd: 1, arm: 70 },
+    variants: ['green'],
+    unlocked: false, unlockReq: 'Secret unlock' },
+  { id: 'kv2', name: 'KV-2', icon: '🗼', category: 'heavy',
+    desc: 'Soviet derp gun. 152mm of fun.',
+    stats: { dmg: 85, spd: 2, arm: 65 },
+    variants: ['green', 'winter'],
+    unlocked: false, unlockReq: '500 total kills' },
+];

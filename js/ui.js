@@ -2599,10 +2599,48 @@ function getSpriteHTML(unit, faction, frameIndex) {
 // Cache for available vehicles (loaded from API)
 let availableVehiclesCache = null;
 
+// Cache for unit variants from API (maps unitId -> variants array)
+let unitVariantsCache = null;
+
 // Default stats for vehicles (can be overridden per-vehicle)
 const DEFAULT_VEHICLE_STATS = {
   speed: 4, hullTurn: 3, turretTurn: 5, damage: 50, armor: 100
 };
+
+/**
+ * Fetch unit variants from the API and cache them
+ * @returns {Promise<Object>} Map of unitId -> variants array
+ */
+export async function fetchUnitVariants() {
+  if (unitVariantsCache) return unitVariantsCache;
+
+  try {
+    const res = await fetch('/api/units');
+    const data = await res.json();
+
+    // Build a map of unitId -> variants
+    unitVariantsCache = {};
+    (data.units || []).forEach(u => {
+      unitVariantsCache[u.id] = u.variants || [];
+    });
+
+    return unitVariantsCache;
+  } catch (err) {
+    console.warn('[ui] Failed to fetch unit variants:', err);
+    unitVariantsCache = {};
+    return unitVariantsCache;
+  }
+}
+
+/**
+ * Get variants for a specific unit (from cache)
+ * @param {string} unitId - The unit ID
+ * @returns {string[]} Array of variant names, or empty array if none
+ */
+export function getUnitVariants(unitId) {
+  if (!unitVariantsCache) return [];
+  return unitVariantsCache[unitId] || [];
+}
 
 /**
  * Fetch available vehicles from the units API
@@ -3930,15 +3968,50 @@ function endlessLoadoutHTML() {
     </div>
   `;
 
+  // Get available variants for selected vehicle from API cache
+  // Falls back to empty array if no variants exist (will show icon fallback)
+  const apiVariants = selectedVehicle ? getUnitVariants(selectedVehicle.id) : [];
+  const availableVariants = apiVariants.length > 0 ? apiVariants : [];
+  const hasVariants = availableVariants.length > 0;
+  const currentVariant = e.loadout.variant || availableVariants[0] || null;
+
   return `
     <div class="screen endless-loadout-screen">
       <!-- Header -->
       <div class="loadout-header">
         <button class="back-btn" data-action="menu">◄</button>
-        <h2>OPERATION BRIEFING</h2>
-        <div class="resource-display">
-          <span class="res-scrap">⬡ ${Game.resources.scrap}</span>
-          <span class="res-parts">◈ ${Game.resources.parts}</span>
+        <div class="header-unit-info">
+          ${selectedVehicle ? `
+            <span class="header-unit-name">${selectedVehicle.name}</span>
+            ${hasVariants ? `
+              <select class="header-variant-select">
+                ${availableVariants.map(v => `
+                  <option value="${v}" ${v === currentVariant ? 'selected' : ''}>
+                    ${v === 'default' ? 'Standard' : v.charAt(0).toUpperCase() + v.slice(1)}
+                  </option>
+                `).join('')}
+              </select>
+            ` : '<span class="no-variants-label">(no sprite)</span>'}
+          ` : '<span class="header-unit-name">Select Vehicle</span>'}
+        </div>
+        <div class="header-right">
+          <div class="resource-display">
+            <span class="res-scrap">⬡ ${Game.resources.scrap}</span>
+            <span class="res-parts">◈ ${Game.resources.parts}</span>
+          </div>
+          <span class="header-label">INSURE</span>
+          <div class="header-option-check ${hasVehicleInsurance ? 'checked' : ''} ${!selectedVehicle ? 'disabled' : ''}" data-action="${selectedVehicle ? 'toggle-vehicle-insurance' : ''}" title="Vehicle Insurance ${vehicleInsuranceCost}⬡">
+            <span class="check-icon">✓</span><span>Veh</span>
+          </div>
+          <div class="header-option-check ${hasEquipmentInsurance ? 'checked' : ''} ${!selectedVehicle ? 'disabled' : ''}" data-action="${selectedVehicle ? 'toggle-equipment-insurance' : ''}" title="Equipment Insurance ${equipmentInsuranceCost}⬡">
+            <span class="check-icon">✓</span><span>Equip</span>
+          </div>
+          <span class="header-label">MODE</span>
+          <select class="header-mode-select">
+            <option value="random" ${!e.seed ? 'selected' : ''}>Random</option>
+            <option value="weekly" ${e.seed ? 'selected' : ''}>Weekly</option>
+          </select>
+          <button class="header-deploy-btn ${!selectedVehicle ? 'disabled' : ''}" data-action="${selectedVehicle ? 'endless-start' : ''}" ${!selectedVehicle ? 'disabled' : ''}>DEPLOY ▶</button>
         </div>
       </div>
 
@@ -3989,32 +4062,29 @@ function endlessLoadoutHTML() {
             ${selectedVehicle ? `
               <div class="unit-card-horizontal">
                 <!-- Left: Large Tank Preview -->
-                <div class="unit-preview-large">
-                  <canvas class="unit-preview-canvas" data-unit="${selectedVehicle.id}" data-variant="${e.loadout.variant || 'default'}" width="1024" height="1024" style="transform: scale(${(e.previewScale || 5) / 5}) translate(${e.previewPanX || 0}%, ${e.previewPanY || 8}%)"></canvas>
-                  <div class="unit-preview-fallback">${selectedVehicle.icon}</div>
-                  <div class="preview-zoom-controls">
-                    <button class="ctrl-btn" data-action="preview-zoom" data-dir="out">−</button>
-                    <span class="zoom-level">${e.previewScale || 5}×</span>
-                    <button class="ctrl-btn" data-action="preview-zoom" data-dir="in">+</button>
-                  </div>
-                  <div class="preview-pan-controls">
-                    <button class="ctrl-btn" data-action="preview-pan" data-dir="up">▲</button>
-                    <div class="pan-btn-row">
-                      <button class="ctrl-btn" data-action="preview-pan" data-dir="left">◀</button>
-                      <button class="ctrl-btn" data-action="preview-pan" data-dir="reset">⟲</button>
-                      <button class="ctrl-btn" data-action="preview-pan" data-dir="right">▶</button>
+                <div class="unit-preview-large ${!hasVariants ? 'icon-only' : ''}">
+                  ${hasVariants ? `
+                    <canvas class="unit-preview-canvas" data-unit="${selectedVehicle.id}" data-variant="${currentVariant}" width="1024" height="1024" style="transform: scale(${(e.previewScale || 5) / 5}) translate(${e.previewPanX || 0}%, ${e.previewPanY || 8}%)"></canvas>
+                    <div class="preview-zoom-controls">
+                      <button class="ctrl-btn" data-action="preview-zoom" data-dir="out">−</button>
+                      <span class="zoom-level">${e.previewScale || 5}×</span>
+                      <button class="ctrl-btn" data-action="preview-zoom" data-dir="in">+</button>
                     </div>
-                    <button class="ctrl-btn" data-action="preview-pan" data-dir="down">▼</button>
-                  </div>
+                    <div class="preview-pan-controls">
+                      <button class="ctrl-btn" data-action="preview-pan" data-dir="up">▲</button>
+                      <div class="pan-btn-row">
+                        <button class="ctrl-btn" data-action="preview-pan" data-dir="left">◀</button>
+                        <button class="ctrl-btn" data-action="preview-pan" data-dir="reset">⟲</button>
+                        <button class="ctrl-btn" data-action="preview-pan" data-dir="right">▶</button>
+                      </div>
+                      <button class="ctrl-btn" data-action="preview-pan" data-dir="down">▼</button>
+                    </div>
+                  ` : ''}
+                  <div class="unit-preview-fallback" style="${hasVariants ? 'display:none' : ''}">${selectedVehicle.icon}</div>
                 </div>
 
                 <!-- Right: Info Stack -->
                 <div class="unit-info-stack">
-                  <div class="unit-header">
-                    <h3 class="unit-name">${selectedVehicle.name}</h3>
-                    <div class="unit-variant-label">"${!e.loadout.variant || e.loadout.variant === 'default' ? 'Standard' : e.loadout.variant.charAt(0).toUpperCase() + e.loadout.variant.slice(1)}"</div>
-                  </div>
-
                   <div class="stats-list">
                     ${statRow('DMG', selectedVehicle.stats.dmg, 'dmg')}
                     ${statRow('SPD', selectedVehicle.stats.spd, 'spd')}
@@ -4035,10 +4105,6 @@ function endlessLoadoutHTML() {
                       <span class="unit-equip-icon">⚙️</span>
                     </div>
                   </div>
-
-                  <button class="unit-deploy-btn" data-action="endless-start">
-                    DEPLOY ▶
-                  </button>
                 </div>
               </div>
             ` : `

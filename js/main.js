@@ -7,7 +7,7 @@ import { Game, newBattlePlan, newCampaign, createAdvancingScenario, createFrontl
 import { initAudio, sound } from './audio.js';
 import { save, load } from './storage.js';
 import { goto, deploy, switchUnit, stopLoop, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, campaignMouseDown, campaignMouseUp, campaignSetAimAngle, campaignClearAimAngle, campaignSetJoystick, campaignClearJoystick } from './game.js';
-import { render, setSubState, fetchAvailableVehicles } from './ui.js';
+import { render, setSubState, fetchAvailableVehicles, fetchUnitVariants } from './ui.js';
 import { initController, getControllerInput, updateButtonStates, setControllerCallbacks, isControllerConnected } from './controller.js';
 import { initGestures, setResetJoysticksCallback } from './gestures.js';
 import { moveJoystick, shootJoystick, getNearJoystickAnchor, setJoystickAnchor, getClosestJoystickSide, getDragThreshold } from './joystick.js';
@@ -423,7 +423,7 @@ document.getElementById('app').addEventListener('click', e => {
   if (action) {
     const a = action.dataset.action;
     if (a === 'campaign') { initAudio(); goto(State.CAMPAIGN_ERA_SELECT); }
-    else if (a === 'endless') { Game.endless = newEndlessRun(); initAudio(); goto(State.ENDLESS_LOADOUT); }
+    else if (a === 'endless') { Game.endless = newEndlessRun(); initAudio(); fetchUnitVariants().then(() => { goto(State.ENDLESS_LOADOUT); render(); }); }
     else if (a === 'classic') { Game.settings.mode = 'classic'; initAudio(); goto(State.COUNTDOWN); }
     else if (a === 'versus') { Game.settings.mode = 'versus'; initAudio(); goto(State.H2H_DESIGN); }
     else if (a === 'play') { initAudio(); goto(State.COUNTDOWN); }
@@ -1035,8 +1035,8 @@ document.getElementById('app').addEventListener('click', e => {
       if (Game.endless) {
         const dir = action.dataset.dir;
         const current = Game.endless.previewScale || 5;
-        if (dir === 'in') Game.endless.previewScale = Math.min(current + 2, 30);
-        else if (dir === 'out') Game.endless.previewScale = Math.max(current - 2, 2);
+        if (dir === 'in') Game.endless.previewScale = Math.min(current + 1, 30);
+        else if (dir === 'out') Game.endless.previewScale = Math.max(current - 1, 1);
         render();
       }
     }
@@ -1056,8 +1056,9 @@ document.getElementById('app').addEventListener('click', e => {
       const vehicleId = action.dataset.vehicle;
       if (Game.endless) {
         Game.endless.loadout.vehicle = vehicleId;
-        // Default to 'default' variant (Standard)
-        Game.endless.loadout.variant = 'default';
+        // Default to first available variant
+        const vehicle = ENDLESS_VEHICLES.find(v => v.id === vehicleId);
+        Game.endless.loadout.variant = vehicle?.variants?.[0] || 'default';
         render();
       }
     }
@@ -1151,7 +1152,7 @@ document.getElementById('app').addEventListener('click', e => {
     }
     else if (a === 'endless-retry') {
       Game.endless = newEndlessRun();
-      goto(State.ENDLESS_LOADOUT);
+      fetchUnitVariants().then(() => { goto(State.ENDLESS_LOADOUT); render(); });
     }
     // Toggle collapsible panels
     else if (a === 'toggle-panel') {
@@ -1479,9 +1480,24 @@ document.getElementById('app').addEventListener('change', e => {
   }
 
   // Variant select in endless loadout
-  if (e.target.closest('.variant-select') && Game.state === State.ENDLESS_LOADOUT) {
+  if ((e.target.closest('.variant-select') || e.target.closest('.header-variant-select')) && Game.state === State.ENDLESS_LOADOUT) {
     if (Game.endless) {
       Game.endless.loadout.variant = e.target.value;
+      render();
+    }
+    return;
+  }
+
+  // Mode select in endless loadout
+  if (e.target.closest('.header-mode-select') && Game.state === State.ENDLESS_LOADOUT) {
+    if (Game.endless) {
+      if (e.target.value === 'weekly') {
+        const now = new Date();
+        const weekNum = Math.floor(now.getTime() / (7 * 24 * 60 * 60 * 1000));
+        Game.endless.seed = `week-${weekNum}`;
+      } else {
+        Game.endless.seed = null;
+      }
       render();
     }
     return;

@@ -7203,15 +7203,17 @@
     .loadout-header {
       display: flex;
       align-items: center;
-      gap: 12px;
-      padding: 12px 16px;
+      gap: 8px;
+      padding: 6px 10px;
       background: var(--bg-medium);
-      border-bottom: 2px solid var(--bg-light);
+      border-bottom: 1px solid var(--bg-light);
       flex-shrink: 0;
+      flex-wrap: nowrap;
+      overflow-x: auto;
     }
 
     .loadout-header h2 {
-      font-size: 1.1rem;
+      font-size: 0.9rem;
       font-weight: 700;
       color: var(--text-primary);
       letter-spacing: 2px;
@@ -7219,11 +7221,165 @@
       flex: 1;
     }
 
+    .header-unit-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+    }
+
+    .header-unit-name {
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: 1px;
+    }
+
+    .header-variant-select {
+      background: var(--bg-dark);
+      border: 1px solid var(--bg-lighter);
+      color: var(--text-secondary);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-family: inherit;
+      cursor: pointer;
+    }
+
+    .header-variant-select:hover {
+      border-color: var(--accent-blue);
+    }
+
+    /* Header right section (resources, options, deploy) */
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: auto;
+    }
+
+    .header-label {
+      font-size: 0.55rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      letter-spacing: 0.5px;
+      margin-left: 4px;
+    }
+
+    .header-option-check,
+    .header-option-radio {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      padding: 4px 6px;
+      background: var(--bg-dark);
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 0.6rem;
+      color: var(--text-secondary);
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+
+    .header-option-check:hover,
+    .header-option-radio:hover {
+      background: var(--bg-light);
+    }
+
+    .header-option-check .check-icon {
+      width: 10px;
+      height: 10px;
+      border: 1px solid var(--text-secondary);
+      border-radius: 2px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.45rem;
+      color: transparent;
+    }
+
+    .header-option-check.checked .check-icon {
+      background: var(--accent-green);
+      border-color: var(--accent-green);
+      color: var(--bg-dark);
+    }
+
+    .header-option-check.checked {
+      color: var(--text-primary);
+    }
+
+    .header-option-check.disabled,
+    .header-deploy-btn.disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+
+    .header-option-radio .radio-dot {
+      width: 8px;
+      height: 8px;
+      border: 1px solid var(--text-secondary);
+      border-radius: 50%;
+    }
+
+    .header-option-radio.selected .radio-dot {
+      border-color: var(--accent-blue);
+      background: var(--accent-blue);
+    }
+
+    .header-option-radio.selected {
+      color: var(--text-primary);
+    }
+
+    .header-option-divider {
+      width: 1px;
+      height: 16px;
+      background: var(--bg-lighter);
+      margin: 0 2px;
+    }
+
+    .header-mode-select {
+      background: var(--bg-dark);
+      border: 1px solid var(--bg-lighter);
+      color: var(--text-secondary);
+      padding: 4px 6px;
+      border-radius: 3px;
+      font-size: 0.6rem;
+      font-family: inherit;
+      cursor: pointer;
+    }
+
+    .header-mode-select:hover {
+      border-color: var(--accent-blue);
+    }
+
+    .header-deploy-btn {
+      padding: 4px 10px;
+      font-size: 0.6rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      background: var(--accent-green);
+      color: var(--bg-dark);
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      white-space: nowrap;
+      margin-left: 4px;
+    }
+
+    .header-deploy-btn:hover {
+      filter: brightness(1.1);
+    }
+
     .loadout-header .resource-display {
       display: flex;
-      gap: 12px;
-      font-size: 0.85rem;
+      gap: 8px;
+      font-size: 0.65rem;
       font-weight: 600;
+      padding-right: 6px;
+      border-right: 1px solid var(--bg-lighter);
+      margin-right: 2px;
     }
 
     .res-scrap { color: var(--accent-yellow); }
@@ -7233,14 +7389,15 @@
       background: transparent;
       border: 1px solid var(--text-secondary);
       color: var(--text-secondary);
-      width: 36px;
-      height: 36px;
+      width: 32px;
+      height: 32px;
       border-radius: 6px;
-      font-size: 1.2rem;
+      font-size: 1rem;
       display: flex;
       align-items: center;
       justify-content: center;
       cursor: pointer;
+      flex-shrink: 0;
     }
 
     .back-btn:active {
@@ -7578,6 +7735,25 @@
       display: block;
     }
 
+    /* Icon-only mode when no sprite variants exist */
+    .unit-preview-large.icon-only {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .unit-preview-large.icon-only .unit-preview-fallback {
+      display: flex;
+      font-size: 6rem;
+      opacity: 0.8;
+    }
+
+    .no-variants-label {
+      font-size: 0.6rem;
+      color: var(--text-secondary);
+      font-style: italic;
+    }
+
     /* Info Stack - Right side */
     .unit-info-stack {
       display: flex;
@@ -7737,6 +7913,130 @@
 
     .unit-equip-label {
       display: none; /* Hidden - using just icons */
+    }
+
+    /* Deploy Strip - horizontal bar below detail panel */
+    .deploy-strip {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 12px;
+      background: var(--bg-dark);
+      border-radius: 6px;
+      margin-top: 8px;
+    }
+
+    /* Deploy Options Row */
+    .deploy-options {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      flex: 1;
+      font-size: 0.65rem;
+    }
+
+    .deploy-strip .unit-deploy-btn {
+      margin-top: 0;
+      white-space: nowrap;
+    }
+
+    .deploy-option-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .deploy-option-label {
+      color: var(--text-secondary);
+      font-weight: 600;
+      font-size: 0.6rem;
+      letter-spacing: 0.5px;
+      margin-right: 2px;
+    }
+
+    .deploy-option-check,
+    .deploy-option-radio {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      background: var(--bg-medium);
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.15s;
+      color: var(--text-secondary);
+    }
+
+    .deploy-option-check:hover,
+    .deploy-option-radio:hover {
+      background: var(--bg-light);
+    }
+
+    .deploy-option-check .check-icon {
+      width: 12px;
+      height: 12px;
+      border: 1px solid var(--text-secondary);
+      border-radius: 2px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.5rem;
+      color: transparent;
+      transition: all 0.15s;
+    }
+
+    .deploy-option-check.checked .check-icon {
+      background: var(--accent-green);
+      border-color: var(--accent-green);
+      color: var(--bg-dark);
+    }
+
+    .deploy-option-check.checked {
+      color: var(--text-primary);
+    }
+
+    .deploy-option-radio .radio-dot {
+      width: 10px;
+      height: 10px;
+      border: 1px solid var(--text-secondary);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+    }
+
+    .deploy-option-radio .radio-dot::after {
+      content: '';
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: transparent;
+      transition: all 0.15s;
+    }
+
+    .deploy-option-radio.selected .radio-dot {
+      border-color: var(--accent-blue);
+    }
+
+    .deploy-option-radio.selected .radio-dot::after {
+      background: var(--accent-blue);
+    }
+
+    .deploy-option-radio.selected {
+      color: var(--text-primary);
+    }
+
+    .option-cost {
+      color: var(--accent-yellow);
+      font-size: 0.55rem;
+    }
+
+    .deploy-option-divider {
+      width: 1px;
+      height: 20px;
+      background: var(--bg-lighter);
     }
 
     /* Deploy Button */
