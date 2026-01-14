@@ -2,11 +2,11 @@
 // UI - HTML rendering functions
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, UnitType, UNITS, UNIT_COSTS, H2H_BUDGET, VEHICLE_UNITS, TYPE_CHART, UNIT_PROJECTILES, PROJECTILES, UNIT_DESCRIPTIONS, CAMPAIGN_ERAS, CAMPAIGN_MOS, SquadOrder, TargetPriority, Formation } from './constants.js';
+import { State, SubState, HQTab, UnitType, UNITS, UNIT_COSTS, H2H_BUDGET, VEHICLE_UNITS, TYPE_CHART, UNIT_PROJECTILES, PROJECTILES, UNIT_DESCRIPTIONS, CAMPAIGN_ERAS, CAMPAIGN_MOS, SquadOrder, TargetPriority, Formation, VEHICLE_CATEGORIES, ENDLESS_VEHICLES } from './constants.js';
 import { Game } from './state.js';
 import { save } from './storage.js';
 import { getSkinSelectorData, setSkinPref, clearCache as clearSkinCache } from './skins.js';
-import { getSprite, hasSprite, loadPartSprites, compositeUnitSprite, getPartImage } from './sprites.js';
+import { getSprite, hasSprite, loadPartSprites, compositeUnitSprite, getPartImage, loadVariant, renderVariant } from './sprites.js';
 
 // Mobile detection
 const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
@@ -128,6 +128,12 @@ export function render() {
     case State.CAMPAIGN_PLANNING: app.innerHTML = campaignPlanningHTML(); initPlanningGrid(); break;
     case State.CAMPAIGN_BATTLE: app.innerHTML = campaignBattleHTML(); break;
     case State.CAMPAIGN_RESULT: app.innerHTML = campaignResultHTML(); break;
+    case State.VEHICLE_SELECT: app.innerHTML = vehicleSelectHTML(); initVehiclePreview(); break;
+    // Endless mode states
+    case State.ENDLESS_LOADOUT: app.innerHTML = endlessLoadoutHTML(); initEndlessPreview(); break;
+    case State.ENDLESS_BATTLE: app.innerHTML = endlessBattleHTML(); break;
+    case State.ENDLESS_BETWEEN: app.innerHTML = endlessBetweenHTML(); break;
+    case State.ENDLESS_RESULT: app.innerHTML = endlessResultHTML(); break;
   }
 }
 
@@ -153,6 +159,7 @@ function menuHTML() {
         <div class="menu-buttons">
           <button class="menu-btn" data-action="campaign">Campaign</button>
           <button class="menu-btn" data-action="endless">Endless</button>
+          <button class="menu-btn" data-action="classic">Classic</button>
           <button class="menu-btn" data-action="versus">Head 2 Head</button>
           <button class="menu-btn" data-action="hq">Headquarters</button>
           <button class="menu-btn secondary" data-action="settings">Settings</button>
@@ -2586,6 +2593,212 @@ function getSpriteHTML(unit, faction, frameIndex) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// VEHICLE SELECTION UI
+// ═══════════════════════════════════════════════════════════════
+
+// Cache for available vehicles (loaded from API)
+let availableVehiclesCache = null;
+
+// Default stats for vehicles (can be overridden per-vehicle)
+const DEFAULT_VEHICLE_STATS = {
+  speed: 4, hullTurn: 3, turretTurn: 5, damage: 50, armor: 100
+};
+
+/**
+ * Fetch available vehicles from the units API
+ * Returns all units from sprites folder with their variants
+ */
+export async function fetchAvailableVehicles() {
+  if (availableVehiclesCache) return availableVehiclesCache;
+
+  try {
+    const res = await fetch('/api/units');
+    const data = await res.json();
+
+    // Map units to vehicle format
+    availableVehiclesCache = (data.units || [])
+      .filter(u => u.hasVariants) // Only include units with at least one variant
+      .map(u => ({
+        id: u.id,
+        name: formatVehicleName(u.id),
+        variants: u.variants.length > 0 ? u.variants : ['default'],
+        stats: { ...DEFAULT_VEHICLE_STATS }
+      }));
+
+    // If no vehicles found, return a fallback
+    if (availableVehiclesCache.length === 0) {
+      availableVehiclesCache = [{
+        id: 'abrams',
+        name: 'M1 Abrams',
+        variants: ['default'],
+        stats: { speed: 4, hullTurn: 3, turretTurn: 5, damage: 75, armor: 120 }
+      }];
+    }
+
+    return availableVehiclesCache;
+  } catch (err) {
+    console.warn('[ui] Failed to fetch vehicles:', err);
+    // Return fallback
+    return [{
+      id: 'abrams',
+      name: 'M1 Abrams',
+      variants: ['default'],
+      stats: { speed: 4, hullTurn: 3, turretTurn: 5, damage: 75, armor: 120 }
+    }];
+  }
+}
+
+/**
+ * Format vehicle ID into display name
+ * e.g., "abrams" -> "M1 Abrams", "sherman" -> "Sherman"
+ */
+function formatVehicleName(id) {
+  const nameMap = {
+    'abrams': 'M1 Abrams',
+    'sherman': 'M4 Sherman',
+    'tiger': 'Tiger I',
+    'panzer': 'Panzer IV',
+    't34': 'T-34',
+    'm60': 'M60 Patton'
+  };
+  return nameMap[id] || id.charAt(0).toUpperCase() + id.slice(1);
+}
+
+/**
+ * Clear vehicle cache (call when variants change)
+ */
+function clearVehicleCache() {
+  availableVehiclesCache = null;
+}
+
+function vehicleSelectHTML() {
+  const selection = Game.vehicleSelect || { vehicle: 'abrams', variant: 'default' };
+  const vehicles = availableVehiclesCache || [];
+  const selectedVehicle = vehicles.find(v => v.id === selection.vehicle) || vehicles[0] || {
+    id: 'abrams', name: 'M1 Abrams', variants: ['default'],
+    stats: { speed: 4, hullTurn: 3, turretTurn: 5, damage: 75, armor: 120 }
+  };
+
+  const vehicleGrid = vehicles.map(v => `
+    <button class="vehicle-btn ${v.id === selection.vehicle ? 'active' : ''}"
+            data-action="select-vehicle" data-vehicle="${v.id}">
+      <div class="vehicle-thumb" data-vehicle="${v.id}"></div>
+      <div class="vehicle-name">${v.name}</div>
+    </button>
+  `).join('');
+
+  const variantPills = selectedVehicle.variants.map(variant => `
+    <button class="variant-pill ${variant === selection.variant ? 'active' : ''}"
+            data-action="select-variant" data-variant="${variant}">
+      ${variant.charAt(0).toUpperCase() + variant.slice(1)}
+    </button>
+  `).join('');
+
+  const stats = selectedVehicle.stats;
+
+  return `
+    <div class="screen campaign-screen">
+      <button class="back-btn-subtle" data-action="campaign">← Back</button>
+      <div class="campaign-content">
+        <h2>SELECT VEHICLE</h2>
+        <p class="subtitle">Choose your battle tank</p>
+
+        <!-- Preview Canvas -->
+        <div class="vehicle-preview-container">
+          <canvas id="vehicle-preview" width="200" height="200"></canvas>
+          <div class="vehicle-current">${selectedVehicle.name}</div>
+        </div>
+
+        <!-- Vehicle Grid -->
+        <div class="vehicle-grid">
+          ${vehicleGrid}
+        </div>
+
+        <!-- Variant Selection -->
+        <div class="variant-pills">
+          ${variantPills}
+        </div>
+
+        <!-- Stats Display -->
+        <div class="vehicle-stats">
+          <div class="stat-row">
+            <span class="stat-label">Speed</span>
+            <div class="stat-bar"><div class="stat-fill" style="width: ${stats.speed / 6 * 100}%"></div></div>
+            <span class="stat-value">${stats.speed}/6</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Hull Turn</span>
+            <div class="stat-bar"><div class="stat-fill" style="width: ${stats.hullTurn / 6 * 100}%"></div></div>
+            <span class="stat-value">${stats.hullTurn}/6</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Turret</span>
+            <div class="stat-bar"><div class="stat-fill" style="width: ${stats.turretTurn / 6 * 100}%"></div></div>
+            <span class="stat-value">${stats.turretTurn}/6</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Damage</span>
+            <div class="stat-bar damage"><div class="stat-fill" style="width: ${stats.damage / 100 * 100}%"></div></div>
+            <span class="stat-value">${stats.damage}</span>
+          </div>
+        </div>
+
+        <!-- Battle Type Selection -->
+        <div class="battle-type-select">
+          <button class="menu-btn" data-action="start-zone-battle" data-zones="3" style="background: #654;">
+            Start 3-Zone Battle
+          </button>
+          <button class="menu-btn" data-action="start-zone-battle" data-zones="5" style="background: #456;">
+            Start 5-Zone Frontline
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function initVehiclePreview() {
+  const canvas = document.getElementById('vehicle-preview');
+  if (!canvas) return;
+
+  const selection = Game.vehicleSelect || { vehicle: 'abrams', variant: 'default' };
+  const ctx = canvas.getContext('2d');
+
+  // Clear canvas
+  ctx.fillStyle = '#1a2332';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  try {
+    // Load and render the actual variant sprite
+    const variantData = await loadVariant(selection.vehicle, selection.variant);
+    if (variantData) {
+      await renderVariant(variantData, canvas, canvas.width, canvas.height);
+      return;
+    }
+  } catch (err) {
+    console.warn('[ui] Failed to load variant for preview:', err);
+  }
+
+  // Fallback: Draw placeholder tank shape
+  ctx.save();
+  ctx.translate(100, 100);
+  ctx.fillStyle = '#4a6a4a';
+  ctx.fillRect(-30, -40, 60, 80); // Hull
+  ctx.fillStyle = '#5a7a5a';
+  ctx.beginPath();
+  ctx.arc(0, 0, 20, 0, Math.PI * 2); // Turret
+  ctx.fill();
+  ctx.fillStyle = '#6a8a6a';
+  ctx.fillRect(-4, -50, 8, 35); // Cannon
+  ctx.restore();
+
+  ctx.fillStyle = '#8b949e';
+  ctx.font = '12px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(selection.vehicle.toUpperCase(), 100, 180);
+}
+
+// ═══════════════════════════════════════════════════════════════
 // CAMPAIGN MODE UI
 // ═══════════════════════════════════════════════════════════════
 
@@ -3605,6 +3818,443 @@ function campaignResultHTML() {
       </div>
       <button class="menu-btn" data-action="campaign-continue">Continue</button>
       <button class="menu-btn secondary" data-action="menu">Main Menu</button>
+    </div>
+  `;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ENDLESS MODE SCREENS
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Render a unit preview to a canvas element
+ * @param {string} unitId - The unit ID (e.g., 'abrams')
+ * @param {string} variantName - The variant name (e.g., 'default')
+ * @param {Object} options - Optional overrides for parts/equipment
+ * @param {Object} options.partOverrides - Part-specific overrides
+ * @param {number} options.zoom - Zoom multiplier (default 1.8 for previews)
+ * @param {HTMLCanvasElement} canvas - Target canvas (defaults to .unit-preview-canvas)
+ * @returns {Promise<boolean>} - True if rendered successfully
+ */
+export async function renderUnitPreview(unitId, variantName = 'default', options = {}, canvas = null) {
+  canvas = canvas || document.querySelector('.unit-preview-canvas');
+  const fallback = document.querySelector('.unit-preview-fallback');
+
+  if (!canvas || !unitId) {
+    if (fallback) fallback.style.display = 'block';
+    return false;
+  }
+
+  try {
+    // Load base variant data
+    let variantData = await loadVariant(unitId, variantName);
+
+    if (!variantData) {
+      canvas.style.display = 'none';
+      if (fallback) fallback.style.display = 'block';
+      return false;
+    }
+
+    // Apply part overrides if provided (e.g., different cannon, armor, etc.)
+    if (options.partOverrides && Object.keys(options.partOverrides).length > 0) {
+      // Deep clone to avoid mutating cached data
+      variantData = JSON.parse(JSON.stringify(variantData));
+
+      for (const [partId, overrideData] of Object.entries(options.partOverrides)) {
+        const partIndex = variantData.parts.findIndex(p => p.partId === partId);
+        if (partIndex >= 0) {
+          // Merge override data into the part
+          variantData.parts[partIndex] = { ...variantData.parts[partIndex], ...overrideData };
+        }
+      }
+    }
+
+    // Render at 1:1 scale - let CSS handle display sizing
+    await renderVariant(variantData, canvas, canvas.width, canvas.height);
+
+    canvas.style.display = 'block';
+    if (fallback) fallback.style.display = 'none';
+    return true;
+  } catch (err) {
+    console.warn('[renderUnitPreview] Failed to render unit:', err);
+    canvas.style.display = 'none';
+    if (fallback) fallback.style.display = 'block';
+    return false;
+  }
+}
+
+/**
+ * Initialize the unit preview canvas after endless loadout HTML is rendered
+ */
+function initEndlessPreview() {
+  const canvas = document.querySelector('.unit-preview-canvas');
+  if (!canvas) return;
+
+  const unitId = canvas.dataset.unit;
+  const variantName = canvas.dataset.variant || 'default';
+
+  if (unitId) {
+    renderUnitPreview(unitId, variantName);
+  }
+}
+
+function endlessLoadoutHTML() {
+  const e = Game.endless;
+  if (!e) return '<div class="screen">Loading...</div>';
+
+  // Filter vehicles by category
+  const category = e.selectedCategory || 'all';
+  const filteredVehicles = category === 'all'
+    ? ENDLESS_VEHICLES
+    : category === 'favorites'
+      ? ENDLESS_VEHICLES.filter(v => Game.favorites?.includes(v.id))
+      : ENDLESS_VEHICLES.filter(v => v.category === category);
+
+  const selectedVehicle = ENDLESS_VEHICLES.find(v => v.id === e.loadout.vehicle);
+
+  // Insurance costs (itemized)
+  const vehicleInsuranceCost = 30;
+  const equipmentInsuranceCost = 15;
+  const totalInsuranceCost = vehicleInsuranceCost + equipmentInsuranceCost;
+  const hasVehicleInsurance = e.loadout.insuredItems?.includes('vehicle');
+  const hasEquipmentInsurance = e.loadout.insuredItems?.includes('equipment');
+
+  // Stat row helper
+  const statRow = (label, value, type, max = 100) => `
+    <div class="stat-row">
+      <span class="stat-label">${label}</span>
+      <div class="stat-bar">
+        <div class="stat-bar-fill ${type}" style="width: ${(value / max) * 100}%"></div>
+      </div>
+      <span class="stat-value">${value}</span>
+    </div>
+  `;
+
+  return `
+    <div class="screen endless-loadout-screen">
+      <!-- Header -->
+      <div class="loadout-header">
+        <button class="back-btn" data-action="menu">◄</button>
+        <h2>OPERATION BRIEFING</h2>
+        <div class="resource-display">
+          <span class="res-scrap">⬡ ${Game.resources.scrap}</span>
+          <span class="res-parts">◈ ${Game.resources.parts}</span>
+        </div>
+      </div>
+
+      <!-- Main Content -->
+      <div class="loadout-content">
+        <!-- ASSET SELECTION (2-column split) -->
+        <div class="section-label">ASSET SELECTION</div>
+        <div class="asset-selection">
+          <!-- Left: Vehicle Grid -->
+          <div class="asset-grid-container">
+            <div class="category-tabs">
+              ${VEHICLE_CATEGORIES.map(cat => `
+                <button class="category-tab ${category === cat.id ? 'active' : ''}"
+                        data-action="endless-category" data-category="${cat.id}">
+                  ${cat.name}
+                </button>
+              `).join('')}
+              <button class="layout-toggle" data-action="toggle-vehicle-layout" title="Toggle grid/list view">
+                ${e.vehicleLayout === 'grid' ? '☰' : '▦'}
+              </button>
+            </div>
+
+            <div class="vehicle-grid ${e.vehicleLayout !== 'grid' ? 'list-view' : ''}">
+              ${filteredVehicles.length === 0 ? `
+                <div style="grid-column: 1/-1; text-align: center; color: var(--text-secondary); padding: 20px;">
+                  ${category === 'favorites' ? 'No favorites yet' : 'No vehicles'}
+                </div>
+              ` : filteredVehicles.map(v => `
+                <div class="vehicle-tile ${e.loadout.vehicle === v.id ? 'selected' : ''} ${!v.unlocked ? 'locked' : ''}"
+                     data-action="${v.unlocked ? 'endless-select-vehicle' : ''}"
+                     data-vehicle="${v.id}"
+                     title="${v.unlocked ? v.name : v.unlockReq}">
+                  <div class="vehicle-tile-icon">${v.icon}</div>
+                  <div class="vehicle-tile-name">${v.name.split(' ').pop()}</div>
+                  <div class="vehicle-tile-stat">
+                    <div class="mini-stat-bar">
+                      <div class="mini-stat-bar-fill" style="width: ${v.stats.dmg}%"></div>
+                    </div>
+                    <span class="mini-stat-value">${v.stats.dmg}</span>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+
+          <!-- Right: Selected Unit Details -->
+          <div class="unit-details">
+            ${selectedVehicle ? `
+              <div class="unit-card-horizontal">
+                <!-- Left: Large Tank Preview -->
+                <div class="unit-preview-large">
+                  <canvas class="unit-preview-canvas" data-unit="${selectedVehicle.id}" data-variant="${e.loadout.variant || 'default'}" width="1024" height="1024" style="transform: scale(${(e.previewScale || 5) / 5}) translate(${e.previewPanX || 0}%, ${e.previewPanY || 8}%)"></canvas>
+                  <div class="unit-preview-fallback">${selectedVehicle.icon}</div>
+                  <div class="preview-zoom-controls">
+                    <button class="ctrl-btn" data-action="preview-zoom" data-dir="out">−</button>
+                    <span class="zoom-level">${e.previewScale || 5}×</span>
+                    <button class="ctrl-btn" data-action="preview-zoom" data-dir="in">+</button>
+                  </div>
+                  <div class="preview-pan-controls">
+                    <button class="ctrl-btn" data-action="preview-pan" data-dir="up">▲</button>
+                    <div class="pan-btn-row">
+                      <button class="ctrl-btn" data-action="preview-pan" data-dir="left">◀</button>
+                      <button class="ctrl-btn" data-action="preview-pan" data-dir="reset">⟲</button>
+                      <button class="ctrl-btn" data-action="preview-pan" data-dir="right">▶</button>
+                    </div>
+                    <button class="ctrl-btn" data-action="preview-pan" data-dir="down">▼</button>
+                  </div>
+                </div>
+
+                <!-- Right: Info Stack -->
+                <div class="unit-info-stack">
+                  <div class="unit-header">
+                    <h3 class="unit-name">${selectedVehicle.name}</h3>
+                    <div class="unit-variant-label">"${!e.loadout.variant || e.loadout.variant === 'default' ? 'Standard' : e.loadout.variant.charAt(0).toUpperCase() + e.loadout.variant.slice(1)}"</div>
+                  </div>
+
+                  <div class="stats-list">
+                    ${statRow('DMG', selectedVehicle.stats.dmg, 'dmg')}
+                    ${statRow('SPD', selectedVehicle.stats.spd, 'spd')}
+                    ${statRow('ARM', selectedVehicle.stats.arm, 'arm')}
+                  </div>
+
+                  <div class="unit-equipment-row">
+                    <div class="unit-equip-slot" data-slot="armor" title="Armor">
+                      <span class="unit-equip-icon">🛡️</span>
+                    </div>
+                    <div class="unit-equip-slot" data-slot="optics" title="Optics">
+                      <span class="unit-equip-icon">🔭</span>
+                    </div>
+                    <div class="unit-equip-slot" data-slot="ammo" title="Ammo">
+                      <span class="unit-equip-icon">💥</span>
+                    </div>
+                    <div class="unit-equip-slot" data-slot="engine" title="Engine">
+                      <span class="unit-equip-icon">⚙️</span>
+                    </div>
+                  </div>
+
+                  <button class="unit-deploy-btn" data-action="endless-start">
+                    DEPLOY ▶
+                  </button>
+                </div>
+              </div>
+            ` : `
+              <div class="unit-details-empty">Select a vehicle</div>
+            `}
+          </div>
+        </div>
+
+        <!-- EQUIPMENT BAY -->
+        <div class="section-label">EQUIPMENT BAY</div>
+        <div class="equipment-bay">
+          <div class="equipment-slots">
+            <div class="equipment-slot">
+              <div class="equipment-slot-icon">🛡️</div>
+              <div class="equipment-slot-name">ARMOR</div>
+              <div class="equipment-slot-empty">Empty</div>
+            </div>
+            <div class="equipment-slot">
+              <div class="equipment-slot-icon">🔭</div>
+              <div class="equipment-slot-name">OPTICS</div>
+              <div class="equipment-slot-empty">Empty</div>
+            </div>
+            <div class="equipment-slot">
+              <div class="equipment-slot-icon">💥</div>
+              <div class="equipment-slot-name">AMMO</div>
+              <div class="equipment-slot-empty">Empty</div>
+            </div>
+            <div class="equipment-slot">
+              <div class="equipment-slot-icon">⚙️</div>
+              <div class="equipment-slot-name">ENGINE</div>
+              <div class="equipment-slot-empty">Empty</div>
+            </div>
+            <button class="equipment-add-btn">+ ARMORY</button>
+          </div>
+        </div>
+
+        <!-- RISK ASSESSMENT -->
+        <div class="section-label">RISK ASSESSMENT</div>
+        <div class="risk-assessment">
+          <!-- Insurance Panel -->
+          <div class="risk-panel">
+            <div class="risk-panel-title">
+              <span>INSURANCE</span>
+              <span class="insurance-total">Total: ${hasVehicleInsurance || hasEquipmentInsurance ? (hasVehicleInsurance ? vehicleInsuranceCost : 0) + (hasEquipmentInsurance ? equipmentInsuranceCost : 0) : 0}⬡</span>
+            </div>
+            <div class="checkbox-item ${hasVehicleInsurance ? 'checked' : ''}" data-action="toggle-vehicle-insurance">
+              <div class="checkbox-box">✓</div>
+              <span class="checkbox-label">Vehicle</span>
+              <span class="checkbox-cost">${vehicleInsuranceCost}⬡</span>
+            </div>
+            <div class="checkbox-item ${hasEquipmentInsurance ? 'checked' : ''}" data-action="toggle-equipment-insurance">
+              <div class="checkbox-box">✓</div>
+              <span class="checkbox-label">Equipment</span>
+              <span class="checkbox-cost">${equipmentInsuranceCost}⬡</span>
+            </div>
+            <div class="insurance-note">On death: recover insured gear</div>
+          </div>
+
+          <!-- Run Type Panel -->
+          <div class="risk-panel">
+            <div class="risk-panel-title">RUN TYPE</div>
+            <div class="radio-item ${!e.seed ? 'selected' : ''}" data-action="endless-set-unseeded">
+              <div class="radio-circle"></div>
+              <span class="radio-label">Random</span>
+            </div>
+            <div class="radio-item ${e.seed ? 'selected' : ''}" data-action="endless-set-seeded">
+              <div class="radio-circle"></div>
+              <span class="radio-label">Weekly Seed</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  `;
+}
+
+function endlessBattleHTML() {
+  const e = Game.endless;
+  if (!e) return '<div class="screen">Loading...</div>';
+
+  return `
+    <div class="screen endless-battle-screen">
+      <div class="endless-hud">
+        <div class="hud-left">
+          <span class="wave-display">Wave ${e.wave}</span>
+          <span class="kills-display">Kills: ${e.kills}</span>
+        </div>
+        <div class="hud-right">
+          <span class="score-display">${e.score.toLocaleString()}</span>
+        </div>
+      </div>
+
+      <div class="endless-battlefield">
+        <!-- Battle canvas will be inserted here -->
+      </div>
+
+      <div class="endless-controls">
+        <button class="control-btn" data-action="endless-pause">⏸</button>
+      </div>
+    </div>
+  `;
+}
+
+function endlessBetweenHTML() {
+  const e = Game.endless;
+  if (!e) return '<div class="screen">Loading...</div>';
+
+  const isBossNext = (e.wave + 1) % 10 === 0;
+
+  return `
+    <div class="screen endless-between-screen">
+      <div class="between-header">
+        <h2>WAVE ${e.wave} COMPLETE</h2>
+        <p class="score-display">Score: ${e.score.toLocaleString()}</p>
+      </div>
+
+      <div class="between-stats">
+        <div class="stat-row">
+          <span>Kills this wave:</span>
+          <span>${e.kills}</span>
+        </div>
+        <div class="stat-row">
+          <span>Scrap collected:</span>
+          <span>⬡ ${e.loot.scrap}</span>
+        </div>
+        <div class="stat-row">
+          <span>Parts found:</span>
+          <span>◈ ${e.loot.parts.length}</span>
+        </div>
+      </div>
+
+      ${isBossNext ? `
+        <div class="boss-warning">
+          <h3>⚠ BOSS WAVE INCOMING</h3>
+          <p>Wave ${e.wave + 1} - Elite Enemy</p>
+        </div>
+      ` : ''}
+
+      <div class="between-actions">
+        <button class="menu-btn primary" data-action="endless-continue">
+          CONTINUE (Wave ${e.wave + 1})
+        </button>
+        <button class="menu-btn exit-btn" data-action="endless-exit">
+          EXIT - Keep All Loot
+        </button>
+      </div>
+
+      <div class="loot-preview">
+        <h4>Current Haul</h4>
+        <p>Exit now to keep: ⬡ ${e.loot.scrap} scrap, ◈ ${e.loot.parts.length} parts</p>
+        <p class="warning-text">Death = Lose everything${e.insuranceCost > 0 ? ' (except insured items)' : ''}</p>
+      </div>
+    </div>
+  `;
+}
+
+function endlessResultHTML() {
+  const e = Game.endless;
+  if (!e) return '<div class="screen">Loading...</div>';
+
+  const isExit = e.result === 'exit';
+  const hadInsurance = e.insuranceCost > 0;
+
+  return `
+    <div class="screen endless-result-screen">
+      <div class="result-icon">${isExit ? '✓' : '💀'}</div>
+      <div class="result-header ${isExit ? 'exit' : 'death'}">
+        <h2>${isExit ? 'EXTRACTION SUCCESSFUL' : 'RUN ENDED'}</h2>
+        <div class="result-wave">Reached Wave ${e.exitWave || e.wave}</div>
+      </div>
+
+      <div class="result-loot">
+        <h4>${isExit ? 'Loot Secured' : (hadInsurance ? 'Insurance Claim' : 'Loot Lost')}</h4>
+        ${isExit ? `
+          <div class="loot-item">
+            <span>Scrap</span>
+            <span class="res-scrap">+⬡ ${e.loot.scrap}</span>
+          </div>
+          <div class="loot-item">
+            <span>Parts</span>
+            <span class="res-parts">+◈ ${e.loot.parts.length}</span>
+          </div>
+        ` : hadInsurance ? `
+          <div class="loot-item">
+            <span>Scrap collected</span>
+            <span class="loot-lost">-⬡ ${e.loot.scrap}</span>
+          </div>
+          <div class="loot-item">
+            <span>Vehicle</span>
+            <span style="color: var(--accent-green);">Protected</span>
+          </div>
+          <div class="loot-item">
+            <span>Insurance used</span>
+            <span style="color: var(--accent-yellow);">⬡ ${e.insuranceCost}</span>
+          </div>
+        ` : `
+          <div class="loot-item">
+            <span>Scrap</span>
+            <span class="loot-lost">-⬡ ${e.loot.scrap}</span>
+          </div>
+          <div class="loot-item">
+            <span>Vehicle</span>
+            <span class="loot-lost">Lost</span>
+          </div>
+        `}
+      </div>
+
+      <div class="result-actions">
+        <button class="menu-btn primary" data-action="endless-retry">
+          NEW RUN
+        </button>
+        <button class="menu-btn secondary" data-action="menu">
+          MAIN MENU
+        </button>
+      </div>
     </div>
   `;
 }

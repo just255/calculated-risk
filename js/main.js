@@ -2,12 +2,12 @@
 // MAIN - Entry point, event handlers, initialization
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, UNITS, PROJECTILES, UNIT_PROJECTILES, SquadOrder } from './constants.js';
-import { Game, newBattlePlan, newCampaign, createAdvancingScenario, createFrontlineScenario, newZoneBattle } from './state.js';
+import { State, SubState, HQTab, UNITS, PROJECTILES, UNIT_PROJECTILES, SquadOrder, ENDLESS_VEHICLES } from './constants.js';
+import { Game, newBattlePlan, newCampaign, createAdvancingScenario, createFrontlineScenario, newZoneBattle, newEndlessRun } from './state.js';
 import { initAudio, sound } from './audio.js';
 import { save, load } from './storage.js';
 import { goto, deploy, switchUnit, stopLoop, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, campaignMouseDown, campaignMouseUp, campaignSetAimAngle, campaignClearAimAngle, campaignSetJoystick, campaignClearJoystick } from './game.js';
-import { render, setSubState } from './ui.js';
+import { render, setSubState, fetchAvailableVehicles } from './ui.js';
 import { initController, getControllerInput, updateButtonStates, setControllerCallbacks, isControllerConnected } from './controller.js';
 import { initGestures, setResetJoysticksCallback } from './gestures.js';
 import { moveJoystick, shootJoystick, getNearJoystickAnchor, setJoystickAnchor, getClosestJoystickSide, getDragThreshold } from './joystick.js';
@@ -423,7 +423,8 @@ document.getElementById('app').addEventListener('click', e => {
   if (action) {
     const a = action.dataset.action;
     if (a === 'campaign') { initAudio(); goto(State.CAMPAIGN_ERA_SELECT); }
-    else if (a === 'endless') { Game.settings.mode = 'endless'; initAudio(); goto(State.COUNTDOWN); }
+    else if (a === 'endless') { Game.endless = newEndlessRun(); initAudio(); goto(State.ENDLESS_LOADOUT); }
+    else if (a === 'classic') { Game.settings.mode = 'classic'; initAudio(); goto(State.COUNTDOWN); }
     else if (a === 'versus') { Game.settings.mode = 'versus'; initAudio(); goto(State.H2H_DESIGN); }
     else if (a === 'play') { initAudio(); goto(State.COUNTDOWN); }
     else if (a === 'settings') goto(State.SETTINGS);
@@ -462,24 +463,55 @@ document.getElementById('app').addEventListener('click', e => {
       Game.campaign.battlePlan = newBattlePlan(Game.campaign.era, mos);
       goto(State.CAMPAIGN_PLANNING);
     }
-    // Test zone battle buttons
-    else if (a === 'test-zone-battle') {
-      // Initialize campaign if needed
-      if (!Game.campaign) Game.campaign = newCampaign();
-      Game.campaign.era = 1;
-      Game.campaign.mos = 'infantry';
-      // Create 3-zone advancing scenario
-      const scenario = createAdvancingScenario('Test Advance', 3);
-      Game.campaign.heroBattle = newZoneBattle(1, 'infantry', scenario);
-      goto(State.CAMPAIGN_BATTLE);
+    // Test zone battle buttons - go to vehicle select first
+    else if (a === 'test-zone-battle' || a === 'test-frontline-battle') {
+      // Fetch available vehicles, then show selection screen
+      fetchAvailableVehicles().then(vehicles => {
+        // Initialize vehicle selection state with first available vehicle
+        const firstVehicle = vehicles[0] || { id: 'abrams', variants: ['default'] };
+        Game.vehicleSelect = Game.vehicleSelect || {
+          vehicle: firstVehicle.id,
+          variant: firstVehicle.variants[0] || 'default'
+        };
+        goto(State.VEHICLE_SELECT);
+      });
     }
-    else if (a === 'test-frontline-battle') {
+    // Vehicle selection handlers
+    else if (a === 'select-vehicle') {
+      const vehicleId = action.dataset.vehicle;
+      // Fetch vehicles to get correct first variant for selected vehicle
+      fetchAvailableVehicles().then(vehicles => {
+        const vehicle = vehicles.find(v => v.id === vehicleId);
+        Game.vehicleSelect = Game.vehicleSelect || {};
+        Game.vehicleSelect.vehicle = vehicleId;
+        Game.vehicleSelect.variant = vehicle?.variants[0] || 'default';
+        render();
+      });
+    }
+    else if (a === 'select-variant') {
+      const variant = action.dataset.variant;
+      Game.vehicleSelect = Game.vehicleSelect || { vehicle: 'abrams' };
+      Game.vehicleSelect.variant = variant;
+      render();
+    }
+    else if (a === 'start-zone-battle') {
+      const zones = parseInt(action.dataset.zones) || 3;
+      const selection = Game.vehicleSelect || { vehicle: 'abrams', variant: 'default' };
+
       // Initialize campaign if needed
       if (!Game.campaign) Game.campaign = newCampaign();
       Game.campaign.era = 1;
       Game.campaign.mos = 'infantry';
-      // Create 5-zone frontline scenario
-      const scenario = createFrontlineScenario('Test Frontline', 5);
+
+      // Store vehicle selection for hero creation
+      Game.campaign.heroVehicle = selection.vehicle;
+      Game.campaign.heroVariant = selection.variant;
+
+      // Create scenario based on zone count
+      const scenario = zones === 5
+        ? createFrontlineScenario('Test Frontline', 5)
+        : createAdvancingScenario('Test Advance', zones);
+
       Game.campaign.heroBattle = newZoneBattle(1, 'infantry', scenario);
       goto(State.CAMPAIGN_BATTLE);
     }
@@ -985,6 +1017,149 @@ document.getElementById('app').addEventListener('click', e => {
       Game.campaign.heroBattle = null;
       goto(State.CAMPAIGN_ERA_SELECT);
     }
+    // Endless mode actions
+    else if (a === 'endless-category') {
+      const cat = action.dataset.category;
+      if (Game.endless) {
+        Game.endless.selectedCategory = cat;
+        render();
+      }
+    }
+    else if (a === 'toggle-vehicle-layout') {
+      if (Game.endless) {
+        Game.endless.vehicleLayout = Game.endless.vehicleLayout === 'grid' ? 'list' : 'grid';
+        render();
+      }
+    }
+    else if (a === 'preview-zoom') {
+      if (Game.endless) {
+        const dir = action.dataset.dir;
+        const current = Game.endless.previewScale || 5;
+        if (dir === 'in') Game.endless.previewScale = Math.min(current + 2, 30);
+        else if (dir === 'out') Game.endless.previewScale = Math.max(current - 2, 2);
+        render();
+      }
+    }
+    else if (a === 'preview-pan') {
+      if (Game.endless) {
+        const dir = action.dataset.dir;
+        const step = 2; // Pan step in %
+        if (dir === 'up') Game.endless.previewPanY = (Game.endless.previewPanY || 8) - step;
+        else if (dir === 'down') Game.endless.previewPanY = (Game.endless.previewPanY || 8) + step;
+        else if (dir === 'left') Game.endless.previewPanX = (Game.endless.previewPanX || 0) - step;
+        else if (dir === 'right') Game.endless.previewPanX = (Game.endless.previewPanX || 0) + step;
+        else if (dir === 'reset') { Game.endless.previewPanX = 0; Game.endless.previewPanY = 8; Game.endless.previewScale = 5; }
+        render();
+      }
+    }
+    else if (a === 'endless-select-vehicle') {
+      const vehicleId = action.dataset.vehicle;
+      if (Game.endless) {
+        Game.endless.loadout.vehicle = vehicleId;
+        // Default to 'default' variant (Standard)
+        Game.endless.loadout.variant = 'default';
+        render();
+      }
+    }
+    else if (a === 'endless-select-variant') {
+      if (Game.endless && action.value) {
+        Game.endless.loadout.variant = action.value;
+        render();
+      }
+    }
+    else if (a === 'endless-toggle-insurance') {
+      if (Game.endless) {
+        const insuranceCost = 50;
+        if (Game.endless.insuranceCost > 0) {
+          // Turn off insurance, refund cost
+          Game.resources.scrap += Game.endless.insuranceCost;
+          Game.endless.insuranceCost = 0;
+        } else if (Game.resources.scrap >= insuranceCost) {
+          // Turn on insurance, deduct cost
+          Game.resources.scrap -= insuranceCost;
+          Game.endless.insuranceCost = insuranceCost;
+        }
+        render();
+      }
+    }
+    else if (a === 'endless-set-seeded') {
+      if (Game.endless) {
+        // Generate weekly seed based on current week
+        const now = new Date();
+        const weekNum = Math.floor(now.getTime() / (7 * 24 * 60 * 60 * 1000));
+        Game.endless.seed = `week-${weekNum}`;
+        render();
+      }
+    }
+    else if (a === 'endless-set-unseeded') {
+      if (Game.endless) {
+        Game.endless.seed = null;
+        render();
+      }
+    }
+    else if (a === 'toggle-vehicle-insurance') {
+      if (Game.endless) {
+        if (!Game.endless.loadout.insuredItems) {
+          Game.endless.loadout.insuredItems = [];
+        }
+        const idx = Game.endless.loadout.insuredItems.indexOf('vehicle');
+        if (idx >= 0) {
+          Game.endless.loadout.insuredItems.splice(idx, 1);
+        } else {
+          Game.endless.loadout.insuredItems.push('vehicle');
+        }
+        render();
+      }
+    }
+    else if (a === 'toggle-equipment-insurance') {
+      if (Game.endless) {
+        if (!Game.endless.loadout.insuredItems) {
+          Game.endless.loadout.insuredItems = [];
+        }
+        const idx = Game.endless.loadout.insuredItems.indexOf('equipment');
+        if (idx >= 0) {
+          Game.endless.loadout.insuredItems.splice(idx, 1);
+        } else {
+          Game.endless.loadout.insuredItems.push('equipment');
+        }
+        render();
+      }
+    }
+    else if (a === 'endless-start') {
+      if (Game.endless && Game.endless.loadout.vehicle) {
+        Game.endless.wave = 1;
+        Game.endless.runStartTime = Date.now();
+        goto(State.ENDLESS_BATTLE);
+      }
+    }
+    else if (a === 'endless-continue') {
+      if (Game.endless) {
+        Game.endless.wave++;
+        goto(State.ENDLESS_BATTLE);
+      }
+    }
+    else if (a === 'endless-exit') {
+      if (Game.endless) {
+        Game.endless.result = 'exit';
+        Game.endless.exitWave = Game.endless.wave;
+        // Add loot to player resources
+        Game.resources.scrap += Game.endless.loot.scrap;
+        // TODO: Handle parts properly
+        save();
+        goto(State.ENDLESS_RESULT);
+      }
+    }
+    else if (a === 'endless-retry') {
+      Game.endless = newEndlessRun();
+      goto(State.ENDLESS_LOADOUT);
+    }
+    // Toggle collapsible panels
+    else if (a === 'toggle-panel') {
+      const panel = action.closest('.loadout-panel');
+      if (panel) {
+        panel.classList.toggle('collapsed');
+      }
+    }
     return;
   }
 
@@ -1302,6 +1477,15 @@ document.getElementById('app').addEventListener('change', e => {
     }
     return;
   }
+
+  // Variant select in endless loadout
+  if (e.target.closest('.variant-select') && Game.state === State.ENDLESS_LOADOUT) {
+    if (Game.endless) {
+      Game.endless.loadout.variant = e.target.value;
+      render();
+    }
+    return;
+  }
 });
 
 // Input events (for range sliders)
@@ -1372,8 +1556,9 @@ document.addEventListener('mouseup', e => {
 // Detect mobile
 const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
 
-// Minimum drag distance to start firing (in pixels)
-const SHOOT_DEADZONE = 20;
+// Aim joystick settings
+const AIM_JOYSTICK_MAX_RANGE = 80;  // Max drag distance in pixels
+const AIM_FIRE_DEADZONE = 0.3;      // 0-30% = aim only, 30-100% = aim + fire
 
 // Hold timer for repositioning joysticks
 let joystickHoldTimer = null;
@@ -1502,17 +1687,23 @@ document.addEventListener('touchmove', e => {
       const dy = shootJoystick.currentY - shootJoystick.startY;
       const dist = Math.sqrt(dx * dx + dy * dy);
 
-      if (dist > SHOOT_DEADZONE) {
-        // Calculate aim angle and start firing
+      // Calculate magnitude as percentage of max range (capped at 1.0)
+      const magnitude = Math.min(dist / AIM_JOYSTICK_MAX_RANGE, 1.0);
+
+      // Always set aim angle when joystick is moved (even in deadzone)
+      if (dist > 5) {  // Small threshold to avoid jitter at center
         const angle = Math.atan2(dy, dx);
         campaignSetAimAngle(angle);
+      }
 
+      // Fire only when past the deadzone (50% of range)
+      if (magnitude > AIM_FIRE_DEADZONE) {
         if (!shootJoystick.firing) {
           shootJoystick.firing = true;
           campaignMouseDown();
         }
       } else {
-        // Inside deadzone - stop firing
+        // Inside deadzone - aim but don't fire
         if (shootJoystick.firing) {
           shootJoystick.firing = false;
           campaignMouseUp();

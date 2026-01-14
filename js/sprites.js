@@ -4,6 +4,7 @@
 import { UNITS } from './constants.js';
 import * as animRuntime from './animation-runtime.js';
 import * as spriteRenderer from './sprite-renderer.js';
+import { getWorldTransform } from './transforms.js';
 
 const spriteCache = new Map();  // unitId → { img, frameCount, frameWidth, frameHeight, loaded }
 const partCache = new Map();    // "unitId:partId:variant" → { img, loaded }
@@ -318,66 +319,16 @@ export async function loadVariant(unitId, variantName) {
 }
 
 /**
- * Calculate world transform for a part in a variant (hierarchy-aware)
- * @param {Array} parts - Array of parts from variant data
- * @param {number} partIndex - Index of the part to calculate transform for
- * @returns {{ x: number, y: number, rotation: number, scale: number }}
- */
-function getPartWorldTransform(parts, partIndex) {
-  const part = parts[partIndex];
-  if (!part) return { x: 0, y: 0, rotation: 0, scale: 1 };
-
-  // If no parent, return direct values
-  if (part.parentIndex === null || part.parentIndex === undefined) {
-    return {
-      x: part.x || 0,
-      y: part.y || 0,
-      rotation: part.rotation || 0,
-      scale: part.scale || 1
-    };
-  }
-
-  // Get parent's world transform (recursive)
-  const parentWorld = getPartWorldTransform(parts, part.parentIndex);
-  const parent = parts[part.parentIndex];
-  if (!parent) {
-    return {
-      x: part.x || 0,
-      y: part.y || 0,
-      rotation: part.rotation || 0,
-      scale: part.scale || 1
-    };
-  }
-
-  // Find the snap point on parent
-  const snapPoint = parent.snapPoints?.find(sp => sp.id === part.attachedTo);
-  const snapX = snapPoint?.x || 0;
-  const snapY = snapPoint?.y || 0;
-
-  // Rotate snap point by parent's world rotation
-  const rad = parentWorld.rotation * Math.PI / 180;
-  const rotatedSnapX = snapX * Math.cos(rad) - snapY * Math.sin(rad);
-  const rotatedSnapY = snapX * Math.sin(rad) + snapY * Math.cos(rad);
-
-  const localRotation = part.rotation || 0;
-
-  return {
-    x: parentWorld.x + rotatedSnapX,
-    y: parentWorld.y + rotatedSnapY,
-    rotation: part.inheritRotation !== false ? parentWorld.rotation + localRotation : localRotation,
-    scale: part.inheritScale ? parentWorld.scale * (part.scale || 1) : (part.scale || 1)
-  };
-}
-
-/**
  * Render a variant with full hierarchy support
  * @param {Object} variantData - Loaded variant data (from loadVariant)
  * @param {HTMLCanvasElement} canvas - Target canvas
  * @param {number} [canvasWidth=256] - Canvas width
  * @param {number} [canvasHeight=256] - Canvas height
+ * @param {Object} [options={}] - Rendering options
+ * @param {number} [options.zoom=1] - Zoom multiplier (e.g., 1.5 = 150% size)
  * @returns {Promise<boolean>} - True if rendered successfully
  */
-export async function renderVariant(variantData, canvas, canvasWidth = 256, canvasHeight = 256) {
+export async function renderVariant(variantData, canvas, canvasWidth = 256, canvasHeight = 256, options = {}) {
   if (!variantData || !variantData.parts || !canvas) {
     console.warn('[sprites] Invalid parameters for renderVariant');
     return false;
@@ -391,6 +342,19 @@ export async function renderVariant(variantData, canvas, canvasWidth = 256, canv
   canvas.height = canvasHeight;
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
 
+  // Calculate scale factor to fit variant into canvas
+  const variantWidth = variantData.canvasSize?.width || 256;
+  const variantHeight = variantData.canvasSize?.height || 256;
+  const scaleX = canvasWidth / variantWidth;
+  const scaleY = canvasHeight / variantHeight;
+  const baseScale = Math.min(scaleX, scaleY);
+  const zoom = options.zoom || 1;
+  const scale = baseScale * zoom;
+
+  // Center the scaled content with optional offset (for previews where cannon extends up)
+  const offsetX = (canvasWidth - variantWidth * scale) / 2 + (options.offsetX || 0);
+  const offsetY = (canvasHeight - variantHeight * scale) / 2 + (options.offsetY || 0);
+
   // Sort parts by zIndex
   const sortedParts = [...variantData.parts]
     .map((part, index) => ({ ...part, originalIndex: index }))
@@ -401,17 +365,27 @@ export async function renderVariant(variantData, canvas, canvasWidth = 256, canv
     // Skip if not visible
     if (part.visible === false) continue;
 
-    // Get world transform
-    const world = getPartWorldTransform(variantData.parts, part.originalIndex);
+    // Get world transform from shared module
+    const world = getWorldTransform(variantData.parts, part.originalIndex);
+    if (!world) continue;
 
-    // Load part image (assumes part has a partId that maps to image path)
-    const img = await loadPartImage(variantData.unitId, part.partId);
+    // Load part image - use the image path from variant data if available
+    let img;
+    if (part.image) {
+      img = await loadImageFromPath(part.image);
+    } else {
+      img = await loadPartImage(variantData.unitId, part.partId);
+    }
     if (!img) continue;
 
     // Draw with transform
     ctx.save();
 
-    // Move to part position
+    // Apply canvas-level transform (scale to fit + center)
+    ctx.translate(offsetX, offsetY);
+    ctx.scale(scale, scale);
+
+    // Move to part position (in variant coordinates)
     ctx.translate(world.x, world.y);
     ctx.rotate(world.rotation * Math.PI / 180);
     ctx.scale(world.scale, world.scale);
@@ -419,15 +393,53 @@ export async function renderVariant(variantData, canvas, canvasWidth = 256, canv
     // Apply opacity
     ctx.globalAlpha = (part.opacity || 100) / 100;
 
-    // Draw centered on position
+    // Calculate draw position
+    // For attached parts, offset by origin to align attachment point
     const w = img.naturalWidth || img.width;
     const h = img.naturalHeight || img.height;
-    ctx.drawImage(img, -w / 2, -h / 2, w, h);
+    const originX = world.originOffsetX || 0;
+    const originY = world.originOffsetY || 0;
+
+    // Draw with origin offset (attached parts use anchor point, not center)
+    ctx.drawImage(img, -w / 2 - originX, -h / 2 - originY, w, h);
 
     ctx.restore();
   }
 
   return true;
+}
+
+/**
+ * Load an image from a URL path (with caching)
+ * @param {string} imagePath - Full image path (e.g., "/sprites/units/abrams/hull/...")
+ * @returns {Promise<HTMLImageElement|null>}
+ */
+async function loadImageFromPath(imagePath) {
+  // Remove query string for cache key
+  const cacheKey = `path:${imagePath.split('?')[0]}`;
+
+  // Check cache first
+  const cached = partCache.get(cacheKey);
+  if (cached && cached.loaded) {
+    return cached.img;
+  }
+
+  return new Promise((resolve) => {
+    const img = new Image();
+
+    img.onload = () => {
+      partCache.set(cacheKey, { img, loaded: true });
+      resolve(img);
+    };
+
+    img.onerror = () => {
+      partCache.set(cacheKey, { img: null, loaded: false });
+      console.warn(`[sprites] Failed to load image: ${imagePath}`);
+      resolve(null);
+    };
+
+    img.src = imagePath;
+  });
 }
 
 /**
@@ -561,6 +573,16 @@ export function renderAnimatedUnit(ctx, unitId, worldX, worldY, rotation = 0, sc
     rotation,
     scale
   );
+}
+
+/**
+ * Check if a unit has an animation state ready for rendering
+ * @param {string} unitId - Unit's unique ID
+ * @returns {boolean} - True if animation is ready
+ */
+export function hasAnimatedUnit(unitId) {
+  const state = animRuntime.getUnitAnimState(unitId);
+  return state && state.variantData && state.variantData.parts && state.variantData.parts.length > 0;
 }
 
 /**

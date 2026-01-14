@@ -52,7 +52,10 @@ export const Game = {
   h2h: null,
 
   // Campaign state
-  campaign: null
+  campaign: null,
+
+  // Endless mode state
+  endless: null
 };
 
 // Campaign state factory
@@ -573,7 +576,13 @@ export function newCampaignBattle(era, mos, battlePlan) {
       fireRate: heroStats.fireRate,
       lastShot: 0,
       unitId: heroStats.id,
-      mos: mos  // MOS for weapon category (infantry, cavalry, etc.)
+      mos: mos,  // MOS for weapon category (infantry, cavalry, etc.)
+      animId: `hero-${heroStats.id}-${Date.now()}`,  // Unique animation ID
+      isMoving: false,
+      lastX: heroX,
+      lastY: heroY,
+      hullAngle: -Math.PI / 2,  // Hull facing direction (separate from aim angle)
+      targetHullAngle: -Math.PI / 2  // Target hull angle for smooth turning
     },
 
     // Player units from battlePlan
@@ -1085,7 +1094,13 @@ export function newZoneBattle(era, mos, scenario) {
       lastShot: 0,
       unitId: heroStats.id,
       mos,
-      isHero: true
+      isHero: true,
+      animId: `hero-${heroStats.id}-${Date.now()}`,  // Unique animation ID
+      isMoving: false,
+      lastX: heroX,
+      lastY: heroY,
+      hullAngle: -Math.PI / 2,  // Hull facing direction (separate from aim angle)
+      targetHullAngle: -Math.PI / 2  // Target hull angle for smooth turning
     },
 
     // Player units - spawn a starting squad near the hero
@@ -1177,5 +1192,54 @@ export function newH2H() {
 
     // Editing state
     selectedWave: null
+  };
+}
+
+// Endless mode run state factory
+export function newEndlessRun() {
+  return {
+    // Run tracking
+    wave: 0,
+    score: 0,
+    kills: 0,
+    runStartTime: Date.now(),
+    seed: null,  // null = unseeded, string = seeded run
+
+    // UI state
+    selectedCategory: 'all',  // Current vehicle category tab
+    vehicleLayout: 'list',    // 'list' or 'grid' - vehicle selector layout
+
+    // Loadout (gear brought at risk)
+    loadout: {
+      vehicle: null,      // Vehicle ID
+      variant: null,      // Variant name (e.g. 'desert', 'winter')
+      parts: [],          // Attached parts
+      insuredItems: []    // Items protected by insurance
+    },
+
+    // Insurance
+    insuranceCost: 0,     // Total insurance cost paid
+
+    // Loot collected this run
+    loot: {
+      scrap: 0,
+      parts: [],          // Part drops collected
+      items: []           // Special items collected
+    },
+
+    // Wear tracking (per component)
+    wear: {
+      barrel: 0,          // Shots fired
+      armor: 0,           // Damage absorbed
+      tracks: 0,          // Distance traveled
+      engine: 0           // Run time (seconds)
+    },
+
+    // Run result
+    result: null,         // 'exit' | 'death'
+    exitWave: null,       // Wave at which player exited/died
+
+    // Battle state (during combat)
+    battle: null          // Active battle instance
   };
 }
