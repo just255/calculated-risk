@@ -7,7 +7,7 @@ import { Game, newBattlePlan, newCampaign, createAdvancingScenario, createFrontl
 import { initAudio, sound } from './audio.js';
 import { save, load } from './storage.js';
 import { goto, deploy, switchUnit, stopLoop, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, campaignMouseDown, campaignMouseUp, campaignSetAimAngle, campaignClearAimAngle, campaignSetJoystick, campaignClearJoystick } from './game.js';
-import { render, setSubState, fetchAvailableVehicles, fetchUnitVariants } from './ui.js';
+import { render, setSubState, fetchAvailableVehicles, fetchUnitVariants, fetchVariantData, getUnitVariants } from './ui.js';
 import { initController, getControllerInput, updateButtonStates, setControllerCallbacks, isControllerConnected } from './controller.js';
 import { initGestures, setResetJoysticksCallback } from './gestures.js';
 import { moveJoystick, shootJoystick, getNearJoystickAnchor, setJoystickAnchor, getClosestJoystickSide, getDragThreshold } from './joystick.js';
@@ -1056,10 +1056,12 @@ document.getElementById('app').addEventListener('click', e => {
       const vehicleId = action.dataset.vehicle;
       if (Game.endless) {
         Game.endless.loadout.vehicle = vehicleId;
-        // Default to first available variant
-        const vehicle = ENDLESS_VEHICLES.find(v => v.id === vehicleId);
-        Game.endless.loadout.variant = vehicle?.variants?.[0] || 'default';
-        render();
+        // Prefer 'default' variant if it exists, otherwise use first available
+        const variants = getUnitVariants(vehicleId);
+        const variantName = variants.includes('default') ? 'default' : (variants[0] || 'default');
+        Game.endless.loadout.variant = variantName;
+        // Fetch variant data for parts display
+        fetchVariantData(vehicleId, variantName).then(() => render());
       }
     }
     else if (a === 'endless-select-variant') {
@@ -1481,9 +1483,11 @@ document.getElementById('app').addEventListener('change', e => {
 
   // Variant select in endless loadout
   if ((e.target.closest('.variant-select') || e.target.closest('.header-variant-select')) && Game.state === State.ENDLESS_LOADOUT) {
-    if (Game.endless) {
-      Game.endless.loadout.variant = e.target.value;
-      render();
+    if (Game.endless && Game.endless.loadout.vehicle) {
+      const variantName = e.target.value;
+      Game.endless.loadout.variant = variantName;
+      // Fetch variant data for parts display
+      fetchVariantData(Game.endless.loadout.vehicle, variantName).then(() => render());
     }
     return;
   }

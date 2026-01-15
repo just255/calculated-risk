@@ -8120,74 +8120,95 @@
       cursor: pointer;
     }
 
-    /* Equipment Bay Section */
+    /* Equipment Bay Section - Two Section Layout */
     .equipment-bay {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
       background: var(--bg-medium);
       border-radius: 8px;
       padding: 12px;
     }
 
-    .equipment-slots {
-      display: flex;
-      gap: 8px;
-      overflow-x: auto;
+    .parts-section {
+      background: var(--bg-dark);
+      border-radius: 6px;
+      padding: 8px 12px;
     }
 
-    .equipment-slot {
-      flex: 0 0 80px;
+    .parts-section-header {
+      font-size: 0.55rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      letter-spacing: 0.1em;
+      margin-bottom: 8px;
+    }
+
+    .parts-slots {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .part-slot {
+      flex: 0 0 70px;
       display: flex;
       flex-direction: column;
       align-items: center;
       gap: 4px;
-      padding: 10px 8px;
-      background: var(--bg-dark);
+      padding: 8px;
+      background: var(--bg-medium);
       border: 2px dashed var(--bg-light);
       border-radius: 6px;
-      text-align: center;
+      cursor: pointer;
+      transition: all 0.15s;
     }
 
-    .equipment-slot.filled {
+    .part-slot.filled {
       border-style: solid;
       border-color: var(--accent-green);
     }
 
-    .equipment-slot-icon {
-      font-size: 1.5rem;
+    .part-slot.placeholder {
+      opacity: 0.5;
+      border-color: var(--bg-light);
     }
 
-    .equipment-slot-name {
-      font-size: 0.6rem;
+    .part-slot:hover:not(.placeholder) {
+      border-color: var(--accent-blue);
+      background: var(--bg-light);
+    }
+
+    .part-slot-icon {
+      font-size: 1.2rem;
+      line-height: 1;
+    }
+
+    .part-slot-name {
+      font-size: 0.5rem;
       font-weight: 600;
       color: var(--text-primary);
+      letter-spacing: 0.05em;
     }
 
-    .equipment-slot-bonus {
-      font-size: 0.55rem;
+    .part-slot-status {
+      font-size: 0.45rem;
+      color: var(--text-secondary);
+    }
+
+    .part-slot-status.filled {
       color: var(--accent-green);
     }
 
-    .equipment-slot-empty {
+    .part-slot-status.empty {
+      color: var(--text-secondary);
+    }
+
+    .parts-empty-message {
       font-size: 0.6rem;
       color: var(--text-secondary);
-    }
-
-    .equipment-add-btn {
-      flex: 0 0 80px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 10px;
-      background: transparent;
-      border: 2px dashed var(--bg-light);
-      border-radius: 6px;
-      color: var(--text-secondary);
-      font-size: 0.7rem;
-      cursor: pointer;
-    }
-
-    .equipment-add-btn:hover {
-      border-color: var(--accent-green);
-      color: var(--accent-green);
+      font-style: italic;
+      padding: 8px;
     }
 
     /* Risk Assessment Section */

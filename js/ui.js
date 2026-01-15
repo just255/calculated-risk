@@ -2,7 +2,7 @@
 // UI - HTML rendering functions
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, UnitType, UNITS, UNIT_COSTS, H2H_BUDGET, VEHICLE_UNITS, TYPE_CHART, UNIT_PROJECTILES, PROJECTILES, UNIT_DESCRIPTIONS, CAMPAIGN_ERAS, CAMPAIGN_MOS, SquadOrder, TargetPriority, Formation, VEHICLE_CATEGORIES, ENDLESS_VEHICLES } from './constants.js';
+import { State, SubState, HQTab, UnitType, UNITS, UNIT_COSTS, H2H_BUDGET, VEHICLE_UNITS, TYPE_CHART, UNIT_PROJECTILES, PROJECTILES, UNIT_DESCRIPTIONS, CAMPAIGN_ERAS, CAMPAIGN_MOS, SquadOrder, TargetPriority, Formation, VEHICLE_CATEGORIES, ENDLESS_VEHICLES, PART_CATEGORY_CONFIG, SYSTEM_DEFINITIONS, UNIT_PART_SLOTS, UNIT_TYPE_MAP } from './constants.js';
 import { Game } from './state.js';
 import { save } from './storage.js';
 import { getSkinSelectorData, setSkinPref, clearCache as clearSkinCache } from './skins.js';
@@ -2642,6 +2642,95 @@ export function getUnitVariants(unitId) {
   return unitVariantsCache[unitId] || [];
 }
 
+// ═══════════════════════════════════════════════════════════════
+// VARIANT DATA FETCHING - Full variant data for parts system
+// ═══════════════════════════════════════════════════════════════
+
+let variantDataCache = {};
+
+/**
+ * Fetch full variant data (parts, animations, etc.)
+ * @param {string} unitId - The unit ID (e.g., 'abrams')
+ * @param {string} variantName - The variant name (e.g., 'default')
+ * @returns {Promise<Object|null>} Variant data or null if not found
+ */
+export async function fetchVariantData(unitId, variantName) {
+  const key = `${unitId}-${variantName}`;
+  if (variantDataCache[key]) return variantDataCache[key];
+
+  try {
+    const res = await fetch(`/api/variants/${key}`);
+    if (!res.ok) return null;
+    const response = await res.json();
+    // API returns { manifest, data: versionData } - extract the data portion which has parts
+    const variantData = response.data || response;
+    variantDataCache[key] = variantData;
+    return variantData;
+  } catch (err) {
+    console.warn('[ui] Failed to fetch variant data:', err);
+    return null;
+  }
+}
+
+/**
+ * Get cached variant data (synchronous)
+ * @param {string} unitId - The unit ID
+ * @param {string} variantName - The variant name
+ * @returns {Object|null} Cached variant data or null
+ */
+export function getCachedVariantData(unitId, variantName) {
+  return variantDataCache[`${unitId}-${variantName}`] || null;
+}
+
+/**
+ * Extract unique part categories from variant data
+ * @param {Object} variantData - The variant data object
+ * @returns {string[]} Array of unique category names
+ */
+export function getVariantPartCategories(variantData) {
+  if (!variantData?.parts) return [];
+  const categories = new Set();
+  variantData.parts.forEach(p => {
+    if (p.category) categories.add(p.category);
+  });
+  return Array.from(categories);
+}
+
+/**
+ * Derive applicable systems from part categories
+ * Systems are matched based on their appliesTo field in SYSTEM_DEFINITIONS
+ * @param {string[]} partCategories - Array of part category names
+ * @returns {Object[]} Array of { id, ...systemDef } for applicable systems
+ */
+export function getApplicableSystems(partCategories) {
+  if (!partCategories || partCategories.length === 0) return [];
+
+  const applicableSystems = [];
+
+  for (const [systemId, systemDef] of Object.entries(SYSTEM_DEFINITIONS)) {
+    // Check if this system applies to any of the unit's parts
+    const applies = systemDef.appliesTo.some(partCat =>
+      partCat === '*' || partCategories.includes(partCat)
+    );
+
+    if (applies) {
+      applicableSystems.push({ id: systemId, ...systemDef });
+    }
+  }
+
+  return applicableSystems;
+}
+
+/**
+ * Get expected part slots for a unit based on its type
+ * @param {string} unitId - The unit ID (e.g., 'abrams')
+ * @returns {string[]} Array of expected part category names
+ */
+export function getUnitPartSlots(unitId) {
+  const unitType = UNIT_TYPE_MAP[unitId] || 'default';
+  return UNIT_PART_SLOTS[unitType] || UNIT_PART_SLOTS.default;
+}
+
 /**
  * Fetch available vehicles from the units API
  * Returns all units from sprites folder with their variants
@@ -3973,7 +4062,25 @@ function endlessLoadoutHTML() {
   const apiVariants = selectedVehicle ? getUnitVariants(selectedVehicle.id) : [];
   const availableVariants = apiVariants.length > 0 ? apiVariants : [];
   const hasVariants = availableVariants.length > 0;
-  const currentVariant = e.loadout.variant || availableVariants[0] || null;
+  // Prefer 'default' variant if available
+  const defaultVariant = availableVariants.includes('default') ? 'default' : availableVariants[0];
+  const currentVariant = e.loadout.variant || defaultVariant || null;
+
+  // Get variant data for parts display
+  const variantData = selectedVehicle && currentVariant
+    ? getCachedVariantData(selectedVehicle.id, currentVariant)
+    : null;
+
+  // Get expected part slots for this unit type (always shows all possible slots)
+  const expectedSlots = selectedVehicle ? getUnitPartSlots(selectedVehicle.id) : [];
+  // Get equipped parts from variant data (to show which slots are filled)
+  const equippedParts = getVariantPartCategories(variantData);
+
+  // Derive applicable systems from expected slots (not just equipped)
+  const applicableSystems = getApplicableSystems(expectedSlots);
+
+  // Helper: Get display config for a part category
+  const getPartConfig = (cat) => PART_CATEGORY_CONFIG[cat] || PART_CATEGORY_CONFIG.default;
 
   return `
     <div class="screen endless-loadout-screen">
@@ -4123,28 +4230,40 @@ function endlessLoadoutHTML() {
         <!-- EQUIPMENT BAY -->
         <div class="section-label">EQUIPMENT BAY</div>
         <div class="equipment-bay">
-          <div class="equipment-slots">
-            <div class="equipment-slot">
-              <div class="equipment-slot-icon">🛡️</div>
-              <div class="equipment-slot-name">ARMOR</div>
-              <div class="equipment-slot-empty">Empty</div>
+          <!-- Unit Parts Section (expected slots for unit type) -->
+          <div class="parts-section">
+            <div class="parts-section-header">UNIT PARTS</div>
+            <div class="parts-slots">
+              ${expectedSlots.length > 0 ? expectedSlots.map(cat => {
+                const config = getPartConfig(cat);
+                const isEquipped = equippedParts.includes(cat);
+                return `
+                  <div class="part-slot ${isEquipped ? 'filled' : ''}" data-category="${cat}">
+                    <div class="part-slot-icon">${config.icon}</div>
+                    <div class="part-slot-name">${config.name.toUpperCase()}</div>
+                    <div class="part-slot-status ${isEquipped ? 'filled' : 'empty'}">${isEquipped ? 'Equipped' : 'Empty'}</div>
+                  </div>
+                `;
+              }).join('') : `
+                <div class="parts-empty-message">Select a vehicle to see parts</div>
+              `}
             </div>
-            <div class="equipment-slot">
-              <div class="equipment-slot-icon">🔭</div>
-              <div class="equipment-slot-name">OPTICS</div>
-              <div class="equipment-slot-empty">Empty</div>
+          </div>
+
+          <!-- Systems Section (derived from parts) -->
+          <div class="parts-section">
+            <div class="parts-section-header">SYSTEMS</div>
+            <div class="parts-slots">
+              ${applicableSystems.length > 0 ? applicableSystems.map(sys => `
+                <div class="part-slot" data-system="${sys.id}" title="${sys.desc}">
+                  <div class="part-slot-icon">${sys.icon}</div>
+                  <div class="part-slot-name">${sys.name.toUpperCase()}</div>
+                  <div class="part-slot-status empty">Empty</div>
+                </div>
+              `).join('') : `
+                <div class="parts-empty-message">No systems available</div>
+              `}
             </div>
-            <div class="equipment-slot">
-              <div class="equipment-slot-icon">💥</div>
-              <div class="equipment-slot-name">AMMO</div>
-              <div class="equipment-slot-empty">Empty</div>
-            </div>
-            <div class="equipment-slot">
-              <div class="equipment-slot-icon">⚙️</div>
-              <div class="equipment-slot-name">ENGINE</div>
-              <div class="equipment-slot-empty">Empty</div>
-            </div>
-            <button class="equipment-add-btn">+ ARMORY</button>
           </div>
         </div>
 

@@ -1556,3 +1556,133 @@ export const ENDLESS_VEHICLES = [
     variants: ['green', 'winter'],
     unlocked: false, unlockReq: '500 total kills' },
 ];
+
+// ═══════════════════════════════════════════════════════════════
+// PART SYSTEM - Equipment Bay configuration
+// ═══════════════════════════════════════════════════════════════
+
+// Part category display config (icon + display name per category)
+// Categories come from variant data - this just provides display metadata
+export const PART_CATEGORY_CONFIG = {
+  // Tanks
+  hull: { name: 'Hull', icon: '▣' },
+  turret: { name: 'Turret', icon: '◎' },
+  cannon: { name: 'Cannon', icon: '║' },
+  gun: { name: 'M. Gun', icon: '┃' },
+  tracks: { name: 'Tracks', icon: '⊟' },
+  // Infantry
+  body: { name: 'Body', icon: '◉' },
+  helmet: { name: 'Helmet', icon: '⌓' },
+  weapon: { name: 'Weapon', icon: '╱' },
+  boots: { name: 'Boots', icon: '⌐' },
+  equipment: { name: 'Gear', icon: '▢' },
+  // Vehicles
+  chassis: { name: 'Chassis', icon: '▣' },
+  wheels: { name: 'Wheels', icon: '◯' },
+  // Aircraft
+  fuselage: { name: 'Fuselage', icon: '◇' },
+  rotor: { name: 'Rotor', icon: '✕' },
+  tail: { name: 'Tail', icon: '◁' },
+  // Generic fallback
+  details: { name: 'Details', icon: '◈' },
+  default: { name: 'Part', icon: '◆' }
+};
+
+// Expected part slots per unit type - defines ALL slots a unit can have
+// Used as fallback when variant data isn't loaded, and to show empty slots
+export const UNIT_PART_SLOTS = {
+  // Tanks (MBTs)
+  tank: ['hull', 'turret', 'cannon', 'gun'],
+  // Light vehicles
+  vehicle: ['chassis', 'wheels', 'turret', 'gun'],
+  // Infantry
+  infantry: ['body', 'helmet', 'weapon', 'equipment'],
+  // Aircraft
+  helicopter: ['fuselage', 'rotor', 'tail', 'weapon'],
+  // Artillery
+  artillery: ['hull', 'cannon', 'wheels'],
+  // Default fallback
+  default: ['hull', 'turret', 'cannon']
+};
+
+// Map unit IDs to their unit type for part slot lookup
+export const UNIT_TYPE_MAP = {
+  // Tanks
+  abrams: 'tank',
+  sherman: 'tank',
+  tiger: 'tank',
+  panzer4: 'tank',
+  t34: 'tank',
+  pershing: 'tank',
+  leopard: 'tank',
+  challenger: 'tank',
+  t90: 'tank',
+  merkava: 'tank',
+  kv2: 'tank',
+  // Light vehicles
+  jeep: 'vehicle',
+  humvee: 'vehicle',
+  // Infantry
+  infantry: 'infantry',
+  medic: 'infantry',
+  specops: 'infantry',
+  stinger: 'infantry',
+  // Aircraft
+  helicopter: 'helicopter',
+  drone: 'helicopter',
+  // Artillery
+  howitzer: 'artillery'
+};
+
+// System definitions - derived from unit parts via appliesTo
+// '*' means universal (applies to all units)
+export const SYSTEM_DEFINITIONS = {
+  optics: {
+    name: 'Optics',
+    icon: '🔭',
+    desc: 'Targeting and vision systems',
+    appliesTo: ['turret', 'cannon', 'weapon', 'launcher']
+  },
+  ammo: {
+    name: 'Ammo',
+    icon: '💥',
+    desc: 'Ammunition type',
+    appliesTo: ['cannon', 'gun', 'weapon', 'launcher']
+  },
+  engine: {
+    name: 'Engine',
+    icon: '⚙️',
+    desc: 'Power and propulsion',
+    appliesTo: ['hull', 'chassis', 'fuselage', 'body']
+  },
+  comms: {
+    name: 'Comms',
+    icon: '📡',
+    desc: 'Communications equipment',
+    appliesTo: ['*']  // universal
+  },
+  fuel: {
+    name: 'Fuel',
+    icon: '⛽',
+    desc: 'Fuel reserves',
+    appliesTo: ['hull', 'chassis', 'fuselage']
+  },
+  armor: {
+    name: 'Armor',
+    icon: '🛡️',
+    desc: 'Additional protection',
+    appliesTo: ['hull', 'chassis', 'body', 'turret']
+  },
+  medkit: {
+    name: 'Medkit',
+    icon: '🩹',
+    desc: 'Medical supplies',
+    appliesTo: ['body', 'equipment']
+  },
+  countermeasures: {
+    name: 'ECM',
+    icon: '📶',
+    desc: 'Electronic countermeasures',
+    appliesTo: ['turret', 'fuselage', 'rotor']
+  }
+};
