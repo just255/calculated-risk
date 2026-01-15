@@ -1,0 +1,136 @@
+{
+  "version": 6,
+  "author": "Artist",
+  "timestamp": "2026-01-07T20:26:57.113Z",
+  "note": "Updated",
+  "canvasWidth": 256,
+  "canvasHeight": 256,
+  "parts": [
+    {
+      "partId": "abrams-hull-default",
+      "image": "/sprites/units/abrams/hull/abrams-hull-default/sprite.png?t=1767749726770",
+      "x": 128,
+      "y": 128,
+      "rotation": 0,
+      "scale": 0.7,
+      "opacity": 100,
+      "zIndex": 0,
+      "animations": {
+        "idle": null,
+        "move": {
+          "type": "oscillate",
+          "params": {
+            "xRange": 0.1,
+            "yRange": 0.1,
+            "speed": 7
+          }
+        },
+        "aim": null,
+        "fire": {
+          "type": "recoil",
+          "params": {
+            "distance": 3,
+            "decay": 8,
+            "speed": 1,
+            "direction": "aim-opposite",
+            "angleScale": true,
+            "angleScaleMin": 0.5,
+            "angleScaleMax": 1
+          }
+        },
+        "hit": {
+          "type": "scale-pulse",
+          "params": {
+            "min": 0.95,
+            "max": 0.99,
+            "speed": 50
+          }
+        }
+      },
+      "parentIndex": null,
+      "attachedTo": null,
+      "inheritRotation": true,
+      "inheritScale": false,
+      "category": "hull",
+      "snapPoints": []
+    },
+    {
+      "partId": "abrams-cannon-default",
+      "image": "/sprites/units/abrams/cannon/abrams-cannon-default/sprite.png?t=1767749726770",
+      "x": 127,
+      "y": 36,
+      "rotation": 0,
+      "scale": 1,
+      "opacity": 100,
+      "zIndex": 1,
+      "animations": {
+        "idle": null,
+        "move": null,
+        "aim": null,
+        "fire": {
+          "type": "recoil",
+          "params": {
+            "distance": 10,
+            "decay": 8,
+            "speed": 1,
+            "direction": "aim-opposite",
+            "angleScale": true,
+            "angleScaleMin": 0.5,
+            "angleScaleMax": 1
+          }
+        },
+        "hit": null
+      },
+      "parentIndex": 2,
+      "attachedTo": "snap_1767564609764",
+      "inheritRotation": true,
+      "inheritScale": false,
+      "category": "cannon",
+      "snapPoints": [
+        {
+          "id": "snap_1767724379288",
+          "name": "cannon_mount",
+          "x": 0.5,
+          "y": 44,
+          "type": "cannon_mount",
+          "rotation": 0
+        }
+      ]
+    },
+    {
+      "partId": "abrams-turret-default",
+      "image": "/sprites/units/abrams/turret/abrams-turret-default/sprite.png?t=1767749726770",
+      "x": 0,
+      "y": -7.142857142857143,
+      "rotation": 0,
+      "scale": 1,
+      "opacity": 100,
+      "zIndex": 2,
+      "animations": {
+        "idle": null,
+        "move": null,
+        "aim": {
+          "type": "aim",
+          "params": {}
+        },
+        "fire": null,
+        "hit": null
+      },
+      "parentIndex": 0,
+      "attachedTo": null,
+      "inheritRotation": true,
+      "inheritScale": false,
+      "category": "turret",
+      "snapPoints": [
+        {
+          "id": "snap_1767564609764",
+          "name": "cannon_mount",
+          "x": -0.5,
+          "y": -48,
+          "type": "cannon_mount",
+          "rotation": 0
+        }
+      ]
+    }
+  ]
+}

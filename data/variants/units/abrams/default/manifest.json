@@ -5,7 +5,7 @@
   "name": "Default",
   "author": "Artist",
   "createdAt": "2026-01-07T16:17:49.903Z",
-  "currentVersion": 5,
+  "currentVersion": 8,
   "versions": [
     {
       "version": 1,
@@ -35,6 +35,24 @@
       "version": 5,
       "author": "Artist",
       "timestamp": "2026-01-07T19:58:57.599Z",
+      "note": "Updated"
+    },
+    {
+      "version": 6,
+      "author": "Artist",
+      "timestamp": "2026-01-07T20:26:57.113Z",
+      "note": "Updated"
+    },
+    {
+      "version": 7,
+      "author": "Artist",
+      "timestamp": "2026-01-07T20:27:02.015Z",
+      "note": "Updated"
+    },
+    {
+      "version": 8,
+      "author": "Artist",
+      "timestamp": "2026-01-07T20:27:05.794Z",
       "note": "Updated"
     }
   ],
