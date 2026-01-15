@@ -12,7 +12,7 @@ import {
   executeAllyCommand,
   executeEmptyTileCommand
 } from './commands.js';
-import { isJoystickActive } from './joystick.js';
+import { isJoystickActive, isTouchNearJoystick } from './joystick.js';
 
 // Callback to reset joysticks (set by main.js to avoid circular import)
 let resetJoysticksCallback = null;
@@ -331,7 +331,15 @@ function handleBattlefieldTouchStart(e) {
   // Don't trigger on UI elements
   if (e.target.closest('.squad-strip') || e.target.closest('.radio-popup')) return;
 
-  const touch = e.touches[0];
+  // Check the new touch that triggered this event (changedTouches, not touches)
+  const touch = e.changedTouches[0];
+  if (!touch) return;
+
+  // Don't trigger battlefield gestures if touch is near joystick areas
+  if (isTouchNearJoystick(touch)) return;
+
+  // Also skip if any joystick is currently active (user is already using sticks)
+  if (isJoystickActive()) return;
 
   const b = getBattle();
   if (!b) return;

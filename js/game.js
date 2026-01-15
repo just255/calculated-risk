@@ -7,6 +7,7 @@ import { Game, newBattle, newH2H, newCampaign, newCampaignBattle } from './state
 import { sound } from './audio.js';
 import { save } from './storage.js';
 import { render, setSubState, getCustomizedSvg, getCustomizedSvgFrames, getEntitySvg, getEntitySvgFrames, drawCommandUI, getUnitVisual, getUnitShadow } from './ui.js';
+import * as sprites from './sprites.js';
 import {
   isBlocked,
   findTargetsInRange,
@@ -55,6 +56,327 @@ let loopId = null;
 let lastT = 0;
 let animFrame = 0; // Animation frame counter for track/wheel animation
 
+// Canvas-based sprite rendering
+let battleCanvas = null;
+let battleCtx = null;
+let useCanvasRendering = true; // Feature flag for canvas-based animated sprites
+
+// Unique ID counter for units
+let unitIdCounter = 0;
+
+/**
+ * Setup the canvas layer for animated sprite rendering
+ */
+function setupBattleCanvas() {
+  const bf = document.querySelector('.battlefield');
+  if (!bf) return;
+
+  // Remove existing canvas if any
+  const existing = bf.querySelector('#battle-canvas');
+  if (existing) existing.remove();
+
+  // Create canvas layer
+  battleCanvas = document.createElement('canvas');
+  battleCanvas.id = 'battle-canvas';
+  battleCanvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:5;';
+
+  // Set canvas size to match battlefield
+  battleCanvas.width = bf.offsetWidth;
+  battleCanvas.height = bf.offsetHeight;
+
+  bf.appendChild(battleCanvas);
+  battleCtx = battleCanvas.getContext('2d');
+
+  console.log(`[game] Battle canvas setup: ${battleCanvas.width}x${battleCanvas.height}`);
+}
+
+// Campaign canvas for hero and unit rendering
+let campaignCanvas = null;
+let campaignCtx = null;
+
+/**
+ * Setup the canvas layer for campaign animated sprite rendering
+ */
+function setupCampaignCanvas() {
+  const bf = document.querySelector('.campaign-battlefield');
+  if (!bf) return;
+
+  // Remove existing canvas if any
+  const existing = bf.querySelector('#campaign-canvas');
+  if (existing) existing.remove();
+
+  // Get device pixel ratio for crisp rendering on high-DPI screens
+  const dpr = window.devicePixelRatio || 1;
+
+  // Create canvas layer
+  campaignCanvas = document.createElement('canvas');
+  campaignCanvas.id = 'campaign-canvas';
+
+  // Get display size
+  const displayWidth = bf.offsetWidth || 800;
+  const displayHeight = bf.offsetHeight || 600;
+
+  // Set canvas buffer size scaled by DPR for sharpness
+  campaignCanvas.width = displayWidth * dpr;
+  campaignCanvas.height = displayHeight * dpr;
+
+  // Set CSS size to match display
+  campaignCanvas.style.cssText = `position:absolute;top:0;left:0;width:${displayWidth}px;height:${displayHeight}px;pointer-events:none;z-index:50;`;
+
+  bf.appendChild(campaignCanvas);
+  campaignCtx = campaignCanvas.getContext('2d');
+
+  // Scale context to match DPR so drawing coordinates stay the same
+  campaignCtx.scale(dpr, dpr);
+
+  // Enable image smoothing for better quality
+  campaignCtx.imageSmoothingEnabled = true;
+  campaignCtx.imageSmoothingQuality = 'high';
+
+  console.log(`[game] Campaign canvas setup: ${displayWidth}x${displayHeight} @ ${dpr}x DPR`);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TANK CONTROLS - Modular vehicle control system
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Default turn rates for vehicles (radians per second)
+ */
+const VEHICLE_TURN_RATES = {
+  tank: {
+    hull: Math.PI * 0.8,    // ~144 deg/sec - tanks turn slowly
+    turret: Math.PI * 1.5   // ~270 deg/sec - turrets turn faster
+  },
+  light: {
+    hull: Math.PI * 1.2,    // ~216 deg/sec - light vehicles turn faster
+    turret: Math.PI * 2.0   // ~360 deg/sec
+  }
+};
+
+/**
+ * Normalize angle to -PI to PI range
+ * @param {number} angle - Angle in radians
+ * @returns {number} Normalized angle
+ */
+function normalizeAngle(angle) {
+  while (angle > Math.PI) angle -= Math.PI * 2;
+  while (angle < -Math.PI) angle += Math.PI * 2;
+  return angle;
+}
+
+/**
+ * Smoothly rotate an angle toward a target angle at a max speed
+ * Handles angle wrapping correctly (takes shortest path)
+ * @param {number} current - Current angle in radians
+ * @param {number} target - Target angle in radians
+ * @param {number} maxDelta - Maximum rotation this frame in radians
+ * @returns {number} New angle in radians
+ */
+function smoothRotateToward(current, target, maxDelta) {
+  current = normalizeAngle(current);
+  target = normalizeAngle(target);
+
+  // Calculate shortest rotation direction
+  let diff = target - current;
+  if (diff > Math.PI) diff -= Math.PI * 2;
+  if (diff < -Math.PI) diff += Math.PI * 2;
+
+  // Clamp rotation to max speed
+  if (Math.abs(diff) <= maxDelta) {
+    return target; // Close enough, snap to target
+  }
+
+  // Rotate toward target at max speed
+  return normalizeAngle(current + Math.sign(diff) * maxDelta);
+}
+
+// Default joystick control settings
+const JOYSTICK_DEFAULTS = {
+  deadzone: 0.25,        // 0-25% = rotate only
+  reverseCone: 22        // degrees from rear that triggers reverse
+};
+
+/**
+ * Get joystick control settings (from Game.settings or defaults)
+ */
+function getJoystickSettings() {
+  const settings = Game.settings?.controls || {};
+  return {
+    deadzone: settings.joystickDeadzone ?? JOYSTICK_DEFAULTS.deadzone,
+    reverseCone: (settings.joystickReverseCone ?? JOYSTICK_DEFAULTS.reverseCone) * Math.PI / 180
+  };
+}
+
+/**
+ * Parse input into tank control values
+ * @param {object} keys - Keyboard state { w, a, s, d }
+ * @param {object} joystickInput - Optional joystick { dx, dy }
+ * @param {number} currentHullAngle - Current hull angle in radians (for joystick drive-toward)
+ * @returns {object} { moveInput, turnInput, targetHullAngle } moveInput/turnInput -1 to 1, targetHullAngle in radians or null
+ */
+function parseTankInput(keys, joystickInput, currentHullAngle = 0) {
+  let moveInput = 0;  // -1 = backward, 0 = none, 1 = forward
+  let turnInput = 0;  // -1 = left, 0 = none, 1 = right
+  let targetHullAngle = null;  // For joystick drive-toward mode
+
+  // Check for analog joystick input first (drive-toward mode)
+  if (joystickInput && (joystickInput.dx !== 0 || joystickInput.dy !== 0)) {
+    const magnitude = Math.sqrt(joystickInput.dx * joystickInput.dx + joystickInput.dy * joystickInput.dy);
+    const { deadzone, reverseCone } = getJoystickSettings();
+
+    // Calculate target angle from joystick (screen coords: up = -Y)
+    targetHullAngle = Math.atan2(joystickInput.dy, joystickInput.dx);
+
+    // Calculate angle difference to determine if we should reverse
+    let angleDiff = targetHullAngle - currentHullAngle;
+    // Normalize to -PI to PI
+    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+
+    // Check if target is within reverse cone (close to directly behind)
+    const isReverseZone = Math.abs(angleDiff) > Math.PI - reverseCone;
+
+    if (isReverseZone) {
+      // Reverse: flip target angle so we turn the rear toward target
+      targetHullAngle = normalizeAngle(targetHullAngle + Math.PI);
+      // Move backward if past deadzone
+      if (magnitude > deadzone) {
+        moveInput = -((magnitude - deadzone) / (1 - deadzone));  // -1 to 0 scaled
+      }
+    } else {
+      // Forward: move toward target if past deadzone
+      if (magnitude > deadzone) {
+        moveInput = (magnitude - deadzone) / (1 - deadzone);  // 0 to 1 scaled
+      }
+    }
+  } else if (keys) {
+    // WASD tank controls (unchanged)
+    if (keys.w) moveInput = 1;   // Forward
+    if (keys.s) moveInput = -1;  // Backward
+    if (keys.a) turnInput = -1;  // Turn left
+    if (keys.d) turnInput = 1;   // Turn right
+  }
+
+  return { moveInput, turnInput, targetHullAngle };
+}
+
+/**
+ * Apply tank controls to update hull angle and calculate movement
+ * @param {object} entity - Entity with hullAngle property
+ * @param {number} moveInput - Forward/backward input (-1 to 1)
+ * @param {number} turnInput - Left/right turn input (-1 to 1) for keyboard
+ * @param {number|null} targetHullAngle - Target hull angle in radians (for joystick drive-toward)
+ * @param {number} hullTurnRate - Hull turn rate in radians/sec
+ * @param {number} dtSec - Delta time in seconds
+ * @returns {object} { dx, dy, isMoving } - Movement direction and state
+ */
+function applyTankMovement(entity, moveInput, turnInput, targetHullAngle, hullTurnRate, dtSec) {
+  // Apply hull turning - either toward target angle (joystick) or via turn input (keyboard)
+  if (targetHullAngle !== null) {
+    // Joystick: smooth rotate toward target angle
+    entity.hullAngle = smoothRotateToward(entity.hullAngle, targetHullAngle, hullTurnRate * dtSec);
+  } else if (turnInput !== 0) {
+    // Keyboard: direct turn rate control
+    entity.hullAngle = normalizeAngle(entity.hullAngle + turnInput * hullTurnRate * dtSec);
+  }
+
+  // Calculate movement in hull direction
+  const isMoving = moveInput !== 0;
+  let dx = 0, dy = 0;
+  if (isMoving) {
+    dx = Math.cos(entity.hullAngle) * moveInput;
+    dy = Math.sin(entity.hullAngle) * moveInput;
+  }
+
+  return { dx, dy, isMoving };
+}
+
+/**
+ * Update turret aim with smooth rotation
+ * @param {object} entity - Entity with angle (turret) and hullAngle
+ * @param {number} targetWorldAngle - Target aim angle in world space (radians)
+ * @param {number} turretTurnRate - Turret turn rate in radians/sec
+ * @param {number} dtSec - Delta time in seconds
+ */
+function applyTurretAim(entity, targetWorldAngle, turretTurnRate, dtSec) {
+  entity.angle = smoothRotateToward(entity.angle, targetWorldAngle, turretTurnRate * dtSec);
+}
+
+/**
+ * Calculate world aim angle from mouse position
+ * @param {object} entity - Entity with x, y position
+ * @param {object} mouse - Mouse position { x, y } in screen coords
+ * @param {object} camera - Camera position { x, y }
+ * @returns {number} World angle in radians
+ */
+function calculateAimAngle(entity, mouse, camera) {
+  const worldMouseX = mouse.x + camera.x;
+  const worldMouseY = mouse.y + camera.y;
+  return Math.atan2(worldMouseY - entity.y, worldMouseX - entity.x);
+}
+
+/**
+ * Generate unique ID for a unit
+ */
+function generateUnitId(type, isEnemy = false) {
+  return `${isEnemy ? 'enemy' : 'unit'}-${type}-${++unitIdCounter}`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ANIMATION HELPERS - Hooks between game state and sprite animations
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Update animation trigger based on movement
+ */
+function updateUnitMovementAnim(unit, prevY) {
+  if (!useCanvasRendering || !unit.animId) return;
+
+  const isNowMoving = Math.abs(unit.y - prevY) > 0.01;
+  if (isNowMoving !== unit.isMoving) {
+    unit.isMoving = isNowMoving;
+    sprites.setUnitAnimTrigger(unit.animId, isNowMoving ? 'move' : 'idle');
+  }
+}
+
+/**
+ * Update turret aim toward a target
+ */
+function updateUnitAimAnim(unit, targetY, laneWidth) {
+  if (!useCanvasRendering || !unit.animId) return;
+
+  // Calculate angle to target (0 = up, 90 = right, etc.)
+  // For now, just aim straight (0 for player units going up, 180 for enemies going down)
+  // TODO: Calculate actual angle based on target position
+  const aimAngle = targetY < unit.y ? 0 : 180;
+  sprites.setUnitAimAngle(unit.animId, aimAngle);
+}
+
+/**
+ * Trigger fire animation when unit shoots
+ */
+function triggerFireAnim(unit) {
+  if (!useCanvasRendering || !unit.animId) return;
+  sprites.triggerUnitAnim(unit.animId, 'fire');
+}
+
+/**
+ * Trigger hit animation when unit takes damage
+ */
+function triggerHitAnim(unit) {
+  if (!useCanvasRendering || !unit.animId) return;
+  sprites.triggerUnitAnim(unit.animId, 'hit');
+}
+
+/**
+ * Clean up animation state when unit is destroyed
+ */
+function cleanupUnitAnim(unit) {
+  if (!useCanvasRendering || !unit.animId) return;
+  sprites.destroyAnimatedUnit(unit.animId);
+}
+
 // Create a shadow element for a unit
 function createShadowElement(x, y, rotation = 0) {
   if (!SHADOW_CONFIG.enabled) return null;
@@ -99,6 +421,10 @@ export function goto(newState, data = {}) {
         spawnWave();
       }
       render();
+      // Setup canvas for animated sprite rendering
+      if (useCanvasRendering) {
+        setupBattleCanvas();
+      }
       startLoop();
       break;
 
@@ -179,11 +505,57 @@ export function goto(newState, data = {}) {
         // Assign smart positions to units without explicit positions
         assignSmartPositions(Game.campaign.heroBattle);
       }
+
+      // Initialize animation for hero (use abrams variant for now)
+      // This runs for all campaign battles including test zone battles
+      {
+        const hero = Game.campaign.heroBattle.hero;
+        if (hero.animId && useCanvasRendering && !sprites.hasAnimatedUnit(hero.animId)) {
+          sprites.initAnimatedUnit(hero.animId, 'abrams', 'default').then(variantData => {
+            if (variantData) {
+              console.log(`[campaign] Initialized hero animation: ${hero.animId}`);
+            }
+          });
+        }
+      }
+
       render();
+      // Setup canvas after render creates the battlefield element
+      setTimeout(() => setupCampaignCanvas(), 0);
       startCampaignLoop();
       break;
 
     case State.CAMPAIGN_RESULT:
+      stopLoop();
+      render();
+      break;
+
+    // Endless Mode States
+    case State.ENDLESS_LOADOUT:
+      render();
+      break;
+
+    case State.ENDLESS_BATTLE:
+      // TODO: Initialize endless battle with hero combat
+      render();
+      // For now, just go to between-wave screen after a delay (placeholder)
+      setTimeout(() => {
+        if (Game.state === State.ENDLESS_BATTLE && Game.endless) {
+          // Simulate wave complete
+          Game.endless.kills += Math.floor(Math.random() * 10) + 5;
+          Game.endless.score += Game.endless.kills * 100;
+          Game.endless.loot.scrap += Math.floor(Math.random() * 50) + 20;
+          goto(State.ENDLESS_BETWEEN);
+        }
+      }, 2000);
+      break;
+
+    case State.ENDLESS_BETWEEN:
+      stopLoop();
+      render();
+      break;
+
+    case State.ENDLESS_RESULT:
       stopLoop();
       render();
       break;
@@ -230,6 +602,8 @@ function spawnWave() {
   const b = Game.battle;
   const wave = b.wave;
   const count = 3 + Math.floor(wave * 1.5);
+  const bf = document.querySelector('.battlefield');
+  const laneW = bf ? bf.offsetWidth / 3 : 100;
 
   for (let i = 0; i < count; i++) {
     let type = 0;
@@ -240,15 +614,35 @@ function spawnWave() {
 
     const def = ENEMIES[type];
     const scale = 1 + (wave - 1) * 0.12;
+    const enemyLane = Math.floor(Math.random() * 3);
 
-    b.enemies.push({
+    // Get unit ID for this enemy type (enemies use unit visuals)
+    const unitDef = UNITS.find(u => u.id === def.unitId);
+    const animId = generateUnitId(unitDef?.id || 'enemy', true);
+
+    const enemy = {
       type,
-      lane: Math.floor(Math.random() * 3),
+      lane: enemyLane,
+      x: enemyLane * laneW + laneW / 2,  // Center of lane
       y: -60 - i * 100,
       rotation: 180,  // Facing down (south)
       hp: Math.floor(def.health * scale),
-      maxHp: Math.floor(def.health * scale)
-    });
+      maxHp: Math.floor(def.health * scale),
+      animId,  // For animation system
+      lastY: -60 - i * 100,  // Track movement
+      isMoving: true  // Enemies start moving
+    };
+
+    b.enemies.push(enemy);
+
+    // Initialize animation state for this enemy (if it has a unit visual)
+    if (useCanvasRendering && unitDef) {
+      sprites.initAnimatedUnit(animId, unitDef.id, 'default').then(variantData => {
+        if (variantData) {
+          sprites.setUnitAnimTrigger(animId, 'move');  // Enemies start moving
+        }
+      });
+    }
   }
 
   b.waveSize = count;
@@ -265,13 +659,32 @@ export function deploy(laneIdx) {
     const def = UNITS[lane.unit];
     const bf = document.querySelector('.battlefield');
     const h = bf ? bf.offsetHeight : 400;
+    const laneW = bf ? bf.offsetWidth / 3 : 100;
 
-    lane.deployed.push({
+    // Generate unique animation ID for this unit
+    const animId = generateUnitId(def.id, false);
+
+    const newUnit = {
       type: lane.unit,
       y: h - 80,
+      x: laneIdx * laneW + laneW / 2,  // Center of lane
       rotation: 0,  // Facing up (north)
-      lastShot: 0
-    });
+      lastShot: 0,
+      animId,  // For animation system
+      lastY: h - 80,  // Track movement for animation triggers
+      isMoving: false
+    };
+
+    lane.deployed.push(newUnit);
+
+    // Initialize animation state for this unit (async, but don't block)
+    if (useCanvasRendering) {
+      sprites.initAnimatedUnit(animId, def.id, 'default').then(variantData => {
+        if (variantData) {
+          console.log(`[game] Initialized animation for ${animId}`);
+        }
+      });
+    }
 
     lane.cooldown = def.deployCooldown;
     sound('deploy');
@@ -311,6 +724,10 @@ export function stopLoop() {
   if (loopId) {
     cancelAnimationFrame(loopId);
     loopId = null;
+  }
+  // Clear all animation states when loop stops
+  if (useCanvasRendering) {
+    sprites.clearAllAnimatedUnits();
   }
 }
 
@@ -371,9 +788,13 @@ function update(dt) {
       // Use shared blocking function
       u.blocked = isBlocked(unitWithProps, enemiesWithAir, -1);
 
+      const prevY = u.y;
       if (!u.blocked) {
         u.y = Math.max(50, u.y - combatStats.speed * dtSec);
       }
+
+      // Update animation based on movement
+      updateUnitMovementAnim(u, prevY);
     });
   });
 
@@ -396,14 +817,19 @@ function update(dt) {
     // Use shared blocking function
     e.blocked = isBlocked(enemyWithProps, allPlayerUnits, 1);
 
+    const prevY = e.y;
     if (!e.blocked) {
       e.y += eDef.speed * dt / 16;
     }
+
+    // Update animation based on movement
+    updateUnitMovementAnim(e, prevY);
 
     // Reached base
     if (e.y > bfH - 50) {
       b.health -= eDef.damage;
       e.dead = true;
+      cleanupUnitAnim(e);  // Clean up animation state
       sound('hit');
 
       if (b.health <= 0) {
@@ -426,9 +852,22 @@ function update(dt) {
       // Use shared targeting function
       const targets = findTargetsInRange(unitWithProps, enemiesWithAir, combatStats.range, -1);
 
+      // Update aim toward closest target (even if not firing)
+      if (targets.length && u.animId) {
+        const target = getClosestTarget(targets, -1);
+        // Calculate aim angle: 0 = up, positive = clockwise
+        const dx = (target.x || target.lane * laneW + laneW / 2) - (u.x || li * laneW + laneW / 2);
+        const dy = target.y - u.y;
+        const aimAngle = Math.atan2(dx, -dy) * 180 / Math.PI;  // -dy because up is negative
+        sprites.setUnitAimAngle(u.animId, aimAngle);
+      }
+
       if (targets.length && now - u.lastShot > stats.fireRate) {
         const target = getClosestTarget(targets, -1);
         u.lastShot = now;
+
+        // Trigger fire animation
+        triggerFireAnim(u);
 
         // Create projectile using shared function
         const proj = createProjectile({
@@ -514,6 +953,10 @@ function update(dt) {
   // Flatten for targeting (these are references, not copies)
   const playerUnitsAsTargets = b.lanes.flatMap(lane => lane.deployed);
 
+  // Track HP before projectile updates for hit animations
+  const enemyHpBefore = new Map(b.enemies.map(e => [e, e.hp]));
+  const playerHpBefore = new Map(playerUnitsAsTargets.map(u => [u, u.hp]));
+
   // Update player projectiles (hitting enemies) - using shared module
   const playerProjs = b.projectiles.filter(p => p.owner === 'player');
   const playerProjResult = updateProjectiles(
@@ -534,14 +977,31 @@ function update(dt) {
     (target) => UNITS[target.type].types
   );
 
+  // Trigger hit animations for damaged units
+  b.enemies.forEach(e => {
+    const hpBefore = enemyHpBefore.get(e);
+    if (hpBefore !== undefined && e.hp < hpBefore) {
+      triggerHitAnim(e);
+    }
+  });
+  playerUnitsAsTargets.forEach(u => {
+    const hpBefore = playerHpBefore.get(u);
+    if (hpBefore !== undefined && u.hp < hpBefore) {
+      triggerHitAnim(u);
+    }
+  });
+
   // No sync needed - updateProjectiles modified the original units directly
 
   // Combine projectile results
   b.projectiles = [...playerProjResult.projectiles, ...enemyProjResult.projectiles];
   b.effects.push(...playerProjResult.effects, ...enemyProjResult.effects);
 
-  // Clean up dead player units
+  // Clean up dead player units (with animation cleanup)
   b.lanes.forEach(lane => {
+    lane.deployed.forEach(u => {
+      if (u.dead) cleanupUnitAnim(u);
+    });
     lane.deployed = lane.deployed.filter(u => !u.dead);
   });
 
@@ -567,7 +1027,10 @@ function update(dt) {
     }
   });
 
-  // Cleanup
+  // Cleanup dead enemies (with animation cleanup)
+  b.enemies.forEach(e => {
+    if (e.dead) cleanupUnitAnim(e);
+  });
   b.enemies = b.enemies.filter(e => !e.dead);
 
   // Clean up effects
@@ -580,7 +1043,10 @@ function update(dt) {
 
   // Wave complete?
   if (b.enemies.length === 0 && b.killed >= b.waveSize) {
-    if (Game.settings.mode === 'waves' && b.wave >= 10) {
+    if (Game.settings.mode === 'classic') {
+      // Classic mode: infinite waves, no victory - just wave complete
+      goto(State.WAVE_COMPLETE);
+    } else if (Game.settings.mode === 'waves' && b.wave >= 10) {
       goto(State.VICTORY);
     } else {
       goto(State.WAVE_COMPLETE);
@@ -626,75 +1092,189 @@ function draw() {
     }
   });
 
-  // Clear entities (including shadows)
+  // Clear entities (including shadows) - but not canvas
   bf.querySelectorAll('.enemy, .unit, .unit-shadow, .explosion, .loot-drop, .projectile, .muzzle-flash, .impact').forEach(el => el.remove());
 
-  // Draw shadows first (behind all units)
-  if (SHADOW_CONFIG.enabled) {
-    // Enemy shadows
-    b.enemies.forEach(e => {
-      const enemyDef = ENEMIES[e.type];
-      const unitDef = UNITS.find(u => u.id === enemyDef.unitId);
-      const x = e.lane * laneW + (laneW - 50) / 2;
-      const content = unitDef ? getUnitShadow(unitDef, animFrame) : '';
+  // Canvas-based animated sprite rendering
+  if (useCanvasRendering && battleCtx) {
+    const gameTime = performance.now();
 
-      const shadow = createShadowElement(x, e.y, e.rotation || 180);
-      if (shadow) {
-        shadow.innerHTML = content;
-        bf.appendChild(shadow);
+    // Clear canvas
+    battleCtx.clearRect(0, 0, battleCanvas.width, battleCanvas.height);
+
+    // Shadow config for canvas rendering
+    const shadowConfig = SHADOW_CONFIG.enabled ? {
+      offsetAngle: SHADOW_CONFIG.sunDirection + 180,
+      offsetDistance: 4,
+      opacity: 0.3
+    } : null;
+
+    // Helper: check if unit has animation ready
+    const hasAnimReady = (animId) => animId && sprites.hasAnimatedUnit(animId);
+
+    // Render enemies - canvas if ready, DOM fallback if not
+    b.enemies.forEach(e => {
+      const x = e.x || (e.lane * laneW + laneW / 2);
+
+      if (hasAnimReady(e.animId)) {
+        // Canvas rendering
+        sprites.renderAnimatedUnit(battleCtx, e.animId, x, e.y, e.rotation || 180, 0.4, gameTime, shadowConfig);
+      } else {
+        // DOM fallback
+        const enemyDef = ENEMIES[e.type];
+        const unitDef = UNITS.find(u => u.id === enemyDef.unitId);
+        const rotation = e.rotation ?? 180;
+
+        if (SHADOW_CONFIG.enabled) {
+          const shadow = createShadowElement(x - 25, e.y, rotation);
+          if (shadow && unitDef) {
+            shadow.innerHTML = getUnitShadow(unitDef, animFrame);
+            bf.appendChild(shadow);
+          }
+        }
+
+        const el = document.createElement('div');
+        el.className = 'enemy';
+        el.style.left = `${x - 25}px`;
+        el.style.top = `${e.y}px`;
+        el.style.transform = `rotate(${rotation}deg)`;
+        el.innerHTML = `
+          ${unitDef ? getUnitVisual(unitDef, 'enemy', animFrame) : ''}
+          <div class="health-pip" style="transform: rotate(${-rotation}deg);"><div class="health-pip-fill" style="width:${(e.hp/e.maxHp)*100}%"></div></div>
+        `;
+        bf.appendChild(el);
+        return;  // Skip canvas health bar below
       }
+
+      // Health bar for canvas-rendered enemy
+      const el = document.createElement('div');
+      el.className = 'enemy';
+      el.style.left = `${x - 25}px`;
+      el.style.top = `${e.y}px`;
+      el.style.width = '50px';
+      el.style.height = '50px';
+      el.innerHTML = `<div class="health-pip"><div class="health-pip-fill" style="width:${(e.hp/e.maxHp)*100}%"></div></div>`;
+      bf.appendChild(el);
     });
 
-    // Player unit shadows
+    // Render player units - canvas if ready, DOM fallback if not
     b.lanes.forEach((lane, li) => {
       lane.deployed.forEach(u => {
+        const x = u.x || (li * laneW + laneW / 2);
         const def = UNITS[u.type];
-        const x = li * laneW + (laneW - 50) / 2;
-        const content = getUnitShadow(def, animFrame);
+        const rotation = u.rotation ?? 0;
 
-        const shadow = createShadowElement(x, u.y, u.rotation || 0);
+        if (hasAnimReady(u.animId)) {
+          // Canvas rendering
+          sprites.renderAnimatedUnit(battleCtx, u.animId, x, u.y, rotation, 0.4, gameTime, shadowConfig);
+
+          // Health bar if damaged
+          if (u.hp && u.hp < u.maxHp) {
+            const el = document.createElement('div');
+            el.className = 'unit';
+            el.style.left = `${x - 25}px`;
+            el.style.top = `${u.y}px`;
+            el.style.width = '50px';
+            el.style.height = '50px';
+            const hpPercent = (u.hp / u.maxHp) * 100;
+            el.innerHTML = `<div class="health-pip player-hp"><div class="health-pip-fill" style="width:${hpPercent}%"></div></div>`;
+            bf.appendChild(el);
+          }
+        } else {
+          // DOM fallback
+          if (SHADOW_CONFIG.enabled) {
+            const shadow = createShadowElement(x - 25, u.y, rotation);
+            if (shadow) {
+              shadow.innerHTML = getUnitShadow(def, animFrame);
+              bf.appendChild(shadow);
+            }
+          }
+
+          const el = document.createElement('div');
+          el.className = 'unit';
+          el.style.left = `${x - 25}px`;
+          el.style.top = `${u.y}px`;
+          el.style.transform = `rotate(${rotation}deg)`;
+
+          const hpPercent = u.hp && u.maxHp ? (u.hp / u.maxHp) * 100 : 100;
+          const showHealthBar = u.hp && u.hp < u.maxHp;
+          el.innerHTML = `
+            ${getUnitVisual(def, 'player', animFrame)}
+            ${showHealthBar ? `<div class="health-pip player-hp" style="transform: rotate(${-rotation}deg);"><div class="health-pip-fill" style="width:${hpPercent}%"></div></div>` : ''}
+          `;
+          bf.appendChild(el);
+        }
+      });
+    });
+  } else {
+    // Fallback: DOM-based rendering (original code)
+
+    // Draw shadows first (behind all units)
+    if (SHADOW_CONFIG.enabled) {
+      // Enemy shadows
+      b.enemies.forEach(e => {
+        const enemyDef = ENEMIES[e.type];
+        const unitDef = UNITS.find(u => u.id === enemyDef.unitId);
+        const x = e.lane * laneW + (laneW - 50) / 2;
+        const content = unitDef ? getUnitShadow(unitDef, animFrame) : '';
+
+        const shadow = createShadowElement(x, e.y, e.rotation || 180);
         if (shadow) {
           shadow.innerHTML = content;
           bf.appendChild(shadow);
         }
       });
-    });
-  }
 
-  // Draw enemies using their linked unit visuals (PNG or SVG)
-  b.enemies.forEach(e => {
-    const enemyDef = ENEMIES[e.type];
-    const unitDef = UNITS.find(u => u.id === enemyDef.unitId);
-    const rotation = e.rotation ?? 180;
+      // Player unit shadows
+      b.lanes.forEach((lane, li) => {
+        lane.deployed.forEach(u => {
+          const def = UNITS[u.type];
+          const x = li * laneW + (laneW - 50) / 2;
+          const content = getUnitShadow(def, animFrame);
 
-    const el = document.createElement('div');
-    el.className = 'enemy';
-    el.style.left = `${e.lane * laneW + (laneW - 50) / 2}px`;
-    el.style.top = `${e.y}px`;
-    el.style.transform = `rotate(${rotation}deg)`;
+          const shadow = createShadowElement(x, u.y, u.rotation || 0);
+          if (shadow) {
+            shadow.innerHTML = content;
+            bf.appendChild(shadow);
+          }
+        });
+      });
+    }
 
-    const content = unitDef ? getUnitVisual(unitDef, 'enemy', animFrame) : '';
-    // Counter-rotate health bar so it stays upright
-    el.innerHTML = `
-      ${content}
-      <div class="health-pip" style="transform: rotate(${-rotation}deg);"><div class="health-pip-fill" style="width:${(e.hp/e.maxHp)*100}%"></div></div>
-    `;
-    bf.appendChild(el);
-  });
-
-  // Draw player units (PNG or SVG)
-  b.lanes.forEach((lane, li) => {
-    lane.deployed.forEach(u => {
-      const def = UNITS[u.type];
-      const rotation = u.rotation ?? 0;
+    // Draw enemies using their linked unit visuals (PNG or SVG)
+    b.enemies.forEach(e => {
+      const enemyDef = ENEMIES[e.type];
+      const unitDef = UNITS.find(u => u.id === enemyDef.unitId);
+      const rotation = e.rotation ?? 180;
 
       const el = document.createElement('div');
-      el.className = 'unit';
-      el.style.left = `${li * laneW + (laneW - 50) / 2}px`;
-      el.style.top = `${u.y}px`;
+      el.className = 'enemy';
+      el.style.left = `${e.lane * laneW + (laneW - 50) / 2}px`;
+      el.style.top = `${e.y}px`;
       el.style.transform = `rotate(${rotation}deg)`;
 
-      // Show health bar if unit has taken damage
+      const content = unitDef ? getUnitVisual(unitDef, 'enemy', animFrame) : '';
+      // Counter-rotate health bar so it stays upright
+      el.innerHTML = `
+        ${content}
+        <div class="health-pip" style="transform: rotate(${-rotation}deg);"><div class="health-pip-fill" style="width:${(e.hp/e.maxHp)*100}%"></div></div>
+      `;
+      bf.appendChild(el);
+    });
+
+    // Draw player units (PNG or SVG)
+    b.lanes.forEach((lane, li) => {
+      lane.deployed.forEach(u => {
+        const def = UNITS[u.type];
+        const rotation = u.rotation ?? 0;
+
+        const el = document.createElement('div');
+        el.className = 'unit';
+        el.style.left = `${li * laneW + (laneW - 50) / 2}px`;
+        el.style.top = `${u.y}px`;
+        el.style.transform = `rotate(${rotation}deg)`;
+
+        // Show health bar if unit has taken damage
       const hpPercent = u.hp && u.maxHp ? (u.hp / u.maxHp) * 100 : 100;
       const showHealthBar = u.hp && u.hp < u.maxHp;
 
@@ -706,6 +1286,7 @@ function draw() {
       bf.appendChild(el);
     });
   });
+  } // End of DOM-based rendering else block
 
   // Draw projectiles
   b.projectiles.forEach(p => {
@@ -2023,27 +2604,18 @@ function updateCampaignBattle(dt) {
     return;
   }
 
-  // --- HERO MOVEMENT (WASD or Analog Joystick) ---
+  // --- HERO MOVEMENT (Tank Controls) ---
   const hero = b.hero;
-  let dx = 0, dy = 0;
 
-  // Check for analog joystick input first (smoother mobile controls)
-  if (b.joystickInput && (b.joystickInput.dx !== 0 || b.joystickInput.dy !== 0)) {
-    dx = b.joystickInput.dx;
-    dy = b.joystickInput.dy;
-  } else {
-    // Fall back to discrete WASD
-    if (b.keys.w) dy -= 1;
-    if (b.keys.s) dy += 1;
-    if (b.keys.a) dx -= 1;
-    if (b.keys.d) dx += 1;
+  // Get vehicle stats (use defaults if not specified on entity)
+  const hullTurnRate = hero.hullTurnRate || VEHICLE_TURN_RATES.tank.hull;
+  const turretTurnRate = hero.turretTurnRate || VEHICLE_TURN_RATES.tank.turret;
 
-    // Normalize diagonal movement for WASD only
-    if (dx !== 0 && dy !== 0) {
-      dx *= 0.707;
-      dy *= 0.707;
-    }
-  }
+  // Parse input from keyboard/joystick (pass hull angle for drive-toward logic)
+  const { moveInput, turnInput, targetHullAngle } = parseTankInput(b.keys, b.joystickInput, hero.hullAngle);
+
+  // Apply tank movement (updates hullAngle, returns movement vector)
+  const { dx, dy, isMoving } = applyTankMovement(hero, moveInput, turnInput, targetHullAngle, hullTurnRate, dtSec);
 
   // Get terrain speed modifier
   const speedMod = getTerrainSpeedMod(b, hero.x, hero.y);
@@ -2053,13 +2625,10 @@ function updateCampaignBattle(dt) {
   const newY = hero.y + dy * hero.speed * speedMod * dtSec;
 
   // Check terrain collision only (no unit collision for now)
-  const terrainBlockedX = isTerrainBlocked(b, newX, hero.y);
-  if (!terrainBlockedX) {
+  if (!isTerrainBlocked(b, newX, hero.y)) {
     hero.x = newX;
   }
-
-  const terrainBlockedY = isTerrainBlocked(b, hero.x, newY);
-  if (!terrainBlockedY) {
+  if (!isTerrainBlocked(b, hero.x, newY)) {
     hero.y = newY;
   }
 
@@ -2067,16 +2636,24 @@ function updateCampaignBattle(dt) {
   hero.x = Math.max(30, Math.min(b.mapWidth - 30, hero.x));
   hero.y = Math.max(30, Math.min(b.mapHeight - 30, hero.y));
 
+  // --- HERO ANIMATION ---
+  if (useCanvasRendering && hero.animId) {
+    // Update movement animation trigger
+    if (isMoving !== hero.isMoving) {
+      hero.isMoving = isMoving;
+      sprites.setUnitAnimTrigger(hero.animId, isMoving ? 'move' : 'idle');
+    }
+    hero.lastX = hero.x;
+    hero.lastY = hero.y;
+  }
+
   // --- AIMING ---
-  // Use aim joystick if available (mobile), otherwise mouse position
+  // Calculate target aim angle (where we want turret to point)
+  let targetAimAngle;
   if (b.aimAngle !== null && b.aimAngle !== undefined) {
-    // Direct angle from aim joystick
-    hero.angle = b.aimAngle;
+    targetAimAngle = b.aimAngle;  // Direct angle from aim joystick
   } else {
-    // Angle from hero to mouse (in world coordinates)
-    const worldMouseX = b.mouse.x + b.camera.x;
-    const worldMouseY = b.mouse.y + b.camera.y;
-    hero.angle = Math.atan2(worldMouseY - hero.y, worldMouseX - hero.x);
+    targetAimAngle = calculateAimAngle(hero, b.mouse, b.camera);  // Mouse aim
   }
 
   // --- HERO AUTO-ATTACK TARGET ---
@@ -2084,28 +2661,39 @@ function updateCampaignBattle(dt) {
   if (hero.autoAttackTarget) {
     const target = b.enemies.find(e => e.id === hero.autoAttackTarget && !e.dead);
     if (target) {
-      // Aim at target
-      hero.angle = Math.atan2(target.y - hero.y, target.x - hero.x);
+      targetAimAngle = Math.atan2(target.y - hero.y, target.x - hero.x);
       autoAttacking = true;
 
       // Check if target is in range (400px)
-      const dx = target.x - hero.x;
-      const dy = target.y - hero.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist > 400) {
-        // Target too far, clear it
+      const tdx = target.x - hero.x;
+      const tdy = target.y - hero.y;
+      if (Math.sqrt(tdx * tdx + tdy * tdy) > 400) {
         hero.autoAttackTarget = null;
         autoAttacking = false;
       }
     } else {
-      // Target dead or gone, clear it
       hero.autoAttackTarget = null;
     }
   }
 
+  // Apply turret aiming (smooth rotation toward target)
+  applyTurretAim(hero, targetAimAngle, turretTurnRate, dtSec);
+
+  // Update turret aim angle for animation (relative to hull)
+  if (useCanvasRendering && hero.animId) {
+    const relativeAim = hero.angle - hero.hullAngle;
+    sprites.setUnitAimAngle(hero.animId, relativeAim * 180 / Math.PI);
+  }
+
   // --- HERO SHOOTING ---
-  // Fire if: manual shooting (mouse down) OR auto-attacking a target
-  if ((b.mouse.down || autoAttacking) && now - hero.lastShot > hero.fireRate) {
+  // Check if turret is aligned with target (within ~10 degrees)
+  let aimDiff = hero.angle - targetAimAngle;
+  while (aimDiff > Math.PI) aimDiff -= Math.PI * 2;
+  while (aimDiff < -Math.PI) aimDiff += Math.PI * 2;
+  const turretAligned = Math.abs(aimDiff) < 0.17; // ~10 degrees
+
+  // Fire if: (manual shooting OR auto-attacking) AND turret is aligned with target
+  if ((b.mouse.down || autoAttacking) && turretAligned && now - hero.lastShot > hero.fireRate) {
     hero.lastShot = now;
 
     // Create projectile moving in aim direction
@@ -2119,6 +2707,11 @@ function updateCampaignBattle(dt) {
       owner: 'player',
       type: 'bullet'
     });
+
+    // Trigger fire animation
+    if (useCanvasRendering && hero.animId) {
+      sprites.triggerUnitAnim(hero.animId, 'fire');
+    }
 
     sound('shoot');
   }
@@ -2339,6 +2932,17 @@ function drawCampaignBattle() {
   // Clear previous entities (but keep terrain if already drawn)
   bf.querySelectorAll('.campaign-entity').forEach(el => el.remove());
 
+  // Ensure campaign canvas exists (may have been destroyed by render() call)
+  if (!campaignCanvas || !bf.contains(campaignCanvas)) {
+    setupCampaignCanvas();
+  }
+
+  // Clear campaign canvas for animated sprites
+  // Note: context is scaled by DPR, so use screenW/screenH (display size)
+  if (campaignCanvas && campaignCtx) {
+    campaignCtx.clearRect(0, 0, screenW, screenH);
+  }
+
   // Draw terrain grid (only once, then cache)
   if (!bf.querySelector('.campaign-terrain')) {
     const terrainContainer = document.createElement('div');
@@ -2399,17 +3003,31 @@ function drawCampaignBattle() {
 
   // Draw hero
   const hero = b.hero;
-  const heroEl = document.createElement('div');
-  heroEl.className = 'campaign-entity campaign-hero';
-  heroEl.style.left = `${hero.x - b.camera.x - 20}px`;
-  heroEl.style.top = `${hero.y - b.camera.y - 20}px`;
-  heroEl.style.width = '40px';
-  heroEl.style.height = '40px';
-  heroEl.style.transform = `rotate(${hero.angle + Math.PI / 2}rad)`;
-  heroEl.style.backgroundColor = '#4a9eff';
-  heroEl.style.borderRadius = '5px';
-  heroEl.style.border = '2px solid #fff';
-  bf.appendChild(heroEl);
+  const heroHasAnim = useCanvasRendering && hero.animId && sprites.hasAnimatedUnit(hero.animId);
+
+  if (heroHasAnim && campaignCtx) {
+    // Render animated sprite on canvas
+    const screenX = hero.x - b.camera.x;
+    const screenY = hero.y - b.camera.y;
+    // Hull rotation is based on movement direction (hullAngle), not aim direction
+    // +90 degrees to align sprite (sprite default faces right, we want up to be 0)
+    const hullRotation = (hero.hullAngle * 180 / Math.PI) + 90;
+    const scale = 0.5; // Scale to reasonable game size
+    sprites.renderAnimatedUnit(campaignCtx, hero.animId, screenX, screenY, hullRotation, scale);
+  } else {
+    // Fallback to DOM rendering
+    const heroEl = document.createElement('div');
+    heroEl.className = 'campaign-entity campaign-hero';
+    heroEl.style.left = `${hero.x - b.camera.x - 20}px`;
+    heroEl.style.top = `${hero.y - b.camera.y - 20}px`;
+    heroEl.style.width = '40px';
+    heroEl.style.height = '40px';
+    heroEl.style.transform = `rotate(${hero.angle + Math.PI / 2}rad)`;
+    heroEl.style.backgroundColor = '#4a9eff';
+    heroEl.style.borderRadius = '5px';
+    heroEl.style.border = '2px solid #fff';
+    bf.appendChild(heroEl);
+  }
 
   // Draw enemies
   b.enemies.forEach(e => {
