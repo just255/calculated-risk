@@ -74,6 +74,24 @@ The server infrastructure is ready for head-to-head battles. In v2:
 - Solving problems sends enemies to opponent's side
 - First to destroy the other's base wins
 
+## Remote Access (ngrok)
+
+For testing on mobile devices outside your local network:
+
+1. Start the game server:
+   ```
+   npm start
+   ```
+
+2. In a separate terminal, start ngrok:
+   ```
+   npx ngrok http 3000
+   ```
+
+3. Use the generated URL (e.g., `https://xxx-xxx.ngrok-free.dev/`) on any device
+
+**Note**: Free ngrok URLs change each session. For a static URL, consider ngrok's paid plans.
+
 ## Troubleshooting
 
 **Mobile can't connect?**

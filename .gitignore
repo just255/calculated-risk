@@ -3,5 +3,10 @@ node_modules/
 *.log
 .env
 
-# Local Netlify folder
-.netlify
+# Temp files
+tmpclaude-*
+nul
+
+# Session notes (optional - remove if you want to track these)
+*.txt
+Context.md.txt
