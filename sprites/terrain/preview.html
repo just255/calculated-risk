@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Terrain Tile Preview</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #1a1a1a;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+      font-family: system-ui, sans-serif;
+      color: #fff;
+    }
+    h1 { margin-bottom: 15px; font-size: 18px; }
+    .controls {
+      margin-bottom: 20px;
+      display: flex;
+      gap: 20px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    select, input[type="range"] {
+      padding: 8px 12px;
+      background: #333;
+      color: #fff;
+      border: 1px solid #555;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    select {
+      min-width: 200px;
+      cursor: pointer;
+    }
+    select:hover {
+      border-color: #777;
+    }
+    label { font-size: 14px; }
+    .preview-container {
+      border: 2px solid #444;
+      overflow: hidden;
+    }
+    .preview {
+      width: 512px;
+      height: 512px;
+      background-repeat: repeat;
+      background-size: var(--tile-size, 128px) var(--tile-size, 128px);
+      background-color: #333;
+    }
+    .info {
+      margin-top: 15px;
+      font-size: 12px;
+      color: #888;
+    }
+    .row {
+      display: flex;
+      gap: 15px;
+      align-items: center;
+    }
+    .refresh-btn {
+      padding: 8px 14px;
+      background: #444;
+      color: #fff;
+      border: 1px solid #555;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .refresh-btn:hover {
+      background: #555;
+    }
+  </style>
+</head>
+<body>
+  <h1>Terrain Tile Preview</h1>
+
+  <div class="controls">
+    <div class="row">
+      <label>Tile:</label>
+      <select id="tileSelect">
+        <option value="">-- Loading... --</option>
+      </select>
+      <button class="refresh-btn" onclick="loadFiles()">↻</button>
+    </div>
+    <div class="row">
+      <label>Size:</label>
+      <input type="range" id="sizeSlider" min="32" max="256" value="128" step="8">
+      <span id="sizeLabel">128px</span>
+    </div>
+  </div>
+
+  <div class="preview-container">
+    <div class="preview" id="preview"></div>
+  </div>
+
+  <div class="info">
+    Preview area: 512x512 | Add PNGs to sprites/terrain/ folder and click refresh
+  </div>
+
+  <script>
+    const preview = document.getElementById('preview');
+    const tileSelect = document.getElementById('tileSelect');
+    const sizeSlider = document.getElementById('sizeSlider');
+    const sizeLabel = document.getElementById('sizeLabel');
+
+    // Load files from server API
+    async function loadFiles() {
+      try {
+        const res = await fetch('/api/terrain/tiles');
+        const data = await res.json();
+
+        tileSelect.innerHTML = '<option value="">-- Select a tile --</option>';
+
+        if (data.files && data.files.length > 0) {
+          data.files.forEach((f, i) => {
+            const option = document.createElement('option');
+            option.value = f.path;
+            option.textContent = f.name;
+            tileSelect.appendChild(option);
+          });
+
+          // Auto-select first
+          tileSelect.selectedIndex = 1;
+          updatePreview();
+        } else {
+          tileSelect.innerHTML = '<option value="">-- No tiles found --</option>';
+        }
+      } catch (err) {
+        console.error('Failed to load tiles:', err);
+        tileSelect.innerHTML = '<option value="">-- Error loading --</option>';
+      }
+    }
+
+    // Update preview
+    function updatePreview() {
+      const selected = tileSelect.value;
+      const size = sizeSlider.value;
+
+      sizeLabel.textContent = `${size}px`;
+      preview.style.setProperty('--tile-size', `${size}px`);
+
+      if (selected) {
+        preview.style.backgroundImage = `url('${selected}')`;
+      } else {
+        preview.style.backgroundImage = 'none';
+      }
+    }
+
+    // Event listeners
+    tileSelect.addEventListener('change', updatePreview);
+    sizeSlider.addEventListener('input', updatePreview);
+
+    // Initialize
+    loadFiles();
+  </script>
+</body>
+</html>

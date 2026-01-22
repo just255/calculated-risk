@@ -6,7 +6,7 @@ import { State, SubState, HQTab, UNITS, PROJECTILES, UNIT_PROJECTILES, SquadOrde
 import { Game, newBattlePlan, newCampaign, createAdvancingScenario, createFrontlineScenario, newZoneBattle, newEndlessRun } from './state.js';
 import { initAudio, sound } from './audio.js';
 import { save, load } from './storage.js';
-import { goto, deploy, switchUnit, stopLoop, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, campaignMouseDown, campaignMouseUp, campaignSetAimAngle, campaignClearAimAngle, campaignSetJoystick, campaignClearJoystick } from './game.js';
+import { goto, deploy, switchUnit, stopLoop, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, campaignMouseDown, campaignMouseUp, campaignSetAimAngle, campaignClearAimAngle, campaignSetJoystick, campaignClearJoystick, endlessKeyDown, endlessKeyUp, endlessMouseMove, endlessMouseDown, endlessMouseUp } from './game.js';
 import { render, setSubState, fetchAvailableVehicles, fetchUnitVariants, fetchVariantData, getUnitVariants } from './ui.js';
 import { initController, getControllerInput, updateButtonStates, setControllerCallbacks, isControllerConnected } from './controller.js';
 import { initGestures, setResetJoysticksCallback } from './gestures.js';
@@ -431,6 +431,7 @@ document.getElementById('app').addEventListener('click', e => {
     else if (a === 'stats') goto(State.STATS);
     else if (a === 'hq') goto(State.HQ);
     else if (a === 'sprite-editor') window.open('/sprite-editor.html', '_blank');
+    else if (a === 'terrain-editor') window.open('/terrain-editor.html', '_blank');
     else if (a === 'menu') { stopLoop(); Game.h2h = null; Game.h2hDefenseSlot = undefined; Game.h2hWaveLane = undefined; goto(State.MENU); }
     else if (a === 'pause') goto(State.PAUSED);
     else if (a === 'resume') goto(State.BATTLE);
@@ -1533,11 +1534,19 @@ document.addEventListener('keydown', e => {
   if (Game.state === State.CAMPAIGN_BATTLE) {
     campaignKeyDown(e.key);
   }
+  // Endless mode keyboard
+  if (Game.state === State.ENDLESS_BATTLE) {
+    endlessKeyDown(e.key);
+  }
 });
 
 document.addEventListener('keyup', e => {
   if (Game.state === State.CAMPAIGN_BATTLE) {
     campaignKeyUp(e.key);
+  }
+  // Endless mode keyboard
+  if (Game.state === State.ENDLESS_BATTLE) {
+    endlessKeyUp(e.key);
   }
 });
 
@@ -1550,17 +1559,33 @@ document.addEventListener('mousemove', e => {
       campaignMouseMove(e.clientX - rect.left, e.clientY - rect.top);
     }
   }
+  // Endless mode mouse
+  if (Game.state === State.ENDLESS_BATTLE) {
+    const bf = document.querySelector('.endless-battlefield');
+    if (bf) {
+      const rect = bf.getBoundingClientRect();
+      endlessMouseMove(e.clientX - rect.left, e.clientY - rect.top);
+    }
+  }
 });
 
 document.addEventListener('mousedown', e => {
   if (Game.state === State.CAMPAIGN_BATTLE && e.button === 0) {
     campaignMouseDown();
   }
+  // Endless mode mouse
+  if (Game.state === State.ENDLESS_BATTLE && e.button === 0) {
+    endlessMouseDown();
+  }
 });
 
 document.addEventListener('mouseup', e => {
   if (Game.state === State.CAMPAIGN_BATTLE && e.button === 0) {
     campaignMouseUp();
+  }
+  // Endless mode mouse
+  if (Game.state === State.ENDLESS_BATTLE && e.button === 0) {
+    endlessMouseUp();
   }
   // End grid panning
   if (Game.state === State.CAMPAIGN_PLANNING) {

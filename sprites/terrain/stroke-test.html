@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Stroke Terrain Test</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #1a1a2e;
+      color: #eee;
+      font-family: system-ui, sans-serif;
+      padding: 20px;
+    }
+    h1 { margin-bottom: 10px; }
+    .container {
+      display: flex;
+      gap: 20px;
+    }
+    .canvas-wrap {
+      position: relative;
+      border: 2px solid #444;
+    }
+    canvas {
+      display: block;
+      cursor: crosshair;
+    }
+    #canopyCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+    }
+    #previewCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+    }
+    .controls {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-width: 200px;
+    }
+    .control-group {
+      background: #252540;
+      padding: 10px;
+      border-radius: 8px;
+    }
+    .control-group label {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 12px;
+      color: #aaa;
+    }
+    select, input[type="range"] {
+      width: 100%;
+      padding: 5px;
+      background: #333;
+      color: #fff;
+      border: 1px solid #555;
+      border-radius: 4px;
+    }
+    button {
+      padding: 10px 15px;
+      background: #4a6a3a;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button:hover { background: #5a8a4a; }
+    button.danger { background: #8a3a3a; }
+    button.danger:hover { background: #aa4a4a; }
+    .info {
+      background: #252540;
+      padding: 10px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-family: monospace;
+    }
+    .info div { margin: 2px 0; }
+    .stroke-count { color: #4ade80; }
+  </style>
+</head>
+<body>
+  <h1>Stroke-Based Terrain Test</h1>
+  <p style="margin-bottom:15px;color:#888;">Click to paint. Right-click to erase. Mouse position shows coverage.</p>
+
+  <div class="container">
+    <div class="canvas-wrap">
+      <canvas id="baseCanvas" width="768" height="768"></canvas>
+      <canvas id="canopyCanvas" width="768" height="768"></canvas>
+      <canvas id="previewCanvas" width="768" height="768"></canvas>
+    </div>
+
+    <div class="controls">
+      <div class="control-group">
+        <label>Ground Type</label>
+        <select id="groundType">
+          <option value="grass">Grass</option>
+          <option value="open">Open/Dirt</option>
+          <option value="water">Water</option>
+        </select>
+      </div>
+
+      <div class="control-group">
+        <label>Paint Mode</label>
+        <select id="paintMode">
+          <option value="feature">Feature (solid)</option>
+          <option value="trees">Trees (individual)</option>
+          <option value="select">Select/Delete</option>
+        </select>
+      </div>
+
+      <div class="control-group" id="featureControls">
+        <label>Feature Type</label>
+        <select id="featureType">
+          <option value="forest">Forest</option>
+          <option value="brush">Brush</option>
+          <option value="water">Water</option>
+        </select>
+      </div>
+
+      <div class="control-group tree-control" id="treeControls" style="display:none;">
+        <label>Tree Type</label>
+        <select id="treeType">
+          <option value="oak">Oak</option>
+          <option value="pine">Pine</option>
+          <option value="birch">Birch</option>
+          <option value="willow">Willow</option>
+          <option value="dead">Dead</option>
+        </select>
+      </div>
+
+      <div class="control-group tree-control" style="display:none;">
+        <label>Density: <span id="densityVal">5</span> trees</label>
+        <input type="range" id="treeDensity" min="1" max="15" value="5">
+      </div>
+
+      <div class="control-group tree-control" style="display:none;">
+        <label>Min Age</label>
+        <select id="minAge">
+          <option value="sapling">Sapling (0.4x)</option>
+          <option value="young" selected>Young (0.6x)</option>
+          <option value="mature">Mature (0.8x)</option>
+          <option value="old">Old (1.0x)</option>
+          <option value="transitional">Transitional (mixed)</option>
+        </select>
+      </div>
+
+      <div class="control-group tree-control" style="display:none;">
+        <label>Max Age</label>
+        <select id="maxAge">
+          <option value="sapling">Sapling (0.4x)</option>
+          <option value="young">Young (0.6x)</option>
+          <option value="mature">Mature (0.8x)</option>
+          <option value="old" selected>Old (1.0x)</option>
+          <option value="transitional">Transitional (mixed)</option>
+        </select>
+      </div>
+
+      <div class="control-group">
+        <label>Brush Radius: <span id="radiusVal">60</span>px</label>
+        <input type="range" id="brushRadius" min="20" max="150" value="60">
+      </div>
+
+      <div class="control-group">
+        <label>Intensity: <span id="intensityVal">1.0</span></label>
+        <input type="range" id="intensity" min="0.2" max="1" step="0.1" value="1">
+      </div>
+
+      <div class="control-group">
+        <label>Falloff</label>
+        <select id="falloff">
+          <option value="smooth">Smooth</option>
+          <option value="linear">Linear</option>
+          <option value="hard">Hard</option>
+        </select>
+      </div>
+
+      <div class="control-group select-control" style="display:none;">
+        <label>Selected: <span id="selectedInfo">None</span></label>
+        <button id="deleteSelectedBtn" class="danger" style="margin-top:5px;">Delete Selected</button>
+      </div>
+
+      <button id="clearBtn" class="danger">Clear All</button>
+
+      <div class="control-group">
+        <button id="exportBtn" style="width:100%;margin-bottom:5px;">Export PNG</button>
+        <button id="saveBtn" style="width:48%;">Save JSON</button>
+        <button id="loadBtn" style="width:48%;float:right;">Load JSON</button>
+        <input type="file" id="loadFile" accept=".json" style="display:none;">
+      </div>
+
+      <div class="info">
+        <div>Strokes: <span id="strokeCount" class="stroke-count">0</span></div>
+        <div>Mouse: <span id="mousePos">-</span></div>
+        <div>Cell: <span id="cellPos">-</span></div>
+        <div>---</div>
+        <div>Forest: <span id="forestCov">0%</span></div>
+        <div>Brush: <span id="brushCov">0%</span></div>
+        <div>Water: <span id="waterCov">0%</span></div>
+        <div>---</div>
+        <div>Speed: <span id="speedMod">100%</span></div>
+        <div>Cover: <span id="coverBonus">0%</span></div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import {
+      createTerrainMap,
+      paint,
+      paintTrees,
+      erase,
+      rasterize,
+      ensureRasterized,
+      getTerrainSpeedMod,
+      getCoverBonus,
+      getFeatureCoverage,
+      getCellData,
+      getGridCoords,
+      renderBaseLayer,
+      renderCanopyLayer,
+      TREE_TYPES,
+      getStrokesAt,
+      removeStroke
+    } from '../../js/world-builder/index.js';
+
+    const baseCanvas = document.getElementById('baseCanvas');
+    const canopyCanvas = document.getElementById('canopyCanvas');
+    const previewCanvas = document.getElementById('previewCanvas');
+    const baseCtx = baseCanvas.getContext('2d');
+    const canopyCtx = canopyCanvas.getContext('2d');
+    const previewCtx = previewCanvas.getContext('2d');
+
+    const CELL_SIZE = 64;
+    const GRID_SIZE = 12; // 12x12 grid = 768px
+
+    // Load terrain images
+    const canopyImages = {};
+    const groundImages = {};
+    const imagePromises = [];
+
+    function loadImage(name, path, targetObj = canopyImages) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          targetObj[name] = img;
+          console.log(`Loaded ${name} from ${path}`);
+          resolve();
+        };
+        img.onerror = () => {
+          console.warn(`Failed to load ${name} from ${path}`);
+          resolve();
+        };
+        img.src = path;
+      });
+    }
+
+    // Load ground textures
+    imagePromises.push(loadImage('grass', './ground/terrain-grass.png', groundImages));
+    imagePromises.push(loadImage('open', './ground/terrain-open.png', groundImages));
+    imagePromises.push(loadImage('water', './ground/terrain-water.png', groundImages));
+
+    // Load canopy images - density variants (fallback)
+    imagePromises.push(loadImage('forest-dense', './terrain-forest-realistic-dense.png'));
+    imagePromises.push(loadImage('forest-medium', './terrain-forest-realistic-medium.png'));
+    imagePromises.push(loadImage('forest-sparse', './terrain-forest-realistic-sparse.png'));
+    imagePromises.push(loadImage('forest-single', './terrain-forest-realistic-single.png'));
+
+    // Load individual tree sprites
+    // Tree types: oak, pine, birch, willow, dead
+    // Organized in subfolders: trees/young/, trees/old/, trees/transitional/
+    // Try loading variants 1-10 for each type/age, use whatever exists
+    const MAX_VARIANTS_TO_TRY = 10;
+    for (const treeType of Object.keys(TREE_TYPES)) {
+      const config = TREE_TYPES[treeType];
+      const ages = config.ages || ['young', 'old'];
+      for (const age of ages) {
+        for (let i = 1; i <= MAX_VARIANTS_TO_TRY; i++) {
+          const key = `${treeType}-${age}-${i}`;
+          // Load from subfolder matching age (young/, old/)
+          const path = `./trees/${age}/${treeType}-${age}-${i}.png`;
+          imagePromises.push(loadImage(key, path));
+        }
+      }
+    }
+
+    // Also try loading transitional variants from trees/transitional/
+    for (const treeType of Object.keys(TREE_TYPES)) {
+      for (let i = 1; i <= MAX_VARIANTS_TO_TRY; i++) {
+        const key = `${treeType}-transitional-${i}`;
+        const path = `./trees/transitional/${treeType}-transitional-${i}.png`;
+        imagePromises.push(loadImage(key, path));
+      }
+    }
+
+    // Create terrain map
+    const terrainMap = createTerrainMap(GRID_SIZE, GRID_SIZE, CELL_SIZE, 'grass');
+
+    // UI elements
+    const groundType = document.getElementById('groundType');
+    const paintMode = document.getElementById('paintMode');
+    const featureType = document.getElementById('featureType');
+    const featureControls = document.getElementById('featureControls');
+    const treeControls = document.querySelectorAll('.tree-control');
+    const selectControls = document.querySelectorAll('.select-control');
+    const treeType = document.getElementById('treeType');
+    const treeDensity = document.getElementById('treeDensity');
+    const densityVal = document.getElementById('densityVal');
+    const minAge = document.getElementById('minAge');
+    const maxAge = document.getElementById('maxAge');
+    const brushRadius = document.getElementById('brushRadius');
+    const radiusVal = document.getElementById('radiusVal');
+    const intensity = document.getElementById('intensity');
+    const intensityVal = document.getElementById('intensityVal');
+    const falloff = document.getElementById('falloff');
+    const clearBtn = document.getElementById('clearBtn');
+    const deleteSelectedBtn = document.getElementById('deleteSelectedBtn');
+    const selectedInfo = document.getElementById('selectedInfo');
+    const strokeCount = document.getElementById('strokeCount');
+    const mousePos = document.getElementById('mousePos');
+    const cellPos = document.getElementById('cellPos');
+    const forestCov = document.getElementById('forestCov');
+    const brushCov = document.getElementById('brushCov');
+    const waterCov = document.getElementById('waterCov');
+    const speedMod = document.getElementById('speedMod');
+    const coverBonus = document.getElementById('coverBonus');
+
+    // Selection and painting state
+    let selectedStroke = null;
+    let isPainting = false;
+    let lastPaintPos = null;
+    let currentMousePos = null;
+    const PAINT_SPACING = 30; // Min pixels between paint strokes when dragging
+
+    // Update slider displays
+    brushRadius.oninput = () => radiusVal.textContent = brushRadius.value;
+    intensity.oninput = () => intensityVal.textContent = intensity.value;
+    treeDensity.oninput = () => densityVal.textContent = treeDensity.value;
+
+    // Ground type change
+    groundType.onchange = () => {
+      terrainMap.baseLayer = groundType.value;
+      render();
+    };
+
+    // Paint mode toggle
+    paintMode.onchange = () => {
+      const mode = paintMode.value;
+      featureControls.style.display = mode === 'feature' ? 'block' : 'none';
+      treeControls.forEach(el => el.style.display = mode === 'trees' ? 'block' : 'none');
+      selectControls.forEach(el => el.style.display = mode === 'select' ? 'block' : 'none');
+
+      // Clear selection when leaving select mode
+      if (mode !== 'select') {
+        selectedStroke = null;
+        selectedInfo.textContent = 'None';
+      }
+      render();
+    };
+
+    // Delete selected stroke
+    deleteSelectedBtn.onclick = () => {
+      if (selectedStroke) {
+        removeStroke(terrainMap, selectedStroke.id);
+        selectedStroke = null;
+        selectedInfo.textContent = 'None';
+        render();
+      }
+    };
+
+    // Render terrain
+    function render() {
+      // Clear
+      baseCtx.clearRect(0, 0, baseCanvas.width, baseCanvas.height);
+      canopyCtx.clearRect(0, 0, canopyCanvas.width, canopyCanvas.height);
+
+      // Render base layer with ground texture
+      const groundImg = groundImages[terrainMap.baseLayer];
+      if (groundImg) {
+        // Tile the ground texture at a fixed size (256x256 per tile)
+        const TILE_SIZE = 256;
+        for (let ty = 0; ty < baseCanvas.height; ty += TILE_SIZE) {
+          for (let tx = 0; tx < baseCanvas.width; tx += TILE_SIZE) {
+            baseCtx.drawImage(groundImg, tx, ty, TILE_SIZE, TILE_SIZE);
+          }
+        }
+      } else {
+        // Fallback to rendered base layer
+        const baseLayer = renderBaseLayer(terrainMap, CELL_SIZE);
+        baseCtx.drawImage(baseLayer, 0, 0);
+      }
+
+      // Draw grid lines
+      baseCtx.strokeStyle = 'rgba(255,255,255,0.1)';
+      baseCtx.lineWidth = 1;
+      for (let i = 0; i <= GRID_SIZE; i++) {
+        baseCtx.beginPath();
+        baseCtx.moveTo(i * CELL_SIZE, 0);
+        baseCtx.lineTo(i * CELL_SIZE, baseCanvas.height);
+        baseCtx.stroke();
+        baseCtx.beginPath();
+        baseCtx.moveTo(0, i * CELL_SIZE);
+        baseCtx.lineTo(baseCanvas.width, i * CELL_SIZE);
+        baseCtx.stroke();
+      }
+
+      // Render canopy layer (with loaded images)
+      const canopyLayer = renderCanopyLayer(terrainMap, CELL_SIZE, canopyImages);
+      canopyCtx.drawImage(canopyLayer, 0, 0);
+
+      // Draw selection highlight
+      if (selectedStroke && paintMode.value === 'select') {
+        canopyCtx.strokeStyle = '#ff0';
+        canopyCtx.lineWidth = 3;
+        canopyCtx.setLineDash([5, 5]);
+        canopyCtx.beginPath();
+        canopyCtx.arc(selectedStroke.x, selectedStroke.y, selectedStroke.radius, 0, Math.PI * 2);
+        canopyCtx.stroke();
+        canopyCtx.setLineDash([]);
+
+        // Draw center point
+        canopyCtx.fillStyle = '#ff0';
+        canopyCtx.beginPath();
+        canopyCtx.arc(selectedStroke.x, selectedStroke.y, 5, 0, Math.PI * 2);
+        canopyCtx.fill();
+      }
+
+      // Update stroke count
+      strokeCount.textContent = terrainMap.strokes.length;
+    }
+
+    // Draw brush preview circle
+    function drawBrushPreview(x, y) {
+      previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+
+      if (paintMode.value === 'select') return;
+
+      const radius = parseInt(brushRadius.value);
+      const mode = paintMode.value;
+
+      // Determine color based on mode
+      let color;
+      if (mode === 'trees') {
+        color = 'rgba(100, 200, 100, 0.4)';
+      } else {
+        const type = featureType.value;
+        switch (type) {
+          case 'forest': color = 'rgba(30, 74, 40, 0.4)'; break;
+          case 'brush': color = 'rgba(58, 106, 42, 0.4)'; break;
+          case 'water': color = 'rgba(30, 90, 140, 0.4)'; break;
+          default: color = 'rgba(100, 100, 100, 0.4)';
+        }
+      }
+
+      // Draw filled circle preview
+      previewCtx.fillStyle = color;
+      previewCtx.beginPath();
+      previewCtx.arc(x, y, radius, 0, Math.PI * 2);
+      previewCtx.fill();
+
+      // Draw outline
+      previewCtx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+      previewCtx.lineWidth = 2;
+      previewCtx.beginPath();
+      previewCtx.arc(x, y, radius, 0, Math.PI * 2);
+      previewCtx.stroke();
+
+      // Draw center crosshair
+      previewCtx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+      previewCtx.lineWidth = 1;
+      previewCtx.beginPath();
+      previewCtx.moveTo(x - 5, y);
+      previewCtx.lineTo(x + 5, y);
+      previewCtx.moveTo(x, y - 5);
+      previewCtx.lineTo(x, y + 5);
+      previewCtx.stroke();
+    }
+
+    // Paint at position (used by click and drag)
+    function paintAt(x, y) {
+      if (paintMode.value === 'select') return;
+
+      if (paintMode.value === 'trees') {
+        paintTrees(terrainMap, treeType.value, x, y, parseInt(brushRadius.value), {
+          density: parseInt(treeDensity.value),
+          minAge: minAge.value,
+          maxAge: maxAge.value,
+          intensity: parseFloat(intensity.value),
+          falloff: falloff.value
+        });
+      } else {
+        paint(terrainMap, featureType.value, x, y, parseInt(brushRadius.value), {
+          intensity: parseFloat(intensity.value),
+          falloff: falloff.value
+        });
+      }
+    }
+
+    // Handle mouse down - start painting
+    baseCanvas.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return; // Left button only
+
+      const rect = baseCanvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      if (paintMode.value === 'select') {
+        // Selection mode - find stroke at click position
+        const strokes = getStrokesAt(terrainMap, x, y);
+        if (strokes.length > 0) {
+          selectedStroke = strokes[strokes.length - 1];
+          const type = selectedStroke.treeType || selectedStroke.type;
+          selectedInfo.textContent = `${type} (r=${selectedStroke.radius})`;
+        } else {
+          selectedStroke = null;
+          selectedInfo.textContent = 'None';
+        }
+        render();
+      } else {
+        // Start painting
+        isPainting = true;
+        lastPaintPos = { x, y };
+        paintAt(x, y);
+        render();
+      }
+    });
+
+    // Handle mouse up - stop painting
+    baseCanvas.addEventListener('mouseup', () => {
+      isPainting = false;
+      lastPaintPos = null;
+    });
+
+    // Handle mouse leave - stop painting
+    baseCanvas.addEventListener('mouseleave', () => {
+      isPainting = false;
+      lastPaintPos = null;
+      previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+    });
+
+    // Handle right-click - erase
+    baseCanvas.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const rect = baseCanvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      erase(terrainMap, x, y, parseInt(brushRadius.value));
+      render();
+    });
+
+    // Handle mouse move - show info, brush preview, and drag paint
+    baseCanvas.addEventListener('mousemove', (e) => {
+      const rect = baseCanvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      currentMousePos = { x, y };
+      mousePos.textContent = `${Math.round(x)}, ${Math.round(y)}`;
+
+      // Draw brush preview
+      drawBrushPreview(x, y);
+
+      // Drag painting
+      if (isPainting && lastPaintPos) {
+        const dx = x - lastPaintPos.x;
+        const dy = y - lastPaintPos.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist >= PAINT_SPACING) {
+          paintAt(x, y);
+          lastPaintPos = { x, y };
+          render();
+        }
+      }
+
+      const coords = getGridCoords(terrainMap, x, y);
+      if (coords) {
+        cellPos.textContent = `[${coords.row}, ${coords.col}]`;
+
+        const cell = getCellData(terrainMap, x, y);
+        forestCov.textContent = `${Math.round(cell.forest * 100)}%`;
+        brushCov.textContent = `${Math.round(cell.brush * 100)}%`;
+        waterCov.textContent = `${Math.round(cell.water * 100)}%`;
+        speedMod.textContent = `${Math.round(cell.speedMod * 100)}%`;
+        coverBonus.textContent = `${Math.round(cell.coverBonus * 100)}%`;
+      }
+    });
+
+    // Clear button
+    clearBtn.addEventListener('click', () => {
+      terrainMap.strokes = [];
+      terrainMap.dirty = true;
+      selectedStroke = null;
+      selectedInfo.textContent = 'None';
+      render();
+    });
+
+    // Export PNG button
+    document.getElementById('exportBtn').addEventListener('click', () => {
+      // Create combined canvas
+      const exportCanvas = document.createElement('canvas');
+      exportCanvas.width = baseCanvas.width;
+      exportCanvas.height = baseCanvas.height;
+      const exportCtx = exportCanvas.getContext('2d');
+
+      // Draw base layer
+      exportCtx.drawImage(baseCanvas, 0, 0);
+      // Draw canopy layer
+      exportCtx.drawImage(canopyCanvas, 0, 0);
+
+      // Download
+      const link = document.createElement('a');
+      link.download = 'terrain.png';
+      link.href = exportCanvas.toDataURL('image/png');
+      link.click();
+    });
+
+    // Save JSON button
+    document.getElementById('saveBtn').addEventListener('click', () => {
+      const data = {
+        version: 1,
+        baseLayer: terrainMap.baseLayer,
+        gridWidth: terrainMap.gridWidth,
+        gridHeight: terrainMap.gridHeight,
+        cellSize: terrainMap.cellSize,
+        strokes: terrainMap.strokes
+      };
+
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const link = document.createElement('a');
+      link.download = 'terrain.json';
+      link.href = URL.createObjectURL(blob);
+      link.click();
+    });
+
+    // Load JSON button
+    const loadFile = document.getElementById('loadFile');
+    document.getElementById('loadBtn').addEventListener('click', () => {
+      loadFile.click();
+    });
+
+    loadFile.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const data = JSON.parse(event.target.result);
+
+          // Restore terrain map
+          terrainMap.baseLayer = data.baseLayer || 'grass';
+          terrainMap.strokes = data.strokes || [];
+          terrainMap.dirty = true;
+
+          // Update ground type selector
+          groundType.value = terrainMap.baseLayer;
+
+          // Clear selection
+          selectedStroke = null;
+          selectedInfo.textContent = 'None';
+
+          render();
+          console.log('Loaded terrain with', terrainMap.strokes.length, 'strokes');
+        } catch (err) {
+          console.error('Failed to load terrain:', err);
+          alert('Failed to load terrain file: ' + err.message);
+        }
+      };
+      reader.readAsText(file);
+
+      // Reset file input
+      loadFile.value = '';
+    });
+
+    // Wait for images to load, then render
+    Promise.all(imagePromises).then(() => {
+      console.log('Images loaded:', Object.keys(canopyImages));
+      render();
+    });
+  </script>
+</body>
+</html>

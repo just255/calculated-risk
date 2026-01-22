@@ -8518,6 +8518,33 @@
       color: var(--text-secondary);
     }
 
+    .endless-hp-bar {
+      width: 140px;
+      height: 18px;
+      background: rgba(0,0,0,0.5);
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+
+    .endless-hp-fill {
+      height: 100%;
+      background: linear-gradient(to right, #ff4444, #ff8844);
+      transition: width 0.2s;
+    }
+
+    .endless-hp-text {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 0.65rem;
+      font-weight: bold;
+      text-shadow: 1px 1px 2px black;
+      white-space: nowrap;
+    }
+
     .score-display {
       font-weight: 700;
       font-size: 1rem;

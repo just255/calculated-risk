@@ -3,6 +3,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { State, SubState, HQTab, H2H_BUDGET, CAMPAIGN_HERO_UNITS, UNITS, ZoneOwner, ScenarioType, Biome, BIOME_TERRAIN } from './constants.js';
+import { WorldBuilder } from './world-builder/index.js';
 
 export const Game = {
   state: State.MENU,
@@ -1242,4 +1243,123 @@ export function newEndlessRun() {
     // Battle state (during combat)
     battle: null          // Active battle instance
   };
+}
+
+// Endless battle factory - creates a battle instance for endless mode
+export function newEndlessBattle(loadout, wave = 1) {
+  const CELL_SIZE = 64;
+
+  // Map size scales slightly with wave (bigger arenas later)
+  const baseSize = 16;
+  const sizeBonus = Math.min(8, Math.floor(wave / 5));
+  const gridWidth = baseSize + sizeBonus;
+  const gridHeight = baseSize + sizeBonus;
+  const mapWidth = gridWidth * CELL_SIZE;
+  const mapHeight = gridHeight * CELL_SIZE;
+
+  // Generate terrain (pass seed from Game.endless if available)
+  const seed = Game.endless?.seed || null;
+  const terrain = generateEndlessTerrain(gridWidth, gridHeight, wave, seed);
+
+  // Hero starts at bottom center
+  const heroX = mapWidth / 2;
+  const heroY = mapHeight - CELL_SIZE * 3;
+
+  // Get vehicle stats from loadout
+  const vehicleId = loadout?.vehicle || 'abrams';
+  const vehicleDef = UNITS.find(u => u.id === vehicleId);
+
+  // Default hero stats (tank-like)
+  const heroStats = {
+    hp: vehicleDef?.hp || 200,
+    speed: vehicleDef?.speed || 120,
+    damage: vehicleDef?.damage || 40,
+    fireRate: vehicleDef?.fireRate || 1500
+  };
+
+  return {
+    // Mode identifier
+    mode: 'endless',
+
+    // Cell/grid config
+    cellSize: CELL_SIZE,
+    gridWidth,
+    gridHeight,
+
+    // Map size in pixels
+    mapWidth,
+    mapHeight,
+
+    // Terrain
+    terrain,
+
+    // Camera - start centered on hero
+    camera: { x: 0, y: heroY - 300, lookX: 0, lookY: 0 },
+
+    // Hero (player's tank)
+    hero: {
+      x: heroX,
+      y: heroY,
+      angle: -Math.PI / 2,  // Face UP (north)
+      hp: heroStats.hp,
+      maxHp: heroStats.hp,
+      speed: heroStats.speed,
+      damage: heroStats.damage,
+      fireRate: heroStats.fireRate,
+      lastShot: 0,
+      unitId: vehicleId,
+      variantId: loadout?.variant || 'default',
+      isHero: true,
+      animId: `hero-${vehicleId}-${Date.now()}`,
+      isMoving: false,
+      lastX: heroX,
+      lastY: heroY,
+      hullAngle: -Math.PI / 2,
+      targetHullAngle: -Math.PI / 2
+    },
+
+    // No support units in endless (solo run)
+    units: [],
+
+    // Input state
+    keys: { w: false, a: false, s: false, d: false },
+    mouse: { x: 0, y: 0, down: false },
+    joystickInput: null,  // { moveX, moveY, aimX, aimY }
+    aimAngle: null,       // Direct aim angle from joystick
+
+    // Enemies
+    enemies: [],
+    enemiesRemaining: 0,
+    enemiesSpawned: 0,
+
+    // Projectiles & Effects
+    projectiles: [],
+    effects: [],
+
+    // Wave tracking
+    wave,
+    waveStartTime: Date.now(),
+    waveComplete: false,
+
+    // Result
+    result: null,  // null | 'victory' | 'defeat'
+    kills: 0,
+
+    // Command UI feedback
+    commandFeedback: null
+  };
+}
+
+// Generate terrain for endless battles using WorldBuilder
+function generateEndlessTerrain(width, height, wave, seed = null) {
+  // Combine seed with wave for unique terrain per wave while keeping determinism
+  const waveSeed = seed ? `${seed}-wave-${wave}` : null;
+
+  return WorldBuilder.generate({
+    mode: 'endless',
+    width,
+    height,
+    wave,
+    seed: waveSeed
+  });
 }

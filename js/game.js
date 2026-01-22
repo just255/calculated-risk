@@ -3,7 +3,8 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { State, SubState, HQTab, UNITS, ENEMIES, getTypeMultiplier, UNIT_COSTS, H2H_BUDGET, PROJECTILES, UNIT_PROJECTILES, UNIT_COMBAT_STATS, getTerrainSVG, getStanceModifier, getEnemyStance, ZoneOwner, ScenarioType, SHADOW_CONFIG } from './constants.js';
-import { Game, newBattle, newH2H, newCampaign, newCampaignBattle } from './state.js';
+import { renderBaseTerrainToCanvas, renderCanopyToCanvas } from './world-builder/terrain-renderer.js';
+import { Game, newBattle, newH2H, newCampaign, newCampaignBattle, newEndlessBattle } from './state.js';
 import { sound } from './audio.js';
 import { save } from './storage.js';
 import { render, setSubState, getCustomizedSvg, getCustomizedSvgFrames, getEntitySvg, getEntitySvgFrames, drawCommandUI, getUnitVisual, getUnitShadow } from './ui.js';
@@ -536,27 +537,22 @@ export function goto(newState, data = {}) {
       break;
 
     case State.ENDLESS_BATTLE:
-      // TODO: Initialize endless battle with hero combat
+      // Initialize endless battle (wave is already set by the action that triggered this)
+      if (Game.endless && !Game.endless.battle) {
+        Game.endless.battle = newEndlessBattle(Game.endless.loadout, Game.endless.wave);
+        console.log('[game] Created endless battle for wave', Game.endless.wave);
+      }
       render();
-      // For now, just go to between-wave screen after a delay (placeholder)
-      setTimeout(() => {
-        if (Game.state === State.ENDLESS_BATTLE && Game.endless) {
-          // Simulate wave complete
-          Game.endless.kills += Math.floor(Math.random() * 10) + 5;
-          Game.endless.score += Game.endless.kills * 100;
-          Game.endless.loot.scrap += Math.floor(Math.random() * 50) + 20;
-          goto(State.ENDLESS_BETWEEN);
-        }
-      }, 2000);
+      startEndlessLoop();
       break;
 
     case State.ENDLESS_BETWEEN:
-      stopLoop();
+      stopEndlessLoop();
       render();
       break;
 
     case State.ENDLESS_RESULT:
-      stopLoop();
+      stopEndlessLoop();
       render();
       break;
 
@@ -2019,6 +2015,392 @@ function campaignLoop(t) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// ENDLESS BATTLE LOOP
+// ═══════════════════════════════════════════════════════════════
+
+let endlessLoopId = null;
+let endlessLastT = 0;
+
+function startEndlessLoop() {
+  if (endlessLoopId) return;
+
+  const b = Game.endless?.battle;
+  if (b) {
+    // Spawn initial enemies
+    spawnEndlessWave(b);
+  }
+
+  endlessLastT = performance.now();
+  endlessLoopId = requestAnimationFrame(endlessLoop);
+}
+
+function stopEndlessLoop() {
+  if (endlessLoopId) {
+    cancelAnimationFrame(endlessLoopId);
+    endlessLoopId = null;
+  }
+}
+
+function endlessLoop(t) {
+  if (Game.state !== State.ENDLESS_BATTLE) {
+    endlessLoopId = null;
+    return;
+  }
+
+  const dt = t - endlessLastT;
+  endlessLastT = t;
+
+  updateEndlessBattle(dt);
+  drawEndlessBattle();
+
+  endlessLoopId = requestAnimationFrame(endlessLoop);
+}
+
+// Update endless battle (reuses campaign battle logic)
+function updateEndlessBattle(dt) {
+  const b = Game.endless?.battle;
+  if (!b || b.result) return;
+
+  const dtSec = dt / 1000;
+  const now = Date.now();
+
+  // --- HERO MOVEMENT (Tank Controls) ---
+  const hero = b.hero;
+
+  const hullTurnRate = VEHICLE_TURN_RATES.tank.hull;
+  const turretTurnRate = VEHICLE_TURN_RATES.tank.turret;
+
+  // Parse input from keyboard/joystick
+  const { moveInput, turnInput, targetHullAngle } = parseTankInput(b.keys, b.joystickInput, hero.hullAngle);
+
+  // Apply tank movement
+  const { dx, dy, isMoving } = applyTankMovement(hero, moveInput, turnInput, targetHullAngle, hullTurnRate, dtSec);
+
+  // Get terrain speed modifier
+  const speedMod = getTerrainSpeedMod(b, hero.x, hero.y);
+
+  // Calculate new position
+  const newX = hero.x + dx * hero.speed * speedMod * dtSec;
+  const newY = hero.y + dy * hero.speed * speedMod * dtSec;
+
+  // Check terrain collision
+  if (!isTerrainBlocked(b, newX, hero.y)) {
+    hero.x = newX;
+  }
+  if (!isTerrainBlocked(b, hero.x, newY)) {
+    hero.y = newY;
+  }
+
+  // Clamp to map bounds
+  hero.x = Math.max(30, Math.min(b.mapWidth - 30, hero.x));
+  hero.y = Math.max(30, Math.min(b.mapHeight - 30, hero.y));
+
+  // Update movement animation
+  if (useCanvasRendering && hero.animId) {
+    if (isMoving !== hero.isMoving) {
+      hero.isMoving = isMoving;
+      sprites.setUnitAnimTrigger(hero.animId, isMoving ? 'move' : 'idle');
+    }
+    hero.lastX = hero.x;
+    hero.lastY = hero.y;
+  }
+
+  // --- AIMING ---
+  let targetAimAngle;
+  if (b.aimAngle !== null && b.aimAngle !== undefined) {
+    targetAimAngle = b.aimAngle;
+  } else {
+    targetAimAngle = calculateAimAngle(hero, b.mouse, b.camera);
+  }
+
+  // Apply turret aiming
+  applyTurretAim(hero, targetAimAngle, turretTurnRate, dtSec);
+
+  // Update aim angle for animation
+  if (useCanvasRendering && hero.animId) {
+    const relativeAim = hero.angle - hero.hullAngle;
+    sprites.setUnitAimAngle(hero.animId, relativeAim * 180 / Math.PI);
+  }
+
+  // --- HERO SHOOTING ---
+  let aimDiff = hero.angle - targetAimAngle;
+  while (aimDiff > Math.PI) aimDiff -= Math.PI * 2;
+  while (aimDiff < -Math.PI) aimDiff += Math.PI * 2;
+  const turretAligned = Math.abs(aimDiff) < 0.17;
+
+  if (b.mouse.down && turretAligned && now - hero.lastShot > hero.fireRate) {
+    hero.lastShot = now;
+
+    const projSpeed = 500;
+    b.projectiles.push({
+      x: hero.x,
+      y: hero.y,
+      vx: Math.cos(hero.angle) * projSpeed,
+      vy: Math.sin(hero.angle) * projSpeed,
+      damage: hero.damage,
+      owner: 'player',
+      type: 'bullet'
+    });
+
+    if (useCanvasRendering && hero.animId) {
+      sprites.triggerUnitAnim(hero.animId, 'fire');
+    }
+
+    sound('shoot');
+  }
+
+  // --- UPDATE CAMERA ---
+  const screenW = 800;
+  const screenH = 600;
+
+  const lookAheadDist = 80;
+  let lookX = 0, lookY = 0;
+
+  if (dx !== 0 || dy !== 0) {
+    lookX = dx * lookAheadDist;
+    lookY = dy * lookAheadDist;
+  } else if (b.mouse.down) {
+    lookX = Math.cos(hero.angle) * lookAheadDist * 0.5;
+    lookY = Math.sin(hero.angle) * lookAheadDist * 0.5;
+  }
+
+  if (!b.camera.lookX) b.camera.lookX = 0;
+  if (!b.camera.lookY) b.camera.lookY = 0;
+  const lookSmooth = 0.08;
+  b.camera.lookX += (lookX - b.camera.lookX) * lookSmooth;
+  b.camera.lookY += (lookY - b.camera.lookY) * lookSmooth;
+
+  const targetX = hero.x + b.camera.lookX - screenW / 2;
+  const targetY = hero.y + b.camera.lookY - screenH * 0.75;
+  b.camera.x = Math.max(0, Math.min(b.mapWidth - screenW, targetX));
+  b.camera.y = Math.max(0, Math.min(b.mapHeight - screenH, targetY));
+
+  // --- UPDATE ENEMIES ---
+  b.enemies.forEach(e => {
+    if (e.dead) return;
+
+    // Simple AI: move toward hero and shoot
+    const dx = hero.x - e.x;
+    const dy = hero.y - e.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist > 150) {
+      // Move toward hero
+      const moveSpeed = e.speed || 60;
+      e.x += (dx / dist) * moveSpeed * dtSec;
+      e.y += (dy / dist) * moveSpeed * dtSec;
+    }
+
+    // Face hero
+    e.angle = Math.atan2(dy, dx);
+
+    // Shoot at hero
+    if (dist < 400 && now - (e.lastShot || 0) > (e.fireRate || 2000)) {
+      e.lastShot = now;
+
+      b.projectiles.push({
+        x: e.x,
+        y: e.y,
+        vx: Math.cos(e.angle) * 300,
+        vy: Math.sin(e.angle) * 300,
+        damage: e.damage || 10,
+        owner: 'enemy',
+        type: 'bullet'
+      });
+    }
+  });
+
+  // --- UPDATE PROJECTILES ---
+  b.projectiles.forEach(p => {
+    p.x += p.vx * dtSec;
+    p.y += p.vy * dtSec;
+
+    // Check bounds
+    if (p.x < 0 || p.x > b.mapWidth || p.y < 0 || p.y > b.mapHeight) {
+      p.dead = true;
+      return;
+    }
+
+    // Check collision
+    if (p.owner === 'player') {
+      // Hit enemies
+      b.enemies.forEach(e => {
+        if (e.dead || p.dead) return;
+        const dx = p.x - e.x;
+        const dy = p.y - e.y;
+        if (dx * dx + dy * dy < 400) {  // ~20px radius
+          e.hp -= p.damage;
+          p.dead = true;
+          if (e.hp <= 0) {
+            e.dead = true;
+            b.kills++;
+            Game.endless.kills++;
+            Game.endless.score += 100;
+            Game.endless.loot.scrap += 5 + Math.floor(Math.random() * 10);
+          }
+        }
+      });
+    } else {
+      // Hit hero
+      const dx = p.x - hero.x;
+      const dy = p.y - hero.y;
+      if (dx * dx + dy * dy < 625) {  // ~25px radius
+        hero.hp -= p.damage;
+        p.dead = true;
+
+        if (useCanvasRendering && hero.animId) {
+          sprites.triggerUnitAnim(hero.animId, 'hit');
+        }
+
+        if (hero.hp <= 0) {
+          hero.hp = 0;
+          b.result = 'defeat';
+          Game.endless.result = 'death';
+          Game.endless.exitWave = Game.endless.wave;
+          goto(State.ENDLESS_RESULT);
+        }
+      }
+    }
+  });
+
+  // Remove dead projectiles
+  b.projectiles = b.projectiles.filter(p => !p.dead);
+
+  // --- CHECK WAVE COMPLETE ---
+  const aliveEnemies = b.enemies.filter(e => !e.dead).length;
+  if (aliveEnemies === 0 && b.enemiesRemaining <= 0 && !b.waveComplete) {
+    b.waveComplete = true;
+
+    // Short delay then go to between screen
+    setTimeout(() => {
+      if (Game.state === State.ENDLESS_BATTLE) {
+        Game.endless.battle = null;  // Clear battle for next wave
+        goto(State.ENDLESS_BETWEEN);
+      }
+    }, 1500);
+  }
+}
+
+// Spawn enemies for endless wave
+function spawnEndlessWave(b) {
+  const wave = b.wave;
+  const CELL_SIZE = b.cellSize;
+
+  // Enemy count scales with wave
+  const baseCount = 3;
+  const waveBonus = Math.floor(wave * 1.5);
+  const enemyCount = baseCount + waveBonus;
+
+  b.enemiesRemaining = enemyCount;
+
+  // Spawn enemies at top of map
+  for (let i = 0; i < enemyCount; i++) {
+    const spawnX = CELL_SIZE * 2 + Math.random() * (b.mapWidth - CELL_SIZE * 4);
+    const spawnY = CELL_SIZE * 2 + Math.random() * CELL_SIZE * 3;
+
+    // Vary enemy types by wave
+    let enemyType = 'grunt';
+    if (wave >= 3 && Math.random() < 0.3) enemyType = 'heavy';
+    if (wave >= 5 && Math.random() < 0.15) enemyType = 'elite';
+
+    const enemyDef = ENEMIES.find(e => e.type === enemyType) || ENEMIES[0];
+
+    b.enemies.push({
+      id: `enemy_${i}_${Date.now()}`,
+      type: enemyType,
+      x: spawnX,
+      y: spawnY,
+      hp: enemyDef.hp * (1 + wave * 0.1),  // Scale HP with wave
+      maxHp: enemyDef.hp * (1 + wave * 0.1),
+      damage: enemyDef.damage,
+      speed: enemyDef.speed,
+      fireRate: 2000,
+      angle: Math.PI / 2,  // Face down (toward player)
+      lastShot: 0,
+      dead: false
+    });
+  }
+
+  b.enemiesRemaining = 0;  // All spawned immediately for now
+}
+
+// Draw endless battle - uses shared hero battle rendering
+function drawEndlessBattle() {
+  const b = Game.endless?.battle;
+  if (!b) return;
+
+  const bf = document.querySelector('.endless-battlefield');
+  if (!bf) return;
+
+  // Use shared drawing function
+  drawHeroBattle(bf, b);
+
+  // Endless-specific HUD updates
+  const hpBar = document.querySelector('.endless-hp-fill');
+  if (hpBar) {
+    hpBar.style.width = `${(b.hero.hp / b.hero.maxHp) * 100}%`;
+  }
+
+  const hpText = document.querySelector('.endless-hp-text');
+  if (hpText) {
+    hpText.textContent = `${Math.ceil(b.hero.hp)} / ${b.hero.maxHp}`;
+  }
+
+  const waveEl = document.querySelector('.wave-display');
+  const killsEl = document.querySelector('.kills-display');
+  const scoreEl = document.querySelector('.score-display');
+
+  if (waveEl) waveEl.textContent = `Wave ${Game.endless.wave}`;
+  if (killsEl) killsEl.textContent = `Kills: ${Game.endless.kills}`;
+  if (scoreEl) scoreEl.textContent = Game.endless.score.toLocaleString();
+}
+
+// Endless input handlers
+export function endlessKeyDown(key) {
+  const b = Game.endless?.battle;
+  if (!b) return;
+
+  const k = key.toLowerCase();
+  if (k === 'w' || k === 'arrowup') b.keys.w = true;
+  if (k === 'a' || k === 'arrowleft') b.keys.a = true;
+  if (k === 's' || k === 'arrowdown') b.keys.s = true;
+  if (k === 'd' || k === 'arrowright') b.keys.d = true;
+}
+
+export function endlessKeyUp(key) {
+  const b = Game.endless?.battle;
+  if (!b) return;
+
+  const k = key.toLowerCase();
+  if (k === 'w' || k === 'arrowup') b.keys.w = false;
+  if (k === 'a' || k === 'arrowleft') b.keys.a = false;
+  if (k === 's' || k === 'arrowdown') b.keys.s = false;
+  if (k === 'd' || k === 'arrowright') b.keys.d = false;
+}
+
+export function endlessMouseMove(x, y) {
+  const b = Game.endless?.battle;
+  if (!b) return;
+
+  b.mouse.x = x;
+  b.mouse.y = y;
+}
+
+export function endlessMouseDown() {
+  const b = Game.endless?.battle;
+  if (!b) return;
+
+  b.mouse.down = true;
+}
+
+export function endlessMouseUp() {
+  const b = Game.endless?.battle;
+  if (!b) return;
+
+  b.mouse.down = false;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // ZONE BATTLE SYSTEM - Spawning, capture, and zone management
 // ═══════════════════════════════════════════════════════════════
 
@@ -2921,6 +3303,43 @@ function drawCampaignBattle() {
   const b = Game.campaign.heroBattle;
   if (!b) return;
 
+  // Use shared drawing function
+  drawHeroBattle(bf, b);
+
+  // Campaign-specific HUD updates
+  const hpBar = document.querySelector('.campaign-hp-fill');
+  if (hpBar) {
+    hpBar.style.width = `${(b.hero.hp / b.hero.maxHp) * 100}%`;
+  }
+
+  const hpText = document.querySelector('.campaign-hp-text');
+  if (hpText) {
+    hpText.textContent = `${Math.ceil(b.hero.hp)} / ${b.hero.maxHp}`;
+  }
+
+  const timerEl = document.querySelector('.campaign-timer');
+  if (timerEl) {
+    timerEl.textContent = `${Math.ceil(b.timer)}s`;
+  }
+
+  const killsEl = document.querySelector('.campaign-kills');
+  if (killsEl) {
+    killsEl.textContent = `Kills: ${b.kills}`;
+  }
+
+  // Draw zone-specific UI if this is a zone battle
+  if (b.scenario && b.zones) {
+    drawZoneUI(bf, b);
+  }
+
+  // Draw command feedback (squad commands)
+  drawCommandUI(bf, b);
+}
+
+// Shared hero battle rendering - used by campaign and endless modes
+function drawHeroBattle(bf, b) {
+  if (!bf || !b) return;
+
   const screenW = bf.offsetWidth;
   const screenH = bf.offsetHeight;
   const cellSize = b.cellSize;
@@ -2930,99 +3349,85 @@ function drawCampaignBattle() {
   b.camera.y = Math.max(0, Math.min(b.mapHeight - screenH, b.hero.y - screenH * 0.75));
 
   // Clear previous entities (but keep terrain if already drawn)
-  bf.querySelectorAll('.campaign-entity').forEach(el => el.remove());
+  bf.querySelectorAll('.battle-entity').forEach(el => el.remove());
 
-  // Ensure campaign canvas exists (may have been destroyed by render() call)
-  if (!campaignCanvas || !bf.contains(campaignCanvas)) {
-    setupCampaignCanvas();
+  // Setup canvas for animated sprites if needed
+  let canvas = bf.querySelector('.battle-canvas');
+  let ctx = null;
+  if (!canvas) {
+    canvas = document.createElement('canvas');
+    canvas.className = 'battle-canvas';
+    canvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10;';
+    canvas.width = screenW;
+    canvas.height = screenH;
+    bf.appendChild(canvas);
+  }
+  ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.clearRect(0, 0, screenW, screenH);
   }
 
-  // Clear campaign canvas for animated sprites
-  // Note: context is scaled by DPR, so use screenW/screenH (display size)
-  if (campaignCanvas && campaignCtx) {
-    campaignCtx.clearRect(0, 0, screenW, screenH);
-  }
-
-  // Draw terrain grid (only once, then cache)
-  if (!bf.querySelector('.campaign-terrain')) {
-    const terrainContainer = document.createElement('div');
-    terrainContainer.className = 'campaign-terrain';
-    terrainContainer.style.position = 'absolute';
-    terrainContainer.style.width = `${b.mapWidth}px`;
-    terrainContainer.style.height = `${b.mapHeight}px`;
-    terrainContainer.style.left = '0';
-    terrainContainer.style.top = '0';
-
-    // Draw each terrain cell with SVG graphics
-    for (let row = 0; row < b.gridHeight; row++) {
-      for (let col = 0; col < b.gridWidth; col++) {
-        const terrainType = b.terrain[row]?.[col] || 'open';
-        const cell = document.createElement('div');
-        cell.className = `campaign-cell terrain-${terrainType}`;
-        cell.style.position = 'absolute';
-        cell.style.left = `${col * cellSize}px`;
-        cell.style.top = `${row * cellSize}px`;
-        cell.style.width = `${cellSize}px`;
-        cell.style.height = `${cellSize}px`;
-        cell.style.boxSizing = 'border-box';
-
-        // Use SVG terrain tiles
-        cell.innerHTML = getTerrainSVG(terrainType, row, b.gridHeight);
-        terrainContainer.appendChild(cell);
-      }
-    }
-    bf.appendChild(terrainContainer);
+  // Draw base terrain layer (ground - below units)
+  let terrainCanvas = bf.querySelector('.terrain-canvas');
+  if (!terrainCanvas) {
+    // Pre-render base terrain to canvas once
+    const renderedTerrain = renderBaseTerrainToCanvas(b.terrain, cellSize);
+    renderedTerrain.className = 'terrain-canvas';
+    renderedTerrain.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none;z-index:1;';
+    bf.appendChild(renderedTerrain);
+    terrainCanvas = renderedTerrain;
   }
 
   // Update terrain position based on camera
-  const terrainEl = bf.querySelector('.campaign-terrain');
-  if (terrainEl) {
-    terrainEl.style.transform = `translate(${-b.camera.x}px, ${-b.camera.y}px)`;
+  if (terrainCanvas) {
+    terrainCanvas.style.transform = `translate(${-b.camera.x}px, ${-b.camera.y}px)`;
   }
 
-  // Draw player units
-  b.units.forEach(unit => {
-    const el = document.createElement('div');
-    const isSelected = b.squad?.selectedUnitId === unit.id;
-    el.className = `campaign-entity campaign-unit ${isSelected ? 'selected' : ''}`;
-    el.style.left = `${unit.x - b.camera.x - 20}px`;
-    el.style.top = `${unit.y - b.camera.y - 20}px`;
-    el.style.width = '40px';
-    el.style.height = '40px';
-    el.style.transform = `rotate(${unit.angle + Math.PI / 2}rad)`;
-    el.style.backgroundColor = isSelected ? '#7ab87a' : '#5a8a5a';
-    el.style.borderRadius = '5px';
-    el.style.border = isSelected ? '3px solid #4a9eff' : '2px solid #3a6a3a';
-    if (isSelected) {
-      el.style.boxShadow = '0 0 15px #4a9eff, 0 0 25px rgba(74, 158, 255, 0.5)';
-      el.style.animation = 'pulse-selected 1s ease-in-out infinite';
-    }
-    el.dataset.unitId = unit.unitId;
-    bf.appendChild(el);
-  });
+  // Draw player units (if any - endless mode has none)
+  if (b.units) {
+    b.units.forEach(unit => {
+      const el = document.createElement('div');
+      const isSelected = b.squad?.selectedUnitId === unit.id;
+      el.className = `battle-entity battle-unit ${isSelected ? 'selected' : ''}`;
+      el.style.position = 'absolute';
+      el.style.left = `${unit.x - b.camera.x - 20}px`;
+      el.style.top = `${unit.y - b.camera.y - 20}px`;
+      el.style.width = '40px';
+      el.style.height = '40px';
+      el.style.transform = `rotate(${unit.angle + Math.PI / 2}rad)`;
+      el.style.backgroundColor = isSelected ? '#7ab87a' : '#5a8a5a';
+      el.style.borderRadius = '5px';
+      el.style.border = isSelected ? '3px solid #4a9eff' : '2px solid #3a6a3a';
+      if (isSelected) {
+        el.style.boxShadow = '0 0 15px #4a9eff, 0 0 25px rgba(74, 158, 255, 0.5)';
+        el.style.animation = 'pulse-selected 1s ease-in-out infinite';
+      }
+      el.dataset.unitId = unit.unitId;
+      bf.appendChild(el);
+    });
+  }
 
   // Draw hero
   const hero = b.hero;
   const heroHasAnim = useCanvasRendering && hero.animId && sprites.hasAnimatedUnit(hero.animId);
 
-  if (heroHasAnim && campaignCtx) {
+  if (heroHasAnim && ctx) {
     // Render animated sprite on canvas
     const screenX = hero.x - b.camera.x;
     const screenY = hero.y - b.camera.y;
-    // Hull rotation is based on movement direction (hullAngle), not aim direction
-    // +90 degrees to align sprite (sprite default faces right, we want up to be 0)
     const hullRotation = (hero.hullAngle * 180 / Math.PI) + 90;
-    const scale = 0.5; // Scale to reasonable game size
-    sprites.renderAnimatedUnit(campaignCtx, hero.animId, screenX, screenY, hullRotation, scale);
+    const scale = 0.5;
+    sprites.renderAnimatedUnit(ctx, hero.animId, screenX, screenY, hullRotation, scale);
   } else {
     // Fallback to DOM rendering
     const heroEl = document.createElement('div');
-    heroEl.className = 'campaign-entity campaign-hero';
+    heroEl.className = 'battle-entity battle-hero';
+    heroEl.style.position = 'absolute';
     heroEl.style.left = `${hero.x - b.camera.x - 20}px`;
     heroEl.style.top = `${hero.y - b.camera.y - 20}px`;
     heroEl.style.width = '40px';
     heroEl.style.height = '40px';
-    heroEl.style.transform = `rotate(${hero.angle + Math.PI / 2}rad)`;
+    heroEl.style.transform = `rotate(${hero.hullAngle + Math.PI / 2}rad)`;
     heroEl.style.backgroundColor = '#4a9eff';
     heroEl.style.borderRadius = '5px';
     heroEl.style.border = '2px solid #fff';
@@ -3034,7 +3439,8 @@ function drawCampaignBattle() {
     if (e.dead) return;
 
     const el = document.createElement('div');
-    el.className = 'campaign-entity campaign-enemy';
+    el.className = 'battle-entity battle-enemy';
+    el.style.position = 'absolute';
     el.style.left = `${e.x - b.camera.x - 15}px`;
     el.style.top = `${e.y - b.camera.y - 15}px`;
     el.style.width = '30px';
@@ -3042,7 +3448,6 @@ function drawCampaignBattle() {
     el.style.backgroundColor = '#ff4444';
     el.style.borderRadius = '50%';
 
-    // Check if this is the concentrate target
     const isConcentrateTarget = b.squad?.concentrateTarget === e.id;
     if (isConcentrateTarget) {
       el.style.border = '3px solid #ffff00';
@@ -3055,10 +3460,10 @@ function drawCampaignBattle() {
     bf.appendChild(el);
   });
 
-  // Draw targeting mode indicator
+  // Draw targeting mode indicator (campaign only)
   if (b.commandMode === 'selectTarget') {
     const indicator = document.createElement('div');
-    indicator.className = 'campaign-entity targeting-indicator';
+    indicator.className = 'battle-entity targeting-indicator';
     indicator.style.position = 'fixed';
     indicator.style.top = '50%';
     indicator.style.left = '50%';
@@ -3078,43 +3483,36 @@ function drawCampaignBattle() {
   // Draw projectiles
   b.projectiles.forEach(p => {
     const el = document.createElement('div');
-    el.className = 'campaign-entity campaign-projectile';
+    el.className = 'battle-entity battle-projectile';
+    el.style.position = 'absolute';
     el.style.left = `${p.x - b.camera.x - 4}px`;
     el.style.top = `${p.y - b.camera.y - 4}px`;
     el.style.width = '8px';
     el.style.height = '8px';
-    el.style.backgroundColor = '#ffcc00';
+    el.style.backgroundColor = p.owner === 'player' ? '#ffcc00' : '#ff6666';
     el.style.borderRadius = '50%';
     el.style.boxShadow = '0 0 10px #ffcc00';
     bf.appendChild(el);
   });
 
-  // Update HUD
-  const hpBar = bf.querySelector('.campaign-hp-fill');
-  if (hpBar) {
-    hpBar.style.width = `${(hero.hp / hero.maxHP) * 100}%`;
+  // Draw canopy layer (forest/brush - above units)
+  let canopyCanvas = bf.querySelector('.canopy-canvas');
+  if (!canopyCanvas) {
+    // Pre-render canopy to canvas once
+    const renderedCanopy = renderCanopyToCanvas(b.terrain, cellSize);
+    renderedCanopy.className = 'canopy-canvas';
+    renderedCanopy.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none;z-index:100;';
+    bf.appendChild(renderedCanopy);
+    canopyCanvas = renderedCanopy;
   }
 
-  const timerEl = bf.querySelector('.campaign-timer');
-  if (timerEl) {
-    timerEl.textContent = `${Math.ceil(b.timer)}s`;
+  // Update canopy position based on camera
+  if (canopyCanvas) {
+    canopyCanvas.style.transform = `translate(${-b.camera.x}px, ${-b.camera.y}px)`;
   }
 
-  const killsEl = bf.querySelector('.campaign-kills');
-  if (killsEl) {
-    killsEl.textContent = `Kills: ${b.kills}`;
-  }
-
-  // Draw zone-specific UI if this is a zone battle
-  if (b.scenario && b.zones) {
-    drawZoneUI(bf, b);
-  }
-
-  // Draw minimap
+  // Draw minimap (shared across modes)
   drawMinimap(b);
-
-  // Draw command feedback
-  drawCommandUI(bf, b);
 }
 
 // Draw minimap showing terrain, units, and enemies

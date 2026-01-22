@@ -165,6 +165,7 @@ function menuHTML() {
           <button class="menu-btn secondary" data-action="settings">Settings</button>
           <button class="menu-btn secondary" data-action="stats">Statistics</button>
           <button class="menu-btn secondary" data-action="sprite-editor">Sprite Editor</button>
+          <button class="menu-btn secondary" data-action="terrain-editor">Terrain Editor</button>
         </div>
       </div>
       <div class="menu-version">v${GAME_VERSION}</div>
@@ -4312,10 +4313,19 @@ function endlessBattleHTML() {
   const e = Game.endless;
   if (!e) return '<div class="screen">Loading...</div>';
 
+  const b = e.battle;
+  const heroHp = b?.hero?.hp ?? 100;
+  const heroMaxHp = b?.hero?.maxHp ?? 100;
+  const hpPct = (heroHp / heroMaxHp) * 100;
+
   return `
     <div class="screen endless-battle-screen">
       <div class="endless-hud">
         <div class="hud-left">
+          <div class="endless-hp-bar">
+            <div class="endless-hp-fill" style="width: ${hpPct}%"></div>
+            <span class="endless-hp-text">${Math.ceil(heroHp)} / ${heroMaxHp}</span>
+          </div>
           <span class="wave-display">Wave ${e.wave}</span>
           <span class="kills-display">Kills: ${e.kills}</span>
         </div>

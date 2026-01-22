@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Terrain Editor - Calculated Risk</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+      overflow: hidden;
+      height: 100vh;
+    }
+
+    /* Layout */
+    .editor-container {
+      display: grid;
+      grid-template-columns: 60px 1fr 280px;
+      grid-template-rows: 48px 1fr 32px;
+      height: 100vh;
+    }
+
+    /* Header */
+    .header {
+      grid-column: 1 / -1;
+      background: #16213e;
+      border-bottom: 1px solid #0f3460;
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 16px;
+    }
+
+    .header h1 {
+      font-size: 18px;
+      font-weight: 500;
+      color: #e94560;
+      flex-shrink: 0;
+    }
+
+    .header #map-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 100px;
+      max-width: 400px;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 8px;
+      margin-left: auto;
+    }
+
+    .header-btn {
+      background: #0f3460;
+      border: 1px solid #1a1a2e;
+      color: #eee;
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    .header-btn:hover {
+      background: #1a4a7e;
+    }
+
+    /* Toolbar */
+    .toolbar {
+      background: #16213e;
+      border-right: 1px solid #0f3460;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .tool-btn {
+      width: 44px;
+      height: 44px;
+      background: #0f3460;
+      border: 2px solid transparent;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+    }
+
+    .tool-btn:hover {
+      background: #1a4a7e;
+    }
+
+    .tool-btn.active {
+      border-color: #e94560;
+      background: #1a4a7e;
+    }
+
+    .tool-btn[title]:hover::after {
+      content: attr(title);
+      position: absolute;
+      left: 56px;
+      background: #1a1a2e;
+      border: 1px solid #0f3460;
+      color: #e94560;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      white-space: nowrap;
+      z-index: 100;
+    }
+
+    .toolbar-divider {
+      height: 1px;
+      background: #0f3460;
+      margin: 8px 0;
+    }
+
+    /* Canvas Area */
+    .canvas-area {
+      background: #0d0d1a;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .canvas-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+
+    .canvas-container canvas {
+      display: block;
+    }
+
+    /* Properties Panel */
+    .properties {
+      background: #16213e;
+      border-left: 1px solid #0f3460;
+      padding: 16px;
+      overflow-y: auto;
+    }
+
+    .panel-section {
+      margin-bottom: 20px;
+    }
+
+    .panel-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #888;
+      margin-bottom: 12px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #0f3460;
+    }
+
+    .prop-row {
+      margin-bottom: 12px;
+    }
+
+    .prop-label {
+      display: block;
+      font-size: 12px;
+      color: #aaa;
+      margin-bottom: 4px;
+    }
+
+    .prop-input {
+      width: 100%;
+      background: #0f3460;
+      border: 1px solid #1a1a2e;
+      color: #eee;
+      padding: 8px;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+
+    .prop-input:focus {
+      outline: none;
+      border-color: #e94560;
+    }
+
+    .prop-select {
+      width: 100%;
+      background: #0f3460;
+      border: 1px solid #1a1a2e;
+      color: #eee;
+      padding: 8px;
+      border-radius: 4px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .prop-range {
+      width: 100%;
+      margin-top: 4px;
+    }
+
+    .prop-value {
+      float: right;
+      font-size: 12px;
+      color: #e94560;
+    }
+
+    /* Feature buttons */
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+
+    .feature-btn {
+      background: #0f3460;
+      border: 2px solid transparent;
+      color: #eee;
+      padding: 8px 4px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      text-align: center;
+    }
+
+    .feature-btn:hover {
+      background: #1a4a7e;
+    }
+
+    .feature-btn.active {
+      border-color: #e94560;
+    }
+
+    .feature-icon {
+      font-size: 18px;
+      display: block;
+      margin-bottom: 2px;
+    }
+
+    /* Tree type buttons */
+    .tree-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 4px;
+    }
+
+    .tree-btn {
+      background: #0f3460;
+      border: 2px solid transparent;
+      color: #eee;
+      padding: 6px 2px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 10px;
+      text-align: center;
+    }
+
+    .tree-btn:hover {
+      background: #1a4a7e;
+    }
+
+    .tree-btn.active {
+      border-color: #4ade80;
+    }
+
+    /* Status Bar */
+    .status-bar {
+      grid-column: 1 / -1;
+      background: #16213e;
+      border-top: 1px solid #0f3460;
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      font-size: 12px;
+      color: #888;
+      gap: 24px;
+    }
+
+    .status-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-value {
+      color: #e94560;
+    }
+
+    /* Keyboard shortcuts hint */
+    .shortcuts-hint {
+      margin-left: auto;
+      font-size: 11px;
+      color: #666;
+    }
+
+    kbd {
+      background: #0f3460;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: monospace;
+      margin: 0 2px;
+    }
+
+    /* Custom scrollbar styling */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #1a1a2e;
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #0f3460;
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #1a4a7e;
+    }
+
+    /* Firefox scrollbar */
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: #0f3460 #1a1a2e;
+    }
+  </style>
+</head>
+<body>
+  <div class="editor-container">
+    <!-- Header -->
+    <header class="header">
+      <h1>Terrain Editor</h1>
+      <span id="map-name">Untitled Map</span>
+      <div class="header-actions">
+        <button class="header-btn" id="btn-new">New</button>
+        <button class="header-btn" id="btn-load">Load</button>
+        <button class="header-btn" id="btn-save">Save</button>
+        <button class="header-btn" id="btn-export">Export PNG</button>
+      </div>
+    </header>
+
+    <!-- Toolbar -->
+    <aside class="toolbar">
+      <button class="tool-btn active" data-tool="paint" title="Paint (P)">🖌️</button>
+      <button class="tool-btn" data-tool="erase" title="Erase (E)">🧹</button>
+      <button class="tool-btn" data-tool="select" title="Select (V)">⬚</button>
+      <button class="tool-btn" data-tool="transform" title="Transform (T)">↔️</button>
+      <div class="toolbar-divider"></div>
+      <button class="tool-btn" data-tool="pan" title="Pan (Space+Drag)">✋</button>
+    </aside>
+
+    <!-- Canvas Area -->
+    <main class="canvas-area">
+      <div class="canvas-container" id="canvas-container">
+        <!-- Canvases injected by renderer -->
+      </div>
+    </main>
+
+    <!-- Properties Panel -->
+    <aside class="properties">
+      <!-- Brush Settings -->
+      <div class="panel-section">
+        <div class="panel-title">Brush</div>
+        <div class="prop-row">
+          <label class="prop-label">
+            Size <span class="prop-value" id="brush-size-val">60</span>
+          </label>
+          <input type="range" class="prop-range" id="brush-size" min="10" max="200" value="60">
+        </div>
+        <div class="prop-row">
+          <label class="prop-label">Falloff</label>
+          <select class="prop-select" id="falloff">
+            <option value="smooth">Smooth</option>
+            <option value="linear">Linear</option>
+            <option value="hard">Hard</option>
+          </select>
+        </div>
+        <div class="prop-row">
+          <label class="prop-label">
+            <input type="checkbox" id="clearing-mode"> Clearing Mode
+            <span style="font-size: 10px; opacity: 0.6">(remove trees)</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Feature Type -->
+      <div class="panel-section">
+        <div class="panel-title">Feature</div>
+        <div class="feature-grid">
+          <button class="feature-btn active" data-feature="forest">
+            <span class="feature-icon">🌲</span>
+            Forest
+          </button>
+          <button class="feature-btn" data-feature="brush">
+            <span class="feature-icon">🌿</span>
+            Brush
+          </button>
+          <button class="feature-btn" data-feature="water">
+            <span class="feature-icon">💧</span>
+            Water
+          </button>
+          <button class="feature-btn" data-feature="groundTexture">
+            <span class="feature-icon">🟫</span>
+            Ground
+          </button>
+        </div>
+      </div>
+
+      <!-- Ground Texture Settings (shown when ground selected) -->
+      <div class="panel-section" id="ground-settings" style="display: none;">
+        <div class="panel-title">Ground Texture</div>
+        <div class="prop-row">
+          <select class="prop-select" id="ground-texture-type">
+            <optgroup label="Grass">
+              <option value="grass-1" selected>Grass 1</option>
+              <option value="grass-2">Grass 2</option>
+              <option value="grass-3">Grass 3</option>
+              <option value="grass-4">Grass 4</option>
+            </optgroup>
+            <optgroup label="Dirt">
+              <option value="dirt-1">Dirt 1</option>
+              <option value="dirt-2">Dirt 2</option>
+              <option value="dirt-3">Dirt 3</option>
+              <option value="dirt-4">Dirt 4</option>
+            </optgroup>
+            <optgroup label="Other">
+              <option value="forest-floor">Forest Floor</option>
+              <option value="mud">Mud</option>
+              <option value="sand">Sand</option>
+            </optgroup>
+          </select>
+        </div>
+        <div class="prop-row">
+          <label class="prop-label">
+            Edge Fade <span class="prop-value" id="fade-width-val">12px</span>
+          </label>
+          <input type="range" class="prop-range" id="fade-width" min="0" max="48" value="12">
+        </div>
+      </div>
+
+      <!-- Auto Ground Texture Toggle (shown for forest) -->
+      <div class="panel-section" id="auto-ground-settings">
+        <div class="prop-row" style="display: flex; align-items: center; gap: 8px;">
+          <input type="checkbox" id="auto-ground-texture" checked>
+          <label for="auto-ground-texture" style="font-size: 12px; cursor: pointer;">Auto-paint forest floor</label>
+        </div>
+        <div class="prop-row">
+          <label class="prop-label">
+            Floor Extend <span class="prop-value" id="floor-extend-val">0px</span>
+          </label>
+          <input type="range" class="prop-range" id="floor-extend" min="-24" max="24" value="0">
+        </div>
+        <div class="prop-row">
+          <label class="prop-label">
+            Floor Fade <span class="prop-value" id="floor-fade-val">16px</span>
+          </label>
+          <input type="range" class="prop-range" id="floor-fade" min="0" max="48" value="16">
+        </div>
+      </div>
+
+      <!-- Water Settings (shown when water selected) -->
+      <div class="panel-section" id="water-settings" style="display: none;">
+        <div class="panel-title">Water Options</div>
+        <div class="prop-row">
+          <label class="prop-label">Water Texture</label>
+          <select class="prop-select" id="water-texture-type">
+            <option value="water" selected>Water</option>
+            <option value="water-deep">Deep Water</option>
+            <option value="water-shallow">Shallow Water</option>
+          </select>
+        </div>
+        <div class="prop-row">
+          <label class="prop-label">
+            Edge Fade <span class="prop-value" id="water-fade-width-val">12px</span>
+          </label>
+          <input type="range" class="prop-range" id="water-fade-width" min="0" max="48" value="12">
+        </div>
+        <div class="prop-row">
+          <label class="prop-label">Shore Texture</label>
+          <select class="prop-select" id="shore-texture-type">
+            <option value="none">None</option>
+            <option value="mud" selected>Mud</option>
+            <option value="sand">Sand</option>
+            <option value="dirt-1">Dirt</option>
+            <option value="grass-1">Grass</option>
+          </select>
+        </div>
+        <div class="prop-row">
+          <label class="prop-label">
+            Shore Width <span class="prop-value" id="shore-width-val">24px</span>
+          </label>
+          <input type="range" class="prop-range" id="shore-width" min="0" max="64" value="24">
+        </div>
+        <div class="prop-row">
+          <label class="prop-label">
+            <input type="checkbox" id="trees-in-water"> Allow trees in water
+          </label>
+        </div>
+      </div>
+
+      <!-- Tree Settings (shown when forest selected) -->
+      <div class="panel-section" id="tree-settings">
+        <!-- Presets -->
+        <div class="panel-title">Presets</div>
+        <div class="prop-row" style="display: flex; gap: 6px; margin-bottom: 16px;">
+          <select class="prop-select" id="preset-select" style="flex: 1;">
+            <optgroup label="Built-in">
+              <option value="temperate">Temperate Forest</option>
+              <option value="boreal">Boreal/Conifer</option>
+              <option value="wetland">Wetland</option>
+              <option value="mixed">Mixed Forest</option>
+              <option value="dead-forest">Dead Forest</option>
+              <option value="sparse-old">Sparse Old Growth</option>
+            </optgroup>
+            <optgroup label="Custom" id="custom-presets-group">
+            </optgroup>
+          </select>
+          <button class="header-btn" id="btn-load-preset" title="Load Preset" style="padding: 6px 10px;">Load</button>
+          <button class="header-btn" id="btn-save-preset" title="Save Current as Preset" style="padding: 6px 10px;">Save</button>
+          <button class="header-btn" id="btn-delete-preset" title="Delete Custom Preset" style="padding: 6px 8px; opacity: 0.6;">✕</button>
+        </div>
+
+        <div class="panel-title">Tree Types <span style="font-size: 10px; opacity: 0.6">(multi-select)</span></div>
+        <div class="tree-grid" style="grid-template-columns: repeat(4, 1fr); gap: 4px;">
+          <button class="tree-btn active" data-tree="oak">Oak</button>
+          <button class="tree-btn" data-tree="pine">Pine</button>
+          <button class="tree-btn" data-tree="birch">Birch</button>
+          <button class="tree-btn" data-tree="willow">Willow</button>
+          <button class="tree-btn" data-tree="oak-dead" style="opacity: 0.7;">☠ Oak</button>
+          <button class="tree-btn" data-tree="pine-dead" style="opacity: 0.7;">☠ Pine</button>
+          <button class="tree-btn" data-tree="birch-dead" style="opacity: 0.7;">☠ Birch</button>
+          <button class="tree-btn" data-tree="willow-dead" style="opacity: 0.7;">☠ Willow</button>
+        </div>
+        <!-- Ratio sliders (shown when multiple trees selected) -->
+        <div id="tree-ratios" style="display: none; margin-top: 8px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px;">
+          <div class="prop-label" style="margin-bottom: 6px; font-size: 11px;">Mix Ratios</div>
+          <div id="ratio-sliders"></div>
+        </div>
+        <div class="prop-row" style="margin-top: 12px;">
+          <label class="prop-label">
+            Scale <span class="prop-value" id="scale-val">8%</span>
+          </label>
+          <input type="range" class="prop-range" id="tree-scale" min="3" max="60" value="35">
+        </div>
+        <div class="prop-row">
+          <label class="prop-label">
+            Density <span class="prop-value" id="density-val">5</span>
+          </label>
+          <input type="range" class="prop-range" id="tree-density" min="1" max="15" value="5">
+        </div>
+        <div class="prop-row">
+          <label class="prop-label">Tree Ages <span style="font-size: 10px; opacity: 0.6">(multi-select)</span></label>
+          <div class="tree-grid" style="grid-template-columns: repeat(3, 1fr);">
+            <button class="tree-btn active" data-age="young">Young</button>
+            <button class="tree-btn active" data-age="transitional">Trans</button>
+            <button class="tree-btn active" data-age="old">Old</button>
+          </div>
+          <!-- Age ratio sliders (shown when multiple ages selected) -->
+          <div id="age-ratios" style="display: none; margin-top: 8px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px;">
+            <div class="prop-label" style="margin-bottom: 6px; font-size: 11px;">Age Mix</div>
+            <div id="age-ratio-sliders"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Ground Layer -->
+      <div class="panel-section">
+        <div class="panel-title">Ground Layer</div>
+        <select class="prop-select" id="base-layer">
+          <optgroup label="Grass">
+            <option value="grass-1" selected>Grass 1</option>
+            <option value="grass-2">Grass 2</option>
+            <option value="grass-3">Grass 3</option>
+            <option value="grass-4">Grass 4</option>
+          </optgroup>
+          <optgroup label="Dirt">
+            <option value="dirt-1">Dirt 1</option>
+            <option value="dirt-2">Dirt 2</option>
+            <option value="dirt-3">Dirt 3</option>
+            <option value="dirt-4">Dirt 4</option>
+          </optgroup>
+          <optgroup label="Other">
+            <option value="forest-floor">Forest Floor</option>
+            <option value="sand">Sand</option>
+            <option value="open">Open</option>
+          </optgroup>
+        </select>
+      </div>
+
+      <!-- View Settings -->
+      <div class="panel-section">
+        <div class="panel-title">View</div>
+        <div class="prop-row">
+          <label class="prop-label">
+            <input type="checkbox" id="show-grid" checked> Show Grid
+          </label>
+        </div>
+        <div class="prop-row">
+          <label class="prop-label">
+            Grid Opacity <span class="prop-value" id="grid-opacity-val">10%</span>
+          </label>
+          <input type="range" class="prop-range" id="grid-opacity" min="5" max="50" value="10">
+        </div>
+        <div class="prop-row">
+          <label class="prop-label">
+            <input type="checkbox" id="show-boundary" checked> Show Boundary
+          </label>
+        </div>
+      </div>
+
+      <!-- Map Settings -->
+      <div class="panel-section">
+        <div class="panel-title">Map Info</div>
+        <div class="prop-row">
+          <label class="prop-label">Name</label>
+          <input type="text" class="prop-input" id="map-name-input" value="Untitled Map">
+        </div>
+        <div class="prop-row">
+          <label class="prop-label">Grid Size</label>
+          <select class="prop-select" id="grid-size">
+            <option value="12">12 x 12 (Small)</option>
+            <option value="24" selected>24 x 24 (Medium)</option>
+            <option value="32">32 x 32 (Large)</option>
+            <option value="48">48 x 48 (XL)</option>
+            <option value="64">64 x 64 (Huge)</option>
+          </select>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Status Bar -->
+    <footer class="status-bar">
+      <div class="status-item">
+        <span>Zoom:</span>
+        <span class="status-value" id="zoom-level">100%</span>
+      </div>
+      <div class="status-item">
+        <span>Cursor:</span>
+        <span class="status-value" id="cursor-pos">0, 0</span>
+      </div>
+      <div class="status-item">
+        <span>Strokes:</span>
+        <span class="status-value" id="stroke-count">0</span>
+      </div>
+      <div class="shortcuts-hint">
+        <kbd>P</kbd> Paint
+        <kbd>E</kbd> Erase
+        <kbd>V</kbd> Select
+        <kbd>Scroll</kbd> Zoom
+        <kbd>Space+Drag</kbd> Pan
+        <kbd>Middle Mouse</kbd> Pan
+        <kbd>Ctrl+Z</kbd> Undo
+      </div>
+    </footer>
+  </div>
+
+  <!-- Hidden file input for loading -->
+  <input type="file" id="file-input" accept=".json" style="display: none;">
+
+  <script type="module" src="/js/terrain-editor/editor.js"></script>
+</body>
+</html>

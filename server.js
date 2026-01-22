@@ -158,6 +158,47 @@ app.get('/api/terrain', (req, res) => {
   res.json(gameObjects.terrain);
 });
 
+// GET /api/terrain/sprites - List available terrain sprite files
+app.get('/api/terrain/sprites', (req, res) => {
+  const treesDir = path.join(__dirname, 'sprites', 'terrain', 'trees');
+  const groundDir = path.join(__dirname, 'sprites', 'terrain', 'ground');
+
+  const result = {
+    trees: {},
+    ground: []
+  };
+
+  // Scan ground textures
+  if (fs.existsSync(groundDir)) {
+    fs.readdirSync(groundDir)
+      .filter(f => f.endsWith('.png'))
+      .forEach(f => {
+        const name = f.replace('.png', '').replace('terrain-', '');
+        result.ground.push(name);
+      });
+  }
+
+  // Scan tree sprites from resized/{type}/ folders
+  const resizedDir = path.join(treesDir, 'resized');
+  if (fs.existsSync(resizedDir)) {
+    const treeTypes = ['oak', 'pine', 'birch', 'willow'];
+    treeTypes.forEach(type => {
+      const typeDir = path.join(resizedDir, type);
+      if (fs.existsSync(typeDir)) {
+        fs.readdirSync(typeDir)
+          .filter(f => f.endsWith('.png'))
+          .forEach(f => {
+            // Format: oak-young-1.png -> key: oak-young-1
+            const key = f.replace('.png', '');
+            result.trees[key] = `/sprites/terrain/trees/resized/${type}/${f}`;
+          });
+      }
+    });
+  }
+
+  res.json(result);
+});
+
 // GET /api/objects/:type/:id/variants - List variants for an object
 app.get('/api/objects/:type/:id/variants', (req, res) => {
   const { type, id } = req.params;
@@ -1191,6 +1232,25 @@ app.post('/api/sprites/:unitId/:partType/:variant/publish', (req, res) => {
   } catch (err) {
     console.error('Publish failed:', err);
     res.status(500).json({ error: 'Failed to publish: ' + err.message });
+  }
+});
+
+// GET /api/terrain/tiles - List all PNG files in terrain folder
+app.get('/api/terrain/tiles', (req, res) => {
+  const terrainDir = path.join(__dirname, 'sprites', 'terrain');
+  ensureDir(terrainDir);
+
+  try {
+    const files = fs.readdirSync(terrainDir)
+      .filter(f => f.endsWith('.png'))
+      .map(f => ({
+        name: f.replace('.png', ''),
+        file: f,
+        path: `/sprites/terrain/${f}`
+      }));
+    res.json({ files });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
