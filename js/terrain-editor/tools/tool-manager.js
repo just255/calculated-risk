@@ -249,7 +249,7 @@ export class ToolManager {
     // Tool shortcuts
     const shortcuts = {
       'p': 'paint',
-      'e': 'erase',
+      'c': 'clear',
       'v': 'select',
       't': 'transform'
     };

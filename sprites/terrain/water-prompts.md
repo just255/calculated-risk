@@ -1,7 +1,5 @@
 # Water Texture Prompts (Seamless Pixel Art)
 
-Generate at 1024x1024 (or AI's native size), then resize to 512x512 in GIMP using NoHalo/LoHalo interpolation.
-
 **Structure:** 4 water types = 4 textures
 - **Types:** Calm Pond, Marsh/Swamp, River, Ocean
 - **Animation:** Code-based (UV scrolling, sine distortion) - no sprite sheets needed
@@ -124,10 +122,32 @@ Transparent PNG not needed - this is a solid fill texture.
 
 ## Post-Processing Notes
 
-1. Generate at AI native resolution
-2. Resize to 512x512 using NoHalo/LoHalo interpolation
-3. Test seamless tiling by placing copies edge-to-edge in GIMP
-4. Verify color palette matches specification
+### Step 1: Resize to 256x256
+Water textures are seamless tiles, so no trimming is needed. Use nearest-neighbor interpolation to preserve pixel art crispness.
+
+```bash
+# Resize with nearest-neighbor (point) filter
+magick input.png -filter point -resize 256x256 output.png
+```
+
+### Batch Processing
+```bash
+# Process all water textures
+for file in water-*.png; do
+    magick "$file" -filter point -resize 256x256 "resized/$file"
+done
+```
+
+### Quality Checklist
+1. **Use nearest-neighbor** - `-filter point` preserves hard pixel edges
+2. **Test seamless tiling** - Place copies edge-to-edge in GIMP/Photoshop
+3. **Verify color palette** - Should match the muted military tones specified
+4. **No trim needed** - Water fills entire frame, no transparent areas
+
+### Troubleshooting
+- **Blurry result**: Ensure `-filter point` is used, not default bicubic
+- **Visible seams**: Original wasn't truly seamless - regenerate
+- **Colors shifted**: Ensure PNG color profile is sRGB
 
 ## File Naming Convention
 

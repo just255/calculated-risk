@@ -7,6 +7,7 @@ import { createEditorState } from './state.js';
 import { createRenderer } from './renderer.js';
 import { createToolManager } from './tools/tool-manager.js';
 import { PaintTool } from './tools/paint-tool.js';
+import { ClearTool } from './tools/clear-tool.js';
 import { Events } from './events.js';
 import * as Presets from './presets.js';
 
@@ -41,7 +42,8 @@ class TerrainEditor {
     // Create tool manager and register tools
     this._toolManager = createToolManager(this._state, this._renderer);
     this._toolManager.register(PaintTool);
-    // TODO: Register erase, select, transform tools
+    this._toolManager.register(ClearTool);
+    // TODO: Register select, transform tools
     this._toolManager.attach(this._renderer.uiCanvas);
 
     // Bind UI events
@@ -76,7 +78,10 @@ class TerrainEditor {
       brushSize: document.getElementById('brush-size'),
       brushSizeVal: document.getElementById('brush-size-val'),
       falloff: document.getElementById('falloff'),
-      clearingMode: document.getElementById('clearing-mode'),
+
+      // Clear tool settings
+      clearSettings: document.getElementById('clear-settings'),
+      clearMode: document.getElementById('clear-mode'),
 
       // Feature buttons
       featureBtns: document.querySelectorAll('.feature-btn'),
@@ -118,6 +123,17 @@ class TerrainEditor {
       scaleVal: document.getElementById('scale-val'),
       treeDensity: document.getElementById('tree-density'),
       densityVal: document.getElementById('density-val'),
+
+      // Brush/Undergrowth settings
+      brushSettings: document.getElementById('brush-settings'),
+      brushTypeBtns: document.querySelectorAll('.brush-type-btn[data-brush]'),
+      brushRatiosContainer: document.getElementById('brush-ratios'),
+      brushRatioSliders: document.getElementById('brush-ratio-sliders'),
+      brushScale: document.getElementById('brush-scale'),
+      brushScaleVal: document.getElementById('brush-scale-val'),
+      brushDensity: document.getElementById('brush-density'),
+      brushDensityVal: document.getElementById('brush-density-val'),
+      brushInWater: document.getElementById('brush-in-water'),
 
       // Map settings
       baseLayer: document.getElementById('base-layer'),
@@ -164,10 +180,12 @@ class TerrainEditor {
       this._state.setToolOption('falloff', e.target.value);
     });
 
-    // Clearing mode
-    this._elements.clearingMode.addEventListener('change', (e) => {
-      this._state.setToolOption('clearingMode', e.target.checked);
-    });
+    // Clear mode (for clear tool)
+    if (this._elements.clearMode) {
+      this._elements.clearMode.addEventListener('change', (e) => {
+        this._state.setToolOption('clearMode', e.target.value);
+      });
+    }
 
     // Feature buttons
     this._elements.featureBtns.forEach(btn => {
@@ -180,6 +198,12 @@ class TerrainEditor {
         // Show/hide tree settings
         this._elements.treeSettings.style.display =
           feature === 'forest' ? 'block' : 'none';
+
+        // Show/hide brush settings
+        if (this._elements.brushSettings) {
+          this._elements.brushSettings.style.display =
+            feature === 'brush' ? 'block' : 'none';
+        }
 
         // Show/hide ground settings
         if (this._elements.groundSettings) {
@@ -321,6 +345,41 @@ class TerrainEditor {
       });
     });
 
+    // Brush type buttons (multi-select)
+    if (this._elements.brushTypeBtns) {
+      this._elements.brushTypeBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          btn.classList.toggle('active');
+          this._updateSelectedBrushTypes();
+        });
+      });
+    }
+
+    // Brush scale
+    if (this._elements.brushScale) {
+      this._elements.brushScale.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value) / 100;
+        this._state.setToolOption('brushScale', value);
+        this._elements.brushScaleVal.textContent = `${e.target.value}%`;
+      });
+    }
+
+    // Brush density
+    if (this._elements.brushDensity) {
+      this._elements.brushDensity.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value);
+        this._state.setToolOption('brushDensity', value);
+        this._elements.brushDensityVal.textContent = value;
+      });
+    }
+
+    // Brush in water toggle
+    if (this._elements.brushInWater) {
+      this._elements.brushInWater.addEventListener('change', (e) => {
+        this._state.setToolOption('brushInWater', e.target.checked);
+      });
+    }
+
     // Base layer
     this._elements.baseLayer.addEventListener('change', (e) => {
       this._state.baseLayer = e.target.value;
@@ -376,6 +435,11 @@ class TerrainEditor {
       this._elements.toolBtns.forEach(btn => {
         btn.classList.toggle('active', btn.dataset.tool === tool);
       });
+
+      // Show/hide clear settings panel
+      if (this._elements.clearSettings) {
+        this._elements.clearSettings.style.display = tool === 'clear' ? 'block' : 'none';
+      }
     });
 
     // Viewport changed
@@ -717,6 +781,120 @@ class TerrainEditor {
     } else if (this._elements.ageRatiosContainer) {
       this._elements.ageRatiosContainer.style.display = 'none';
     }
+  }
+
+  /**
+   * Update selected brush types and ratio UI
+   */
+  _updateSelectedBrushTypes() {
+    const selectedTypes = [];
+    this._elements.brushTypeBtns.forEach(b => {
+      if (b.classList.contains('active')) {
+        selectedTypes.push(b.dataset.brush);
+      }
+    });
+
+    // Ensure at least one is selected
+    if (selectedTypes.length === 0) {
+      const firstBtn = this._elements.brushTypeBtns[0];
+      firstBtn.classList.add('active');
+      selectedTypes.push(firstBtn.dataset.brush);
+    }
+
+    // Update state with selected types (equal ratios by default)
+    const ratios = {};
+    const equalRatio = 1 / selectedTypes.length;
+    selectedTypes.forEach(type => {
+      ratios[type] = equalRatio;
+    });
+
+    this._state.setToolOption('brushTypes', selectedTypes);
+    this._state.setToolOption('brushRatios', ratios);
+
+    // Show/hide ratio sliders
+    if (selectedTypes.length > 1 && this._elements.brushRatiosContainer) {
+      this._elements.brushRatiosContainer.style.display = 'block';
+      this._renderBrushRatioSliders(selectedTypes, ratios);
+    } else if (this._elements.brushRatiosContainer) {
+      this._elements.brushRatiosContainer.style.display = 'none';
+    }
+  }
+
+  /**
+   * Render ratio sliders for selected brush types
+   */
+  _renderBrushRatioSliders(types, ratios) {
+    const container = this._elements.brushRatioSliders;
+    if (!container) return;
+
+    const labels = {
+      'bush-small': 'Bush S',
+      'bush-large': 'Bush L',
+      'fern-small': 'Fern'
+    };
+
+    container.innerHTML = types.map(type => `
+      <div class="prop-row" style="margin-bottom: 4px;">
+        <label class="prop-label" style="font-size: 11px;">
+          ${labels[type] || type} <span class="brush-ratio-val" data-brush="${type}">${Math.round(ratios[type] * 100)}%</span>
+        </label>
+        <input type="range" class="prop-range brush-ratio-slider" data-brush="${type}"
+               min="0" max="100" value="${Math.round(ratios[type] * 100)}" style="height: 4px;">
+      </div>
+    `).join('');
+
+    // Add listeners to ratio sliders
+    container.querySelectorAll('.brush-ratio-slider').forEach(slider => {
+      slider.addEventListener('input', (e) => this._onBrushRatioChange(e, types));
+    });
+  }
+
+  /**
+   * Handle brush ratio slider change - adjust others so total stays at 100%
+   */
+  _onBrushRatioChange(e, types) {
+    const changedType = e.target.dataset.brush;
+    const newValue = parseInt(e.target.value) / 100;
+    const currentRatios = this._state.toolOptions.brushRatios || {};
+
+    // Calculate what others should sum to
+    const remaining = 1 - newValue;
+    const otherTypes = types.filter(t => t !== changedType);
+    const otherSum = otherTypes.reduce((sum, t) => sum + (currentRatios[t] || 0), 0);
+
+    // Distribute remaining proportionally among others
+    const newRatios = { [changedType]: newValue };
+    if (otherSum > 0 && remaining > 0) {
+      otherTypes.forEach(t => {
+        newRatios[t] = ((currentRatios[t] || 0) / otherSum) * remaining;
+      });
+    } else if (remaining > 0) {
+      // Equal split for others
+      const equalShare = remaining / otherTypes.length;
+      otherTypes.forEach(t => {
+        newRatios[t] = equalShare;
+      });
+    } else {
+      // Zero out others
+      otherTypes.forEach(t => {
+        newRatios[t] = 0;
+      });
+    }
+
+    this._state.setToolOption('brushRatios', newRatios);
+
+    // Update all sliders and labels
+    const container = this._elements.brushRatioSliders;
+    types.forEach(type => {
+      const slider = container.querySelector(`[data-brush="${type}"]`);
+      const label = container.querySelector(`.brush-ratio-val[data-brush="${type}"]`);
+      if (slider && type !== changedType) {
+        slider.value = Math.round(newRatios[type] * 100);
+      }
+      if (label) {
+        label.textContent = `${Math.round(newRatios[type] * 100)}%`;
+      }
+    });
   }
 
   /**

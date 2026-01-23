@@ -161,10 +161,12 @@ app.get('/api/terrain', (req, res) => {
 // GET /api/terrain/sprites - List available terrain sprite files
 app.get('/api/terrain/sprites', (req, res) => {
   const treesDir = path.join(__dirname, 'sprites', 'terrain', 'trees');
+  const brushDir = path.join(__dirname, 'sprites', 'terrain', 'brush');
   const groundDir = path.join(__dirname, 'sprites', 'terrain', 'ground');
 
   const result = {
     trees: {},
+    brush: {},
     ground: []
   };
 
@@ -179,11 +181,11 @@ app.get('/api/terrain/sprites', (req, res) => {
   }
 
   // Scan tree sprites from resized/{type}/ folders
-  const resizedDir = path.join(treesDir, 'resized');
-  if (fs.existsSync(resizedDir)) {
+  const treeResizedDir = path.join(treesDir, 'resized');
+  if (fs.existsSync(treeResizedDir)) {
     const treeTypes = ['oak', 'pine', 'birch', 'willow'];
     treeTypes.forEach(type => {
-      const typeDir = path.join(resizedDir, type);
+      const typeDir = path.join(treeResizedDir, type);
       if (fs.existsSync(typeDir)) {
         fs.readdirSync(typeDir)
           .filter(f => f.endsWith('.png'))
@@ -194,6 +196,19 @@ app.get('/api/terrain/sprites', (req, res) => {
           });
       }
     });
+  }
+
+  // Scan brush sprites from resized/ folder
+  const brushResizedDir = path.join(brushDir, 'resized');
+  console.log('[API] Brush resized dir:', brushResizedDir, 'exists:', fs.existsSync(brushResizedDir));
+  if (fs.existsSync(brushResizedDir)) {
+    const files = fs.readdirSync(brushResizedDir).filter(f => f.endsWith('.png'));
+    console.log('[API] Brush files found:', files);
+    files.forEach(f => {
+        // Format: bush-small-1.png -> key: bush-small-1
+        const key = f.replace('.png', '');
+        result.brush[key] = `/sprites/terrain/brush/resized/${f}`;
+      });
   }
 
   res.json(result);

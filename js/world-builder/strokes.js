@@ -116,6 +116,43 @@ export const TREE_AGES = {
 export const TREE_AGE_THRESHOLD = 0.7;
 
 /**
+ * Brush/undergrowth type definitions
+ * These render in the canopy layer but BELOW trees (z-order by scale)
+ * Brushes have closer spacing than trees for denser coverage
+ */
+export const BRUSH_TYPES = {
+  'bush-small': {
+    featureType: 'brush',     // Maps to brush for gameplay effects
+    baseScale: 0.8,
+    spacing: 35,              // Similar to birch trees
+    canopyRadius: 25,
+    variants: 3               // Number of variant images (1, 2, 3)
+  },
+  'bush-large': {
+    featureType: 'brush',
+    baseScale: 1.0,
+    spacing: 45,              // Similar to oak trees
+    canopyRadius: 35,
+    variants: 3
+  },
+  'fern-small': {
+    featureType: 'brush',
+    baseScale: 0.7,
+    spacing: 30,              // Similar to pine trees
+    canopyRadius: 22,
+    variants: 3
+  },
+  'leaf-particles': {
+    featureType: 'brush',
+    baseScale: 0.5,
+    spacing: 0,               // No spacing - particles can overlap freely
+    canopyRadius: 0,
+    variants: 3,
+    noCollision: true         // Skip collision detection for particles
+  }
+};
+
+/**
  * Color variation ranges for natural look
  */
 export const COLOR_VARIATION = {
@@ -172,6 +209,15 @@ export function createStroke(type, x, y, radius, options = {}) {
   // Add ground texture properties if specified
   if (type === 'groundTexture' && options.textureType) {
     stroke.textureType = options.textureType;
+    if (options.fadeWidth !== undefined) stroke.fadeWidth = options.fadeWidth;
+    if (options.isShore) stroke.isShore = true;
+  }
+
+  // Add water properties if specified
+  if (type === 'water') {
+    stroke.textureType = options.textureType || 'water';
+    if (options.fadeWidth !== undefined) stroke.fadeWidth = options.fadeWidth;
+    if (options.shoreWidth !== undefined) stroke.shoreWidth = options.shoreWidth;
   }
 
   return stroke;
@@ -189,6 +235,7 @@ export function createTerrainMap(gridWidth, gridHeight, cellSize = 64, baseLayer
   return {
     strokes: [],
     trees: [],              // Global tree registry for collision detection & rendering
+    brushes: [],            // Global brush registry for collision detection & rendering
     baseLayer,
     grid: [],
     gridWidth,
@@ -285,6 +332,21 @@ export function generateTreesForStroke(terrainMap, stroke, options = {}) {
 
     // Calculate spacing requirement (scaled by tree size)
     const treeSpacing = treeConfig.spacing * finalScale * 4; // Reduced multiplier for denser forests
+
+    // Check if position is in water or shore (unless allowTreesInWater is set)
+    const allowTreesInWater = stroke.allowTreesInWater || false;
+    if (!allowTreesInWater) {
+      const inWater = terrainMap.strokes.some(s => {
+        if (s.type !== 'water') return false;
+        const dx = s.x - tx;
+        const dy = s.y - ty;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        // Include shore area in the check
+        const effectiveRadius = s.radius + (s.shoreWidth || 0);
+        return dist < effectiveRadius;
+      });
+      if (inWater) continue;
+    }
 
     // Check collision with existing trees
     const tooClose = terrainMap.trees.some(existing => {
@@ -399,4 +461,198 @@ export function removeTreesInRadius(terrainMap, x, y, radius, falloff = 'hard') 
  */
 export function getTreesSortedByScale(terrainMap) {
   return [...terrainMap.trees].sort((a, b) => a.scale - b.scale);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BRUSH GENERATION
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Generate brush/undergrowth for a stroke with collision detection
+ * Adds brush items to the global registry if they don't overlap existing items
+ * @param {object} terrainMap - TerrainMap with global brush registry
+ * @param {object} stroke - Stroke with brush painting properties
+ * @param {object} options - Additional options
+ * @param {number} options.globalScale - Global scale multiplier (default 0.12)
+ * @returns {object[]} Array of brush items that were added
+ */
+export function generateBrushForStroke(terrainMap, stroke, options = {}) {
+  const { x, y, radius, seed, brushType, density } = stroke;
+
+  // Get brush type config
+  const brushConfig = BRUSH_TYPES[brushType];
+  if (!brushConfig) return [];
+
+  // Ensure brushes array exists
+  if (!terrainMap.brushes) terrainMap.brushes = [];
+
+  const globalScale = options.globalScale || stroke.brushScale || 0.12;
+
+  // Calculate number of brush attempts based on density and radius
+  // Same formula as trees for proportionate spacing
+  const maxAttempts = Math.max(1, Math.floor((density || 5) * (radius / 100) * 2));
+
+  // Scale variation for natural look
+  const scaleVariation = 0.3; // ±30% from base
+
+  const addedBrush = [];
+
+  for (let i = 0; i < maxAttempts; i++) {
+    const brushSeed = seed + i * 1000;
+
+    // Random position within stroke circle (sqrt for uniform distribution)
+    const angle = seededRandom(brushSeed) * Math.PI * 2;
+    const distFactor = Math.sqrt(seededRandom(brushSeed + 1));
+    const dist = distFactor * radius * 0.95;
+    const bx = x + Math.cos(angle) * dist;
+    const by = y + Math.sin(angle) * dist;
+
+    // Random scale variation
+    const scaleRand = 1 + (seededRandom(brushSeed + 2) - 0.5) * 2 * scaleVariation;
+    const finalScale = brushConfig.baseScale * scaleRand * globalScale;
+
+    // Calculate spacing requirement (scaled by brush size)
+    const brushSpacing = brushConfig.spacing * finalScale * 4;
+
+    // Check if position is in water or shore (unless allowBrushInWater is set)
+    const allowBrushInWater = stroke.allowBrushInWater || false;
+    if (!allowBrushInWater) {
+      const inWater = terrainMap.strokes.some(s => {
+        if (s.type !== 'water') return false;
+        const dx = s.x - bx;
+        const dy = s.y - by;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const effectiveRadius = s.radius + (s.shoreWidth || 0);
+        return dist < effectiveRadius;
+      });
+      if (inWater) continue;
+    }
+
+    // Skip collision checks for particle-type brush (noCollision flag)
+    if (!brushConfig.noCollision) {
+      // Check collision with existing brush items
+      const tooCloseToBrush = terrainMap.brushes.some(existing => {
+        // Skip collision with other noCollision types
+        const existingConfig = BRUSH_TYPES[existing.brushType] || BRUSH_TYPES['bush-small'];
+        if (existingConfig.noCollision) return false;
+
+        const dx = existing.x - bx;
+        const dy = existing.y - by;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        const existingSpacing = existingConfig.spacing * existing.scale * 4;
+
+        // Minimum distance is average of both items' spacing requirements
+        const minDist = (brushSpacing + existingSpacing) / 2;
+
+        return dist < minDist;
+      });
+
+      if (tooCloseToBrush) continue;
+
+      // Also check collision with trees (brush should not overlap trees)
+      const tooCloseToTree = terrainMap.trees.some(tree => {
+        const dx = tree.x - bx;
+        const dy = tree.y - by;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        // Get tree's spacing
+        const treeConfig = TREE_TYPES[tree.treeType] || TREE_TYPES.oak;
+        const treeSpacing = treeConfig.spacing * tree.scale * 2; // Less strict with trees
+
+        return dist < treeSpacing;
+      });
+
+      if (tooCloseToTree) continue;
+    }
+
+    // Create brush object
+    const brushItem = {
+      id: `brush_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+      strokeId: stroke.id,
+      brushType,
+      x: bx,
+      y: by,
+      scale: finalScale,
+      variant: Math.floor(seededRandom(brushSeed + 3) * brushConfig.variants) + 1,
+      hueShift: (seededRandom(brushSeed + 4) - 0.5) * COLOR_VARIATION.hueRange,
+      brightness: 1 + (seededRandom(brushSeed + 5) - 0.5) * COLOR_VARIATION.brightnessRange,
+      saturation: 1 + (seededRandom(brushSeed + 6) - 0.5) * COLOR_VARIATION.saturationRange
+    };
+
+    // Add to global registry
+    terrainMap.brushes.push(brushItem);
+    addedBrush.push(brushItem);
+  }
+
+  return addedBrush;
+}
+
+/**
+ * Remove brush associated with a stroke
+ * @param {object} terrainMap - TerrainMap with global brush registry
+ * @param {string} strokeId - ID of stroke to remove brush for
+ * @returns {number} Number of brush items removed
+ */
+export function removeBrushForStroke(terrainMap, strokeId) {
+  if (!terrainMap.brushes) return 0;
+  const before = terrainMap.brushes.length;
+  terrainMap.brushes = terrainMap.brushes.filter(b => b.strokeId !== strokeId);
+  return before - terrainMap.brushes.length;
+}
+
+/**
+ * Remove brush within a radius (for clearing tool)
+ * @param {object} terrainMap - TerrainMap with global brush registry
+ * @param {number} x - Center X coordinate
+ * @param {number} y - Center Y coordinate
+ * @param {number} radius - Clearing radius
+ * @param {string} falloff - Falloff type ('hard', 'linear', 'smooth')
+ * @returns {number} Number of brush items removed
+ */
+export function removeBrushInRadius(terrainMap, x, y, radius, falloff = 'hard') {
+  if (!terrainMap.brushes) return 0;
+  const before = terrainMap.brushes.length;
+  const radiusSq = radius * radius;
+
+  terrainMap.brushes = terrainMap.brushes.filter(brush => {
+    const dx = brush.x - x;
+    const dy = brush.y - y;
+    const distSq = dx * dx + dy * dy;
+
+    if (distSq > radiusSq) {
+      return true; // Outside radius, keep
+    }
+
+    // For hard falloff, remove everything in radius
+    if (falloff === 'hard') {
+      return false;
+    }
+
+    // For soft falloffs, use probability based on distance
+    const dist = Math.sqrt(distSq);
+    const normalizedDist = dist / radius;
+    let keepChance;
+
+    if (falloff === 'linear') {
+      keepChance = normalizedDist;
+    } else {
+      // Smooth (hermite)
+      keepChance = normalizedDist * normalizedDist * (3 - 2 * normalizedDist);
+    }
+
+    return Math.random() < keepChance;
+  });
+
+  return before - terrainMap.brushes.length;
+}
+
+/**
+ * Get all brush items sorted by scale (for z-ordering - smaller first)
+ * @param {object} terrainMap - TerrainMap with global brush registry
+ * @returns {object[]} Brush items sorted by scale ascending
+ */
+export function getBrushSortedByScale(terrainMap) {
+  if (!terrainMap.brushes) return [];
+  return [...terrainMap.brushes].sort((a, b) => a.scale - b.scale);
 }

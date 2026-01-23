@@ -501,7 +501,7 @@ export const generateEndlessTerrain = (wave, seed) => WorldBuilder.generateForEn
 // ═══════════════════════════════════════════════════════════════
 
 // Re-export stroke system components
-export { createStroke, createTerrainMap, createEmptyCell, FEATURE_DEFS, GROUND_TEXTURES, FALLOFF, TREE_TYPES, TREE_AGES, TREE_AGE_THRESHOLD, COLOR_VARIATION, generateTreesForStroke, removeTreesForStroke, removeTreesInRadius, getTreesSortedByScale } from './strokes.js';
+export { createStroke, createTerrainMap, createEmptyCell, FEATURE_DEFS, GROUND_TEXTURES, FALLOFF, TREE_TYPES, TREE_AGES, TREE_AGE_THRESHOLD, BRUSH_TYPES, COLOR_VARIATION, generateTreesForStroke, removeTreesForStroke, removeTreesInRadius, getTreesSortedByScale, generateBrushForStroke, removeBrushForStroke, removeBrushInRadius, getBrushSortedByScale } from './strokes.js';
 export { paint, paintTrees, erase, addStroke, removeStroke, clearStrokes, getStrokesAt } from './stroke-painter.js';
 export { rasterize, ensureRasterized } from './rasterize.js';
 export {

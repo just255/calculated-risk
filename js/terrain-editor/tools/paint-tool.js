@@ -3,7 +3,7 @@
 // Brush-based terrain painting
 // ═══════════════════════════════════════════════════════════════
 
-import { createStroke, FEATURE_DEFS } from '../../world-builder/strokes.js';
+import { createStroke, FEATURE_DEFS, BRUSH_TYPES } from '../../world-builder/strokes.js';
 
 /**
  * Feature type colors for brush preview
@@ -57,12 +57,15 @@ export const PaintTool = {
     const inBounds = e.x >= 0 && e.x <= state.canvasWidth &&
                      e.y >= 0 && e.y <= state.canvasHeight;
 
-    // Update brush preview (show different color if out of bounds)
+    // Update brush preview with outer ring for shore/floor extend
     if (inBounds) {
       const color = this._getPreviewColor(options);
-      renderer.setBrushPreview(e.x, e.y, options.brushRadius, color);
+      const previewOptions = this._getPreviewOptions(options);
+      renderer.setBrushPreview(e.x, e.y, options.brushRadius, color, previewOptions);
     } else {
-      renderer.setBrushPreview(e.x, e.y, options.brushRadius, 'rgba(255, 50, 50, 0.3)');
+      renderer.setBrushPreview(e.x, e.y, options.brushRadius, 'rgba(255, 50, 50, 0.3)', {
+        shape: options.brushShape || 'circle'
+      });
     }
 
     // Drag painting (only in bounds)
@@ -126,12 +129,6 @@ export const PaintTool = {
       return; // Outside bounds
     }
 
-    // Clearing mode - remove trees instead of adding
-    if (options.clearingMode) {
-      state.clearTreesAt(x, y, options.brushRadius, options.falloff);
-      return;
-    }
-
     // Manual ground texture painting mode
     if (options.featureType === 'groundTexture') {
       const groundStroke = createStroke(
@@ -167,7 +164,8 @@ export const PaintTool = {
             intensity: 1.0,
             falloff: options.falloff,
             textureType: options.shoreTextureType,
-            fadeWidth: options.fadeWidth ?? 12
+            fadeWidth: options.fadeWidth ?? 12,
+            isShore: true  // Mark as shore so it renders after regular ground textures
           }
         );
         state.addStroke(shoreStroke, true);  // Always skip, render with water stroke
@@ -183,15 +181,16 @@ export const PaintTool = {
           intensity: options.intensity || 1.0,
           falloff: options.falloff,
           textureType: options.waterTextureType || 'water',
-          fadeWidth: options.waterFadeWidth ?? 12
+          fadeWidth: options.waterFadeWidth ?? 12,
+          shoreWidth: options.shoreWidth || 0  // Store shore width for forest avoidance
         }
       );
       state.addStroke(waterStroke, skipRender);
 
-      // Add to preview for visual feedback during drag
+      // Both shore and water render via ground cache rebuild (stroke count detection)
+      // Don't add shore to paint preview - it would be drawn ON TOP of water from cache
       if (skipRender && renderer) {
-        if (shoreStroke) renderer.addToPaintPreview(shoreStroke);
-        renderer.addToPaintPreview(waterStroke);
+        renderer.requestUIRender();
       }
       return;
     }
@@ -222,11 +221,22 @@ export const PaintTool = {
       stroke.treeScale = options.treeScale || 0.35;
       stroke.selectedAges = options.selectedAges || ['young', 'transitional', 'old'];
       stroke.ageRatios = options.ageRatios || { young: 0.333, transitional: 0.333, old: 0.334 };
+      stroke.allowTreesInWater = options.treesInWater || false;
       // For backwards compat with renderer, derive min/max from selected
       const ageOrder = ['young', 'transitional', 'old'];
       const selected = stroke.selectedAges;
       stroke.minAge = ageOrder.find(a => selected.includes(a)) || 'young';
       stroke.maxAge = [...ageOrder].reverse().find(a => selected.includes(a)) || 'old';
+    }
+
+    // If painting brush/undergrowth, add brush-specific properties
+    if (options.featureType === 'brush') {
+      // Pick brush type based on ratios
+      const selectedType = this._pickBrushType(options);
+      stroke.brushType = selectedType;
+      stroke.density = options.brushDensity || 8;
+      stroke.brushScale = options.brushScale || 0.12;
+      stroke.allowBrushInWater = options.brushInWater || false;
     }
 
     // Auto-paint ground texture if enabled (paint first so it's behind trees)
@@ -240,6 +250,8 @@ export const PaintTool = {
         const floorRadius = options.brushRadius + (options.floorExtend ?? 0);
         const floorFade = options.floorFade ?? 16;
 
+        // Always paint forest floor - water renders on top and will cover it
+        // Trees individually check for water overlap, so they'll still avoid water
         autoGroundStroke = createStroke(
           'groundTexture',
           x,
@@ -277,14 +289,39 @@ export const PaintTool = {
   },
 
   _getPreviewColor(options) {
-    // Clearing mode shows red/orange
-    if (options.clearingMode) {
-      return 'rgba(255, 150, 50, 0.4)';
-    }
     if (options.featureType === 'forest') {
       return 'rgba(100, 200, 100, 0.4)';
     }
     return FEATURE_COLORS[options.featureType] || 'rgba(100, 100, 100, 0.4)';
+  },
+
+  /**
+   * Get preview options including outer ring for shore/floor extend
+   */
+  _getPreviewOptions(options) {
+    const result = {
+      shape: options.brushShape || 'circle'
+    };
+
+    // Water with shore - show outer ring for shore area
+    if (options.featureType === 'water') {
+      const shoreWidth = options.shoreWidth || 0;
+      if (shoreWidth > 0 && options.shoreTextureType && options.shoreTextureType !== 'none') {
+        result.outerRadius = options.brushRadius + shoreWidth;
+        result.outerColor = 'rgba(139, 90, 43, 0.25)'; // Mud/shore color
+      }
+    }
+
+    // Forest with auto ground texture - show outer ring for floor extend
+    if (options.featureType === 'forest' && options.autoGroundTexture) {
+      const floorExtend = options.floorExtend || 0;
+      if (floorExtend !== 0) {
+        result.outerRadius = options.brushRadius + floorExtend;
+        result.outerColor = 'rgba(60, 40, 20, 0.25)'; // Forest floor color
+      }
+    }
+
+    return result;
   },
 
   /**
@@ -312,5 +349,51 @@ export const PaintTool = {
 
     // Fallback
     return types[0];
+  },
+
+  /**
+   * Pick a brush type based on configured ratios
+   */
+  _pickBrushType(options) {
+    const types = options.brushTypes || [options.brushType || 'bush-small'];
+    const ratios = options.brushRatios || {};
+
+    // If only one type, return it
+    if (types.length === 1) {
+      return types[0];
+    }
+
+    // Pick based on ratio (weighted random)
+    const rand = Math.random();
+    let cumulative = 0;
+
+    for (const type of types) {
+      cumulative += ratios[type] || (1 / types.length);
+      if (rand < cumulative) {
+        return type;
+      }
+    }
+
+    // Fallback
+    return types[0];
+  },
+
+  /**
+   * Check if a position is inside any water stroke (including shore area)
+   * Used by tree generation to avoid water
+   */
+  _isInWater(x, y, state) {
+    const terrainMap = state.terrainMap;
+    if (!terrainMap || !terrainMap.strokes) return false;
+
+    return terrainMap.strokes.some(s => {
+      if (s.type !== 'water') return false;
+      const dx = s.x - x;
+      const dy = s.y - y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      // Include shore area in the check
+      const effectiveRadius = s.radius + (s.shoreWidth || 0);
+      return dist < effectiveRadius;
+    });
   }
 };

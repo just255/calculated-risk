@@ -1,6 +1,4 @@
-# Tree Sprite Prompts (128px Pixel Art)
-
-Generate at 1024x1024 (or AI's native size), then resize to 128x128 in GIMP using NoHalo/LoHalo interpolation.
+# Tree Sprite Prompts (256px Pixel Art)
 
 **Structure:** 4 tree types × 5 stages = 20 sprites
 - **Types:** Oak, Pine, Birch, Willow
@@ -543,3 +541,110 @@ Single large dead weeping willow viewed from directly above, modern pixel art st
 
 Transparent PNG, no checkered background. Make sure that everything that is not the tree or branches is an alpha channel.
 ```
+
+---
+
+## Post-Processing Notes
+
+> See [imagemagick.md](imagemagick.md) for ImageMagick installation and PATH setup.
+
+### Resize to 256x256
+Use nearest-neighbor interpolation to preserve pixel art crispness.
+
+```bash
+# Resize with nearest-neighbor (point) filter
+magick input.png -filter point -resize 256x256 output.png
+```
+
+### Batch Processing (PowerShell)
+```powershell
+# Use full path if magick is not in PATH
+$magick = "C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"
+$originals = "originals\trees"
+$dest = "trees"
+
+foreach ($type in @("oak", "pine", "birch", "willow")) {
+    Get-ChildItem "$originals\$type\*.png" | ForEach-Object {
+        $name = $_.Name
+
+        # Determine age folder
+        if ($name -match "young") { $age = "young" }
+        elseif ($name -match "transitional") { $age = "transitional" }
+        else { $age = "old" }
+
+        $destPath = "$dest\$age\$name"
+        Write-Host "  $name -> $age\$name"
+
+        # Resize to 256x256
+        & $magick $_.FullName -filter point -resize 256x256 $destPath
+    }
+}
+```
+
+### Batch Processing (Windows Batch)
+```batch
+@echo off
+setlocal enabledelayedexpansion
+
+REM Use full path if magick is not in PATH
+set MAGICK="C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"
+set ORIGINALS=originals\trees
+set DEST=trees
+
+for %%T in (oak pine birch willow) do (
+    echo Processing %%T...
+
+    for %%F in ("%ORIGINALS%\%%T\*.png") do (
+        set "filename=%%~nxF"
+        echo   %%~nxF
+
+        REM Resize to 256x256
+        %MAGICK% "%%F" -filter point -resize 256x256 "%DEST%\%%~nxF"
+    )
+)
+```
+
+### Quality Checklist
+1. **Use nearest-neighbor** - `-filter point` preserves hard pixel edges
+2. **Check transparency** - Verify alpha channel is clean (no semi-transparent artifacts)
+3. **Compare to original** - Tree should look sharp, not blurry or smeared
+4. **Test at game scale** - View at actual in-game size (trees render at ~35% of 256px = ~90px)
+
+### Troubleshooting
+- **Blurry result**: Ensure `-filter point` is used, not default bicubic
+- **Jagged edges**: This is expected for pixel art; do NOT use anti-aliasing filters
+- **Colors shifted**: Ensure PNG color profile is sRGB
+
+---
+
+## File Naming Convention
+
+```
+trees/
+  young/
+    oak-young-1.png, oak-young-2.png, oak-young-3.png
+    oak-young-dead-1.png, oak-young-dead-2.png, oak-young-dead-3.png
+    pine-young-1.png, ...
+    birch-young-1.png, ...
+    willow-young-1.png, ...
+  old/
+    oak-old-1.png, oak-old-2.png, oak-old-3.png
+    oak-old-dead-1.png, ...
+    pine-old-1.png, ...
+    birch-old-1.png, ...
+    willow-old-1.png, ...
+  transitional/
+    oak-transitional-1.png, oak-transitional-2.png, oak-transitional-3.png
+    pine-transitional-1.png, ...
+    birch-transitional-1.png, ...
+    willow-transitional-1.png, ...
+```
+
+---
+
+## Variants
+
+Generate 3 variants of each tree type/age combination for visual variety:
+- Variant 1, 2, 3 should have slight differences in branch positions, canopy shape
+- Same color palette and overall style
+- Randomly selected at runtime for natural forest appearance

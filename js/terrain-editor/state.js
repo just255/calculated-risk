@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { EventEmitter, Events } from './events.js';
-import { createTerrainMap, generateTreesForStroke, removeTreesForStroke, removeTreesInRadius } from '../world-builder/index.js';
+import { createTerrainMap, generateTreesForStroke, removeTreesForStroke, removeTreesInRadius, generateBrushForStroke, removeBrushForStroke, removeBrushInRadius } from '../world-builder/index.js';
 
 /**
  * Default editor configuration
@@ -22,7 +22,8 @@ const DEFAULT_CONFIG = {
 const DEFAULT_TOOL_OPTIONS = {
   brushRadius: 60,
   falloff: 'smooth',
-  clearingMode: false,          // When true, brush removes trees instead of adding
+  brushShape: 'circle',         // Brush shape: 'circle' or 'square'
+  clearMode: 'all',             // What to clear: 'all', 'trees', 'water', 'groundTexture', 'forest'
   featureType: 'forest',
   treeType: 'oak',              // Legacy single type (fallback)
   treeTypes: ['oak'],           // Multi-select tree types (includes dead variants like 'oak-dead')
@@ -43,7 +44,15 @@ const DEFAULT_TOOL_OPTIONS = {
   waterFadeWidth: 12,           // Water edge fade width
   shoreTextureType: 'mud',      // Shore texture around water (or 'none')
   shoreWidth: 24,               // Width of shore ring around water
-  treesInWater: false           // Allow trees to spawn in water areas
+  treesInWater: false,          // Allow trees to spawn in water areas
+
+  // Brush/Undergrowth options
+  brushType: 'bush-small',      // Legacy single type (fallback)
+  brushTypes: ['bush-small'],   // Multi-select brush types
+  brushRatios: { 'bush-small': 1.0 },  // Ratios for each selected type
+  brushDensity: 4,              // Brush items per stroke (lowered for more natural look)
+  brushScale: 0.12,             // Global scale multiplier for brush
+  brushInWater: false           // Allow brush to spawn in water areas
 };
 
 /**
@@ -159,6 +168,11 @@ export class EditorState extends EventEmitter {
       generateTreesForStroke(this._terrainMap, stroke);
     }
 
+    // Generate brush items for brush strokes
+    if (stroke.brushType) {
+      generateBrushForStroke(this._terrainMap, stroke);
+    }
+
     this._terrainMap.dirty = true;
     this._markDirty();
     this.emit(Events.STROKE_ADDED, { stroke });
@@ -182,8 +196,9 @@ export class EditorState extends EventEmitter {
     if (index !== -1) {
       const stroke = this._terrainMap.strokes.splice(index, 1)[0];
 
-      // Remove associated trees
+      // Remove associated trees and brush
       removeTreesForStroke(this._terrainMap, strokeId);
+      removeBrushForStroke(this._terrainMap, strokeId);
 
       this._terrainMap.dirty = true;
       this._markDirty();
@@ -212,8 +227,11 @@ export class EditorState extends EventEmitter {
     });
 
     if (removed.length > 0) {
-      // Remove associated trees for all removed strokes
-      removed.forEach(stroke => removeTreesForStroke(this._terrainMap, stroke.id));
+      // Remove associated trees and brush for all removed strokes
+      removed.forEach(stroke => {
+        removeTreesForStroke(this._terrainMap, stroke.id);
+        removeBrushForStroke(this._terrainMap, stroke.id);
+      });
 
       this._terrainMap.dirty = true;
       this._markDirty();
@@ -226,7 +244,8 @@ export class EditorState extends EventEmitter {
 
   clearStrokes() {
     this._terrainMap.strokes = [];
-    this._terrainMap.trees = []; // Clear all trees too
+    this._terrainMap.trees = [];   // Clear all trees too
+    this._terrainMap.brushes = []; // Clear all brush too
     this._terrainMap.dirty = true;
     this._markDirty();
     this.emit(Events.STROKES_CLEARED);
@@ -235,6 +254,16 @@ export class EditorState extends EventEmitter {
 
   clearTreesAt(x, y, radius, falloff = 'hard') {
     const removed = removeTreesInRadius(this._terrainMap, x, y, radius, falloff);
+    if (removed > 0) {
+      this._terrainMap.dirty = true;
+      this._markDirty();
+      this.emit(Events.RENDER_REQUESTED);
+    }
+    return removed;
+  }
+
+  clearBrushAt(x, y, radius, falloff = 'hard') {
+    const removed = removeBrushInRadius(this._terrainMap, x, y, radius, falloff);
     if (removed > 0) {
       this._terrainMap.dirty = true;
       this._markDirty();

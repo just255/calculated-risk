@@ -253,7 +253,7 @@
       gap: 4px;
     }
 
-    .tree-btn {
+    .tree-btn, .brush-type-btn {
       background: #0f3460;
       border: 2px solid transparent;
       color: #eee;
@@ -264,11 +264,11 @@
       text-align: center;
     }
 
-    .tree-btn:hover {
+    .tree-btn:hover, .brush-type-btn:hover {
       background: #1a4a7e;
     }
 
-    .tree-btn.active {
+    .tree-btn.active, .brush-type-btn.active {
       border-color: #4ade80;
     }
 
@@ -354,7 +354,7 @@
     <!-- Toolbar -->
     <aside class="toolbar">
       <button class="tool-btn active" data-tool="paint" title="Paint (P)">🖌️</button>
-      <button class="tool-btn" data-tool="erase" title="Erase (E)">🧹</button>
+      <button class="tool-btn" data-tool="clear" title="Clear (C)">🧹</button>
       <button class="tool-btn" data-tool="select" title="Select (V)">⬚</button>
       <button class="tool-btn" data-tool="transform" title="Transform (T)">↔️</button>
       <div class="toolbar-divider"></div>
@@ -388,10 +388,27 @@
           </select>
         </div>
         <div class="prop-row">
-          <label class="prop-label">
-            <input type="checkbox" id="clearing-mode"> Clearing Mode
-            <span style="font-size: 10px; opacity: 0.6">(remove trees)</span>
-          </label>
+          <label class="prop-label">Shape</label>
+          <select class="prop-select" id="brush-shape">
+            <option value="circle">Circle</option>
+            <option value="square">Square</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Clear Tool Settings -->
+      <div class="panel-section" id="clear-settings" style="display: none;">
+        <div class="panel-title">Clear Options</div>
+        <div class="prop-row">
+          <label class="prop-label">Clear Mode</label>
+          <select class="prop-select" id="clear-mode">
+            <option value="all">All Features</option>
+            <option value="trees">Trees Only</option>
+            <option value="brush">Brush/Undergrowth Only</option>
+            <option value="water">Water Only</option>
+            <option value="groundTexture">Ground Textures Only</option>
+            <option value="forest">Forest Coverage Only</option>
+          </select>
         </div>
       </div>
 
@@ -468,6 +485,11 @@
           </label>
           <input type="range" class="prop-range" id="floor-fade" min="0" max="48" value="16">
         </div>
+        <div class="prop-row" style="margin-top: 8px;">
+          <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; cursor: pointer;">
+            <input type="checkbox" id="trees-in-water"> Allow in water
+          </label>
+        </div>
       </div>
 
       <!-- Water Settings (shown when water selected) -->
@@ -477,8 +499,10 @@
           <label class="prop-label">Water Texture</label>
           <select class="prop-select" id="water-texture-type">
             <option value="water" selected>Water</option>
-            <option value="water-deep">Deep Water</option>
-            <option value="water-shallow">Shallow Water</option>
+            <option value="water-pond">Pond</option>
+            <option value="water-river">River</option>
+            <option value="water-ocean">Ocean</option>
+            <option value="water-marsh">Marsh</option>
           </select>
         </div>
         <div class="prop-row">
@@ -502,11 +526,6 @@
             Shore Width <span class="prop-value" id="shore-width-val">24px</span>
           </label>
           <input type="range" class="prop-range" id="shore-width" min="0" max="64" value="24">
-        </div>
-        <div class="prop-row">
-          <label class="prop-label">
-            <input type="checkbox" id="trees-in-water"> Allow trees in water
-          </label>
         </div>
       </div>
 
@@ -575,6 +594,39 @@
         </div>
       </div>
 
+      <!-- Brush/Undergrowth Settings (shown when brush selected) -->
+      <div class="panel-section" id="brush-settings" style="display: none;">
+        <div class="panel-title">Brush Types <span style="font-size: 10px; opacity: 0.6">(multi-select)</span></div>
+        <div class="tree-grid" style="grid-template-columns: repeat(2, 1fr); gap: 4px;">
+          <button class="brush-type-btn active" data-brush="bush-small">Bush S</button>
+          <button class="brush-type-btn" data-brush="bush-large">Bush L</button>
+          <button class="brush-type-btn" data-brush="fern-small">Fern</button>
+          <button class="brush-type-btn" data-brush="leaf-particles">Leaves</button>
+        </div>
+        <!-- Ratio sliders (shown when multiple brush types selected) -->
+        <div id="brush-ratios" style="display: none; margin-top: 8px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px;">
+          <div class="prop-label" style="margin-bottom: 6px; font-size: 11px;">Mix Ratios</div>
+          <div id="brush-ratio-sliders"></div>
+        </div>
+        <div class="prop-row" style="margin-top: 12px;">
+          <label class="prop-label">
+            Scale <span class="prop-value" id="brush-scale-val">12%</span>
+          </label>
+          <input type="range" class="prop-range" id="brush-scale" min="5" max="40" value="12">
+        </div>
+        <div class="prop-row">
+          <label class="prop-label">
+            Density <span class="prop-value" id="brush-density-val">8</span>
+          </label>
+          <input type="range" class="prop-range" id="brush-density" min="2" max="20" value="8">
+        </div>
+        <div class="prop-row">
+          <label class="prop-label">
+            <input type="checkbox" id="brush-in-water"> Allow in water/shore
+          </label>
+        </div>
+      </div>
+
       <!-- Ground Layer -->
       <div class="panel-section">
         <div class="panel-title">Ground Layer</div>
@@ -611,7 +663,7 @@
           <label class="prop-label">
             Grid Opacity <span class="prop-value" id="grid-opacity-val">10%</span>
           </label>
-          <input type="range" class="prop-range" id="grid-opacity" min="5" max="50" value="10">
+          <input type="range" class="prop-range" id="grid-opacity" min="0" max="100" value="10">
         </div>
         <div class="prop-row">
           <label class="prop-label">

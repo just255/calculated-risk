@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { ensureRasterized } from './rasterize.js';
-import { FEATURE_DEFS, FALLOFF, TREE_TYPES, TREE_AGES, TREE_AGE_THRESHOLD, COLOR_VARIATION, getTreesSortedByScale } from './strokes.js';
+import { FEATURE_DEFS, FALLOFF, TREE_TYPES, TREE_AGES, TREE_AGE_THRESHOLD, BRUSH_TYPES, COLOR_VARIATION, getTreesSortedByScale, getBrushSortedByScale } from './strokes.js';
 
 /**
  * Color definitions for features
@@ -88,19 +88,25 @@ export function renderBaseLayer(terrainMap, cellSize) {
  * Render canopy layer (forest/brush above units)
  * @param {object} terrainMap - TerrainMap object
  * @param {number} cellSize - Cell size for rendering
- * @param {object} images - Optional preloaded images { forest: Image, brush: Image }
+ * @param {object} treeImages - Optional preloaded tree images
+ * @param {number} dpr - Device pixel ratio for high-DPI rendering (default 1)
+ * @param {object} brushImages - Optional preloaded brush images
  * @returns {HTMLCanvasElement} Canvas with canopy layer (transparent background)
  */
-export function renderCanopyLayer(terrainMap, cellSize, images = null) {
+export function renderCanopyLayer(terrainMap, cellSize, treeImages = null, dpr = 1, brushImages = null) {
   ensureRasterized(terrainMap);
 
   const width = terrainMap.gridWidth * cellSize;
   const height = terrainMap.gridHeight * cellSize;
 
   const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
+  // Scale canvas by DPR for crisp rendering on high-DPI displays
+  canvas.width = width * dpr;
+  canvas.height = height * dpr;
   const ctx = canvas.getContext('2d');
+
+  // Scale context to draw at map coordinates but render at DPR resolution
+  ctx.scale(dpr, dpr);
 
   // Disable image smoothing for crisp pixel art
   ctx.imageSmoothingEnabled = false;
@@ -108,30 +114,42 @@ export function renderCanopyLayer(terrainMap, cellSize, images = null) {
   // Start transparent
   ctx.clearRect(0, 0, width, height);
 
+  // Check if we have brush in the global registry
+  const hasGlobalBrush = terrainMap.brushes && terrainMap.brushes.length > 0;
+
+  // Render brush FIRST (under trees) - sorted by scale for z-ordering
+  if (hasGlobalBrush) {
+    const sortedBrush = getBrushSortedByScale(terrainMap);
+    drawBrushFromRegistry(ctx, sortedBrush, brushImages);
+  }
+
   // Check if we have trees in the global registry
   const hasGlobalTrees = terrainMap.trees && terrainMap.trees.length > 0;
 
   if (hasGlobalTrees) {
-    // NEW: Render from global tree registry (sorted by scale for z-ordering)
+    // Render from global tree registry (sorted by scale for z-ordering)
     const sortedTrees = getTreesSortedByScale(terrainMap);
-    drawTreesFromRegistry(ctx, sortedTrees, images);
+    drawTreesFromRegistry(ctx, sortedTrees, treeImages);
   } else {
     // LEGACY: Render from stroke data (for backwards compatibility)
     for (const stroke of terrainMap.strokes) {
       const def = FEATURE_DEFS[stroke.type];
       if (!def || !def.isCanopy) continue;
 
+      // Skip brush strokes if they've been processed into the global registry
+      if (stroke.brushType && hasGlobalBrush) continue;
+
       // Check if this is a tree-based stroke
       if (isTreeStroke(stroke)) {
-        const treeImages = getTreeImages(images, stroke.treeType);
-        if (Object.keys(treeImages).length > 0) {
-          drawTreeStroke(ctx, stroke, treeImages);
+        const images = getTreeImages(treeImages, stroke.treeType);
+        if (Object.keys(images).length > 0) {
+          drawTreeStroke(ctx, stroke, images);
           continue;
         }
       }
 
       // Fallback: Try to get density variant based on intensity
-      const image = getDensityVariant(images, stroke.type, stroke.intensity);
+      const image = getDensityVariant(treeImages, stroke.type, stroke.intensity);
       if (image) {
         drawImageStroke(ctx, stroke, image);
       } else {
@@ -177,20 +195,69 @@ function drawTreesFromRegistry(ctx, trees, images) {
 }
 
 /**
+ * Draw brush items from the global registry (pre-calculated positions)
+ * @param {CanvasRenderingContext2D} ctx - Canvas context
+ * @param {object[]} brushItems - Array of brush objects sorted by scale
+ * @param {object} images - Loaded brush images
+ */
+function drawBrushFromRegistry(ctx, brushItems, images) {
+  for (const brush of brushItems) {
+    const { brushType, x, y, scale, variant, hueShift, brightness, saturation } = brush;
+
+    // Build image key: bush-small-1, bush-large-2, fern-small-3, etc.
+    const imageKey = `${brushType}-${variant}`;
+    let brushImage = images?.[imageKey];
+
+    if (!brushImage) {
+      // Try first variant as fallback
+      brushImage = images?.[`${brushType}-1`];
+    }
+
+    if (!brushImage) continue;
+
+    drawSingleBrush(ctx, brushImage, x, y, scale, hueShift, brightness, saturation);
+  }
+}
+
+/**
+ * Draw a single brush item with transforms
+ */
+function drawSingleBrush(ctx, image, x, y, scale, hueShift, brightness, saturation) {
+  // Round to integers for crisp pixel art rendering
+  const brushWidth = Math.round(image.width * scale);
+  const brushHeight = Math.round(image.height * scale);
+
+  ctx.save();
+  ctx.translate(Math.round(x), Math.round(y));
+
+  // Ensure smoothing stays disabled
+  ctx.imageSmoothingEnabled = false;
+
+  // Draw brush centered at position (use integer offsets)
+  ctx.drawImage(image, Math.round(-brushWidth / 2), Math.round(-brushHeight / 2), brushWidth, brushHeight);
+
+  ctx.restore();
+}
+
+/**
  * Draw a single tree with transforms
  */
 function drawSingleTree(ctx, image, x, y, scale, hueShift, brightness, saturation) {
-  const treeWidth = image.width * scale;
-  const treeHeight = image.height * scale;
+  // Round to integers for crisp pixel art rendering
+  const treeWidth = Math.round(image.width * scale);
+  const treeHeight = Math.round(image.height * scale);
 
   ctx.save();
-  ctx.translate(x, y);
+  ctx.translate(Math.round(x), Math.round(y));
 
-  // Apply color variation filter
-  ctx.filter = `hue-rotate(${hueShift}deg) brightness(${brightness}) saturate(${saturation})`;
+  // Ensure smoothing stays disabled
+  ctx.imageSmoothingEnabled = false;
 
-  // Draw tree centered at position
-  ctx.drawImage(image, -treeWidth / 2, -treeHeight / 2, treeWidth, treeHeight);
+  // Color variation filter disabled for testing - may cause blur
+  // ctx.filter = `hue-rotate(${hueShift}deg) brightness(${brightness}) saturate(${saturation})`;
+
+  // Draw tree centered at position (use integer offsets)
+  ctx.drawImage(image, Math.round(-treeWidth / 2), Math.round(-treeHeight / 2), treeWidth, treeHeight);
 
   ctx.filter = 'none';
   ctx.restore();
@@ -402,24 +469,27 @@ function drawTreeStroke(ctx, stroke, treeImages) {
     const brightness = 1 + (seededRandom(treeSeed + 7) - 0.5) * COLOR_VARIATION.brightnessRange;
     const saturation = 1 + (seededRandom(treeSeed + 8) - 0.5) * COLOR_VARIATION.saturationRange;
 
-    // Calculate tree size
-    const treeWidth = treeImage.width * finalScale;
-    const treeHeight = treeImage.height * finalScale;
+    // Calculate tree size (round for crisp pixel art)
+    const treeWidth = Math.round(treeImage.width * finalScale);
+    const treeHeight = Math.round(treeImage.height * finalScale);
 
     // Save context state
     ctx.save();
 
-    // Move to tree position
-    ctx.translate(tx, ty);
+    // Move to tree position (round to integers)
+    ctx.translate(Math.round(tx), Math.round(ty));
 
     // Apply rotation
     ctx.rotate(rotation);
 
-    // Apply color variation filter
-    ctx.filter = `hue-rotate(${hueShift}deg) brightness(${brightness}) saturate(${saturation})`;
+    // Ensure smoothing stays disabled
+    ctx.imageSmoothingEnabled = false;
 
-    // Draw tree centered at position
-    ctx.drawImage(treeImage, -treeWidth / 2, -treeHeight / 2, treeWidth, treeHeight);
+    // Color variation filter disabled for testing - may cause blur
+    // ctx.filter = `hue-rotate(${hueShift}deg) brightness(${brightness}) saturate(${saturation})`;
+
+    // Draw tree centered at position (use integer offsets)
+    ctx.drawImage(treeImage, Math.round(-treeWidth / 2), Math.round(-treeHeight / 2), treeWidth, treeHeight);
 
     // Restore context
     ctx.filter = 'none';

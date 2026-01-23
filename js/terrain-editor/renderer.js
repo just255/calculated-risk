@@ -28,7 +28,8 @@ export class Renderer {
     // Loaded images
     this._images = {
       ground: {},
-      trees: {}
+      trees: {},
+      brush: {}
     };
 
     // Animation frame handle
@@ -44,15 +45,17 @@ export class Renderer {
     // Cached ground layer (strokes rendered once, reused until changed)
     this._groundCache = null;
     this._groundCacheValid = false;
+    this._groundCacheStrokeCount = 0;
 
     // Paint preview layer (for showing strokes during drag painting)
     this._paintPreview = null;
     this._paintPreviewStrokes = [];
 
-    // Cached canopy layer (trees rendered once, reused until changed)
+    // Cached canopy layer (trees/brush rendered once, reused until changed)
     this._canopyCache = null;
     this._canopyCacheValid = false;
     this._canopyCacheTreeCount = 0;
+    this._canopyCacheBrushCount = 0;
 
     this._init();
   }
@@ -104,8 +107,16 @@ export class Renderer {
 
   /**
    * Render a single stroke to the paint preview canvas
+   * Note: Water and forest strokes render via cache rebuild (stroke/tree count detection).
+   * Only groundTexture strokes use the preview canvas.
    */
   _renderPaintPreviewStroke(stroke) {
+    // Water renders via ground cache (stroke count detection triggers rebuild)
+    // Only groundTexture uses the paint preview canvas
+    if (stroke.type !== 'groundTexture') {
+      return;
+    }
+
     const width = this._state.canvasWidth;
     const height = this._state.canvasHeight;
 
@@ -119,12 +130,7 @@ export class Renderer {
     const ctx = this._paintPreview.getContext('2d');
     ctx.imageSmoothingEnabled = false;
 
-    // Render the stroke based on type (use preview mode for faster rendering)
-    if (stroke.type === 'groundTexture') {
-      this._renderGroundTextureStroke(ctx, stroke, true);
-    } else if (stroke.type === 'water') {
-      this._renderWaterStroke(ctx, stroke, true);
-    }
+    this._renderGroundTextureStroke(ctx, stroke, true);
   }
 
   _createCanvases() {
@@ -138,12 +144,20 @@ export class Renderer {
     const width = rect.width;
     const height = rect.height;
 
+    // Account for high-DPI displays
+    const dpr = window.devicePixelRatio || 1;
+    this._dpr = dpr;
+
     // Create each layer
     ['ground', 'features', 'ui'].forEach((layer, index) => {
       const canvas = document.createElement('canvas');
       canvas.id = `terrain-${layer}`;
-      canvas.width = width;
-      canvas.height = height;
+      // Set actual pixel dimensions (device pixels)
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      // Set CSS display size (CSS pixels)
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
       canvas.style.position = index === 0 ? 'relative' : 'absolute';
       canvas.style.top = '0';
       canvas.style.left = '0';
@@ -151,10 +165,13 @@ export class Renderer {
 
       container.appendChild(canvas);
       this._canvases[layer] = canvas;
-      this._contexts[layer] = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d');
+      // Scale context to account for DPR
+      ctx.scale(dpr, dpr);
+      this._contexts[layer] = ctx;
     });
 
-    // Store viewport dimensions
+    // Store viewport dimensions (in CSS pixels)
     this._viewportWidth = width;
     this._viewportHeight = height;
 
@@ -171,11 +188,24 @@ export class Renderer {
     const rect = container.parentElement.getBoundingClientRect();
     const width = rect.width;
     const height = rect.height;
+    const newDpr = window.devicePixelRatio || 1;
 
-    // Resize all canvases
-    Object.values(this._canvases).forEach(canvas => {
-      canvas.width = width;
-      canvas.height = height;
+    // Check if DPR changed (e.g., moved to different display)
+    const dprChanged = this._dpr !== newDpr;
+    if (dprChanged) {
+      this._dpr = newDpr;
+      // Invalidate caches that were rendered at old DPR
+      this._invalidateCanopyCache();
+    }
+
+    // Resize all canvases with DPR scaling
+    Object.entries(this._canvases).forEach(([layer, canvas]) => {
+      canvas.width = width * this._dpr;
+      canvas.height = height * this._dpr;
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+      // Re-apply DPR scale to context (gets reset when canvas resizes)
+      this._contexts[layer].scale(this._dpr, this._dpr);
     });
 
     this._viewportWidth = width;
@@ -193,7 +223,7 @@ export class Renderer {
 
   async loadImages() {
     // Fetch available sprites from server
-    let spriteManifest = { trees: {}, ground: [] };
+    let spriteManifest = { trees: {}, brush: {}, ground: [] };
     try {
       const response = await fetch('/api/terrain/sprites');
       spriteManifest = await response.json();
@@ -201,6 +231,7 @@ export class Renderer {
       console.warn('[Renderer] Could not fetch sprite manifest, using defaults:', err);
       spriteManifest = {
         trees: {},
+        brush: {},
         ground: ['grass', 'open', 'water']
       };
     }
@@ -222,10 +253,17 @@ export class Renderer {
       promises.push(this._loadImage(key, path, this._images.trees));
     }
 
+    // Brush sprites - only load what exists
+    console.log('[Renderer] Brush sprites from API:', spriteManifest.brush);
+    for (const [key, path] of Object.entries(spriteManifest.brush || {})) {
+      promises.push(this._loadImage(key, path, this._images.brush));
+    }
+
     await Promise.all(promises);
     console.log('[Renderer] Images loaded:', {
       ground: Object.keys(this._images.ground).length,
-      trees: Object.keys(this._images.trees).length
+      trees: Object.keys(this._images.trees).length,
+      brush: Object.keys(this._images.brush).length
     });
 
     // Invalidate caches now that images are loaded
@@ -241,7 +279,10 @@ export class Renderer {
         target[key || name] = img;
         resolve();
       };
-      img.onerror = () => resolve(); // Silently skip missing images
+      img.onerror = (err) => {
+        console.error(`[Renderer] Failed to load image: ${path}`, err);
+        resolve();
+      };
       img.src = path;
     });
   }
@@ -283,11 +324,15 @@ export class Renderer {
 
   _render() {
     const viewport = this._state.viewport;
+    const dpr = this._dpr || 1;
 
-    // Clear all canvases and apply viewport transform
+    // Clear all canvases and apply viewport transform (with DPR scaling)
     Object.entries(this._contexts).forEach(([layer, ctx]) => {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+      // Disable image smoothing for crisp pixel art
+      ctx.imageSmoothingEnabled = false;
 
       // Only fill background on ground layer (others stay transparent)
       if (layer === 'ground') {
@@ -295,7 +340,11 @@ export class Renderer {
         ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
       }
 
-      ctx.setTransform(viewport.zoom, 0, 0, viewport.zoom, viewport.x, viewport.y);
+      // Apply DPR-scaled viewport transform
+      ctx.setTransform(
+        viewport.zoom * dpr, 0, 0, viewport.zoom * dpr,
+        viewport.x * dpr, viewport.y * dpr
+      );
     });
 
     this._renderGround();
@@ -311,9 +360,11 @@ export class Renderer {
     const height = this._state.canvasHeight;
 
     // Check if we need to rebuild the ground cache
-    // Use terrainMap.dirty flag to detect stroke changes (avoids per-stroke event overhead)
-    if (!this._groundCacheValid || terrainMap.dirty) {
+    // Use stroke count change as proxy for ground changes during painting (like trees use tree count)
+    const strokeCount = terrainMap.strokes?.length || 0;
+    if (!this._groundCacheValid || terrainMap.dirty || this._groundCacheStrokeCount !== strokeCount) {
       this._rebuildGroundCache();
+      this._groundCacheStrokeCount = strokeCount;
       terrainMap.dirty = false;  // Reset dirty flag after rebuild
     }
 
@@ -364,10 +415,17 @@ export class Renderer {
       cacheCtx.fillRect(0, 0, width, height);
     }
 
-    // Draw ground texture strokes
+    // Draw ground texture strokes (excluding shore)
     ensureRasterized(terrainMap);
     for (const stroke of terrainMap.strokes) {
-      if (stroke.type === 'groundTexture') {
+      if (stroke.type === 'groundTexture' && !stroke.isShore) {
+        this._renderGroundTextureStroke(cacheCtx, stroke);
+      }
+    }
+
+    // Draw shore strokes (on top of regular ground textures, under water)
+    for (const stroke of terrainMap.strokes) {
+      if (stroke.type === 'groundTexture' && stroke.isShore) {
         this._renderGroundTextureStroke(cacheCtx, stroke);
       }
     }
@@ -380,7 +438,6 @@ export class Renderer {
     }
 
     this._groundCacheValid = true;
-    console.log(`[Renderer] Ground cache rebuilt (${terrainMap.strokes.length} strokes)`);
   }
 
   /**
@@ -405,7 +462,11 @@ export class Renderer {
         'mud': '#3a3530',
         'sand': '#8a8070',
         'grass': '#5a6a4a',
-        'water': '#1e5a8c'
+        'water': '#1e5a8c',
+        'water-pond': '#2a4a5a',
+        'water-river': '#2a3a4a',
+        'water-ocean': '#2a3a4a',
+        'water-marsh': '#2a3a2a'
       };
       ctx.fillStyle = fallbackColors[textureType] || '#4a4a3a';
       ctx.globalAlpha = intensity;
@@ -518,41 +579,62 @@ export class Renderer {
     const terrainMap = this._state.terrainMap;
 
     // Check if we need to rebuild the canopy cache
-    // Use terrainMap.trees length change as a proxy for tree changes during painting
+    // Use terrainMap.trees and brushes length change as a proxy for changes during painting
     const treeCount = terrainMap.trees?.length || 0;
-    if (!this._canopyCacheValid || this._canopyCacheTreeCount !== treeCount) {
+    const brushCount = terrainMap.brushes?.length || 0;
+    if (!this._canopyCacheValid || this._canopyCacheTreeCount !== treeCount || this._canopyCacheBrushCount !== brushCount) {
       this._rebuildCanopyCache();
     }
 
     // Draw cached canopy layer
+    // Cache is at DPR-scaled resolution, draw at map size (transform handles scaling)
     if (this._canopyCache) {
-      ctx.drawImage(this._canopyCache, 0, 0);
+      const width = this._state.canvasWidth;
+      const height = this._state.canvasHeight;
+      ctx.drawImage(this._canopyCache, 0, 0, width, height);
     }
   }
 
   _rebuildCanopyCache() {
     const terrainMap = this._state.terrainMap;
+    const dpr = this._dpr || 1;
     ensureRasterized(terrainMap);
-    this._canopyCache = renderCanopyLayer(terrainMap, this._state.cellSize, this._images.trees);
+    // Pass DPR for high-resolution rendering on high-DPI displays
+    // Pass both tree and brush images for rendering
+    this._canopyCache = renderCanopyLayer(terrainMap, this._state.cellSize, this._images.trees, dpr, this._images.brush);
     this._canopyCacheValid = true;
     this._canopyCacheTreeCount = terrainMap.trees?.length || 0;
-    console.log(`[Renderer] Canopy cache rebuilt (${this._canopyCacheTreeCount} trees)`);
+    this._canopyCacheBrushCount = terrainMap.brushes?.length || 0;
+    console.log(`[Renderer] Canopy cache rebuilt (${this._canopyCacheTreeCount} trees, ${this._canopyCacheBrushCount} brush, dpr=${dpr})`);
   }
 
   /**
-   * Lightweight render - redraws ground from cache + preview, features, and UI
-   * Skips expensive ground cache rebuild
+   * Lightweight render - redraws ground, features, and UI
+   * Rebuilds caches if stroke/tree counts changed (for live preview during painting)
    */
   _renderUIOnly() {
     const viewport = this._state.viewport;
+    const dpr = this._dpr || 1;
+    const terrainMap = this._state.terrainMap;
 
-    // Redraw ground from cache + preview (no rebuild)
+    // Check if ground cache needs rebuild (stroke count changed during painting)
+    const strokeCount = terrainMap.strokes?.length || 0;
+    if (!this._groundCacheValid || this._groundCacheStrokeCount !== strokeCount) {
+      this._rebuildGroundCache();
+      this._groundCacheStrokeCount = strokeCount;
+    }
+
+    // Redraw ground from cache + preview
     const groundCtx = this._contexts.ground;
     groundCtx.setTransform(1, 0, 0, 1, 0, 0);
     groundCtx.clearRect(0, 0, groundCtx.canvas.width, groundCtx.canvas.height);
+    groundCtx.imageSmoothingEnabled = false;
     groundCtx.fillStyle = '#0d0d1a';
     groundCtx.fillRect(0, 0, groundCtx.canvas.width, groundCtx.canvas.height);
-    groundCtx.setTransform(viewport.zoom, 0, 0, viewport.zoom, viewport.x, viewport.y);
+    groundCtx.setTransform(
+      viewport.zoom * dpr, 0, 0, viewport.zoom * dpr,
+      viewport.x * dpr, viewport.y * dpr
+    );
 
     if (this._groundCache) {
       groundCtx.drawImage(this._groundCache, 0, 0);
@@ -568,7 +650,11 @@ export class Renderer {
     const featuresCtx = this._contexts.features;
     featuresCtx.setTransform(1, 0, 0, 1, 0, 0);
     featuresCtx.clearRect(0, 0, featuresCtx.canvas.width, featuresCtx.canvas.height);
-    featuresCtx.setTransform(viewport.zoom, 0, 0, viewport.zoom, viewport.x, viewport.y);
+    featuresCtx.imageSmoothingEnabled = false;
+    featuresCtx.setTransform(
+      viewport.zoom * dpr, 0, 0, viewport.zoom * dpr,
+      viewport.x * dpr, viewport.y * dpr
+    );
     this._renderFeatures();
     // Restore dirty flag so ground cache rebuilds on mouse-up
     if (wasDirty) this._state.terrainMap.dirty = true;
@@ -577,7 +663,11 @@ export class Renderer {
     const uiCtx = this._contexts.ui;
     uiCtx.setTransform(1, 0, 0, 1, 0, 0);
     uiCtx.clearRect(0, 0, uiCtx.canvas.width, uiCtx.canvas.height);
-    uiCtx.setTransform(viewport.zoom, 0, 0, viewport.zoom, viewport.x, viewport.y);
+    uiCtx.imageSmoothingEnabled = false;
+    uiCtx.setTransform(
+      viewport.zoom * dpr, 0, 0, viewport.zoom * dpr,
+      viewport.x * dpr, viewport.y * dpr
+    );
 
     this._renderUI();
   }
@@ -634,25 +724,61 @@ export class Renderer {
   }
 
   _renderBrushPreview(ctx) {
-    const { x, y, radius, color } = this._brushPreview;
+    const { x, y, radius, color, outerRadius, outerColor, shape } = this._brushPreview;
+    const zoom = this._state.viewport.zoom;
+    const isSquare = shape === 'square';
 
-    // Fill
+    // Draw outer ring first (shore/floor extend) if specified
+    if (outerRadius && outerRadius > radius) {
+      // Outer fill
+      ctx.fillStyle = outerColor || 'rgba(139, 90, 43, 0.2)';
+      ctx.beginPath();
+      if (isSquare) {
+        ctx.rect(x - outerRadius, y - outerRadius, outerRadius * 2, outerRadius * 2);
+      } else {
+        ctx.arc(x, y, outerRadius, 0, Math.PI * 2);
+      }
+      ctx.fill();
+
+      // Outer outline (dashed)
+      ctx.strokeStyle = 'rgba(180, 140, 80, 0.6)';
+      ctx.lineWidth = 1.5 / zoom;
+      ctx.setLineDash([6 / zoom, 4 / zoom]);
+      ctx.beginPath();
+      if (isSquare) {
+        ctx.rect(x - outerRadius, y - outerRadius, outerRadius * 2, outerRadius * 2);
+      } else {
+        ctx.arc(x, y, outerRadius, 0, Math.PI * 2);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Main brush fill
     ctx.fillStyle = color || 'rgba(100, 200, 100, 0.3)';
     ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    if (isSquare) {
+      ctx.rect(x - radius, y - radius, radius * 2, radius * 2);
+    } else {
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+    }
     ctx.fill();
 
-    // Outline
+    // Main brush outline
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
-    ctx.lineWidth = 2 / this._state.viewport.zoom;
+    ctx.lineWidth = 2 / zoom;
     ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    if (isSquare) {
+      ctx.rect(x - radius, y - radius, radius * 2, radius * 2);
+    } else {
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+    }
     ctx.stroke();
 
     // Crosshair
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-    ctx.lineWidth = 1 / this._state.viewport.zoom;
-    const size = 5 / this._state.viewport.zoom;
+    ctx.lineWidth = 1 / zoom;
+    const size = 5 / zoom;
     ctx.beginPath();
     ctx.moveTo(x - size, y);
     ctx.lineTo(x + size, y);
@@ -661,8 +787,21 @@ export class Renderer {
     ctx.stroke();
   }
 
-  setBrushPreview(x, y, radius, color) {
-    this._brushPreview = { x, y, radius, color };
+  /**
+   * Set brush preview with optional outer ring and shape
+   * @param {number} x - Center X
+   * @param {number} y - Center Y
+   * @param {number} radius - Main brush radius
+   * @param {string} color - Main brush color
+   * @param {object} options - Optional: { outerRadius, outerColor, shape }
+   */
+  setBrushPreview(x, y, radius, color, options = {}) {
+    this._brushPreview = {
+      x, y, radius, color,
+      outerRadius: options.outerRadius || null,
+      outerColor: options.outerColor || null,
+      shape: options.shape || 'circle'
+    };
     // Lightweight UI-only update (no ground/feature re-render)
     this._requestUIRender();
   }
@@ -677,6 +816,14 @@ export class Renderer {
    * Much cheaper than full render - doesn't touch ground cache or features
    */
   _requestUIRender() {
+    this._needsUIRender = true;
+  }
+
+  /**
+   * Public method to request UI render (for tools to call)
+   * Triggers stroke count detection which will rebuild ground cache if needed
+   */
+  requestUIRender() {
     this._needsUIRender = true;
   }
 

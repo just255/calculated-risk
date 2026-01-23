@@ -1,180 +1,99 @@
-# Brush Sprite Prompts (128px Pixel Art)
+# Brush/Undergrowth Sprite Prompts (256px Pixel Art)
 
-Generate at 1024x1024 (or AI's native size), then resize to 128x128 in GIMP using NoHalo/LoHalo interpolation.
+**Structure:** 5 brush types, generate 3 variants from each prompt
+- **Types:** Bush, Shrub, Bramble, Grass Clump, Fern
 
-**Structure:** 4 brush types x 3 variants = 12 sprites
-- **Types:** Bush Small, Bush Large, Grass Clump, Fern
-- **Variants:** A, B, C (visual variety for natural placement)
+> Particle sprites (leaves, pebbles) in [particle-prompts.md](particle-prompts.md)
 
 ---
 
-## BUSH SMALL
-
-### Bush Small - Variant A
+## BUSH
 
 ```
-Single small bush/shrub viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
+Single dense leafy bush viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
 
-- One small bush, centered
+- One small dense bush, centered
 - STRICTLY top-down view, camera PERFECTLY perpendicular to ground, exactly 90 degrees, NO angle or tilt
-- Compact rounded shrub shape, NOT perfectly circular
-- Organic irregular outline with natural variation
-- Dense leafy appearance with some depth variation
-- Small size - fills 35% of frame
-- Muted desaturated tones - subdued military color palette
-- NOT vibrant
+- IRREGULAR organic blob shape - NOT circular, NOT round, NOT donut-shaped
+- Asymmetric silhouette - longer on one axis than the other
+- Multiple distinct leaf cluster protrusions of varying sizes
+- Small gaps/holes where you can see through to ground (10-15% internal transparency)
+- Dense leafy texture but with visible individual leaf clusters
+- Muted desaturated green tones - subdued military color palette
+- NOT vibrant, NOT bright green
 - Light source directly overhead (noon)
 - EXACT COLOR PALETTE (use only these colors):
-  - Shadows: #1a2a1a, #2a3a2a (nearly black-green)
-  - Midtones: #3a5a3a, #4a6a4a (olive-green)
-  - Highlights: #5a7a5a, #6a8a6a (lighter olive)
-- STRONG CONTRAST: Very deep dark shadows in center/underneath, brighter highlights on top surface
+  - Shadows: #1a2a1a, #2a3a2a (nearly black-green depth)
+  - Midtones: #3a4a35, #4a5a45 (dark olive-green)
+  - Highlights: #5a6a55, #6a7a65 (lighter olive on top leaves)
+- STRONG CONTRAST: Very deep dark shadows in recesses, brighter highlights on sun-facing top leaves
 - Shadows should be nearly black-green, not washed out
 - Chunky pixel art aesthetic, not photorealistic
-- Bush fills 35% of frame
+- Bush fills 50% of frame
 
-Transparent PNG, no checkered background. Make sure that everything that is not the bush or leaves is an alpha channel.
-```
-
-### Bush Small - Variant B
-
-```
-Single small bush/shrub viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
-
-- One small bush, centered
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, exactly 90 degrees, NO angle or tilt
-- Compact irregular shrub shape, slightly more spread than variant A
-- Organic asymmetrical outline with natural variation
-- Dense leafy appearance with some depth variation
-- Small size - fills 35% of frame
-- Muted desaturated tones - subdued military color palette
-- NOT vibrant
-- Light source directly overhead (noon)
-- EXACT COLOR PALETTE (use only these colors):
-  - Shadows: #1a2a1a, #2a3a2a (nearly black-green)
-  - Midtones: #3a5a3a, #4a6a4a (olive-green)
-  - Highlights: #5a7a5a, #6a8a6a (lighter olive)
-- STRONG CONTRAST: Very deep dark shadows in center/underneath, brighter highlights on top surface
-- Shadows should be nearly black-green, not washed out
-- Chunky pixel art aesthetic, not photorealistic
-- Bush fills 35% of frame
-
-Transparent PNG, no checkered background. Make sure that everything that is not the bush or leaves is an alpha channel.
-```
-
-### Bush Small - Variant C
-
-```
-Single small bush/shrub viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
-
-- One small bush, centered
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, exactly 90 degrees, NO angle or tilt
-- Compact oblong shrub shape, elongated in one direction
-- Organic irregular outline with natural variation
-- Dense leafy appearance with some depth variation
-- Small size - fills 35% of frame
-- Muted desaturated tones - subdued military color palette
-- NOT vibrant
-- Light source directly overhead (noon)
-- EXACT COLOR PALETTE (use only these colors):
-  - Shadows: #1a2a1a, #2a3a2a (nearly black-green)
-  - Midtones: #3a5a3a, #4a6a4a (olive-green)
-  - Highlights: #5a7a5a, #6a8a6a (lighter olive)
-- STRONG CONTRAST: Very deep dark shadows in center/underneath, brighter highlights on top surface
-- Shadows should be nearly black-green, not washed out
-- Chunky pixel art aesthetic, not photorealistic
-- Bush fills 35% of frame
-
-Transparent PNG, no checkered background. Make sure that everything that is not the bush or leaves is an alpha channel.
+Transparent PNG, no checkered background. Make sure that everything that is not the bush is an alpha channel.
 ```
 
 ---
 
-## BUSH LARGE
-
-### Bush Large - Variant A
+## SHRUB
 
 ```
-Single large bush/shrub viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
+Single wild shrub viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
 
-- One large bush, centered
+- One small wild shrub, centered
 - STRICTLY top-down view, camera PERFECTLY perpendicular to ground, exactly 90 degrees, NO angle or tilt
-- Full rounded shrub shape, NOT perfectly circular
-- Organic irregular outline with natural variation, some branches extend further
-- Dense thick leafy appearance with significant depth variation
-- Large size - fills 65% of frame
-- Muted desaturated tones - subdued military color palette
-- NOT vibrant
+- IRREGULAR organic blob shape - NOT circular, NOT symmetrical
+- Bumpy, lumpy silhouette with varied leaf cluster protrusions
+- Some gaps/holes showing through where branches diverge
+- Asymmetric form - one side larger than the other
+- Muted desaturated olive-green tones - subdued military color palette
+- NOT vibrant, NOT bright green
 - Light source directly overhead (noon)
 - EXACT COLOR PALETTE (use only these colors):
   - Shadows: #1a2a1a, #2a3a2a (nearly black-green)
-  - Midtones: #3a5a3a, #4a6a4a (olive-green)
-  - Highlights: #5a7a5a, #6a8a6a (lighter olive)
-- STRONG CONTRAST: Very deep dark shadows in center/underneath, brighter highlights on top surface
+  - Midtones: #4a5a3a, #5a6a4a (olive-green)
+  - Highlights: #6a7a5a, #7a8a6a (lighter olive)
+- STRONG CONTRAST: Very deep dark shadows between leaf clusters, brighter highlights on sun-facing surfaces
 - Shadows should be nearly black-green, not washed out
 - Chunky pixel art aesthetic, not photorealistic
-- Bush fills 65% of frame
+- Shrub fills 45% of frame
 
-Transparent PNG, no checkered background. Make sure that everything that is not the bush or leaves is an alpha channel.
+Transparent PNG, no checkered background. Make sure that everything that is not the shrub is an alpha channel.
 ```
 
-### Bush Large - Variant B
+---
+
+## BRAMBLE
 
 ```
-Single large bush/shrub viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
+Single bramble/thorny bush viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
 
-- One large bush, centered
+- One small bramble patch, centered
 - STRICTLY top-down view, camera PERFECTLY perpendicular to ground, exactly 90 degrees, NO angle or tilt
-- Full spreading shrub shape, wider than tall
-- Organic asymmetrical outline with natural variation, sprawling form
-- Dense thick leafy appearance with significant depth variation
-- Large size - fills 65% of frame
-- Muted desaturated tones - subdued military color palette
+- SPIKY irregular silhouette with thorny protrusions pointing outward
+- Tangled, chaotic crisscrossing branches visible
+- Mix of dark woody branches and small clustered leaves
+- Angular, aggressive shape - NOT soft or rounded
+- 40-50% of frame is transparent - lots of gaps between thorny branches
+- Muted dark green-brown tones - subdued military color palette
 - NOT vibrant
 - Light source directly overhead (noon)
 - EXACT COLOR PALETTE (use only these colors):
-  - Shadows: #1a2a1a, #2a3a2a (nearly black-green)
-  - Midtones: #3a5a3a, #4a6a4a (olive-green)
-  - Highlights: #5a7a5a, #6a8a6a (lighter olive)
-- STRONG CONTRAST: Very deep dark shadows in center/underneath, brighter highlights on top surface
-- Shadows should be nearly black-green, not washed out
+  - Shadows: #1a1a15, #2a2520 (nearly black-brown)
+  - Midtones: #3a4a35, #4a5a40 (dark olive-brown)
+  - Highlights: #5a6a50, #6a7a5a (muted green tips)
+  - Thorns: #3a3530, #4a4035 (dark brown woody)
+- STRONG CONTRAST: Dark tangled center, lighter leaf tips
 - Chunky pixel art aesthetic, not photorealistic
-- Bush fills 65% of frame
+- Bramble fills 50% of frame
 
-Transparent PNG, no checkered background. Make sure that everything that is not the bush or leaves is an alpha channel.
-```
-
-### Bush Large - Variant C
-
-```
-Single large bush/shrub viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
-
-- One large bush, centered
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, exactly 90 degrees, NO angle or tilt
-- Full irregular shrub shape, cloud-like clusters
-- Organic multi-lobed outline with natural variation
-- Dense thick leafy appearance with significant depth variation
-- Large size - fills 65% of frame
-- Muted desaturated tones - subdued military color palette
-- NOT vibrant
-- Light source directly overhead (noon)
-- EXACT COLOR PALETTE (use only these colors):
-  - Shadows: #1a2a1a, #2a3a2a (nearly black-green)
-  - Midtones: #3a5a3a, #4a6a4a (olive-green)
-  - Highlights: #5a7a5a, #6a8a6a (lighter olive)
-- STRONG CONTRAST: Very deep dark shadows in center/underneath, brighter highlights on top surface
-- Shadows should be nearly black-green, not washed out
-- Chunky pixel art aesthetic, not photorealistic
-- Bush fills 65% of frame
-
-Transparent PNG, no checkered background. Make sure that everything that is not the bush or leaves is an alpha channel.
+Transparent PNG, no checkered background. Make sure that everything that is not the bramble is an alpha channel.
 ```
 
 ---
 
 ## GRASS CLUMP
-
-### Grass Clump - Variant A
 
 ```
 Single tall grass tuft/clump viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
@@ -185,69 +104,16 @@ Single tall grass tuft/clump viewed from directly above, modern pixel art style 
 - Organic starburst shape, NOT perfectly symmetrical
 - Individual blade tips visible at edges, sparse gaps between blades
 - 40-50% of frame is transparent/empty between grass blades
-- Muted desaturated tones - subdued military color palette
+- Muted desaturated yellow-green tones - subdued military color palette
 - NOT vibrant
 - Light source directly overhead (noon)
 - EXACT COLOR PALETTE (use only these colors):
-  - Shadows: #1a2a1a, #2a3a2a (nearly black-green at center)
-  - Midtones: #4a6a3a, #5a7a4a (olive-green blades)
-  - Highlights: #6a8a5a, #7a9a6a (lighter blade tips)
+  - Shadows: #2a3a2a, #3a4a3a (dark green at center)
+  - Midtones: #5a6a4a, #6a7a5a (yellow-green blades)
+  - Highlights: #7a8a6a, #8a9a7a (lighter blade tips)
 - STRONG CONTRAST: Very deep dark shadows at base/center, brighter highlights on blade tips
-- Shadows should be nearly black-green, not washed out
 - Chunky pixel art aesthetic, not photorealistic
 - Grass fills 45% of frame
-
-Transparent PNG, no checkered background. Make sure that everything that is not the grass is an alpha channel.
-```
-
-### Grass Clump - Variant B
-
-```
-Single tall grass tuft/clump viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
-
-- One grass clump, centered
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, exactly 90 degrees, NO angle or tilt
-- Radiating grass blades fanning outward from center, blown slightly to one side
-- Organic windswept shape, NOT perfectly symmetrical
-- Individual blade tips visible at edges, sparse gaps between blades
-- 40-50% of frame is transparent/empty between grass blades
-- Muted desaturated tones - subdued military color palette
-- NOT vibrant
-- Light source directly overhead (noon)
-- EXACT COLOR PALETTE (use only these colors):
-  - Shadows: #1a2a1a, #2a3a2a (nearly black-green at center)
-  - Midtones: #4a6a3a, #5a7a4a (olive-green blades)
-  - Highlights: #6a8a5a, #7a9a6a (lighter blade tips)
-- STRONG CONTRAST: Very deep dark shadows at base/center, brighter highlights on blade tips
-- Shadows should be nearly black-green, not washed out
-- Chunky pixel art aesthetic, not photorealistic
-- Grass fills 45% of frame
-
-Transparent PNG, no checkered background. Make sure that everything that is not the grass is an alpha channel.
-```
-
-### Grass Clump - Variant C
-
-```
-Single tall grass tuft/clump viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
-
-- One grass clump, centered
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, exactly 90 degrees, NO angle or tilt
-- Radiating grass blades fanning outward from center, denser clump
-- Organic fuller shape, NOT perfectly symmetrical
-- Individual blade tips visible at edges, fewer gaps than other variants
-- 30-40% of frame is transparent/empty between grass blades
-- Muted desaturated tones - subdued military color palette
-- NOT vibrant
-- Light source directly overhead (noon)
-- EXACT COLOR PALETTE (use only these colors):
-  - Shadows: #1a2a1a, #2a3a2a (nearly black-green at center)
-  - Midtones: #4a6a3a, #5a7a4a (olive-green blades)
-  - Highlights: #6a8a5a, #7a9a6a (lighter blade tips)
-- STRONG CONTRAST: Very deep dark shadows at base/center, brighter highlights on blade tips
-- Shadows should be nearly black-green, not washed out
-- Chunky pixel art aesthetic, not photorealistic
-- Grass fills 50% of frame
 
 Transparent PNG, no checkered background. Make sure that everything that is not the grass is an alpha channel.
 ```
@@ -255,8 +121,6 @@ Transparent PNG, no checkered background. Make sure that everything that is not 
 ---
 
 ## FERN
-
-### Fern - Variant A
 
 ```
 Single fern plant viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
@@ -282,97 +146,73 @@ Single fern plant viewed from directly above, modern pixel art style with chunky
 Transparent PNG, no checkered background. Make sure that everything that is not the fern or fronds is an alpha channel.
 ```
 
-### Fern - Variant B
+---
 
-```
-Single fern plant viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
+## Post-Processing
 
-- One fern plant, centered
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, exactly 90 degrees, NO angle or tilt
-- Radiating fronds fanning outward from central point, fewer but larger fronds
-- Bold fern silhouette, NOT perfectly symmetrical
-- Feathery pinnate leaves with visible leaflet structure
-- 55-65% of frame is transparent/empty between fronds
-- Muted desaturated tones - subdued military color palette
-- NOT vibrant
-- Light source directly overhead (noon)
-- EXACT COLOR PALETTE (use only these colors):
-  - Shadows: #1a2a1a, #2a3a2a (nearly black-green at center)
-  - Midtones: #3a5a3a, #4a6a4a (dark olive-green fronds)
-  - Highlights: #5a7a5a, #6a8a6a (lighter frond tips)
-- STRONG CONTRAST: Very deep dark shadows at base/center, brighter highlights on frond tips
-- Shadows should be nearly black-green, not washed out
-- Chunky pixel art aesthetic, not photorealistic
-- Fern fills 55% of frame
+See [imagemagick.md](imagemagick.md) for setup instructions.
 
-Transparent PNG, no checkered background. Make sure that everything that is not the fern or fronds is an alpha channel.
+### Resize to 256x256
+```bash
+magick input.png -filter point -resize 256x256 output.png
 ```
 
-### Fern - Variant C
-
+### File Naming
+Generate 3 images from each prompt, name them:
 ```
-Single fern plant viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
-
-- One fern plant, centered
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, exactly 90 degrees, NO angle or tilt
-- Radiating fronds fanning outward from central point, compact and dense
-- Lush fern appearance, NOT perfectly symmetrical
-- Feathery pinnate leaves with visible leaflet structure, overlapping fronds
-- 40-50% of frame is transparent/empty between fronds
-- Muted desaturated tones - subdued military color palette
-- NOT vibrant
-- Light source directly overhead (noon)
-- EXACT COLOR PALETTE (use only these colors):
-  - Shadows: #1a2a1a, #2a3a2a (nearly black-green at center)
-  - Midtones: #3a5a3a, #4a6a4a (dark olive-green fronds)
-  - Highlights: #5a7a5a, #6a8a6a (lighter frond tips)
-- STRONG CONTRAST: Very deep dark shadows at base/center, brighter highlights on frond tips
-- Shadows should be nearly black-green, not washed out
-- Chunky pixel art aesthetic, not photorealistic
-- Fern fills 55% of frame
-
-Transparent PNG, no checkered background. Make sure that everything that is not the fern or fronds is an alpha channel.
+brush/
+  originals/
+    bush-1.png, bush-2.png, bush-3.png
+    shrub-1.png, shrub-2.png, shrub-3.png
+    bramble-1.png, bramble-2.png, bramble-3.png
+    grass-clump-1.png, grass-clump-2.png, grass-clump-3.png
+    fern-small-1.png, fern-small-2.png, fern-small-3.png
+  resized/
+    (same names after processing)
 ```
 
 ---
 
----
+## Code Integration
 
-## LEAF PARTICLES
+After generating sprites, update `js/world-builder/strokes.js` BRUSH_TYPES:
 
-Small particle sprites for forest movement effects. Simple shapes, don't need precision.
-
-### Leaf Particle Set (4 variants in one image)
-
+```javascript
+export const BRUSH_TYPES = {
+  'bush': {
+    featureType: 'brush',
+    baseScale: 0.85,
+    spacing: 38,
+    canopyRadius: 28,
+    variants: 3
+  },
+  'shrub': {
+    featureType: 'brush',
+    baseScale: 0.8,
+    spacing: 35,
+    canopyRadius: 25,
+    variants: 3
+  },
+  'bramble': {
+    featureType: 'brush',
+    baseScale: 0.9,
+    spacing: 40,
+    canopyRadius: 28,
+    variants: 3
+  },
+  'grass-clump': {
+    featureType: 'brush',
+    baseScale: 0.7,
+    spacing: 30,
+    canopyRadius: 22,
+    variants: 3
+  },
+  'fern-small': {
+    featureType: 'brush',
+    baseScale: 0.7,
+    spacing: 30,
+    canopyRadius: 22,
+    variants: 3
+  }
+};
 ```
-Four small fallen leaves arranged in a 2x2 grid, pixel art style. Transparent PNG.
-
-- 4 simple leaf shapes, each roughly 16x16 pixels
-- Top-left: oval brown leaf
-- Top-right: pointed tan leaf
-- Bottom-left: curled dark orange leaf
-- Bottom-right: small irregular brown leaf
-- Simple chunky pixel shapes - NOT detailed
-- Muted autumn colors: #4a4030, #5a4a35, #6a5040, #5a4535
-- Top-down view
-- Transparent background
-
-64x64 total image (4 leaves in 2x2 grid, each 16x16 area)
-```
-
----
-
-## Post-Processing Notes
-
-1. Generate at AI native resolution
-2. Resize to 128x128 using NoHalo/LoHalo interpolation
-3. Verify alpha channel transparency (no background remnants)
-4. Check contrast levels match tree sprites
-
-## File Naming Convention
-
-- `bush-small-a.png`, `bush-small-b.png`, `bush-small-c.png`
-- `bush-large-a.png`, `bush-large-b.png`, `bush-large-c.png`
-- `grass-clump-a.png`, `grass-clump-b.png`, `grass-clump-c.png`
-- `fern-a.png`, `fern-b.png`, `fern-c.png`
-- `leaf-particles.png` (64x64, 4 leaves in 2x2 grid)

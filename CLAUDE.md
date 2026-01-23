@@ -11,7 +11,12 @@ A military-themed math training game for a 12-year-old struggling with times tab
 **IMPORTANT: Follow these rules when implementing features:**
 
 1. **Check before coding** - Always search the codebase first to verify a feature doesn't already exist before implementing it
-2. **Separation of concerns** - Keep code modular:
+2. **No assumptions** - Never assume how something works or what the user wants:
+   - Trace the full code path before making changes
+   - Verify data actually flows where you think it does (check function signatures, property copying, etc.)
+   - Ask the user for expected behavior before implementing design decisions
+   - When a fix doesn't work, READ the code and investigate - don't guess
+3. **Separation of concerns** - Keep code modular:
    - `constants.js` - Data definitions (units, enemies, state enums)
    - `state.js` - Game state object only
    - `game.js` - Game logic and loop
@@ -19,8 +24,8 @@ A military-themed math training game for a 12-year-old struggling with times tab
    - `audio.js` - Sound only
    - `storage.js` - Persistence only
    - `main.js` - Event handling and initialization
-3. **No monolith files** - If a module grows too large, split it further
-4. **Single responsibility** - Each function/module should do one thing well
+4. **No monolith files** - If a module grows too large, split it further
+5. **Single responsibility** - Each function/module should do one thing well
 
 ## Development Commands
 
@@ -30,6 +35,40 @@ npm start            # Start server at http://localhost:3000
 ```
 
 The server automatically detects the local network IP for mobile device access (same WiFi required).
+
+## Server Management (for Claude)
+
+**When to restart the server:**
+- After modifying `server.js` (server-side code changes require restart)
+- Client-side changes (HTML, CSS, JS in `/js/`) do NOT require restart - just refresh browser
+
+**How to restart the server (Windows PowerShell):**
+```powershell
+# Kill existing node processes and restart
+taskkill /f /im node.exe; npm start
+```
+
+**Or as separate commands:**
+```powershell
+taskkill /f /im node.exe    # Stop the server
+npm start                    # Start the server
+```
+
+**Note:** The user typically has the server running in their own terminal. Ask them to restart it rather than trying to manage the process remotely.
+
+**Starting ngrok tunnel (for remote access):**
+```powershell
+npx ngrok http 3000
+```
+
+**Full restart (server + ngrok):**
+```powershell
+# Terminal 1: Server
+taskkill /f /im node.exe; npm start
+
+# Terminal 2: ngrok tunnel
+npx ngrok http 3000
+```
 
 ## Architecture
 

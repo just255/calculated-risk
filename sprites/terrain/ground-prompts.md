@@ -147,14 +147,33 @@ Note: Use for beaches, desert, river banks.
 
 ## Post-Processing Notes
 
-1. Generate at 1024x1024 with chunky 4x4 pixel blocks
-2. Resize to 256x256 using NEAREST-NEIGHBOR (preserves hard pixels):
-   ```
-   magick input.png -filter point -resize 256x256 output.png
-   ```
-3. Test seamless tiling by placing copies edge-to-edge
-4. Verify color palette matches specification
-5. If result is blurry, regenerate with chunkier blocks
+### Step 1: Resize to 256x256
+Ground textures are seamless tiles, so no trimming is needed. Use nearest-neighbor interpolation to preserve pixel art crispness.
+
+```bash
+# Resize with nearest-neighbor (point) filter
+magick input.png -filter point -resize 256x256 output.png
+```
+
+### Batch Processing
+```bash
+# Process all ground textures
+for file in terrain-*.png; do
+    magick "$file" -filter point -resize 256x256 "resized/$file"
+done
+```
+
+### Quality Checklist
+1. **Generate chunky** - Use 4x4 pixel blocks at 1024x1024
+2. **Use nearest-neighbor** - `-filter point` preserves hard pixel edges
+3. **Test seamless tiling** - Place copies edge-to-edge in GIMP/Photoshop
+4. **Verify color palette** - Should match the muted military tones specified
+5. **No trim needed** - Ground fills entire frame, no transparent areas
+
+### Troubleshooting
+- **Blurry result**: Ensure `-filter point` is used, not default bicubic. If still blurry, regenerate with chunkier blocks.
+- **Visible seams**: Original wasn't truly seamless - regenerate
+- **Colors shifted**: Ensure PNG color profile is sRGB
 
 ## File Naming Convention
 
