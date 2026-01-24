@@ -9,13 +9,20 @@ Generate 3 images from each prompt for variants.
 ## LEAF PARTICLES
 
 ```
-Small cluster of 3-4 fallen autumn leaves viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
+Randomly scattered fallen autumn leaves on a 256x256 pixel canvas, viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
 
-- 3-4 small fallen leaves scattered loosely, centered in frame
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, 90 degrees
+- 256x256 pixel image
+- EXACTLY 6 fallen leaves - no more, no less - COUNT THEM
+- Leaves scattered randomly over the ENTIRE image, edge to edge
+- Some leaves near edges, some near center - evenly distributed
+- NOT clustered in center - spread across full canvas
+- NO overlapping - each leaf separate with space between
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, EXACTLY 90 degrees
+- NO perspective, NO angle, NO 3D depth - completely flat overhead view
+- Leaves appear as flat shapes, NOT showing any thickness or side profile
 - Mix of leaf shapes: some oval, some pointed, some curled
 - Leaves at different angles of rotation
-- 70-80% of frame is transparent/empty
+- 60-70% of frame is transparent/empty (corners plus gaps between leaves)
 - Muted autumn color palette - subdued military tones
 - NOT vibrant
 - Light source directly overhead
@@ -25,7 +32,7 @@ Small cluster of 3-4 fallen autumn leaves viewed from directly above, modern pix
   - Lights: #7a6a4a, #8a7a55 (light tan/ochre)
   - Accent: #5a4035 (reddish-brown for variety)
 - Simple chunky pixel shapes - NOT highly detailed
-- Cluster fills 25-30% of frame
+- NOT a ring pattern - random scatter within a round area
 
 Transparent PNG, no checkered background.
 ```
@@ -62,7 +69,8 @@ Transparent PNG, no checkered background.
 Small cluster of 3-5 fallen twigs and small sticks viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
 
 - 3-5 small broken twigs/sticks scattered loosely, centered in frame
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, 90 degrees
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, EXACTLY 90 degrees
+- NO perspective, NO angle, NO 3D depth - completely flat overhead view
 - Mix of twig sizes: some short stubby, some longer thin
 - Twigs at different angles, some crossing over each other
 - 75-85% of frame is transparent/empty
@@ -88,7 +96,8 @@ Transparent PNG, no checkered background.
 Small cluster of fallen pine needles viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
 
 - Scattered pine needle cluster, centered in frame
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, 90 degrees
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, EXACTLY 90 degrees
+- NO perspective, NO angle, NO 3D depth - completely flat overhead view
 - Mix of single needles and small needle bunches
 - Needles at various angles radiating loosely
 - 70-80% of frame is transparent/empty
@@ -113,7 +122,8 @@ Transparent PNG, no checkered background.
 Small cluster of 3-4 acorns and seed pods viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
 
 - 3-4 acorns/nuts scattered loosely, centered in frame
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, 90 degrees
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, EXACTLY 90 degrees
+- NO perspective, NO angle, NO 3D depth - completely flat overhead view
 - Mix of whole acorns and empty caps
 - Items at different orientations
 - 75-85% of frame is transparent/empty
@@ -139,7 +149,8 @@ Transparent PNG, no checkered background.
 Small cluster of 2-3 tiny mushrooms viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
 
 - 2-3 small mushrooms scattered, centered in frame
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, 90 degrees
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, EXACTLY 90 degrees
+- NO perspective, NO angle, NO 3D depth - completely flat overhead view
 - Mushroom caps seen from above - circular/oval shapes
 - Mix of sizes, some overlapping slightly
 - 80-85% of frame is transparent/empty
@@ -165,7 +176,8 @@ Transparent PNG, no checkered background.
 Small irregular moss patch viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
 
 - One irregular moss patch, centered in frame
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, 90 degrees
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, EXACTLY 90 degrees
+- NO perspective, NO angle, NO 3D depth - completely flat overhead view
 - Organic blobby shape with fuzzy/soft edges
 - NOT circular - irregular natural spread
 - 70-80% of frame is transparent/empty
@@ -190,7 +202,8 @@ Transparent PNG, no checkered background.
 Small shallow puddle viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
 
 - One small irregular puddle, centered in frame
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, 90 degrees
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, EXACTLY 90 degrees
+- NO perspective, NO angle, NO 3D depth - completely flat overhead view
 - Organic irregular water shape - NOT circular
 - Reflective water surface with slight ripple texture
 - 75-85% of frame is transparent/empty
@@ -215,7 +228,8 @@ Transparent PNG, no checkered background.
 Small irregular snow patch viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
 
 - One small irregular snow patch, centered in frame
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, 90 degrees
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, EXACTLY 90 degrees
+- NO perspective, NO angle, NO 3D depth - completely flat overhead view
 - Organic blobby shape with soft melting edges
 - NOT circular - natural drift/melt pattern
 - 70-80% of frame is transparent/empty
@@ -240,7 +254,8 @@ Transparent PNG, no checkered background.
 Small mud splatter pattern viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
 
 - Irregular mud splatter, centered in frame
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, 90 degrees
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, EXACTLY 90 degrees
+- NO perspective, NO angle, NO 3D depth - completely flat overhead view
 - Organic splatter shape with droplet offshoots
 - Wet mud appearance with darker wet center
 - 75-85% of frame is transparent/empty
@@ -264,7 +279,8 @@ Transparent PNG, no checkered background.
 Small cluster of 4-6 spent bullet shell casings viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
 
 - 4-6 spent brass shell casings scattered, centered in frame
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, 90 degrees
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, EXACTLY 90 degrees
+- NO perspective, NO angle, NO 3D depth - completely flat overhead view
 - Mix of casings lying flat and at angles
 - Cylindrical brass shells, some showing open end
 - 80-85% of frame is transparent/empty
@@ -289,7 +305,8 @@ Transparent PNG, no checkered background.
 Small cluster of rubble and debris chunks viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
 
 - 5-7 small rubble chunks scattered, centered in frame
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, 90 degrees
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, EXACTLY 90 degrees
+- NO perspective, NO angle, NO 3D depth - completely flat overhead view
 - Mix of concrete/stone debris pieces
 - Irregular angular broken shapes
 - 75-85% of frame is transparent/empty
@@ -314,7 +331,8 @@ Transparent PNG, no checkered background.
 Small cluster of torn sandbag debris viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
 
 - 2-3 torn sandbag pieces with spilled sand, centered in frame
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, 90 degrees
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, EXACTLY 90 degrees
+- NO perspective, NO angle, NO 3D depth - completely flat overhead view
 - Torn burlap fabric pieces with sand piles
 - Irregular torn shapes
 - 75-85% of frame is transparent/empty
@@ -339,7 +357,8 @@ Transparent PNG, no checkered background.
 Short section of tire track marks viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
 
 - Short tire track segment, centered in frame
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, 90 degrees
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, EXACTLY 90 degrees
+- NO perspective, NO angle, NO 3D depth - completely flat overhead view
 - Parallel tread marks pressed into mud/dirt
 - Partial track, NOT full tire width necessarily
 - 70-80% of frame is transparent/empty
@@ -363,7 +382,8 @@ Transparent PNG, no checkered background.
 Small cluster of 3-5 desert rocks/stones viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
 
 - 3-5 small desert rocks scattered, centered in frame
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, 90 degrees
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, EXACTLY 90 degrees
+- NO perspective, NO angle, NO 3D depth - completely flat overhead view
 - Mix of sizes, angular weathered shapes
 - Desert/sandstone coloring
 - 75-85% of frame is transparent/empty
@@ -387,7 +407,8 @@ Transparent PNG, no checkered background.
 Small cluster of marsh reed tufts viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
 
 - 2-3 small reed/cattail tufts, centered in frame
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, 90 degrees
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, EXACTLY 90 degrees
+- NO perspective, NO angle, NO 3D depth - completely flat overhead view
 - Vertical reeds seen from above - small circular/oval clusters
 - Mix of green reeds and brown cattail heads
 - 80-85% of frame is transparent/empty
@@ -412,7 +433,8 @@ Transparent PNG, no checkered background.
 Small cluster of 4-6 tiny wildflowers viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
 
 - 4-6 small wildflowers scattered, centered in frame
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, 90 degrees
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, EXACTLY 90 degrees
+- NO perspective, NO angle, NO 3D depth - completely flat overhead view
 - Mix of tiny flower heads - some open, some budding
 - Muted, desaturated colors - NOT bright or vibrant
 - 80-85% of frame is transparent/empty

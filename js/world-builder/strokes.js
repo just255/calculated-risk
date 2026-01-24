@@ -153,6 +153,52 @@ export const BRUSH_TYPES = {
 };
 
 /**
+ * Particle type definitions
+ * Particles are sparse scatter items that can overlap freely
+ * They link to parent trees/brush for cascading delete
+ */
+export const PARTICLE_TYPES = {
+  'leaf-particles': {
+    baseScale: 0.5,
+    variants: 3,
+    noCollision: true
+  },
+  'pine-needles': {
+    baseScale: 0.4,
+    variants: 3,
+    noCollision: true
+  },
+  'twigs': {
+    baseScale: 0.45,
+    variants: 3,
+    noCollision: true
+  }
+};
+
+/**
+ * Tree type to particle type mapping
+ * Defines which particles auto-generate around each tree type
+ */
+export const TREE_TO_PARTICLES = {
+  'oak': ['leaf-particles'],
+  'pine': ['pine-needles'],
+  'birch': ['leaf-particles'],
+  'willow': ['leaf-particles', 'twigs'],
+  'dead': ['twigs']
+};
+
+/**
+ * Tree type to suggested brush mapping
+ */
+export const TREE_TO_BRUSH = {
+  'oak': ['fern-small', 'bush-small'],
+  'pine': ['fern-small'],
+  'birch': ['fern-small', 'bush-small'],
+  'willow': ['fern-small'],
+  'dead': ['bush-small']
+};
+
+/**
  * Color variation ranges for natural look
  */
 export const COLOR_VARIATION = {
@@ -236,6 +282,7 @@ export function createTerrainMap(gridWidth, gridHeight, cellSize = 64, baseLayer
     strokes: [],
     trees: [],              // Global tree registry for collision detection & rendering
     brushes: [],            // Global brush registry for collision detection & rendering
+    particles: [],          // Global particle registry (leaves, needles, etc.)
     baseLayer,
     grid: [],
     gridWidth,
@@ -385,7 +432,16 @@ export function generateTreesForStroke(terrainMap, stroke, options = {}) {
       variant: Math.floor(seededRandom(treeSeed + 3) * 3) + 1, // 1, 2, or 3
       hueShift: (seededRandom(treeSeed + 6) - 0.5) * COLOR_VARIATION.hueRange,
       brightness: 1 + (seededRandom(treeSeed + 7) - 0.5) * COLOR_VARIATION.brightnessRange,
-      saturation: 1 + (seededRandom(treeSeed + 8) - 0.5) * COLOR_VARIATION.saturationRange
+      saturation: 1 + (seededRandom(treeSeed + 8) - 0.5) * COLOR_VARIATION.saturationRange,
+      // Floor settings baked at creation time (includes density bonus)
+      floorRadiusPercent: (() => {
+        const base = options.floorRadiusPercent ?? stroke.floorRadiusPercent ?? 30;
+        const treeDensity = stroke.density ?? 5;
+        const densityBonus = Math.max(0, (treeDensity - 3) * 2);
+        return base + densityBonus;
+      })(),
+      floorFade: options.floorFade ?? stroke.floorFade ?? 100,
+      floorIntensity: options.floorIntensity ?? stroke.floorIntensity ?? 70
     };
 
     // Add to global registry
@@ -655,4 +711,173 @@ export function removeBrushInRadius(terrainMap, x, y, radius, falloff = 'hard') 
 export function getBrushSortedByScale(terrainMap) {
   if (!terrainMap.brushes) return [];
   return [...terrainMap.brushes].sort((a, b) => a.scale - b.scale);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PARTICLE GENERATION
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Generate particles around a tree
+ * @param {object} terrainMap - TerrainMap with global particle registry
+ * @param {object} tree - Tree object to generate particles around
+ * @param {object} options - Generation options
+ * @param {number} options.density - Particles to generate (default 3)
+ * @param {number} options.radius - Scatter radius around tree (default based on tree scale)
+ * @returns {object[]} Array of particles that were added
+ */
+export function generateParticlesForTree(terrainMap, tree, options = {}) {
+  // Ensure particles array exists
+  if (!terrainMap.particles) terrainMap.particles = [];
+
+  // Get particle types for this tree type
+  const particleTypes = TREE_TO_PARTICLES[tree.treeType];
+  if (!particleTypes || particleTypes.length === 0) return [];
+
+  const baseDensity = options.density ?? 3;
+  const spreadPercent = options.spread ?? 40; // Spread as percentage of canopy size
+
+  // Tree sprite is 256px, canopy fills ~90% of frame, so canopy diameter = 230px at scale 1.0
+  // At tree.scale, canopy radius in pixels = 115 * tree.scale
+  const canopyRadius = 115 * tree.scale;
+  const minRadius = canopyRadius * 0.95; // Start right at canopy edge
+  // Spread scales proportionally with canopy size
+  const maxRadius = canopyRadius * (1 + spreadPercent / 100);
+
+  // Scale density by tree size and spread - larger areas need more particles
+  // Use power of 0.75 instead of 0.5 (sqrt) for more aggressive scaling on big trees
+  const scaleMultiplier = Math.max(1, Math.pow(tree.scale / 0.1, 0.75));
+  const spreadMultiplier = Math.max(1, spreadPercent / 40); // 40% is baseline
+  const density = Math.round(baseDensity * scaleMultiplier * spreadMultiplier);
+  const falloffExponent = options.falloff ?? 0.4; // Controls concentration (0.2=tight at inner edge, 1.0=uniform)
+
+  // Debug output
+  console.log(`[Particles] scale=${tree.scale.toFixed(2)}, density=${density} (base ${baseDensity} × scale ${scaleMultiplier.toFixed(1)} × spread ${spreadMultiplier.toFixed(1)}), ring=${minRadius.toFixed(0)}-${maxRadius.toFixed(0)}px`);
+  const seed = options.seed ?? (parseInt(tree.id.split('_')[1]) || Date.now());
+
+  const addedParticles = [];
+
+  for (let i = 0; i < density; i++) {
+    const particleSeed = seed + i * 100;
+
+    // Pick random particle type from available types
+    const typeIndex = Math.floor(seededRandom(particleSeed) * particleTypes.length);
+    const particleType = particleTypes[typeIndex];
+    const particleConfig = PARTICLE_TYPES[particleType];
+    if (!particleConfig) continue;
+
+    // Ring distribution: particles spawn between minRadius (canopy edge) and maxRadius
+    // Falloff controls concentration: lower = denser at inner edge, 1.0 = uniform across ring
+    const ringWidth = Math.max(0, maxRadius - minRadius);
+    const distFactor = Math.pow(seededRandom(particleSeed + 2), 1 / falloffExponent);
+
+    const angle = seededRandom(particleSeed + 1) * Math.PI * 2;
+    const dist = minRadius + (distFactor * ringWidth);
+    const px = tree.x + Math.cos(angle) * dist;
+    const py = tree.y + Math.sin(angle) * dist;
+
+    // Random scale variation
+    const scaleVariation = 0.4; // ±40%
+    const scaleRand = 1 + (seededRandom(particleSeed + 3) - 0.5) * 2 * scaleVariation;
+    const globalScale = options.scale ?? 0.15; // User-controlled global particle scale
+    const finalScale = particleConfig.baseScale * scaleRand * globalScale;
+
+    // Create particle object
+    const particle = {
+      id: `particle_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+      strokeId: tree.strokeId,       // For bulk stroke delete
+      parentId: tree.id,             // For cascading delete from tree
+      particleType,
+      x: px,
+      y: py,
+      scale: finalScale,
+      rotation: seededRandom(particleSeed + 4) * 360,
+      variant: Math.floor(seededRandom(particleSeed + 5) * particleConfig.variants) + 1,
+      hueShift: (seededRandom(particleSeed + 6) - 0.5) * COLOR_VARIATION.hueRange,
+      brightness: 1 + (seededRandom(particleSeed + 7) - 0.5) * COLOR_VARIATION.brightnessRange,
+      saturation: 1 + (seededRandom(particleSeed + 8) - 0.5) * COLOR_VARIATION.saturationRange
+    };
+
+    terrainMap.particles.push(particle);
+    addedParticles.push(particle);
+  }
+
+  return addedParticles;
+}
+
+/**
+ * Generate particles for all trees in a stroke
+ * @param {object} terrainMap - TerrainMap
+ * @param {string} strokeId - Stroke ID
+ * @param {object} options - Generation options
+ * @returns {object[]} Array of particles added
+ */
+export function generateParticlesForStroke(terrainMap, strokeId, options = {}) {
+  const trees = terrainMap.trees.filter(t => t.strokeId === strokeId);
+  const allParticles = [];
+
+  for (const tree of trees) {
+    const particles = generateParticlesForTree(terrainMap, tree, options);
+    allParticles.push(...particles);
+  }
+
+  return allParticles;
+}
+
+/**
+ * Remove particles associated with a parent (tree or brush)
+ * @param {object} terrainMap - TerrainMap
+ * @param {string} parentId - Parent tree/brush ID
+ * @returns {number} Number of particles removed
+ */
+export function removeParticlesForParent(terrainMap, parentId) {
+  if (!terrainMap.particles) return 0;
+  const before = terrainMap.particles.length;
+  terrainMap.particles = terrainMap.particles.filter(p => p.parentId !== parentId);
+  return before - terrainMap.particles.length;
+}
+
+/**
+ * Remove particles associated with a stroke
+ * @param {object} terrainMap - TerrainMap
+ * @param {string} strokeId - Stroke ID
+ * @returns {number} Number of particles removed
+ */
+export function removeParticlesForStroke(terrainMap, strokeId) {
+  if (!terrainMap.particles) return 0;
+  const before = terrainMap.particles.length;
+  terrainMap.particles = terrainMap.particles.filter(p => p.strokeId !== strokeId);
+  return before - terrainMap.particles.length;
+}
+
+/**
+ * Remove particles within a radius
+ * @param {object} terrainMap - TerrainMap
+ * @param {number} x - Center X
+ * @param {number} y - Center Y
+ * @param {number} radius - Radius
+ * @returns {number} Number of particles removed
+ */
+export function removeParticlesInRadius(terrainMap, x, y, radius) {
+  if (!terrainMap.particles) return 0;
+  const before = terrainMap.particles.length;
+  const radiusSq = radius * radius;
+
+  terrainMap.particles = terrainMap.particles.filter(p => {
+    const dx = p.x - x;
+    const dy = p.y - y;
+    return (dx * dx + dy * dy) > radiusSq;
+  });
+
+  return before - terrainMap.particles.length;
+}
+
+/**
+ * Get all particles sorted by Y position (for z-ordering)
+ * @param {object} terrainMap - TerrainMap
+ * @returns {object[]} Particles sorted by Y ascending
+ */
+export function getParticlesSortedByY(terrainMap) {
+  if (!terrainMap.particles) return [];
+  return [...terrainMap.particles].sort((a, b) => a.y - b.y);
 }

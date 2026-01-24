@@ -93,10 +93,12 @@ class TerrainEditor {
       fadeWidthVal: document.getElementById('fade-width-val'),
       autoGroundSettings: document.getElementById('auto-ground-settings'),
       autoGroundTexture: document.getElementById('auto-ground-texture'),
-      floorExtend: document.getElementById('floor-extend'),
-      floorExtendVal: document.getElementById('floor-extend-val'),
+      floorRadius: document.getElementById('floor-radius'),
+      floorRadiusVal: document.getElementById('floor-radius-val'),
       floorFade: document.getElementById('floor-fade'),
       floorFadeVal: document.getElementById('floor-fade-val'),
+      floorIntensity: document.getElementById('floor-intensity'),
+      floorIntensityVal: document.getElementById('floor-intensity-val'),
 
       // Water settings
       waterSettings: document.getElementById('water-settings'),
@@ -135,6 +137,18 @@ class TerrainEditor {
       brushDensityVal: document.getElementById('brush-density-val'),
       brushInWater: document.getElementById('brush-in-water'),
 
+      // Particle settings
+      autoParticles: document.getElementById('auto-particles'),
+      particleDensity: document.getElementById('particle-density'),
+      particleDensityVal: document.getElementById('particle-density-val'),
+      particleSpread: document.getElementById('particle-spread'),
+      particleSpreadVal: document.getElementById('particle-spread-val'),
+      particleFalloff: document.getElementById('particle-falloff'),
+      particleFalloffVal: document.getElementById('particle-falloff-val'),
+      particleScale: document.getElementById('particle-scale'),
+      particleScaleVal: document.getElementById('particle-scale-val'),
+      cascadeDelete: document.getElementById('cascade-delete'),
+
       // Map settings
       baseLayer: document.getElementById('base-layer'),
       gridSize: document.getElementById('grid-size'),
@@ -144,6 +158,7 @@ class TerrainEditor {
       gridOpacity: document.getElementById('grid-opacity'),
       gridOpacityVal: document.getElementById('grid-opacity-val'),
       showBoundary: document.getElementById('show-boundary'),
+      showParticleDebug: document.getElementById('show-particle-debug'),
 
       // Status bar
       zoomLevel: document.getElementById('zoom-level'),
@@ -249,21 +264,31 @@ class TerrainEditor {
       });
     }
 
-    // Floor extend slider
-    if (this._elements.floorExtend) {
-      this._elements.floorExtend.addEventListener('input', (e) => {
+    // Floor radius slider (percentage beyond canopy) - affects NEW trees only
+    if (this._elements.floorRadius) {
+      this._elements.floorRadius.addEventListener('input', (e) => {
         const value = parseInt(e.target.value);
-        this._state.setToolOption('floorExtend', value);
-        this._elements.floorExtendVal.textContent = `${value}px`;
+        this._state.setToolOption('floorRadiusPercent', value);
+        this._elements.floorRadiusVal.textContent = `${value}%`;
       });
     }
 
-    // Floor fade slider
+    // Floor fade slider - affects NEW trees only
+    // 0% = hard edge, 100% = entire ring fades
     if (this._elements.floorFade) {
       this._elements.floorFade.addEventListener('input', (e) => {
         const value = parseInt(e.target.value);
         this._state.setToolOption('floorFade', value);
-        this._elements.floorFadeVal.textContent = `${value}px`;
+        this._elements.floorFadeVal.textContent = `${value}%`;
+      });
+    }
+
+    // Floor intensity slider - affects NEW trees only
+    if (this._elements.floorIntensity) {
+      this._elements.floorIntensity.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value);
+        this._state.setToolOption('floorIntensity', value);
+        this._elements.floorIntensityVal.textContent = `${value}%`;
       });
     }
 
@@ -321,7 +346,7 @@ class TerrainEditor {
       this._elements.scaleVal.textContent = `${e.target.value}%`;
     });
 
-    // Tree density
+    // Tree density - affects NEW trees only
     this._elements.treeDensity.addEventListener('input', (e) => {
       const value = parseInt(e.target.value);
       this._state.setToolOption('treeDensity', value);
@@ -380,6 +405,62 @@ class TerrainEditor {
       });
     }
 
+    // Auto particles checkbox
+    if (this._elements.autoParticles) {
+      this._elements.autoParticles.addEventListener('change', (e) => {
+        this._state.setToolOption('autoParticles', e.target.checked);
+        // Show/hide particle settings based on auto-particles toggle
+        const display = e.target.checked ? 'block' : 'none';
+        ['particle-density-row', 'particle-spread-row', 'particle-falloff-row', 'particle-scale-row'].forEach(id => {
+          const row = document.getElementById(id);
+          if (row) row.style.display = display;
+        });
+      });
+    }
+
+    // Particle density slider
+    if (this._elements.particleDensity) {
+      this._elements.particleDensity.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value);
+        this._state.setToolOption('particleDensity', value);
+        this._elements.particleDensityVal.textContent = value;
+      });
+    }
+
+    // Particle spread slider
+    if (this._elements.particleSpread) {
+      this._elements.particleSpread.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value);
+        this._state.setToolOption('particleSpread', value);
+        this._elements.particleSpreadVal.textContent = `${value}%`;
+      });
+    }
+
+    // Particle falloff slider (converts 20-100 range to 0.2-1.0)
+    if (this._elements.particleFalloff) {
+      this._elements.particleFalloff.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value) / 100;
+        this._state.setToolOption('particleFalloff', value);
+        this._elements.particleFalloffVal.textContent = value.toFixed(1);
+      });
+    }
+
+    // Particle scale slider (converts 5-40 range to 0.05-0.40)
+    if (this._elements.particleScale) {
+      this._elements.particleScale.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value) / 100;
+        this._state.setToolOption('particleScale', value);
+        this._elements.particleScaleVal.textContent = `${e.target.value}%`;
+      });
+    }
+
+    // Cascade delete checkbox
+    if (this._elements.cascadeDelete) {
+      this._elements.cascadeDelete.addEventListener('change', (e) => {
+        this._state.setToolOption('cascadeDelete', e.target.checked);
+      });
+    }
+
     // Base layer
     this._elements.baseLayer.addEventListener('change', (e) => {
       this._state.baseLayer = e.target.value;
@@ -420,6 +501,13 @@ class TerrainEditor {
     this._elements.showBoundary.addEventListener('change', (e) => {
       this._state.setViewSetting('showBoundary', e.target.checked);
     });
+
+    // Particle debug rings toggle
+    if (this._elements.showParticleDebug) {
+      this._elements.showParticleDebug.addEventListener('change', (e) => {
+        this._state.setViewSetting('showParticleDebug', e.target.checked);
+      });
+    }
 
     // Track cursor position
     this._renderer.uiCanvas.addEventListener('mousemove', (e) => {

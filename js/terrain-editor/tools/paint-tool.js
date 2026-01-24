@@ -222,6 +222,11 @@ export const PaintTool = {
       stroke.selectedAges = options.selectedAges || ['young', 'transitional', 'old'];
       stroke.ageRatios = options.ageRatios || { young: 0.333, transitional: 0.333, old: 0.334 };
       stroke.allowTreesInWater = options.treesInWater || false;
+
+      // Floor settings baked at paint time
+      stroke.floorRadiusPercent = options.floorRadiusPercent ?? 30;
+      stroke.floorFade = options.floorFade ?? 100;  // Percentage: 0=hard edge, 100=full fade
+      stroke.floorIntensity = options.floorIntensity ?? 70;
       // For backwards compat with renderer, derive min/max from selected
       const ageOrder = ['young', 'transitional', 'old'];
       const selected = stroke.selectedAges;
@@ -240,18 +245,18 @@ export const PaintTool = {
     }
 
     // Auto-paint ground texture if enabled (paint first so it's behind trees)
+    // NOTE: For forests, we skip stroke-based floor - tree-based ground layer handles it
     let autoGroundStroke = null;
     if (options.autoGroundTexture) {
       const featureDef = FEATURE_DEFS[options.featureType];
       const autoTexture = featureDef?.autoGroundTexture;
 
-      if (autoTexture) {
-        // For forests, use user-defined floor extend and fade
+      // Skip forest-floor strokes - tree-based system renders floor radiating from each tree
+      // Other auto textures (like mud around water) still use strokes
+      if (autoTexture && autoTexture !== 'forest-floor') {
         const floorRadius = options.brushRadius + (options.floorExtend ?? 0);
         const floorFade = options.floorFade ?? 16;
 
-        // Always paint forest floor - water renders on top and will cover it
-        // Trees individually check for water overlap, so they'll still avoid water
         autoGroundStroke = createStroke(
           'groundTexture',
           x,
@@ -312,8 +317,10 @@ export const PaintTool = {
       }
     }
 
-    // Forest with auto ground texture - show outer ring for floor extend
-    if (options.featureType === 'forest' && options.autoGroundTexture) {
+    // Forest floor preview removed - tree-based system handles floor now
+    // Floor radiates from each tree, not from brush stroke
+    if (false && options.featureType === 'forest' && options.autoGroundTexture) {
+      // Legacy: stroke-based floor extend preview (disabled)
       const floorExtend = options.floorExtend || 0;
       if (floorExtend !== 0) {
         result.outerRadius = options.brushRadius + floorExtend;

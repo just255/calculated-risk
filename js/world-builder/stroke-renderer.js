@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { ensureRasterized } from './rasterize.js';
-import { FEATURE_DEFS, FALLOFF, TREE_TYPES, TREE_AGES, TREE_AGE_THRESHOLD, BRUSH_TYPES, COLOR_VARIATION, getTreesSortedByScale, getBrushSortedByScale } from './strokes.js';
+import { FEATURE_DEFS, FALLOFF, TREE_TYPES, TREE_AGES, TREE_AGE_THRESHOLD, BRUSH_TYPES, PARTICLE_TYPES, COLOR_VARIATION, getTreesSortedByScale, getBrushSortedByScale, getParticlesSortedByY } from './strokes.js';
 
 /**
  * Color definitions for features
@@ -91,9 +91,10 @@ export function renderBaseLayer(terrainMap, cellSize) {
  * @param {object} treeImages - Optional preloaded tree images
  * @param {number} dpr - Device pixel ratio for high-DPI rendering (default 1)
  * @param {object} brushImages - Optional preloaded brush images
+ * @param {object} particleImages - Optional preloaded particle images
  * @returns {HTMLCanvasElement} Canvas with canopy layer (transparent background)
  */
-export function renderCanopyLayer(terrainMap, cellSize, treeImages = null, dpr = 1, brushImages = null) {
+export function renderCanopyLayer(terrainMap, cellSize, treeImages = null, dpr = 1, brushImages = null, particleImages = null) {
   ensureRasterized(terrainMap);
 
   const width = terrainMap.gridWidth * cellSize;
@@ -114,10 +115,19 @@ export function renderCanopyLayer(terrainMap, cellSize, treeImages = null, dpr =
   // Start transparent
   ctx.clearRect(0, 0, width, height);
 
+  // Check if we have particles in the global registry
+  const hasGlobalParticles = terrainMap.particles && terrainMap.particles.length > 0;
+
+  // Render particles FIRST (under everything else)
+  // Use baked composites per tree for performance (1 draw per tree instead of N particles)
+  if (hasGlobalParticles) {
+    drawParticlesWithBaking(ctx, terrainMap, particleImages, brushImages);
+  }
+
   // Check if we have brush in the global registry
   const hasGlobalBrush = terrainMap.brushes && terrainMap.brushes.length > 0;
 
-  // Render brush FIRST (under trees) - sorted by scale for z-ordering
+  // Render brush (under trees) - sorted by scale for z-ordering
   if (hasGlobalBrush) {
     const sortedBrush = getBrushSortedByScale(terrainMap);
     drawBrushFromRegistry(ctx, sortedBrush, brushImages);
@@ -217,6 +227,221 @@ function drawBrushFromRegistry(ctx, brushItems, images) {
 
     drawSingleBrush(ctx, brushImage, x, y, scale, hueShift, brightness, saturation);
   }
+}
+
+/**
+ * Draw particles using baked composites for performance
+ * Instead of drawing N particles individually, we bake all particles for each tree
+ * into a single composite image, reducing draw calls from N to 1 per tree.
+ *
+ * Also keeps 2-3 particles per tree as "animated" for potential future animation.
+ *
+ * @param {CanvasRenderingContext2D} ctx - Canvas context
+ * @param {object} terrainMap - TerrainMap with trees and particles
+ * @param {object} particleImages - Loaded particle images
+ * @param {object} brushImages - Fallback brush images
+ */
+function drawParticlesWithBaking(ctx, terrainMap, particleImages, brushImages) {
+  const trees = terrainMap.trees || [];
+  const particles = terrainMap.particles || [];
+
+  // Group particles by parent tree
+  const particlesByTree = new Map();
+  const orphanParticles = []; // Particles without a parent tree
+
+  for (const particle of particles) {
+    if (particle.parentId) {
+      if (!particlesByTree.has(particle.parentId)) {
+        particlesByTree.set(particle.parentId, []);
+      }
+      particlesByTree.get(particle.parentId).push(particle);
+    } else {
+      orphanParticles.push(particle);
+    }
+  }
+
+  // Process each tree's particles
+  for (const tree of trees) {
+    const treeParticles = particlesByTree.get(tree.id) || [];
+    if (treeParticles.length === 0) continue;
+
+    // Check if we need to bake (or rebake)
+    // Rebake if particle count changed or composite doesn't exist
+    const needsBake = !tree._particleComposite ||
+                      tree._particleCount !== treeParticles.length;
+
+    if (needsBake) {
+      bakeParticlesForTree(tree, treeParticles, particleImages, brushImages);
+    }
+
+    // Draw the baked composite
+    if (tree._particleComposite) {
+      ctx.drawImage(
+        tree._particleComposite,
+        tree._particleBounds.x,
+        tree._particleBounds.y
+      );
+    }
+
+    // Draw animated particles individually (for future animation support)
+    if (tree._animatedParticles) {
+      for (const particle of tree._animatedParticles) {
+        drawSingleParticleWithImages(ctx, particle, particleImages, brushImages);
+      }
+    }
+  }
+
+  // Draw orphan particles individually (no parent tree)
+  for (const particle of orphanParticles) {
+    drawSingleParticleWithImages(ctx, particle, particleImages, brushImages);
+  }
+}
+
+/**
+ * Bake all particles for a tree into a single composite image
+ * @param {object} tree - Tree object to store composite on
+ * @param {object[]} particles - Particles belonging to this tree
+ * @param {object} particleImages - Loaded particle images
+ * @param {object} brushImages - Fallback brush images
+ */
+function bakeParticlesForTree(tree, particles, particleImages, brushImages) {
+  if (particles.length === 0) {
+    tree._particleComposite = null;
+    tree._particleCount = 0;
+    tree._animatedParticles = [];
+    return;
+  }
+
+  // Keep 2-3 particles for animation (random selection from the set)
+  const animatedCount = Math.min(3, Math.floor(particles.length * 0.1)); // 10% or max 3
+  const shuffled = [...particles].sort(() => Math.random() - 0.5);
+  tree._animatedParticles = shuffled.slice(0, animatedCount);
+  const bakedParticles = shuffled.slice(animatedCount);
+
+  if (bakedParticles.length === 0) {
+    tree._particleComposite = null;
+    tree._particleCount = particles.length;
+    return;
+  }
+
+  // Calculate bounding box for all baked particles
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const PARTICLE_SIZE = 256; // Max particle sprite size
+
+  for (const p of bakedParticles) {
+    const halfSize = (PARTICLE_SIZE * p.scale) / 2;
+    minX = Math.min(minX, p.x - halfSize);
+    minY = Math.min(minY, p.y - halfSize);
+    maxX = Math.max(maxX, p.x + halfSize);
+    maxY = Math.max(maxY, p.y + halfSize);
+  }
+
+  // Add padding
+  const padding = 4;
+  minX = Math.floor(minX) - padding;
+  minY = Math.floor(minY) - padding;
+  maxX = Math.ceil(maxX) + padding;
+  maxY = Math.ceil(maxY) + padding;
+
+  const width = maxX - minX;
+  const height = maxY - minY;
+
+  // Create offscreen canvas
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+
+  // Sort by Y for proper z-ordering
+  bakedParticles.sort((a, b) => a.y - b.y);
+
+  // Draw all particles to the composite
+  for (const particle of bakedParticles) {
+    const { particleType, x, y, scale, rotation, variant } = particle;
+
+    const imageKey = `${particleType}-${variant}`;
+    let image = particleImages?.[imageKey] || brushImages?.[imageKey];
+    if (!image) {
+      image = particleImages?.[`${particleType}-1`] || brushImages?.[`${particleType}-1`];
+    }
+    if (!image) continue;
+
+    const pWidth = Math.round(image.width * scale);
+    const pHeight = Math.round(image.height * scale);
+
+    ctx.save();
+    ctx.translate(Math.round(x - minX), Math.round(y - minY));
+    ctx.rotate(rotation * Math.PI / 180);
+    ctx.drawImage(image, Math.round(-pWidth / 2), Math.round(-pHeight / 2), pWidth, pHeight);
+    ctx.restore();
+  }
+
+  // Store composite and metadata on tree
+  tree._particleComposite = canvas;
+  tree._particleBounds = { x: minX, y: minY, width, height };
+  tree._particleCount = particles.length;
+}
+
+/**
+ * Draw a single particle with image lookup
+ */
+function drawSingleParticleWithImages(ctx, particle, particleImages, brushImages) {
+  const { particleType, x, y, scale, rotation, variant } = particle;
+
+  const imageKey = `${particleType}-${variant}`;
+  let image = particleImages?.[imageKey] || brushImages?.[imageKey];
+  if (!image) {
+    image = particleImages?.[`${particleType}-1`] || brushImages?.[`${particleType}-1`];
+  }
+  if (!image) return;
+
+  drawSingleParticle(ctx, image, x, y, scale, rotation);
+}
+
+/**
+ * Draw particles from the global registry (legacy - kept for reference)
+ * @param {CanvasRenderingContext2D} ctx - Canvas context
+ * @param {object[]} particles - Array of particle objects sorted by Y
+ * @param {object} particleImages - Loaded particle images (or null to use brushImages)
+ * @param {object} brushImages - Fallback to brush images for particle types like leaf-particles
+ */
+function drawParticlesFromRegistry(ctx, particles, particleImages, brushImages) {
+  for (const particle of particles) {
+    const { particleType, x, y, scale, rotation, variant, hueShift, brightness, saturation } = particle;
+
+    // Build image key: leaf-particles-1, pine-needles-2, etc.
+    const imageKey = `${particleType}-${variant}`;
+
+    // Try particle images first, then brush images as fallback
+    let particleImage = particleImages?.[imageKey] || brushImages?.[imageKey];
+
+    if (!particleImage) {
+      // Try first variant as fallback
+      particleImage = particleImages?.[`${particleType}-1`] || brushImages?.[`${particleType}-1`];
+    }
+
+    if (!particleImage) continue;
+
+    drawSingleParticle(ctx, particleImage, x, y, scale, rotation, hueShift, brightness, saturation);
+  }
+}
+
+/**
+ * Draw a single particle with transforms
+ */
+function drawSingleParticle(ctx, image, x, y, scale, rotation, hueShift, brightness, saturation) {
+  const width = Math.round(image.width * scale);
+  const height = Math.round(image.height * scale);
+
+  ctx.save();
+  ctx.translate(Math.round(x), Math.round(y));
+  ctx.rotate(rotation * Math.PI / 180);
+
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(image, Math.round(-width / 2), Math.round(-height / 2), width, height);
+
+  ctx.restore();
 }
 
 /**

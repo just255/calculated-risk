@@ -475,15 +475,21 @@
         </div>
         <div class="prop-row">
           <label class="prop-label">
-            Floor Extend <span class="prop-value" id="floor-extend-val">0px</span>
+            Floor Radius <span class="prop-value" id="floor-radius-val">30%</span>
           </label>
-          <input type="range" class="prop-range" id="floor-extend" min="-24" max="24" value="0">
+          <input type="range" class="prop-range" id="floor-radius" min="10" max="100" value="30">
         </div>
         <div class="prop-row">
           <label class="prop-label">
-            Floor Fade <span class="prop-value" id="floor-fade-val">16px</span>
+            Floor Fade <span class="prop-value" id="floor-fade-val">100%</span>
           </label>
-          <input type="range" class="prop-range" id="floor-fade" min="0" max="48" value="16">
+          <input type="range" class="prop-range" id="floor-fade" min="0" max="100" value="100">
+        </div>
+        <div class="prop-row">
+          <label class="prop-label">
+            Floor Intensity <span class="prop-value" id="floor-intensity-val">70%</span>
+          </label>
+          <input type="range" class="prop-range" id="floor-intensity" min="30" max="100" value="70">
         </div>
         <div class="prop-row" style="margin-top: 8px;">
           <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; cursor: pointer;">
@@ -592,6 +598,40 @@
             <div id="age-ratio-sliders"></div>
           </div>
         </div>
+        <div class="prop-row" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">
+          <label class="prop-label">
+            <input type="checkbox" id="auto-particles" checked> Auto particles (leaves/needles)
+          </label>
+        </div>
+        <div class="prop-row" id="particle-density-row">
+          <label class="prop-label">
+            Density <span class="prop-value" id="particle-density-val">8</span>
+          </label>
+          <input type="range" class="prop-range" id="particle-density" min="0" max="20" value="8">
+        </div>
+        <div class="prop-row" id="particle-spread-row">
+          <label class="prop-label">
+            Spread <span class="prop-value" id="particle-spread-val">40%</span>
+          </label>
+          <input type="range" class="prop-range" id="particle-spread" min="10" max="100" value="40">
+        </div>
+        <div class="prop-row" id="particle-falloff-row">
+          <label class="prop-label">
+            Falloff <span class="prop-value" id="particle-falloff-val">0.4</span>
+          </label>
+          <input type="range" class="prop-range" id="particle-falloff" min="20" max="100" value="40">
+        </div>
+        <div class="prop-row" id="particle-scale-row">
+          <label class="prop-label">
+            Scale <span class="prop-value" id="particle-scale-val">15%</span>
+          </label>
+          <input type="range" class="prop-range" id="particle-scale" min="5" max="40" value="15">
+        </div>
+        <div class="prop-row" style="margin-top: 8px;">
+          <label class="prop-label">
+            <input type="checkbox" id="cascade-delete" checked> Cascade delete (remove particles with trees)
+          </label>
+        </div>
       </div>
 
       <!-- Brush/Undergrowth Settings (shown when brush selected) -->
@@ -670,6 +710,11 @@
             <input type="checkbox" id="show-boundary" checked> Show Boundary
           </label>
         </div>
+        <div class="prop-row">
+          <label class="prop-label">
+            <input type="checkbox" id="show-particle-debug"> Show Particle Rings
+          </label>
+        </div>
       </div>
 
       <!-- Map Settings -->
@@ -705,6 +750,13 @@
       <div class="status-item">
         <span>Strokes:</span>
         <span class="status-value" id="stroke-count">0</span>
+      </div>
+      <div class="status-item" id="debug-panel" style="margin-left: auto; font-size: 10px; color: #60a5fa;">
+        <span>Debug:</span>
+        <span id="debug-tree-scale">scale=-</span>
+        <span id="debug-canopy">canopy=-</span>
+        <span id="debug-min">min=-</span>
+        <span id="debug-max">max=-</span>
       </div>
       <div class="shortcuts-hint">
         <kbd>P</kbd> Paint

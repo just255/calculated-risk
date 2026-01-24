@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { EventEmitter, Events } from './events.js';
-import { createTerrainMap, generateTreesForStroke, removeTreesForStroke, removeTreesInRadius, generateBrushForStroke, removeBrushForStroke, removeBrushInRadius } from '../world-builder/index.js';
+import { createTerrainMap, generateTreesForStroke, removeTreesForStroke, removeTreesInRadius, generateBrushForStroke, removeBrushForStroke, removeBrushInRadius, generateParticlesForStroke, removeParticlesForStroke, removeParticlesInRadius, removeParticlesForParent } from '../world-builder/index.js';
 
 /**
  * Default editor configuration
@@ -36,8 +36,9 @@ const DEFAULT_TOOL_OPTIONS = {
   autoGroundTexture: true,      // Auto-paint ground texture with features
   groundTextureType: 'grass-1', // Manual ground texture type when painting groundTexture (matches default base layer)
   fadeWidth: 12,                // Width of soft alpha fade at edges in pixels (0 = hard edge)
-  floorExtend: 0,               // How much forest floor extends beyond tree brush (-24 to +24)
-  floorFade: 16,                // Forest floor edge fade width
+  floorRadiusPercent: 30,       // Forest floor extends X% beyond canopy (10-100)
+  floorFade: 100,               // Floor fade percentage (0=hard edge, 100=entire ring fades)
+  floorIntensity: 70,           // Forest floor opacity/darkness (30-100%)
 
   // Water options
   waterTextureType: 'water',    // Water texture to paint
@@ -52,7 +53,17 @@ const DEFAULT_TOOL_OPTIONS = {
   brushRatios: { 'bush-small': 1.0 },  // Ratios for each selected type
   brushDensity: 4,              // Brush items per stroke (lowered for more natural look)
   brushScale: 0.12,             // Global scale multiplier for brush
-  brushInWater: false           // Allow brush to spawn in water areas
+  brushInWater: false,          // Allow brush to spawn in water areas
+
+  // Particle options (auto-scatter with forest strokes)
+  autoParticles: true,          // Auto-generate particles with forest strokes
+  particleDensity: 8,           // Particles per tree (0-20)
+  particleSpread: 40,           // Spread as % of canopy size (10-100)
+  particleFalloff: 0.4,         // Falloff exponent (0.2=concentrated, 1.0=uniform)
+  particleScale: 0.15,          // Global particle scale (0.05-0.40)
+
+  // Delete behavior
+  cascadeDelete: true           // Remove particles when deleting trees/brush
 };
 
 /**
@@ -61,7 +72,8 @@ const DEFAULT_TOOL_OPTIONS = {
 const DEFAULT_VIEW_SETTINGS = {
   showGrid: true,
   gridOpacity: 0.1,
-  showBoundary: true
+  showBoundary: true,
+  showParticleDebug: false
 };
 
 /**
@@ -160,12 +172,27 @@ export class EditorState extends EventEmitter {
   // STROKES
   // ═══════════════════════════════════════════════════════════════
 
-  addStroke(stroke, skipRender = false) {
+  addStroke(stroke, skipRender = false, options = {}) {
     this._terrainMap.strokes.push(stroke);
 
     // Generate trees for forest strokes
     if (stroke.treeType) {
       generateTreesForStroke(this._terrainMap, stroke);
+
+      // Auto-generate particles around trees (if enabled)
+      const autoParticles = options.autoParticles ?? this._toolOptions.autoParticles ?? true;
+      const particleDensity = options.particleDensity ?? this._toolOptions.particleDensity ?? 8;
+      const particleRadius = options.particleRadius ?? this._toolOptions.particleRadius ?? 60;
+      const particleFalloff = options.particleFalloff ?? this._toolOptions.particleFalloff ?? 0.4;
+      const particleScale = options.particleScale ?? this._toolOptions.particleScale ?? 0.15;
+      if (autoParticles && particleDensity > 0) {
+        generateParticlesForStroke(this._terrainMap, stroke.id, {
+          density: particleDensity,
+          radius: particleRadius,
+          falloff: particleFalloff,
+          scale: particleScale
+        });
+      }
     }
 
     // Generate brush items for brush strokes
@@ -196,9 +223,10 @@ export class EditorState extends EventEmitter {
     if (index !== -1) {
       const stroke = this._terrainMap.strokes.splice(index, 1)[0];
 
-      // Remove associated trees and brush
+      // Remove associated trees, brush, and particles
       removeTreesForStroke(this._terrainMap, strokeId);
       removeBrushForStroke(this._terrainMap, strokeId);
+      removeParticlesForStroke(this._terrainMap, strokeId);
 
       this._terrainMap.dirty = true;
       this._markDirty();
@@ -227,10 +255,11 @@ export class EditorState extends EventEmitter {
     });
 
     if (removed.length > 0) {
-      // Remove associated trees and brush for all removed strokes
+      // Remove associated trees, brush, and particles for all removed strokes
       removed.forEach(stroke => {
         removeTreesForStroke(this._terrainMap, stroke.id);
         removeBrushForStroke(this._terrainMap, stroke.id);
+        removeParticlesForStroke(this._terrainMap, stroke.id);
       });
 
       this._terrainMap.dirty = true;
@@ -244,15 +273,30 @@ export class EditorState extends EventEmitter {
 
   clearStrokes() {
     this._terrainMap.strokes = [];
-    this._terrainMap.trees = [];   // Clear all trees too
-    this._terrainMap.brushes = []; // Clear all brush too
+    this._terrainMap.trees = [];      // Clear all trees too
+    this._terrainMap.brushes = [];    // Clear all brush too
+    this._terrainMap.particles = [];  // Clear all particles too
     this._terrainMap.dirty = true;
     this._markDirty();
     this.emit(Events.STROKES_CLEARED);
     this.emit(Events.RENDER_REQUESTED);
   }
 
-  clearTreesAt(x, y, radius, falloff = 'hard') {
+  clearTreesAt(x, y, radius, falloff = 'hard', options = {}) {
+    const cascadeDelete = options.cascadeDelete ?? this._toolOptions.cascadeDelete ?? true;
+
+    // If cascading, first find trees to be removed and delete their particles
+    if (cascadeDelete) {
+      const treesToRemove = this._terrainMap.trees.filter(tree => {
+        const dx = tree.x - x;
+        const dy = tree.y - y;
+        return Math.sqrt(dx * dx + dy * dy) <= radius;
+      });
+      treesToRemove.forEach(tree => {
+        removeParticlesForParent(this._terrainMap, tree.id);
+      });
+    }
+
     const removed = removeTreesInRadius(this._terrainMap, x, y, radius, falloff);
     if (removed > 0) {
       this._terrainMap.dirty = true;
@@ -262,8 +306,32 @@ export class EditorState extends EventEmitter {
     return removed;
   }
 
-  clearBrushAt(x, y, radius, falloff = 'hard') {
+  clearBrushAt(x, y, radius, falloff = 'hard', options = {}) {
+    const cascadeDelete = options.cascadeDelete ?? this._toolOptions.cascadeDelete ?? true;
+
+    // If cascading, first find brush to be removed and delete their particles
+    if (cascadeDelete) {
+      const brushToRemove = (this._terrainMap.brushes || []).filter(brush => {
+        const dx = brush.x - x;
+        const dy = brush.y - y;
+        return Math.sqrt(dx * dx + dy * dy) <= radius;
+      });
+      brushToRemove.forEach(brush => {
+        removeParticlesForParent(this._terrainMap, brush.id);
+      });
+    }
+
     const removed = removeBrushInRadius(this._terrainMap, x, y, radius, falloff);
+    if (removed > 0) {
+      this._terrainMap.dirty = true;
+      this._markDirty();
+      this.emit(Events.RENDER_REQUESTED);
+    }
+    return removed;
+  }
+
+  clearParticlesAt(x, y, radius) {
+    const removed = removeParticlesInRadius(this._terrainMap, x, y, radius);
     if (removed > 0) {
       this._terrainMap.dirty = true;
       this._markDirty();
@@ -450,19 +518,21 @@ export class EditorState extends EventEmitter {
 
   toJSON() {
     return {
-      version: 2,  // Bumped for tree registry support
+      version: 3,  // Bumped for particle/brush registry support
       metadata: { ...this._metadata },
       baseLayer: this._terrainMap.baseLayer,
       gridWidth: this._terrainMap.gridWidth,
       gridHeight: this._terrainMap.gridHeight,
       cellSize: this._terrainMap.cellSize,
       strokes: this._terrainMap.strokes.map(s => ({ ...s })),
-      trees: this._terrainMap.trees.map(t => ({ ...t }))  // Save tree registry
+      trees: this._terrainMap.trees.map(t => ({ ...t })),
+      brushes: (this._terrainMap.brushes || []).map(b => ({ ...b })),
+      particles: (this._terrainMap.particles || []).map(p => ({ ...p }))
     };
   }
 
   loadFromJSON(data) {
-    if (!data || (data.version !== 1 && data.version !== 2)) {
+    if (!data || (data.version !== 1 && data.version !== 2 && data.version !== 3)) {
       throw new Error('Invalid map data format');
     }
 
@@ -478,8 +548,7 @@ export class EditorState extends EventEmitter {
     this._terrainMap.strokes = data.strokes || [];
 
     // Load or regenerate trees
-    if (data.version === 2 && data.trees) {
-      // Version 2: Load pre-calculated trees
+    if (data.version >= 2 && data.trees) {
       this._terrainMap.trees = data.trees;
     } else {
       // Version 1: Regenerate trees from strokes
@@ -487,6 +556,36 @@ export class EditorState extends EventEmitter {
       for (const stroke of this._terrainMap.strokes) {
         if (stroke.treeType) {
           generateTreesForStroke(this._terrainMap, stroke);
+        }
+      }
+    }
+
+    // Load or regenerate brush
+    if (data.version >= 3 && data.brushes) {
+      this._terrainMap.brushes = data.brushes;
+    } else {
+      // Regenerate brush from strokes
+      this._terrainMap.brushes = [];
+      for (const stroke of this._terrainMap.strokes) {
+        if (stroke.brushType) {
+          generateBrushForStroke(this._terrainMap, stroke);
+        }
+      }
+    }
+
+    // Load or regenerate particles
+    if (data.version >= 3 && data.particles) {
+      this._terrainMap.particles = data.particles;
+    } else {
+      // Regenerate particles from trees (use defaults for old maps)
+      this._terrainMap.particles = [];
+      for (const stroke of this._terrainMap.strokes) {
+        if (stroke.treeType) {
+          generateParticlesForStroke(this._terrainMap, stroke.id, {
+            density: 8,
+            radius: 60,
+            falloff: 0.4
+          });
         }
       }
     }

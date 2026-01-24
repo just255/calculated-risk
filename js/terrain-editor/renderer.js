@@ -46,6 +46,7 @@ export class Renderer {
     this._groundCache = null;
     this._groundCacheValid = false;
     this._groundCacheStrokeCount = 0;
+    this._groundCacheTreeCount = 0;
 
     // Paint preview layer (for showing strokes during drag painting)
     this._paintPreview = null;
@@ -56,6 +57,7 @@ export class Renderer {
     this._canopyCacheValid = false;
     this._canopyCacheTreeCount = 0;
     this._canopyCacheBrushCount = 0;
+    this._canopyCacheParticleCount = 0;
 
     this._init();
   }
@@ -360,11 +362,15 @@ export class Renderer {
     const height = this._state.canvasHeight;
 
     // Check if we need to rebuild the ground cache
-    // Use stroke count change as proxy for ground changes during painting (like trees use tree count)
+    // Rebuild when strokes or trees change (trees affect forest floor layer)
     const strokeCount = terrainMap.strokes?.length || 0;
-    if (!this._groundCacheValid || terrainMap.dirty || this._groundCacheStrokeCount !== strokeCount) {
+    const treeCount = terrainMap.trees?.length || 0;
+    if (!this._groundCacheValid || terrainMap.dirty ||
+        this._groundCacheStrokeCount !== strokeCount ||
+        this._groundCacheTreeCount !== treeCount) {
       this._rebuildGroundCache();
       this._groundCacheStrokeCount = strokeCount;
+      this._groundCacheTreeCount = treeCount;
       terrainMap.dirty = false;  // Reset dirty flag after rebuild
     }
 
@@ -422,6 +428,9 @@ export class Renderer {
         this._renderGroundTextureStroke(cacheCtx, stroke);
       }
     }
+
+    // Draw tree-based forest floor (radiating from each tree)
+    this._renderTreeBasedGroundLayer(cacheCtx);
 
     // Draw shore strokes (on top of regular ground textures, under water)
     for (const stroke of terrainMap.strokes) {
@@ -519,8 +528,9 @@ export class Renderer {
 
     // Apply circular alpha mask with soft edges at 4x resolution
     tempCtx.globalCompositeOperation = 'destination-in';
+    const innerRadius = Math.max(0, scaledRadius - scaledFadeWidth);
     const gradient = tempCtx.createRadialGradient(
-      scaledRadius, scaledRadius, scaledRadius - scaledFadeWidth,
+      scaledRadius, scaledRadius, innerRadius,
       scaledRadius, scaledRadius, scaledRadius
     );
     gradient.addColorStop(0, 'rgba(0,0,0,1)');
@@ -534,6 +544,157 @@ export class Renderer {
     ctx.imageSmoothingEnabled = false;
     ctx.globalAlpha = intensity;
     ctx.drawImage(tempCanvas, 0, 0, size, size, x - radius, y - radius, radius * 2, radius * 2);
+    ctx.restore();
+  }
+
+  /**
+   * Render tree-based ground layer
+   * Each tree creates a circular forest-floor texture radiating outward
+   * @param {CanvasRenderingContext2D} ctx - Target canvas context
+   */
+  _renderTreeBasedGroundLayer(ctx) {
+    const terrainMap = this._state.terrainMap;
+    const trees = terrainMap.trees || [];
+
+    if (trees.length === 0) return;
+
+    // Sort trees by scale (smaller first) so larger trees' floors render on top
+    const sortedTrees = [...trees].sort((a, b) => a.scale - b.scale);
+
+    for (const tree of sortedTrees) {
+      // Get floor settings baked on tree (or use defaults for legacy trees)
+      const floorRadiusPercent = tree.floorRadiusPercent ?? 30;
+      const floorIntensity = tree.floorIntensity ?? 70;
+
+      // Calculate floor radius based on canopy size
+      // Canopy radius = 115 * tree.scale (same as particle system)
+      const canopyRadius = 115 * tree.scale;
+      const floorRadiusMultiplier = floorRadiusPercent / 100 + 1;
+      const floorRadius = canopyRadius * floorRadiusMultiplier;
+
+      // Skip very small floors
+      if (floorRadius < 10) continue;
+
+      // Intensity from tree's baked setting, with slight variation by size
+      const baseIntensity = floorIntensity / 100;
+      const sizeVariation = (tree.scale - 0.5) * 0.1;
+      const intensity = Math.min(0.95, Math.max(0.3, baseIntensity + sizeVariation));
+
+      // Floor fade as percentage (0% = hard edge, 100% = entire floor fades)
+      const floorFadePercent = tree.floorFade ?? 100;
+
+      // Render from center (innerRadius=0) to floor radius
+      // A ring with inner radius 0 is just a filled circle
+      this._renderTextureRing(
+        ctx,
+        'forest-floor',
+        tree.x,
+        tree.y,
+        0,  // Start from center
+        floorRadius,
+        intensity,
+        floorFadePercent
+      );
+    }
+  }
+
+  /**
+   * Render a textured ring (donut shape) with gradient from inner to outer edge
+   * Note: Pass innerRadius=0 to render a filled circle instead of a ring
+   * Used for tree-based floor that radiates from canopy edge outward
+   * @param {CanvasRenderingContext2D} ctx - Target canvas context
+   * @param {string} textureType - Texture key
+   * @param {number} x - Center X
+   * @param {number} y - Center Y
+   * @param {number} innerRadius - Inner edge (canopy edge)
+   * @param {number} outerRadius - Outer edge (floor extent)
+   * @param {number} intensity - Max alpha at inner edge
+   * @param {number} fadePercent - Percentage of ring that fades (0=hard edge, 100=full fade)
+   */
+  _renderTextureRing(ctx, textureType, x, y, innerRadius, outerRadius, intensity, fadePercent = 100) {
+    const textureImg = this._images.ground[textureType];
+
+    if (!textureImg) {
+      // Fallback: draw colored ring
+      ctx.save();
+      ctx.globalAlpha = intensity;
+      ctx.fillStyle = '#3a3025';
+      ctx.beginPath();
+      ctx.arc(x, y, outerRadius, 0, Math.PI * 2);
+      ctx.arc(x, y, innerRadius, 0, Math.PI * 2, true); // counter-clockwise for hole
+      ctx.fill();
+      ctx.restore();
+      return;
+    }
+
+    const scale = 2; // Resolution scale
+    const tileSize = 256 * GROUND_TEXTURE_SCALE * scale;
+    const scaledOuter = outerRadius * scale;
+    const scaledInner = innerRadius * scale;
+
+    // Create temp canvas for the ring
+    const size = Math.ceil(scaledOuter * 2) + 2;
+    if (!this._tempCanvas || this._tempCanvasSize < size) {
+      this._tempCanvas = document.createElement('canvas');
+      this._tempCanvas.width = size;
+      this._tempCanvas.height = size;
+      this._tempCtx = this._tempCanvas.getContext('2d');
+      this._tempCanvasSize = size;
+    }
+    const tempCanvas = this._tempCanvas;
+    const tempCtx = this._tempCtx;
+
+    tempCtx.setTransform(1, 0, 0, 1, 0, 0);
+    tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
+    tempCtx.imageSmoothingEnabled = false;
+
+    // Tile texture (ensure source-over mode for tiling)
+    tempCtx.globalCompositeOperation = 'source-over';
+    const startX = (x - outerRadius) * scale;
+    const startY = (y - outerRadius) * scale;
+    const offsetX = ((startX % tileSize) + tileSize) % tileSize;
+    const offsetY = ((startY % tileSize) + tileSize) % tileSize;
+
+    for (let ty = -offsetY; ty < size; ty += tileSize) {
+      for (let tx = -offsetX; tx < size; tx += tileSize) {
+        tempCtx.drawImage(textureImg, tx, ty, tileSize, tileSize);
+      }
+    }
+
+    // Apply ring mask with gradient
+    // fadePercent controls how much of the ring fades vs stays solid
+    // 100% = entire ring fades, 50% = inner half solid + outer half fades, 0% = hard edge
+    tempCtx.globalCompositeOperation = 'destination-in';
+
+    const ringWidth = scaledOuter - scaledInner;
+    const solidPortion = 1 - (fadePercent / 100);
+    const fadeStartRadius = scaledInner + (ringWidth * solidPortion);
+
+    const gradient = tempCtx.createRadialGradient(
+      scaledOuter, scaledOuter, fadeStartRadius,
+      scaledOuter, scaledOuter, scaledOuter
+    );
+    gradient.addColorStop(0, 'rgba(0,0,0,1)');  // Full opacity at fade start
+    gradient.addColorStop(1, 'rgba(0,0,0,0)');  // Transparent at outer edge
+
+    // If there's a solid portion, fill it first
+    if (solidPortion > 0.01) {
+      tempCtx.fillStyle = 'rgba(0,0,0,1)';
+      tempCtx.beginPath();
+      tempCtx.arc(scaledOuter, scaledOuter, fadeStartRadius, 0, Math.PI * 2);
+      tempCtx.arc(scaledOuter, scaledOuter, scaledInner, 0, Math.PI * 2, true);
+      tempCtx.fill();
+    }
+
+    // Apply the gradient fade
+    tempCtx.fillStyle = gradient;
+    tempCtx.fillRect(0, 0, size, size);
+
+    // Draw to main canvas
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.globalAlpha = intensity;
+    ctx.drawImage(tempCanvas, 0, 0, size, size, x - outerRadius, y - outerRadius, outerRadius * 2, outerRadius * 2);
     ctx.restore();
   }
 
@@ -574,15 +735,61 @@ export class Renderer {
     }
   }
 
+  _renderParticleDebugRings(ctx) {
+    const terrainMap = this._state.terrainMap;
+    if (!terrainMap.trees || terrainMap.trees.length === 0) return;
+
+    const toolOptions = this._state.toolOptions;
+    const spreadPercent = toolOptions.particleSpread ?? 40;
+
+    ctx.lineWidth = 2;
+
+    for (const tree of terrainMap.trees) {
+      // Calculate the same values as generateParticlesForTree
+      const canopyRadius = 115 * tree.scale;
+      const minRadius = canopyRadius * 0.95;
+      // Spread scales proportionally with canopy size
+      const maxRadius = canopyRadius * (1 + spreadPercent / 100);
+
+      // Draw canopy edge (yellow - thick)
+      ctx.strokeStyle = '#ffff00';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(tree.x, tree.y, canopyRadius, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Draw min radius (green - where particles start)
+      ctx.strokeStyle = '#00ff00';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(tree.x, tree.y, minRadius, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Draw max radius (red - where particles end)
+      ctx.strokeStyle = '#ff0000';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(tree.x, tree.y, maxRadius, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Draw center point
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(tree.x, tree.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
   _renderFeatures() {
     const ctx = this._contexts.features;
     const terrainMap = this._state.terrainMap;
 
     // Check if we need to rebuild the canopy cache
-    // Use terrainMap.trees and brushes length change as a proxy for changes during painting
+    // Use terrainMap.trees, brushes, and particles length change as a proxy for changes during painting
     const treeCount = terrainMap.trees?.length || 0;
     const brushCount = terrainMap.brushes?.length || 0;
-    if (!this._canopyCacheValid || this._canopyCacheTreeCount !== treeCount || this._canopyCacheBrushCount !== brushCount) {
+    const particleCount = terrainMap.particles?.length || 0;
+    if (!this._canopyCacheValid || this._canopyCacheTreeCount !== treeCount || this._canopyCacheBrushCount !== brushCount || this._canopyCacheParticleCount !== particleCount) {
       this._rebuildCanopyCache();
     }
 
@@ -600,12 +807,14 @@ export class Renderer {
     const dpr = this._dpr || 1;
     ensureRasterized(terrainMap);
     // Pass DPR for high-resolution rendering on high-DPI displays
-    // Pass both tree and brush images for rendering
-    this._canopyCache = renderCanopyLayer(terrainMap, this._state.cellSize, this._images.trees, dpr, this._images.brush);
+    // Pass tree, brush, and particle images for rendering
+    // Particles use brush images folder, so pass brush images as particleImages too
+    this._canopyCache = renderCanopyLayer(terrainMap, this._state.cellSize, this._images.trees, dpr, this._images.brush, this._images.brush);
     this._canopyCacheValid = true;
     this._canopyCacheTreeCount = terrainMap.trees?.length || 0;
     this._canopyCacheBrushCount = terrainMap.brushes?.length || 0;
-    console.log(`[Renderer] Canopy cache rebuilt (${this._canopyCacheTreeCount} trees, ${this._canopyCacheBrushCount} brush, dpr=${dpr})`);
+    this._canopyCacheParticleCount = terrainMap.particles?.length || 0;
+    console.log(`[Renderer] Canopy cache rebuilt (${this._canopyCacheTreeCount} trees, ${this._canopyCacheBrushCount} brush, ${this._canopyCacheParticleCount} particles, dpr=${dpr})`);
   }
 
   /**
@@ -617,11 +826,15 @@ export class Renderer {
     const dpr = this._dpr || 1;
     const terrainMap = this._state.terrainMap;
 
-    // Check if ground cache needs rebuild (stroke count changed during painting)
+    // Check if ground cache needs rebuild (stroke or tree count changed during painting)
     const strokeCount = terrainMap.strokes?.length || 0;
-    if (!this._groundCacheValid || this._groundCacheStrokeCount !== strokeCount) {
+    const treeCount = terrainMap.trees?.length || 0;
+    if (!this._groundCacheValid ||
+        this._groundCacheStrokeCount !== strokeCount ||
+        this._groundCacheTreeCount !== treeCount) {
       this._rebuildGroundCache();
       this._groundCacheStrokeCount = strokeCount;
+      this._groundCacheTreeCount = treeCount;
     }
 
     // Redraw ground from cache + preview
@@ -677,6 +890,11 @@ export class Renderer {
 
     // Render map boundary
     this._renderBoundary(ctx);
+
+    // Render particle debug rings (on top of terrain, below selection)
+    if (this._state.viewSettings.showParticleDebug) {
+      this._renderParticleDebugRings(ctx);
+    }
 
     // Render selection highlights
     this._renderSelection(ctx);
