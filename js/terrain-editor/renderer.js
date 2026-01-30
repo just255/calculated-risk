@@ -1235,22 +1235,6 @@ export class Renderer {
     // Sort: smaller scale first, then by Y for proper layering
     const sorted = [...items].sort((a, b) => (a.scale - b.scale) || (a.y - b.y));
 
-    // DEBUG: Log tree items being rendered (match getSpriteKey logic exactly)
-    const treeItems = sorted.filter(i => SCATTER_TYPES[i.type]?.category === 'tree');
-    if (treeItems.length > 0) {
-      for (const tree of treeItems) {
-        const config = SCATTER_TYPES[tree.type];
-        // Match getSpriteKey logic exactly
-        let treeType = tree.type.replace('tree-', '');
-        if (treeType === 'dead') treeType = 'oak';
-        const spriteKey = (tree.isDead || config?.isDead)
-          ? `${treeType}-${tree.age}-dead-${tree.variant}`
-          : `${treeType}-${tree.age}-${tree.variant}`;
-        const hasSprite = !!images.tree?.[spriteKey];
-        console.log(`[Preview] Tree: ${tree.type}, age=${tree.age}, variant=${tree.variant}, isDead=${tree.isDead}, layer=${config?.layer}, pos=(${Math.round(tree.x)},${Math.round(tree.y)}), spriteKey=${spriteKey}, hasSprite=${hasSprite}`);
-      }
-    }
-
     // Render layers in order: ground → particle → canopy
     for (const item of sorted) {
       const config = SCATTER_TYPES[item.type];
