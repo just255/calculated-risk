@@ -10,6 +10,7 @@ import { PaintTool } from './tools/paint-tool.js';
 import { ClearTool } from './tools/clear-tool.js';
 import { Events } from './events.js';
 import * as Presets from './presets.js';
+import { BIOME_PRESETS, SEASON_BIOME_CONFIG, getSeasonBiomeConfig, getConfigSchema, exportConfigString, SCATTER_TYPES, generateForestItems, renderScatterItem, getSpriteKey } from '../world-builder/index.js';
 
 /**
  * Terrain Editor Application
@@ -51,6 +52,10 @@ class TerrainEditor {
 
     // Subscribe to state events for UI updates
     this._bindStateEvents();
+
+    // Refresh scatter preview now that state events are bound
+    // (biome was applied during _bindUIEvents but preview listener wasn't ready yet)
+    this._refreshScatterPreview();
 
     // Initial render
     this._state.emit(Events.RENDER_REQUESTED);
@@ -117,18 +122,19 @@ class TerrainEditor {
       btnLoadPreset: document.getElementById('btn-load-preset'),
       btnSavePreset: document.getElementById('btn-save-preset'),
       btnDeletePreset: document.getElementById('btn-delete-preset'),
-      treeBtns: document.querySelectorAll('.tree-btn[data-tree]'),
-      ageBtns: document.querySelectorAll('.tree-btn[data-age]'),
+      treeBtns: document.querySelectorAll('.variant-btn[data-tree]'),
+      ageBtns: document.querySelectorAll('.variant-btn[data-age]'),
       ageRatiosContainer: document.getElementById('age-ratios'),
       ageRatioSliders: document.getElementById('age-ratio-sliders'),
       treeScale: document.getElementById('tree-scale'),
       scaleVal: document.getElementById('scale-val'),
       treeDensity: document.getElementById('tree-density'),
       densityVal: document.getElementById('density-val'),
+      animationStyle: document.getElementById('animation-style'),
 
       // Brush/Undergrowth settings
       brushSettings: document.getElementById('brush-settings'),
-      brushTypeBtns: document.querySelectorAll('.brush-type-btn[data-brush]'),
+      brushTypeBtns: document.querySelectorAll('.variant-btn[data-brush]'),
       brushRatiosContainer: document.getElementById('brush-ratios'),
       brushRatioSliders: document.getElementById('brush-ratio-sliders'),
       brushScale: document.getElementById('brush-scale'),
@@ -137,7 +143,17 @@ class TerrainEditor {
       brushDensityVal: document.getElementById('brush-density-val'),
       brushInWater: document.getElementById('brush-in-water'),
 
-      // Particle settings
+      // Floor variant buttons (category cards)
+      floorTypeBtns: document.querySelectorAll('.variant-btn[data-floor]'),
+      floorRatiosContainer: document.getElementById('floor-ratios'),
+      floorRatioSliders: document.getElementById('floor-ratio-sliders'),
+
+      // Particle variant buttons (category cards)
+      particleTypeBtns: document.querySelectorAll('.variant-btn[data-particle]'),
+      particleRatiosContainer: document.getElementById('particle-ratios'),
+      particleRatioSliders: document.getElementById('particle-ratio-sliders'),
+
+      // Particle settings (legacy)
       autoParticles: document.getElementById('auto-particles'),
       particleDensity: document.getElementById('particle-density'),
       particleDensityVal: document.getElementById('particle-density-val'),
@@ -149,9 +165,44 @@ class TerrainEditor {
       particleScaleVal: document.getElementById('particle-scale-val'),
       cascadeDelete: document.getElementById('cascade-delete'),
 
-      // Map settings
+      // Map settings (hidden panel elements)
       baseLayer: document.getElementById('base-layer'),
       gridSize: document.getElementById('grid-size'),
+      biomeSelect: document.getElementById('biome-select'),
+      seasonSelect: document.getElementById('season-select'),
+      biomeDescription: document.getElementById('biome-description'),
+      mapNameInput: document.getElementById('map-name-input'),
+
+      // Header elements (top bar)
+      mapNameHeader: document.getElementById('map-name-header'),
+      gridSizeHeader: document.getElementById('grid-size-header'),
+      baseLayerHeader: document.getElementById('base-layer-header'),
+      // Scatter environment (biome/season - for forest/brush in scatter mode)
+      scatterEnvironment: document.getElementById('scatter-environment'),
+
+      // Feature tools in toolbar
+      featureTools: document.querySelectorAll('.tool-btn.feature-tool'),
+
+      // Generation system toggle
+      systemLegacy: document.getElementById('system-legacy'),
+      systemScatter: document.getElementById('system-scatter'),
+      legacySystemSettings: document.getElementById('legacy-system-settings'),
+      scatterSystemSettings: document.getElementById('scatter-system-settings'),
+      legacyPresetsSection: document.getElementById('legacy-presets-section'),
+      legacyParticleSettings: document.getElementById('legacy-particle-settings'),
+      legacyDensityRow: document.getElementById('legacy-density-row'),
+
+      // Scatter Stroke Output controls
+      scatterTreeCount: document.getElementById('scatter-tree-count'),
+      scatterTreeCountVal: document.getElementById('scatter-tree-count-val'),
+      treeSpacing: document.getElementById('tree-spacing'),
+      treeSpacingVal: document.getElementById('tree-spacing-val'),
+
+      // Category toggles
+      toggleTrees: document.getElementById('toggle-trees'),
+      toggleFloor: document.getElementById('toggle-floor'),
+      toggleParticles: document.getElementById('toggle-particles'),
+      toggleBrush: document.getElementById('toggle-brush'),
 
       // View settings
       showGrid: document.getElementById('show-grid'),
@@ -159,11 +210,100 @@ class TerrainEditor {
       gridOpacityVal: document.getElementById('grid-opacity-val'),
       showBoundary: document.getElementById('show-boundary'),
       showParticleDebug: document.getElementById('show-particle-debug'),
+      particleDebugRow: document.getElementById('particle-debug-row'),
+      useScatterRendering: document.getElementById('use-scatter-rendering'),
+
+      // Scatter preview
+      scatterPreviewSection: document.getElementById('scatter-preview-section'),
+      scatterPreviewCanvas: document.getElementById('scatter-preview-canvas'),
+      scatterPreviewInfo: document.getElementById('scatter-preview-info'),
+      showScatterPreview: document.getElementById('show-scatter-preview'),
 
       // Status bar
       zoomLevel: document.getElementById('zoom-level'),
       cursorPos: document.getElementById('cursor-pos'),
-      strokeCount: document.getElementById('stroke-count')
+      strokeCount: document.getElementById('stroke-count'),
+
+      // Season Tuning panel
+      seasonTuningPanel: document.getElementById('season-tuning-panel'),
+      seasonTuningToggle: document.getElementById('season-tuning-toggle'),
+      seasonTuningArrow: document.getElementById('season-tuning-arrow'),
+      seasonTuningBody: document.getElementById('season-tuning-body'),
+      seasonTuningLabel: document.getElementById('season-tuning-label'),
+      // Scatter tuning
+      tuneFloorType: document.getElementById('tune-floor-type'),
+      tuneFloorDensity: document.getElementById('tune-floor-density'),
+      tuneFloorDensityVal: document.getElementById('tune-floor-density-val'),
+      tuneParticleType: document.getElementById('tune-particle-type'),
+      tuneParticleDensity: document.getElementById('tune-particle-density'),
+      tuneParticleDensityVal: document.getElementById('tune-particle-density-val'),
+      tuneBrushDensity: document.getElementById('tune-brush-density'),
+      tuneBrushDensityVal: document.getElementById('tune-brush-density-val'),
+      // Canopy tuning
+      tuneCanopyHue: document.getElementById('tune-canopy-hue'),
+      tuneCanopyHueVal: document.getElementById('tune-canopy-hue-val'),
+      tuneCanopySat: document.getElementById('tune-canopy-sat'),
+      tuneCanopySatVal: document.getElementById('tune-canopy-sat-val'),
+      tuneCanopyBright: document.getElementById('tune-canopy-bright'),
+      tuneCanopyBrightVal: document.getElementById('tune-canopy-bright-val'),
+      // Ground tuning
+      tuneGroundTint: document.getElementById('tune-ground-tint'),
+      tuneGroundTintVal: document.getElementById('tune-ground-tint-val'),
+      tuneGroundBright: document.getElementById('tune-ground-bright'),
+      tuneGroundBrightVal: document.getElementById('tune-ground-bright-val'),
+      // Environment tuning
+      tuneEnvSnow: document.getElementById('tune-env-snow'),
+      tuneEnvPuddles: document.getElementById('tune-env-puddles'),
+      tuneEnvFog: document.getElementById('tune-env-fog'),
+      tuneEnvFogVal: document.getElementById('tune-env-fog-val'),
+      tuneEnvFrost: document.getElementById('tune-env-frost'),
+      // Atmosphere tuning
+      tuneAtmAmbient: document.getElementById('tune-atm-ambient'),
+      tuneAtmAmbientVal: document.getElementById('tune-atm-ambient-val'),
+      tuneAtmShadow: document.getElementById('tune-atm-shadow'),
+      tuneAtmShadowVal: document.getElementById('tune-atm-shadow-val'),
+      tuneAtmWind: document.getElementById('tune-atm-wind'),
+      tuneAtmWindVal: document.getElementById('tune-atm-wind-val'),
+      // Tuning actions
+      tuneReset: document.getElementById('tune-reset'),
+      tuneExport: document.getElementById('tune-export'),
+      tuneModifiedList: document.getElementById('tune-modified-list'),
+      tuneModifiedFields: document.getElementById('tune-modified-fields'),
+
+      // View Options (now in header)
+      showGridHeader: document.getElementById('show-grid-header'),
+      showBoundaryHeader: document.getElementById('show-boundary-header'),
+      showGridPanel: document.getElementById('show-grid-panel'),
+      showBoundaryPanel: document.getElementById('show-boundary-panel'),
+
+      // Category cards
+      categoryHeaders: document.querySelectorAll('.category-header'),
+      catTreesBody: document.getElementById('cat-trees-body'),
+      catFloorBody: document.getElementById('cat-floor-body'),
+      catParticlesBody: document.getElementById('cat-particles-body'),
+      catBrushBody: document.getElementById('cat-brush-body'),
+
+      // Floor spawn (in category card)
+      floorSpawnDensity: document.getElementById('floor-spawn-density'),
+      floorSpawnDensityVal: document.getElementById('floor-spawn-density-val'),
+      floorSpawnScale: document.getElementById('floor-spawn-scale'),
+      floorSpawnScaleVal: document.getElementById('floor-spawn-scale-val'),
+      floorSpawnRadius: document.getElementById('floor-spawn-radius'),
+      floorSpawnRadiusVal: document.getElementById('floor-spawn-radius-val'),
+      floorSpawnFalloff: document.getElementById('floor-spawn-falloff'),
+      floorSpawnFalloffVal: document.getElementById('floor-spawn-falloff-val'),
+      // Particle spawn (in category card)
+      particleSpawnDensity: document.getElementById('particle-spawn-density'),
+      particleSpawnDensityVal: document.getElementById('particle-spawn-density-val'),
+      particleSpawnScale: document.getElementById('particle-spawn-scale'),
+      particleSpawnScaleVal: document.getElementById('particle-spawn-scale-val'),
+      particleSpawnRadius: document.getElementById('particle-spawn-radius'),
+      particleSpawnRadiusVal: document.getElementById('particle-spawn-radius-val'),
+      // Brush spawn (in category card)
+      brushSpawnDensity: document.getElementById('brush-spawn-density'),
+      brushSpawnDensityVal: document.getElementById('brush-spawn-density-val'),
+      brushSpawnScale: document.getElementById('brush-spawn-scale'),
+      brushSpawnScaleVal: document.getElementById('brush-spawn-scale-val')
     };
   }
 
@@ -175,11 +315,29 @@ class TerrainEditor {
     this._elements.btnExport.addEventListener('click', () => this._exportPNG());
     this._elements.fileInput.addEventListener('change', (e) => this._loadMap(e));
 
-    // Tool buttons
+    // Tool buttons (including feature tools)
     this._elements.toolBtns.forEach(btn => {
       btn.addEventListener('click', () => {
         const tool = btn.dataset.tool;
+        const feature = btn.dataset.feature;
+
+        // Set active tool
         this._state.activeTool = tool;
+
+        // If this is a feature tool, also set the feature type
+        if (feature) {
+          this._state.setToolOption('featureType', feature);
+          this._updateFeaturePanels(feature);
+        }
+      });
+    });
+
+    // Feature tools in toolbar (separate from utility tools)
+    this._elements.featureTools.forEach(btn => {
+      btn.addEventListener('click', () => {
+        // Update active state for feature tools only
+        this._elements.featureTools.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
       });
     });
 
@@ -202,44 +360,24 @@ class TerrainEditor {
       });
     }
 
-    // Feature buttons
-    this._elements.featureBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
-        this._elements.featureBtns.forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        const feature = btn.dataset.feature;
-        this._state.setToolOption('featureType', feature);
+    // Header element syncing (top bar to hidden panel elements)
+    this._bindHeaderSync();
 
-        // Show/hide tree settings
-        this._elements.treeSettings.style.display =
-          feature === 'forest' ? 'block' : 'none';
-
-        // Show/hide brush settings
-        if (this._elements.brushSettings) {
-          this._elements.brushSettings.style.display =
-            feature === 'brush' ? 'block' : 'none';
-        }
-
-        // Show/hide ground settings
-        if (this._elements.groundSettings) {
-          this._elements.groundSettings.style.display =
-            feature === 'groundTexture' ? 'block' : 'none';
-        }
-
-        // Show/hide water settings
-        if (this._elements.waterSettings) {
-          this._elements.waterSettings.style.display =
-            feature === 'water' ? 'block' : 'none';
-        }
-
-        // Show/hide auto-ground settings (for features that support auto-paint)
-        if (this._elements.autoGroundSettings) {
-          const supportsAutoGround = feature === 'forest';
-          this._elements.autoGroundSettings.style.display =
-            supportsAutoGround ? 'block' : 'none';
-        }
+    // Legacy feature buttons (for backwards compatibility, if they still exist)
+    if (this._elements.featureBtns) {
+      this._elements.featureBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          this._elements.featureBtns.forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          const feature = btn.dataset.feature;
+          this._state.setToolOption('featureType', feature);
+          this._updateFeaturePanels(feature);
+        });
       });
-    });
+    }
+
+    // Initialize feature panels based on default (forest)
+    this._updateFeaturePanels('forest');
 
     // Ground texture type
     if (this._elements.groundTextureType) {
@@ -336,6 +474,11 @@ class TerrainEditor {
       btn.addEventListener('click', () => {
         btn.classList.toggle('active');
         this._updateSelectedTreeTypes();
+
+        // In scatter mode, manual tree type change switches biome to "Custom"
+        if (this._state.toolOptions.useScatterSystem) {
+          this._switchBiomeToCustom();
+        }
       });
     });
 
@@ -351,13 +494,33 @@ class TerrainEditor {
       const value = parseInt(e.target.value);
       this._state.setToolOption('treeDensity', value);
       this._elements.densityVal.textContent = value;
+      // Sync to scatter tree count slider
+      if (this._elements.scatterTreeCount) {
+        this._elements.scatterTreeCount.value = value;
+        if (this._elements.scatterTreeCountVal) this._elements.scatterTreeCountVal.textContent = value;
+      }
     });
 
+    // Animation style
+    if (this._elements.animationStyle) {
+      this._elements.animationStyle.addEventListener('change', (e) => {
+        this._state.setToolOption('animationStyle', e.target.value);
+      });
+    }
+
     // Preset buttons
-    this._elements.btnLoadPreset.addEventListener('click', () => this._loadPreset());
-    this._elements.btnSavePreset.addEventListener('click', () => this._savePreset());
-    this._elements.btnDeletePreset.addEventListener('click', () => this._deletePreset());
-    this._elements.presetSelect.addEventListener('change', () => this._updateDeleteButton());
+    if (this._elements.btnLoadPreset) {
+      this._elements.btnLoadPreset.addEventListener('click', () => this._loadPreset());
+    }
+    if (this._elements.btnSavePreset) {
+      this._elements.btnSavePreset.addEventListener('click', () => this._savePreset());
+    }
+    if (this._elements.btnDeletePreset) {
+      this._elements.btnDeletePreset.addEventListener('click', () => this._deletePreset());
+    }
+    if (this._elements.presetSelect) {
+      this._elements.presetSelect.addEventListener('change', () => this._updateDeleteButton());
+    }
 
     // Load custom presets into dropdown on init
     this._loadCustomPresetsIntoDropdown();
@@ -367,6 +530,11 @@ class TerrainEditor {
       btn.addEventListener('click', () => {
         btn.classList.toggle('active');
         this._updateSelectedAges();
+
+        // In scatter mode, manual age change switches biome to "Custom"
+        if (this._state.toolOptions.useScatterSystem) {
+          this._switchBiomeToCustom();
+        }
       });
     });
 
@@ -376,6 +544,26 @@ class TerrainEditor {
         btn.addEventListener('click', () => {
           btn.classList.toggle('active');
           this._updateSelectedBrushTypes();
+        });
+      });
+    }
+
+    // Floor type buttons (multi-select)
+    if (this._elements.floorTypeBtns) {
+      this._elements.floorTypeBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          btn.classList.toggle('active');
+          this._updateSelectedFloorTypes();
+        });
+      });
+    }
+
+    // Particle type buttons (multi-select)
+    if (this._elements.particleTypeBtns) {
+      this._elements.particleTypeBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          btn.classList.toggle('active');
+          this._updateSelectedParticleTypes();
         });
       });
     }
@@ -466,6 +654,60 @@ class TerrainEditor {
       this._state.baseLayer = e.target.value;
     });
 
+    // Biome preset (sets tree ratios, brush types, density defaults)
+    if (this._elements.biomeSelect) {
+      this._elements.biomeSelect.addEventListener('change', (e) => {
+        const biome = e.target.value;
+        this._state.setToolOption('biome', biome);
+
+        // Update description text
+        const biomePreset = BIOME_PRESETS[biome];
+        if (this._elements.biomeDescription && biomePreset) {
+          this._elements.biomeDescription.textContent = biomePreset.description;
+        }
+
+        // Apply biome settings to tree UI (unless custom)
+        if (biome !== 'custom' && biomePreset) {
+          // Convert biome tree format to preset format
+          // biome: { 'tree-oak': 0.6 } → preset: { oak: 0.6 }
+          const treeTypes = [];
+          const treeRatios = {};
+          for (const [key, ratio] of Object.entries(biomePreset.trees)) {
+            const treeType = key.replace('tree-', '');
+            treeTypes.push(treeType);
+            treeRatios[treeType] = ratio;
+          }
+
+          // Build preset object compatible with _applyPreset
+          const preset = {
+            treeTypes,
+            treeRatios,
+            selectedAges: Object.keys(biomePreset.ageRatios),
+            ageRatios: biomePreset.ageRatios,
+            treeScale: this._state.toolOptions.treeScale || 0.08,
+            treeDensity: this._state.toolOptions.treeDensity || 5
+          };
+
+          this._applyPreset(preset);
+        }
+
+        this._refreshSeasonTuning();
+        console.log(`[Editor] Biome set to: ${biome}`);
+      });
+    }
+
+    // Season (affects debris density and colors for new strokes)
+    if (this._elements.seasonSelect) {
+      this._elements.seasonSelect.addEventListener('change', (e) => {
+        this._state.setToolOption('season', e.target.value);
+        this._refreshSeasonTuning();
+        console.log(`[Editor] Season set to: ${e.target.value}`);
+      });
+    }
+
+    // Season Tuning panel
+    this._bindSeasonTuning();
+
     // Map name
     this._elements.mapNameInput.addEventListener('change', (e) => {
       this._state.setMetadata({ name: e.target.value });
@@ -487,9 +729,13 @@ class TerrainEditor {
       }
     });
 
-    // View settings
+    // View settings (hidden elements - bound for compatibility)
     this._elements.showGrid.addEventListener('change', (e) => {
       this._state.setViewSetting('showGrid', e.target.checked);
+      // Sync panel checkbox
+      if (this._elements.showGridPanel) {
+        this._elements.showGridPanel.checked = e.target.checked;
+      }
     });
 
     this._elements.gridOpacity.addEventListener('input', (e) => {
@@ -500,7 +746,45 @@ class TerrainEditor {
 
     this._elements.showBoundary.addEventListener('change', (e) => {
       this._state.setViewSetting('showBoundary', e.target.checked);
+      // Sync panel checkbox
+      if (this._elements.showBoundaryPanel) {
+        this._elements.showBoundaryPanel.checked = e.target.checked;
+      }
     });
+
+    // View Options - header checkboxes (primary)
+    if (this._elements.showGridHeader) {
+      this._elements.showGridHeader.addEventListener('change', (e) => {
+        this._state.setViewSetting('showGrid', e.target.checked);
+        this._elements.showGrid.checked = e.target.checked;
+        if (this._elements.showGridPanel) this._elements.showGridPanel.checked = e.target.checked;
+      });
+    }
+    if (this._elements.showBoundaryHeader) {
+      this._elements.showBoundaryHeader.addEventListener('change', (e) => {
+        this._state.setViewSetting('showBoundary', e.target.checked);
+        this._elements.showBoundary.checked = e.target.checked;
+        if (this._elements.showBoundaryPanel) this._elements.showBoundaryPanel.checked = e.target.checked;
+      });
+    }
+
+    // Category card collapse/expand toggles
+    if (this._elements.categoryHeaders) {
+      this._elements.categoryHeaders.forEach(header => {
+        header.addEventListener('click', (e) => {
+          // Don't toggle if clicking on the toggle switch area (input, label, or slider span)
+          if (e.target.tagName === 'INPUT') return;
+          if (e.target.closest('.category-toggle')) return;
+
+          const category = header.dataset.category;
+          const body = document.getElementById(`cat-${category}-body`);
+          if (body) {
+            header.classList.toggle('collapsed');
+            body.classList.toggle('collapsed');
+          }
+        });
+      });
+    }
 
     // Particle debug rings toggle
     if (this._elements.showParticleDebug) {
@@ -508,6 +792,92 @@ class TerrainEditor {
         this._state.setViewSetting('showParticleDebug', e.target.checked);
       });
     }
+
+    // Generation system toggle (Legacy vs Scatter)
+    const updateSystemUI = (useScatter) => {
+      // Update state first
+      this._state.setViewSetting('useScatterRendering', useScatter);
+      this._state.setToolOption('useScatterSystem', useScatter);
+
+      // Update hidden checkbox that renderer uses
+      if (this._elements.useScatterRendering) {
+        this._elements.useScatterRendering.checked = useScatter;
+      }
+
+      // System-level panels (not feature-specific)
+      if (this._elements.scatterSystemSettings) {
+        this._elements.scatterSystemSettings.style.display = useScatter ? 'block' : 'none';
+      }
+      if (this._elements.seasonTuningPanel) {
+        this._elements.seasonTuningPanel.style.display = useScatter ? 'block' : 'none';
+        if (useScatter) this._refreshSeasonTuning();
+      }
+      if (this._elements.scatterPreviewSection) {
+        this._elements.scatterPreviewSection.style.display = useScatter ? 'block' : 'none';
+        if (useScatter) this._refreshScatterPreview();
+      }
+      if (this._elements.particleDebugRow) {
+        this._elements.particleDebugRow.style.display = useScatter ? 'none' : 'flex';
+      }
+
+      // Category cards (scatter) vs legacy density row
+      const categoryCards = document.querySelectorAll('.category-card');
+      categoryCards.forEach(card => {
+        // Trees card is always shown, others only in scatter mode
+        if (card.id === 'cat-trees') {
+          card.style.display = 'block';
+        } else {
+          card.style.display = useScatter ? 'block' : 'none';
+        }
+      });
+      if (this._elements.legacyDensityRow) {
+        this._elements.legacyDensityRow.style.display = useScatter ? 'none' : 'block';
+      }
+
+      // When switching to scatter, apply biome preset to tree types
+      if (useScatter) {
+        this._applyBiomeToTreeTypes();
+      }
+
+      // Feature panel visibility depends on system mode, so re-run it
+      const feature = this._state.toolOptions.featureType || 'forest';
+      this._updateFeaturePanels(feature);
+    };
+
+    if (this._elements.systemLegacy) {
+      this._elements.systemLegacy.addEventListener('change', (e) => {
+        if (e.target.checked) updateSystemUI(false);
+      });
+    }
+    if (this._elements.systemScatter) {
+      this._elements.systemScatter.addEventListener('change', (e) => {
+        if (e.target.checked) updateSystemUI(true);
+      });
+    }
+
+    // Initialize system UI based on default (scatter)
+    updateSystemUI(true);
+
+    // Scatter rendering toggle (hidden, controlled by system toggle above)
+    if (this._elements.useScatterRendering) {
+      this._elements.useScatterRendering.addEventListener('change', (e) => {
+        // Set BOTH the view setting (for renderer) AND the tool option (for generation)
+        this._state.setViewSetting('useScatterRendering', e.target.checked);
+        this._state.setToolOption('useScatterSystem', e.target.checked);
+      });
+    }
+
+    // Scatter preview "On Canvas" toggle
+    if (this._elements.showScatterPreview) {
+      this._elements.showScatterPreview.addEventListener('change', (e) => {
+        this._state.setViewSetting('showScatterPreview', e.target.checked);
+      });
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // CHILD SPAWN CONTROLS
+    // ═══════════════════════════════════════════════════════════════
+    this._bindChildSpawnControls();
 
     // Track cursor position
     this._renderer.uiCanvas.addEventListener('mousemove', (e) => {
@@ -520,13 +890,29 @@ class TerrainEditor {
   _bindStateEvents() {
     // Tool changed
     this._state.on(Events.TOOL_CHANGED, ({ tool }) => {
+      const featureTools = ['forest', 'brush', 'water', 'ground'];
+      const isFeatureTool = featureTools.includes(tool);
+
+      // Update all tool buttons (utility tools)
       this._elements.toolBtns.forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.tool === tool);
+        // Feature tools have special handling (green border instead of red)
+        if (btn.classList.contains('feature-tool')) {
+          btn.classList.toggle('active', btn.dataset.tool === tool);
+        } else {
+          // Utility tools: active if tool matches AND it's not a feature tool
+          btn.classList.toggle('active', btn.dataset.tool === tool && !isFeatureTool);
+        }
       });
 
       // Show/hide clear settings panel
       if (this._elements.clearSettings) {
         this._elements.clearSettings.style.display = tool === 'clear' ? 'block' : 'none';
+      }
+
+      // Update feature panels based on tool
+      if (isFeatureTool) {
+        const feature = this._state.toolOptions.featureType || tool;
+        this._updateFeaturePanels(feature);
       }
     });
 
@@ -542,10 +928,109 @@ class TerrainEditor {
     this._state.on(Events.STROKES_CLEARED, () => this._updateStrokeCount());
     this._state.on(Events.MAP_LOADED, () => this._updateStrokeCount());
     this._state.on(Events.MAP_CLEARED, () => this._updateStrokeCount());
+
+    // Refresh scatter preview when relevant options change
+    this._state.on(Events.TOOL_OPTIONS_CHANGED, ({ key }) => {
+      const previewKeys = ['treeType', 'treeTypes', 'treeRatios', 'treeScale', 'treeDensity',
+        'selectedAges', 'ageRatios', 'brushTypes', 'brushRatios', 'brushDensity', 'brushScale',
+        'season', 'biome', 'seasonOverrides', 'childSpawnOverrides', 'brushRadius',
+        'useScatterSystem', 'previewSeed'];
+      if (!key || previewKeys.includes(key)) {
+        this._refreshScatterPreview();
+      }
+    });
   }
 
   _updateStrokeCount() {
     this._elements.strokeCount.textContent = this._state.strokes.length;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // CHILD SPAWN CONTROLS
+  // ═══════════════════════════════════════════════════════════════
+
+  _bindChildSpawnControls() {
+    const el = this._elements;
+    const state = this._state;
+
+    // Helper to update child spawn overrides in state
+    const updateOverride = (category, key, value) => {
+      const overrides = { ...state.toolOptions.childSpawnOverrides };
+      overrides[category] = { ...overrides[category], [key]: value };
+      state.setToolOption('childSpawnOverrides', overrides);
+      this._refreshScatterPreview();
+    };
+
+    // ═══ FLOOR SPAWN ═══
+    if (el.floorSpawnDensity) {
+      el.floorSpawnDensity.addEventListener('input', (e) => {
+        const v = parseInt(e.target.value);
+        el.floorSpawnDensityVal.textContent = v;
+        updateOverride('floor', 'density', v);
+      });
+    }
+    if (el.floorSpawnScale) {
+      el.floorSpawnScale.addEventListener('input', (e) => {
+        const v = parseInt(e.target.value);
+        el.floorSpawnScaleVal.textContent = `${v}%`;
+        updateOverride('floor', 'scale', v / 100);
+      });
+    }
+    if (el.floorSpawnRadius) {
+      el.floorSpawnRadius.addEventListener('input', (e) => {
+        const v = parseInt(e.target.value);
+        el.floorSpawnRadiusVal.textContent = `${v}%`;
+        updateOverride('floor', 'radius', v / 100);
+      });
+    }
+    if (el.floorSpawnFalloff) {
+      el.floorSpawnFalloff.addEventListener('input', (e) => {
+        const v = parseInt(e.target.value);
+        el.floorSpawnFalloffVal.textContent = `${v}%`;
+        updateOverride('floor', 'falloff', v / 100);
+      });
+    }
+
+    // ═══ PARTICLE SPAWN ═══
+    if (el.particleSpawnDensity) {
+      el.particleSpawnDensity.addEventListener('input', (e) => {
+        const v = parseInt(e.target.value);
+        el.particleSpawnDensityVal.textContent = v;
+        updateOverride('particle', 'density', v);
+      });
+    }
+    if (el.particleSpawnScale) {
+      el.particleSpawnScale.addEventListener('input', (e) => {
+        const v = parseInt(e.target.value);
+        el.particleSpawnScaleVal.textContent = `${v}%`;
+        updateOverride('particle', 'scale', v / 100);
+      });
+    }
+    if (el.particleSpawnRadius) {
+      el.particleSpawnRadius.addEventListener('input', (e) => {
+        const v = parseInt(e.target.value);
+        el.particleSpawnRadiusVal.textContent = `${v}%`;
+        updateOverride('particle', 'radius', v / 100);
+      });
+    }
+
+    // ═══ BRUSH SPAWN ═══
+    // Brush density is now a multiplier (0-2.0×) like tree density
+    if (el.brushSpawnDensity) {
+      el.brushSpawnDensity.addEventListener('input', (e) => {
+        const v = parseFloat(e.target.value);
+        el.brushSpawnDensityVal.textContent = v.toFixed(1) + '×';
+        this._state.setToolOption('brushDensity', v);
+      });
+    }
+    if (el.brushSpawnScale) {
+      el.brushSpawnScale.addEventListener('input', (e) => {
+        const v = parseInt(e.target.value);
+        el.brushSpawnScaleVal.textContent = `${v}%`;
+        this._state.setToolOption('brushScale', v / 100);
+      });
+    }
+
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -663,10 +1148,62 @@ class TerrainEditor {
    * Update delete button state (only enabled for custom presets)
    */
   _updateDeleteButton() {
+    if (!this._elements.presetSelect || !this._elements.btnDeletePreset) return;
     const selectedId = this._elements.presetSelect.value;
     const isCustom = !Presets.isBuiltInPreset(selectedId);
     this._elements.btnDeletePreset.style.opacity = isCustom ? '1' : '0.4';
     this._elements.btnDeletePreset.disabled = !isCustom;
+  }
+
+  /**
+   * Apply current biome preset to tree type UI
+   * Called when switching to scatter system or when biome changes
+   */
+  _applyBiomeToTreeTypes() {
+    const biome = this._elements.biomeSelect?.value || 'temperate';
+    const biomePreset = BIOME_PRESETS[biome];
+
+    if (!biomePreset || biome === 'custom') return;
+
+    // Convert biome tree format to preset format
+    // biome: { 'tree-oak': 0.6 } → preset: { oak: 0.6 }
+    const treeTypes = [];
+    const treeRatios = {};
+    for (const [key, ratio] of Object.entries(biomePreset.trees)) {
+      const treeType = key.replace('tree-', '');
+      treeTypes.push(treeType);
+      treeRatios[treeType] = ratio;
+    }
+
+    // Build preset object compatible with _applyPreset
+    const preset = {
+      treeTypes,
+      treeRatios,
+      selectedAges: Object.keys(biomePreset.ageRatios),
+      ageRatios: biomePreset.ageRatios,
+      treeScale: this._state.toolOptions.treeScale || 0.08,
+      treeDensity: this._state.toolOptions.treeDensity || 5
+    };
+
+    this._applyPreset(preset);
+
+    // Update description
+    if (this._elements.biomeDescription) {
+      this._elements.biomeDescription.textContent = biomePreset.description;
+    }
+  }
+
+  /**
+   * Switch biome to custom (called when user manually edits tree types in scatter mode)
+   */
+  _switchBiomeToCustom() {
+    if (this._elements.biomeSelect) {
+      this._elements.biomeSelect.value = 'custom';
+      this._state.setToolOption('biome', 'custom');
+      if (this._elements.biomeDescription) {
+        this._elements.biomeDescription.textContent = BIOME_PRESETS.custom.description;
+      }
+    }
   }
 
   /**
@@ -683,6 +1220,85 @@ class TerrainEditor {
 
     this._applyPreset(preset);
     console.log('[Editor] Loaded preset:', preset.name);
+  }
+
+  /**
+   * Update feature-specific panels based on selected feature
+   */
+  _updateFeaturePanels(feature) {
+    const useScatter = this._elements.systemScatter?.checked ?? false;
+
+    // Show/hide tree settings (forest feature)
+    if (this._elements.treeSettings) {
+      this._elements.treeSettings.style.display = feature === 'forest' ? 'block' : 'none';
+    }
+
+    // Show/hide brush settings
+    if (this._elements.brushSettings) {
+      this._elements.brushSettings.style.display = feature === 'brush' ? 'block' : 'none';
+    }
+
+    // Show/hide ground settings
+    if (this._elements.groundSettings) {
+      this._elements.groundSettings.style.display = feature === 'groundTexture' ? 'block' : 'none';
+    }
+
+    // Show/hide water settings
+    if (this._elements.waterSettings) {
+      this._elements.waterSettings.style.display = feature === 'water' ? 'block' : 'none';
+    }
+
+    // Show/hide scatter environment (biome/season) - for forest OR brush in scatter mode
+    const showEnvironment = useScatter && (feature === 'forest' || feature === 'brush');
+    if (this._elements.scatterEnvironment) {
+      this._elements.scatterEnvironment.style.display = showEnvironment ? 'block' : 'none';
+    }
+
+    // Show/hide legacy settings - only for forest in legacy mode
+    if (this._elements.legacySystemSettings) {
+      this._elements.legacySystemSettings.style.display =
+        (!useScatter && feature === 'forest') ? 'block' : 'none';
+    }
+    if (this._elements.legacyParticleSettings) {
+      this._elements.legacyParticleSettings.style.display =
+        (!useScatter && feature === 'forest') ? 'block' : 'none';
+    }
+    if (this._elements.legacyPresetsSection) {
+      this._elements.legacyPresetsSection.style.display =
+        (!useScatter && feature === 'forest') ? 'block' : 'none';
+    }
+  }
+
+  /**
+   * Bind header elements to sync with hidden panel elements
+   */
+  _bindHeaderSync() {
+    const el = this._elements;
+
+    // Map name: header <-> hidden input
+    if (el.mapNameHeader) {
+      el.mapNameHeader.addEventListener('input', (e) => {
+        if (el.mapNameInput) el.mapNameInput.value = e.target.value;
+        this._state.mapName = e.target.value;
+      });
+    }
+
+    // Grid size: header -> hidden select
+    if (el.gridSizeHeader) {
+      el.gridSizeHeader.addEventListener('change', (e) => {
+        if (el.gridSize) el.gridSize.value = e.target.value;
+        this._state.setGridSize(parseInt(e.target.value));
+      });
+    }
+
+    // Base layer: header -> hidden select
+    if (el.baseLayerHeader) {
+      el.baseLayerHeader.addEventListener('change', (e) => {
+        if (el.baseLayer) el.baseLayer.value = e.target.value;
+        this._state.baseLayer = e.target.value;
+      });
+    }
+
   }
 
   /**
@@ -899,6 +1515,11 @@ class TerrainEditor {
     this._state.setToolOption('brushTypes', selectedTypes);
     this._state.setToolOption('brushRatios', ratios);
 
+    // Update childSpawnOverrides.brush.type
+    const overrides = { ...this._state.toolOptions.childSpawnOverrides };
+    overrides.brush = { ...overrides.brush, type: selectedTypes.length === 1 ? selectedTypes[0] : 'auto' };
+    this._state.setToolOption('childSpawnOverrides', overrides);
+
     // Show/hide ratio sliders
     if (selectedTypes.length > 1 && this._elements.brushRatiosContainer) {
       this._elements.brushRatiosContainer.style.display = 'block';
@@ -906,6 +1527,8 @@ class TerrainEditor {
     } else if (this._elements.brushRatiosContainer) {
       this._elements.brushRatiosContainer.style.display = 'none';
     }
+
+    this._refreshScatterPreview();
   }
 
   /**
@@ -922,12 +1545,11 @@ class TerrainEditor {
     };
 
     container.innerHTML = types.map(type => `
-      <div class="prop-row" style="margin-bottom: 4px;">
-        <label class="prop-label" style="font-size: 11px;">
-          ${labels[type] || type} <span class="brush-ratio-val" data-brush="${type}">${Math.round(ratios[type] * 100)}%</span>
-        </label>
-        <input type="range" class="prop-range brush-ratio-slider" data-brush="${type}"
-               min="0" max="100" value="${Math.round(ratios[type] * 100)}" style="height: 4px;">
+      <div class="ratio-row">
+        <span class="ratio-label">${labels[type] || type}</span>
+        <input type="range" class="ratio-slider brush-ratio-slider" data-brush="${type}"
+               min="0" max="100" value="${Math.round(ratios[type] * 100)}">
+        <span class="ratio-value brush-ratio-val" data-brush="${type}">${Math.round(ratios[type] * 100)}%</span>
       </div>
     `).join('');
 
@@ -986,6 +1608,82 @@ class TerrainEditor {
   }
 
   /**
+   * Update selected floor types from variant buttons
+   */
+  _updateSelectedFloorTypes() {
+    const selectedTypes = [];
+    this._elements.floorTypeBtns.forEach(b => {
+      if (b.classList.contains('active')) {
+        selectedTypes.push(b.dataset.floor);
+      }
+    });
+
+    // Ensure at least one is selected
+    if (selectedTypes.length === 0) {
+      const firstBtn = this._elements.floorTypeBtns[0];
+      if (firstBtn) {
+        firstBtn.classList.add('active');
+        selectedTypes.push(firstBtn.dataset.floor);
+      }
+    }
+
+    // Update state
+    this._state.setToolOption('floorTypes', selectedTypes);
+
+    // Update childSpawnOverrides.floor.type
+    const overrides = { ...this._state.toolOptions.childSpawnOverrides };
+    overrides.floor = { ...overrides.floor, type: selectedTypes.length === 1 ? selectedTypes[0] : 'auto' };
+    this._state.setToolOption('childSpawnOverrides', overrides);
+
+    // Show/hide ratio sliders
+    if (selectedTypes.length > 1 && this._elements.floorRatiosContainer) {
+      this._elements.floorRatiosContainer.style.display = 'block';
+    } else if (this._elements.floorRatiosContainer) {
+      this._elements.floorRatiosContainer.style.display = 'none';
+    }
+
+    this._refreshScatterPreview();
+  }
+
+  /**
+   * Update selected particle types from variant buttons
+   */
+  _updateSelectedParticleTypes() {
+    const selectedTypes = [];
+    this._elements.particleTypeBtns.forEach(b => {
+      if (b.classList.contains('active')) {
+        selectedTypes.push(b.dataset.particle);
+      }
+    });
+
+    // Ensure at least one is selected
+    if (selectedTypes.length === 0) {
+      const firstBtn = this._elements.particleTypeBtns[0];
+      if (firstBtn) {
+        firstBtn.classList.add('active');
+        selectedTypes.push(firstBtn.dataset.particle);
+      }
+    }
+
+    // Update state
+    this._state.setToolOption('particleTypes', selectedTypes);
+
+    // Update childSpawnOverrides.particle.type
+    const overrides = { ...this._state.toolOptions.childSpawnOverrides };
+    overrides.particle = { ...overrides.particle, type: selectedTypes.length === 1 ? selectedTypes[0] : 'auto' };
+    this._state.setToolOption('childSpawnOverrides', overrides);
+
+    // Show/hide ratio sliders
+    if (selectedTypes.length > 1 && this._elements.particleRatiosContainer) {
+      this._elements.particleRatiosContainer.style.display = 'block';
+    } else if (this._elements.particleRatiosContainer) {
+      this._elements.particleRatiosContainer.style.display = 'none';
+    }
+
+    this._refreshScatterPreview();
+  }
+
+  /**
    * Format age for display
    */
   _formatAge(age) {
@@ -1005,12 +1703,11 @@ class TerrainEditor {
     if (!container) return;
 
     container.innerHTML = ages.map(age => `
-      <div class="prop-row" style="margin-bottom: 4px;">
-        <label class="prop-label" style="font-size: 11px;">
-          ${this._formatAge(age)} <span class="age-ratio-val" data-age="${age}">${Math.round(ratios[age] * 100)}%</span>
-        </label>
-        <input type="range" class="prop-range age-ratio-slider" data-age="${age}"
-               min="0" max="100" value="${Math.round(ratios[age] * 100)}" style="height: 4px;">
+      <div class="ratio-row">
+        <span class="ratio-label">${this._formatAge(age)}</span>
+        <input type="range" class="ratio-slider age-ratio-slider" data-age="${age}"
+               min="0" max="100" value="${Math.round(ratios[age] * 100)}">
+        <span class="ratio-value age-ratio-val" data-age="${age}">${Math.round(ratios[age] * 100)}%</span>
       </div>
     `).join('');
 
@@ -1069,6 +1766,11 @@ class TerrainEditor {
     });
 
     this._state.setToolOption('ageRatios', ratios);
+
+    // In scatter mode, manual age ratio change switches biome to "Custom"
+    if (this._state.toolOptions.useScatterSystem) {
+      this._switchBiomeToCustom();
+    }
   }
 
   /**
@@ -1090,12 +1792,11 @@ class TerrainEditor {
     if (!container) return;
 
     container.innerHTML = types.map(type => `
-      <div class="prop-row" style="margin-bottom: 4px;">
-        <label class="prop-label" style="font-size: 11px;">
-          ${this._formatTreeType(type)} <span class="ratio-val" data-type="${type}">${Math.round(ratios[type] * 100)}%</span>
-        </label>
-        <input type="range" class="prop-range ratio-slider" data-type="${type}"
-               min="0" max="100" value="${Math.round(ratios[type] * 100)}" style="height: 4px;">
+      <div class="ratio-row">
+        <span class="ratio-label">${this._formatTreeType(type)}</span>
+        <input type="range" class="ratio-slider" data-type="${type}"
+               min="0" max="100" value="${Math.round(ratios[type] * 100)}">
+        <span class="ratio-value ratio-val" data-type="${type}">${Math.round(ratios[type] * 100)}%</span>
       </div>
     `).join('');
 
@@ -1112,7 +1813,10 @@ class TerrainEditor {
     const changedType = e.target.dataset.type;
     const newValue = parseInt(e.target.value);
 
-    const sliders = document.querySelectorAll('.ratio-slider');
+    // Only select tree ratio sliders (not density or other sliders)
+    const container = document.getElementById('ratio-sliders');
+    if (!container) return;
+    const sliders = container.querySelectorAll('.ratio-slider[data-type]');
     const otherSliders = [...sliders].filter(s => s.dataset.type !== changedType);
 
     // Calculate how much the others need to share
@@ -1154,6 +1858,703 @@ class TerrainEditor {
     });
 
     this._state.setToolOption('treeRatios', ratios);
+
+    // In scatter mode, manual ratio change switches biome to "Custom"
+    if (this._state.toolOptions.useScatterSystem) {
+      this._switchBiomeToCustom();
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // SEASON TUNING
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Bind all season tuning panel events
+   */
+  _bindSeasonTuning() {
+    const el = this._elements;
+    if (!el.seasonTuningPanel) return;
+
+    // Track overrides locally
+    this._seasonOverrides = {};
+
+    // Toggle collapse for Season Tuning (starts collapsed via CSS)
+    if (el.seasonTuningToggle) {
+      el.seasonTuningToggle.addEventListener('click', () => {
+        const isCollapsed = el.seasonTuningToggle.classList.toggle('collapsed');
+        el.seasonTuningBody.classList.toggle('collapsed', isCollapsed);
+      });
+    }
+
+    // Toggle collapse for View Options
+    if (el.viewOptionsToggle) {
+      el.viewOptionsToggle.addEventListener('click', () => {
+        const isCollapsed = el.viewOptionsToggle.classList.toggle('collapsed');
+        el.viewOptionsBody.classList.toggle('collapsed', isCollapsed);
+      });
+    }
+
+    // Scatter controls (type selects in Season Tuning panel)
+    this._bindTuneSelect(el.tuneFloorType, 'scatter', 'floorType');
+    this._bindTuneSelect(el.tuneParticleType, 'scatter', 'particleType');
+
+    // Stroke Output sliders (new hierarchical density controls)
+    this._bindStrokeOutputControls();
+
+    // Canopy controls
+    this._bindTuneSlider(el.tuneCanopyHue, el.tuneCanopyHueVal, 'canopy', 'hueShift', 0, '°');
+    this._bindTuneSlider(el.tuneCanopySat, el.tuneCanopySatVal, 'canopy', 'saturation', 2);
+    this._bindTuneSlider(el.tuneCanopyBright, el.tuneCanopyBrightVal, 'canopy', 'brightness', 2);
+
+    // Ground controls
+    this._bindTuneColor(el.tuneGroundTint, el.tuneGroundTintVal, 'ground', 'tintColor');
+    this._bindTuneSlider(el.tuneGroundBright, el.tuneGroundBrightVal, 'ground', 'brightness', 2);
+
+    // Environment controls
+    this._bindTuneCheckbox(el.tuneEnvSnow, 'environment', 'snow');
+    this._bindTuneCheckbox(el.tuneEnvPuddles, 'environment', 'puddles');
+    this._bindTuneSlider(el.tuneEnvFog, el.tuneEnvFogVal, 'environment', 'fogDensity', 2);
+    this._bindTuneCheckbox(el.tuneEnvFrost, 'environment', 'frost');
+
+    // Atmosphere controls
+    this._bindTuneColor(el.tuneAtmAmbient, el.tuneAtmAmbientVal, 'atmosphere', 'ambientColor');
+    this._bindTuneSlider(el.tuneAtmShadow, el.tuneAtmShadowVal, 'atmosphere', 'shadowIntensity', 2);
+    this._bindTuneSlider(el.tuneAtmWind, el.tuneAtmWindVal, 'atmosphere', 'windSpeed', 2);
+
+    // Reset button
+    if (el.tuneReset) {
+      el.tuneReset.addEventListener('click', () => {
+        this._seasonOverrides = {};
+        this._state.setToolOption('seasonOverrides', {});
+        this._refreshSeasonTuning();
+        console.log('[Editor] Season tuning reset to defaults');
+      });
+    }
+
+    // Export button
+    if (el.tuneExport) {
+      el.tuneExport.addEventListener('click', () => {
+        this._exportSeasonConfig();
+      });
+    }
+
+    // +/- buttons for fine tuning
+    document.querySelectorAll('.tune-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const targetId = btn.dataset.target;
+        const delta = parseFloat(btn.dataset.delta);
+        const slider = document.getElementById(targetId);
+        if (!slider) return;
+
+        const min = parseFloat(slider.min);
+        const max = parseFloat(slider.max);
+        const step = parseFloat(slider.step) || 1;
+        let newVal = parseFloat(slider.value) + delta;
+
+        // Clamp to min/max and round to step
+        newVal = Math.max(min, Math.min(max, newVal));
+        newVal = Math.round(newVal / step) * step;
+
+        slider.value = newVal;
+        slider.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    });
+  }
+
+  /**
+   * Bind a slider tuning control
+   */
+  _bindTuneSlider(slider, valEl, group, field, decimals = 2, suffix = '') {
+    if (!slider) return;
+    slider.addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value);
+      if (valEl) valEl.textContent = val.toFixed(decimals) + suffix;
+      this._setSeasonOverride(group, field, val);
+    });
+  }
+
+  /**
+   * Bind a select tuning control
+   */
+  _bindTuneSelect(select, group, field) {
+    if (!select) return;
+    select.addEventListener('change', (e) => {
+      this._setSeasonOverride(group, field, e.target.value);
+    });
+  }
+
+  /**
+   * Bind a color input tuning control
+   */
+  _bindTuneColor(colorInput, valEl, group, field) {
+    if (!colorInput) return;
+    colorInput.addEventListener('input', (e) => {
+      if (valEl) valEl.textContent = e.target.value;
+      this._setSeasonOverride(group, field, e.target.value);
+    });
+  }
+
+  /**
+   * Bind a checkbox tuning control
+   */
+  _bindTuneCheckbox(checkbox, group, field) {
+    if (!checkbox) return;
+    checkbox.addEventListener('change', (e) => {
+      this._setSeasonOverride(group, field, e.target.checked);
+    });
+  }
+
+  /**
+   * Bind Stroke Output controls (hierarchical density sliders)
+   */
+  _bindStrokeOutputControls() {
+    const el = this._elements;
+
+    // Tree count → treeDensity tool option (now a multiplier: 0.5 to 2.0)
+    if (el.scatterTreeCount) {
+      el.scatterTreeCount.addEventListener('input', (e) => {
+        const val = parseFloat(e.target.value);
+        if (el.scatterTreeCountVal) el.scatterTreeCountVal.textContent = val.toFixed(1) + '×';
+        this._state.setToolOption('treeDensity', val);
+      });
+    }
+
+    // Tree spacing → treeSpacing tool option (50% to 150%, affects tree-to-tree collision)
+    if (el.treeSpacing) {
+      el.treeSpacing.addEventListener('input', (e) => {
+        const val = parseInt(e.target.value);
+        if (el.treeSpacingVal) el.treeSpacingVal.textContent = val + '%';
+        this._state.setToolOption('treeSpacing', val / 100); // Store as multiplier (0.5-1.5)
+      });
+    }
+
+    // Category toggles - ON = expanded, OFF = collapsed
+    if (el.toggleTrees) {
+      el.toggleTrees.addEventListener('change', (e) => {
+        const enabled = e.target.checked;
+        this._state.setToolOption('treesEnabled', enabled);
+        // Expand/collapse the panel based on toggle state
+        const header = el.toggleTrees.closest('.category-header');
+        if (header) header.classList.toggle('collapsed', !enabled);
+        if (el.catTreesBody) el.catTreesBody.classList.toggle('collapsed', !enabled);
+        this._refreshScatterPreview();
+      });
+    }
+    if (el.toggleFloor) {
+      el.toggleFloor.addEventListener('change', (e) => {
+        const enabled = e.target.checked;
+        this._state.setToolOption('floorEnabled', enabled);
+        // Also update childSpawnOverrides for floor
+        const overrides = { ...this._state.toolOptions.childSpawnOverrides };
+        overrides.floor = { ...overrides.floor, enabled };
+        this._state.setToolOption('childSpawnOverrides', overrides);
+        // Expand/collapse the panel based on toggle state
+        const header = el.toggleFloor.closest('.category-header');
+        if (header) header.classList.toggle('collapsed', !enabled);
+        if (el.catFloorBody) el.catFloorBody.classList.toggle('collapsed', !enabled);
+        this._refreshScatterPreview();
+      });
+    }
+    if (el.toggleParticles) {
+      el.toggleParticles.addEventListener('change', (e) => {
+        const enabled = e.target.checked;
+        this._state.setToolOption('particlesEnabled', enabled);
+        // Also update childSpawnOverrides for particles
+        const overrides = { ...this._state.toolOptions.childSpawnOverrides };
+        overrides.particle = { ...overrides.particle, enabled };
+        this._state.setToolOption('childSpawnOverrides', overrides);
+        // Expand/collapse the panel based on toggle state
+        const header = el.toggleParticles.closest('.category-header');
+        if (header) header.classList.toggle('collapsed', !enabled);
+        if (el.catParticlesBody) el.catParticlesBody.classList.toggle('collapsed', !enabled);
+        this._refreshScatterPreview();
+      });
+    }
+    if (el.toggleBrush) {
+      el.toggleBrush.addEventListener('change', (e) => {
+        const enabled = e.target.checked;
+        this._state.setToolOption('brushEnabled', enabled);
+        // Expand/collapse the panel based on toggle state
+        const header = el.toggleBrush.closest('.category-header');
+        if (header) header.classList.toggle('collapsed', !enabled);
+        if (el.catBrushBody) el.catBrushBody.classList.toggle('collapsed', !enabled);
+        this._refreshScatterPreview();
+      });
+    }
+
+  }
+
+  /**
+   * Sync Stroke Output sliders with current values (called when season/biome changes)
+   */
+  _syncStrokeOutputValues() {
+    const el = this._elements;
+
+    // Get current values from state/config
+    const treeDensity = this._state.toolOptions?.treeDensity ?? 5;
+    const season = el.seasonSelect?.value || 'summer';
+    const biome = el.biomeSelect?.value || 'temperate';
+    const config = getSeasonBiomeConfig(season, biome);
+    const overrides = this._seasonOverrides || {};
+
+    // Get effective values (override or config default)
+    const floorDensity = overrides.scatter?.floorDensity ?? config?.scatter?.floorDensity ?? 0.6;
+    const particleDensity = overrides.scatter?.particleDensity ?? config?.scatter?.particleDensity ?? 0.3;
+    const brushDensity = overrides.scatter?.brushDensity ?? config?.scatter?.brushDensity ?? 1.0;
+
+    // Update sliders and values (treeDensity is now a multiplier: 0.5 to 2.0)
+    if (el.scatterTreeCount) {
+      el.scatterTreeCount.value = treeDensity;
+      if (el.scatterTreeCountVal) el.scatterTreeCountVal.textContent = treeDensity.toFixed(1) + '×';
+    }
+  }
+
+  /**
+   * Set a season override value and push to state
+   */
+  _setSeasonOverride(group, field, value) {
+    if (!this._seasonOverrides[group]) {
+      this._seasonOverrides[group] = {};
+    }
+    this._seasonOverrides[group][field] = value;
+
+    // Push to state for scatter generation
+    this._state.setToolOption('seasonOverrides', { ...this._seasonOverrides });
+
+    // Update modified indicator
+    this._updateModifiedIndicator();
+  }
+
+  /**
+   * Refresh the tuning panel with current season x biome values
+   */
+  _refreshSeasonTuning() {
+    const el = this._elements;
+    if (!el.seasonTuningPanel) return;
+
+    const season = el.seasonSelect?.value || 'summer';
+    const biome = el.biomeSelect?.value || 'temperate';
+    const config = getSeasonBiomeConfig(season, biome);
+
+    if (!config) return;
+
+    // Update label
+    const biomeName = BIOME_PRESETS[biome]?.name || biome;
+    const seasonName = season.charAt(0).toUpperCase() + season.slice(1);
+    if (el.seasonTuningLabel) {
+      el.seasonTuningLabel.textContent = `${seasonName} × ${biomeName}`;
+    }
+
+    // Apply overrides on top of config
+    const overrides = this._seasonOverrides || {};
+    const get = (group, field) => {
+      return overrides[group]?.[field] ?? config[group]?.[field];
+    };
+
+    // Scatter
+    this._setTuneSelect(el.tuneFloorType, get('scatter', 'floorType'));
+    this._setTuneSlider(el.tuneFloorDensity, el.tuneFloorDensityVal, get('scatter', 'floorDensity'), 2);
+    this._setTuneSelect(el.tuneParticleType, get('scatter', 'particleType'));
+    this._setTuneSlider(el.tuneParticleDensity, el.tuneParticleDensityVal, get('scatter', 'particleDensity'), 2);
+    this._setTuneSlider(el.tuneBrushDensity, el.tuneBrushDensityVal, get('scatter', 'brushDensity'), 2);
+
+    // Canopy
+    this._setTuneSlider(el.tuneCanopyHue, el.tuneCanopyHueVal, get('canopy', 'hueShift'), 0, '°');
+    this._setTuneSlider(el.tuneCanopySat, el.tuneCanopySatVal, get('canopy', 'saturation'), 2);
+    this._setTuneSlider(el.tuneCanopyBright, el.tuneCanopyBrightVal, get('canopy', 'brightness'), 2);
+
+    // Ground
+    this._setTuneColor(el.tuneGroundTint, el.tuneGroundTintVal, get('ground', 'tintColor'));
+    this._setTuneSlider(el.tuneGroundBright, el.tuneGroundBrightVal, get('ground', 'brightness'), 2);
+
+    // Environment
+    this._setTuneCheckbox(el.tuneEnvSnow, get('environment', 'snow'));
+    this._setTuneCheckbox(el.tuneEnvPuddles, get('environment', 'puddles'));
+    this._setTuneSlider(el.tuneEnvFog, el.tuneEnvFogVal, get('environment', 'fogDensity'), 2);
+    this._setTuneCheckbox(el.tuneEnvFrost, get('environment', 'frost'));
+
+    // Atmosphere
+    this._setTuneColor(el.tuneAtmAmbient, el.tuneAtmAmbientVal, get('atmosphere', 'ambientColor'));
+    this._setTuneSlider(el.tuneAtmShadow, el.tuneAtmShadowVal, get('atmosphere', 'shadowIntensity'), 2);
+    this._setTuneSlider(el.tuneAtmWind, el.tuneAtmWindVal, get('atmosphere', 'windSpeed'), 2);
+
+    // Sync Stroke Output sliders (hierarchical density controls)
+    this._syncStrokeOutputValues();
+
+    // Update modified indicator
+    this._updateModifiedIndicator();
+  }
+
+  /**
+   * Refresh the sidebar scatter preview canvas (Tetris-style "next piece" preview)
+   * Generates a preview cluster using current settings and renders to the preview canvas.
+   * Auto-zooms to fit the full brush radius + child overflow.
+   */
+  _refreshScatterPreview() {
+    const canvas = this._elements.scatterPreviewCanvas;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+
+    // Clear
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Background - use base ground texture if available
+    const baseLayer = this._state.baseLayer || 'grass-1';
+    const groundImg = this._renderer._images?.ground?.[baseLayer];
+    if (groundImg) {
+      // Tile the ground texture across the preview
+      const pattern = ctx.createPattern(groundImg, 'repeat');
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    } else {
+      ctx.fillStyle = '#1a2f1a';  // Dark green fallback
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    const options = this._state.toolOptions;
+    if (!options.useScatterSystem) return;
+
+    // Use shared forest generation function (single source of truth)
+    const mockTerrain = { scatterItems: [], strokes: [] };
+    const virtualCx = 1000;
+    const virtualCy = 1000;
+    const radius = options.brushRadius;
+
+    const previewItems = generateForestItems(mockTerrain,
+      { x: virtualCx, y: virtualCy, radius, seed: options.previewSeed ?? 42 },
+      {
+        treeTypes: options.treeTypes || [options.treeType || 'oak'],
+        treeRatios: options.treeRatios || {},
+        treeDensity: options.treeDensity ?? 1.0,
+        treeScale: options.treeScale ?? 0.35,
+        treeSpacing: options.treeSpacing ?? 1.0,
+        selectedAges: options.selectedAges ?? ['young', 'transitional', 'old'],
+        ageRatios: options.ageRatios ?? null,
+        brushTypes: options.brushTypes || ['bush-small'],
+        brushRatios: options.brushRatios || {},
+        brushDensity: options.brushDensity ?? 1.0,
+        brushScale: options.brushScale ?? 0.25,
+        season: options.season ?? 'summer',
+        biome: options.biome ?? 'temperate',
+        seasonOverrides: options.seasonOverrides ?? {},
+        childSpawnOverrides: options.childSpawnOverrides ?? {},
+        // Category toggles
+        treesEnabled: options.treesEnabled ?? true,
+        brushEnabled: options.brushEnabled ?? true,
+        floorEnabled: options.floorEnabled ?? true,
+        particlesEnabled: options.particlesEnabled ?? true,
+        images: {
+          tree: this._renderer._images.trees,
+          brush: this._renderer._images.brush,
+          floor: this._renderer._images.floor,
+          particle: this._renderer._images.brush
+        }
+      }
+    );
+
+    if (previewItems.length === 0) {
+      ctx.fillStyle = '#475569';
+      ctx.font = '11px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('No items generated', canvas.width / 2, canvas.height / 2);
+      this._updatePreviewInfo([], 1);
+      return;
+    }
+
+    // Calculate bounding box of all items (including their rendered size)
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const item of previewItems) {
+      const imgSize = (256 * item.scale) / 2; // half the rendered size
+      minX = Math.min(minX, item.x - imgSize);
+      minY = Math.min(minY, item.y - imgSize);
+      maxX = Math.max(maxX, item.x + imgSize);
+      maxY = Math.max(maxY, item.y + imgSize);
+    }
+
+    // Also include the brush radius circle
+    minX = Math.min(minX, virtualCx - radius);
+    minY = Math.min(minY, virtualCy - radius);
+    maxX = Math.max(maxX, virtualCx + radius);
+    maxY = Math.max(maxY, virtualCy + radius);
+
+    // Calculate zoom to fit with padding
+    const padding = 10;
+    const contentW = maxX - minX;
+    const contentH = maxY - minY;
+    const availW = canvas.width - padding * 2;
+    const availH = canvas.height - padding * 2;
+    const zoom = Math.min(1.5, availW / contentW, availH / contentH); // cap at 1.5x
+
+    // Center offset
+    const contentCx = (minX + maxX) / 2;
+    const contentCy = (minY + maxY) / 2;
+    const canvasCx = canvas.width / 2;
+    const canvasCy = canvas.height / 2;
+
+    // Prepare images
+    const images = {
+      tree: this._renderer._images.trees,
+      brush: this._renderer._images.brush,
+      floor: this._renderer._images.floor,
+      particle: this._renderer._images.brush
+    };
+
+    // Build list of canopy occluders (trees) with their occlusion radii
+    const occluders = [];
+    for (const item of previewItems) {
+      const config = SCATTER_TYPES[item.type];
+      if (config && config.category === 'tree') {
+        // Calculate visual canopy radius from actual loaded sprite dimensions
+        const spriteKey = getSpriteKey(item);
+        const img = images.tree?.[spriteKey];
+        const spriteWidth = img?.width || 256;
+        const canopyFill = config.canopyFill ?? 0.8;
+        const occlusionRadius = (spriteWidth / 2) * canopyFill * item.scale;
+        occluders.push({ x: item.x, y: item.y, radius: occlusionRadius });
+      }
+    }
+
+    // Check if an item is completely occluded by any tree canopy
+    // Only ground and particle layer items can be occluded (not canopy layer)
+    const isOccluded = (item) => {
+      const config = SCATTER_TYPES[item.type];
+      if (!config) return false;
+      // Canopy layer items (trees, bushes) don't get occluded
+      if (config.layer === 'canopy') return false;
+      // Approximate item radius based on scale
+      const itemRadius = 20 * item.scale; // rough estimate
+      for (const occ of occluders) {
+        const dx = item.x - occ.x;
+        const dy = item.y - occ.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        // Item is occluded if its center + radius is inside the occluder
+        if (dist + itemRadius < occ.radius * 0.85) { // 85% to allow edge visibility
+          return true;
+        }
+      }
+      return false;
+    };
+
+    // Filter out occluded items
+    const visibleItems = previewItems.filter(item => !isOccluded(item));
+
+    // Sort: smaller scale first, then by Y
+    const sorted = [...visibleItems].sort((a, b) => (a.scale - b.scale) || (a.y - b.y));
+
+    // Apply zoom transform
+    ctx.save();
+    ctx.translate(canvasCx, canvasCy);
+    ctx.scale(zoom, zoom);
+    ctx.translate(-contentCx, -contentCy);
+
+    // Render layers in order: ground → particle → canopy
+    for (const item of sorted) {
+      const config = SCATTER_TYPES[item.type];
+      if (config && config.layer === 'ground') {
+        renderScatterItem(ctx, item, images, { skipFilters: true });
+      }
+    }
+    for (const item of sorted) {
+      const config = SCATTER_TYPES[item.type];
+      if (config && config.layer === 'particle') {
+        renderScatterItem(ctx, item, images, { skipFilters: true });
+      }
+    }
+    for (const item of sorted) {
+      const config = SCATTER_TYPES[item.type];
+      if (config && config.layer === 'canopy') {
+        renderScatterItem(ctx, item, images, { skipFilters: true });
+      }
+    }
+
+    // Draw brush radius circle (dashed outline)
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.lineWidth = 1 / zoom; // constant screen-space width
+    ctx.setLineDash([4 / zoom, 4 / zoom]);
+    ctx.beginPath();
+    ctx.arc(virtualCx, virtualCy, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.restore();
+
+    // Update info text with detailed breakdown (visible items only)
+    this._updatePreviewInfo(visibleItems, zoom);
+  }
+
+  _updatePreviewInfo(items, zoom) {
+    const el = this._elements.scatterPreviewInfo;
+    if (!el) return;
+
+    if (!items || items.length === 0) {
+      el.textContent = 'No items (collision?)';
+      return;
+    }
+
+    // Group by layer, then by category/type with scale tracking
+    const layers = {
+      ground: { items: [], byType: {} },
+      particle: { items: [], byType: {} },
+      canopy: { items: [], byType: {} }
+    };
+
+    for (const item of items) {
+      const config = SCATTER_TYPES[item.type];
+      if (!config) continue;
+
+      const layer = config.layer || 'canopy';
+      layers[layer].items.push(item);
+
+      // Extract readable type name
+      const typeName = item.type.replace(/^(tree|floor|particle|brush)-/, '');
+      const displayName = config.category === 'particle' ? `${typeName}-ptc` : typeName;
+
+      if (!layers[layer].byType[displayName]) {
+        layers[layer].byType[displayName] = { count: 0, scales: [], category: config.category };
+      }
+      layers[layer].byType[displayName].count++;
+      layers[layer].byType[displayName].scales.push(item.scale);
+    }
+
+    // Build layer-based summary with per-type scales
+    const lines = [];
+
+    // Canopy layer - split into Trees and Brush for readability
+    if (layers.canopy.items.length > 0) {
+      const treeParts = [];
+      const brushParts = [];
+      for (const [name, data] of Object.entries(layers.canopy.byType)) {
+        const minS = Math.min(...data.scales);
+        const maxS = Math.max(...data.scales);
+        const scaleStr = minS === maxS
+          ? `${(minS * 100).toFixed(0)}%`
+          : `${(minS * 100).toFixed(0)}-${(maxS * 100).toFixed(0)}%`;
+        const part = `${data.count} ${name} @${scaleStr}`;
+        if (data.category === 'tree') {
+          treeParts.push(part);
+        } else {
+          brushParts.push(part);
+        }
+      }
+      if (treeParts.length > 0) {
+        lines.push(`<b>Trees:</b> ${treeParts.join(', ')}`);
+      }
+      if (brushParts.length > 0) {
+        lines.push(`<b>Brush:</b> ${brushParts.join(', ')}`);
+      }
+    }
+
+    // Particle layer (leaves, needles, debris)
+    if (layers.particle.items.length > 0) {
+      const parts = [];
+      for (const [name, data] of Object.entries(layers.particle.byType)) {
+        const minS = Math.min(...data.scales);
+        const maxS = Math.max(...data.scales);
+        const scaleStr = minS === maxS
+          ? `${(minS * 100).toFixed(0)}%`
+          : `${(minS * 100).toFixed(0)}-${(maxS * 100).toFixed(0)}%`;
+        parts.push(`${data.count} ${name} @${scaleStr}`);
+      }
+      lines.push(`<b>Particles:</b> ${parts.join(', ')}`);
+    }
+
+    // Ground layer (floor)
+    if (layers.ground.items.length > 0) {
+      const parts = [];
+      for (const [name, data] of Object.entries(layers.ground.byType)) {
+        const minS = Math.min(...data.scales);
+        const maxS = Math.max(...data.scales);
+        const scaleStr = minS === maxS
+          ? `${(minS * 100).toFixed(0)}%`
+          : `${(minS * 100).toFixed(0)}-${(maxS * 100).toFixed(0)}%`;
+        parts.push(`${data.count} ${name} @${scaleStr}`);
+      }
+      lines.push(`<b>Ground:</b> ${parts.join(', ')}`);
+    }
+
+    const zoomStr = zoom && zoom < 0.99 ? `<br><i>Preview zoom: ${Math.round(zoom * 100)}%</i>` : '';
+    el.innerHTML = lines.join('<br>') + zoomStr;
+  }
+
+  _setTuneSlider(slider, valEl, value, decimals = 2, suffix = '') {
+    if (slider && value !== undefined) {
+      slider.value = value;
+      if (valEl) valEl.textContent = Number(value).toFixed(decimals) + suffix;
+    }
+  }
+
+  _setTuneSelect(select, value) {
+    if (select && value !== undefined) select.value = value;
+  }
+
+  _setTuneColor(colorInput, valEl, value) {
+    if (colorInput && value) {
+      colorInput.value = value;
+      if (valEl) valEl.textContent = value;
+    }
+  }
+
+  _setTuneCheckbox(checkbox, value) {
+    if (checkbox && value !== undefined) checkbox.checked = !!value;
+  }
+
+  /**
+   * Update the "Modified: ..." indicator
+   */
+  _updateModifiedIndicator() {
+    const el = this._elements;
+    if (!el.tuneModifiedList) return;
+
+    const overrides = this._seasonOverrides || {};
+    const fields = [];
+    for (const [group, vals] of Object.entries(overrides)) {
+      for (const field of Object.keys(vals)) {
+        fields.push(`${group}.${field}`);
+      }
+    }
+
+    if (fields.length > 0) {
+      el.tuneModifiedList.style.display = '';
+      el.tuneModifiedFields.textContent = fields.join(', ');
+    } else {
+      el.tuneModifiedList.style.display = 'none';
+    }
+  }
+
+  /**
+   * Export current season config values to clipboard
+   */
+  _exportSeasonConfig() {
+    const season = this._elements.seasonSelect?.value || 'summer';
+    const biome = this._elements.biomeSelect?.value || 'temperate';
+    const config = getSeasonBiomeConfig(season, biome);
+
+    // Merge overrides into config
+    const merged = {};
+    for (const group of ['scatter', 'canopy', 'ground', 'environment', 'atmosphere']) {
+      merged[group] = { ...config[group], ...(this._seasonOverrides?.[group] || {}) };
+    }
+
+    const output = exportConfigString(season, biome, merged);
+    const header = `// ${season} × ${biome}\n`;
+
+    navigator.clipboard.writeText(header + output).then(() => {
+      console.log('[Editor] Season config copied to clipboard');
+      // Brief visual feedback
+      const btn = this._elements.tuneExport;
+      if (btn) {
+        const orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = orig; }, 1500);
+      }
+    }).catch(err => {
+      console.error('[Editor] Failed to copy:', err);
+      // Fallback: log to console
+      console.log('Season config export:\n' + header + output);
+    });
   }
 }
 

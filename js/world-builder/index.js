@@ -500,8 +500,64 @@ export const generateEndlessTerrain = (wave, seed) => WorldBuilder.generateForEn
 // STROKE-BASED TERRAIN SYSTEM (v2)
 // ═══════════════════════════════════════════════════════════════
 
-// Re-export stroke system components
-export { createStroke, createTerrainMap, createEmptyCell, FEATURE_DEFS, GROUND_TEXTURES, FALLOFF, TREE_TYPES, TREE_AGES, TREE_AGE_THRESHOLD, BRUSH_TYPES, PARTICLE_TYPES, TREE_TO_PARTICLES, TREE_TO_BRUSH, COLOR_VARIATION, generateTreesForStroke, removeTreesForStroke, removeTreesInRadius, getTreesSortedByScale, generateBrushForStroke, removeBrushForStroke, removeBrushInRadius, getBrushSortedByScale, generateParticlesForTree, generateParticlesForStroke, removeParticlesForParent, removeParticlesForStroke, removeParticlesInRadius, getParticlesSortedByY } from './strokes.js';
+// Re-export stroke system components (legacy)
+export { createStroke, createTerrainMap, createEmptyCell, FEATURE_DEFS, GROUND_TEXTURES, FALLOFF, TREE_TYPES, TREE_AGES, TREE_AGE_THRESHOLD, BRUSH_TYPES, PARTICLE_TYPES, TREE_TO_PARTICLES, TREE_TO_BRUSH, TREE_TO_FLOOR, DEFAULT_FLOOR, FLOOR_PATCH_TYPES, COLOR_VARIATION, generateTreesForStroke, removeTreesForStroke, removeTreesInRadius, getTreesSortedByScale, generateBrushForStroke, removeBrushForStroke, removeBrushInRadius, getBrushSortedByScale, generateParticlesForTree, generateParticlesForStroke, removeParticlesForParent, removeParticlesForStroke, removeParticlesInRadius, getParticlesSortedByY, generateFloorPatchesForTree, generateFloorPatchesForStroke, removeFloorPatchesForParent, removeFloorPatchesForStroke, removeFloorPatchesInRadius, getFloorPatches } from './strokes.js';
+
+// ═══════════════════════════════════════════════════════════════
+// UNIFIED SCATTER SYSTEM (MVP)
+// ═══════════════════════════════════════════════════════════════
+
+// Config data (source of truth: season-config.js, re-exported via scatter.js)
+export {
+  SCATTER_TYPES,
+  SPAWN_RULES,
+  TREE_AGES as SCATTER_AGES,
+  TREE_AGE_THRESHOLD as SCATTER_AGE_THRESHOLD,
+  AGE_MODIFIERS,
+  SEASONS,
+  TREE_CATEGORIES,
+  BIOME_PRESETS,
+  SEASON_BIOME_CONFIG,
+  getEffectiveSettings,
+  getSeasonBiomeConfig,
+  getConfigSchema,
+  exportConfigString,
+  // Generation logic
+  generateScatter,
+  generateForestItems,
+  spawnChildren,
+  removeScatterByStroke,
+  removeScatterByParent,
+  removeScatterInRadius,
+  getScatterByLayer,
+  getScatterByCategory,
+  getScatterSorted,
+  getVisibleScatter,
+  getSpriteKey,
+  getScatterConfig,
+  rebuildSpatialHash
+} from './scatter.js';
+
+// Scatter renderer
+export {
+  renderScatterLayer,
+  renderScatterItem,
+  renderGroundScatter,
+  renderCanopyScatter,
+  getVisibleScatterCounts
+} from './scatter-renderer.js';
+
+// Scatter animation
+export {
+  ANIMATION_STYLES,
+  startPlacementAnimation,
+  startGrowInAnimation,  // Legacy alias
+  updateAnimations,
+  hasActiveAnimations,
+  getActiveAnimationCount,
+  clearAnimations,
+  animateNewItems
+} from './scatter-animation.js';
 export { paint, paintTrees, erase, addStroke, removeStroke, clearStrokes, getStrokesAt } from './stroke-painter.js';
 export { rasterize, ensureRasterized } from './rasterize.js';
 export {

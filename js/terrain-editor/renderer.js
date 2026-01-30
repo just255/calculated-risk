@@ -5,6 +5,10 @@
 
 import { Events } from './events.js';
 import { renderCanopyLayer, renderBaseLayer, ensureRasterized } from '../world-builder/index.js';
+// NEW: Unified scatter system rendering
+import { renderScatterLayer, renderScatterItem, getVisibleScatter, SCATTER_TYPES } from '../world-builder/index.js';
+// NEW: Animation system
+import { updateAnimations, hasActiveAnimations, getActiveAnimationCount } from '../world-builder/scatter-animation.js';
 
 // Ground texture scale (1 = native 256px, 0.25 = 64px tiles = matches cell size)
 const GROUND_TEXTURE_SCALE = 0.25;
@@ -29,7 +33,11 @@ export class Renderer {
     this._images = {
       ground: {},
       trees: {},
-      brush: {}
+      brush: {},
+      floor: {},     // Floor patch sprites (discrete sprites with variants)
+      particle: {},  // Particle sprites (leaves, needles, twigs)
+      // NEW: Category-based images for scatter system
+      tree: {},      // Alias for trees (scatter uses 'tree' category)
     };
 
     // Animation frame handle
@@ -45,8 +53,11 @@ export class Renderer {
     // Cached ground layer (strokes rendered once, reused until changed)
     this._groundCache = null;
     this._groundCacheValid = false;
+    this._groundCacheIsPreview = false;  // Whether cache was built at preview quality
     this._groundCacheStrokeCount = 0;
     this._groundCacheTreeCount = 0;
+    this._groundCacheFloorPatchCount = 0;
+    this._groundCacheScatterCount = 0;  // NEW: Track scatterItems for cache invalidation
 
     // Paint preview layer (for showing strokes during drag painting)
     this._paintPreview = null;
@@ -58,9 +69,36 @@ export class Renderer {
     this._canopyCacheTreeCount = 0;
     this._canopyCacheBrushCount = 0;
     this._canopyCacheParticleCount = 0;
+    this._canopyCacheScatterCount = 0;  // NEW: Track scatterItems for cache invalidation
+
+    // Track current rendering mode to invalidate caches when it changes
+    this._useScatterRendering = false;
+
+    // Drag painting mode - defer cache rebuilds until drag ends
+    this._isDragPainting = false;
+
+    // Scatter preview (shown on UI layer when hovering with preview enabled)
+    this._scatterPreview = null;
 
     this._init();
   }
+
+  /**
+   * Begin drag painting mode - uses preview quality (2x) for ground cache rebuilds
+   */
+  beginDragPaint() {
+    this._isDragPainting = true;
+  }
+
+  /**
+   * End drag painting mode - triggers full quality cache rebuild
+   */
+  endDragPaint() {
+    this._isDragPainting = false;
+    this._invalidateGroundCache();
+    this._invalidateCanopyCache();
+  }
+
 
   _init() {
     // Create canvas layers
@@ -74,6 +112,14 @@ export class Renderer {
     this._state.on(Events.MAP_LOADED, () => { this._invalidateGroundCache(); this._invalidateCanopyCache(); });
     this._state.on(Events.MAP_CLEARED, () => { this._invalidateGroundCache(); this._invalidateCanopyCache(); });
     this._state.on(Events.BASE_LAYER_CHANGED, () => this._invalidateGroundCache());
+
+    // Invalidate caches when post-processing settings change (seasonOverrides)
+    this._state.on(Events.TOOL_OPTIONS_CHANGED, ({ key }) => {
+      if (key === 'seasonOverrides') {
+        this._invalidateGroundCache();
+        this._invalidateCanopyCache();
+      }
+    });
 
     // Start render loop
     this._startRenderLoop();
@@ -196,8 +242,7 @@ export class Renderer {
     const dprChanged = this._dpr !== newDpr;
     if (dprChanged) {
       this._dpr = newDpr;
-      // Invalidate caches that were rendered at old DPR
-      this._invalidateCanopyCache();
+      // Canopy cache uses 1x DPR always, no invalidation needed
     }
 
     // Resize all canvases with DPR scaling
@@ -225,7 +270,7 @@ export class Renderer {
 
   async loadImages() {
     // Fetch available sprites from server
-    let spriteManifest = { trees: {}, brush: {}, ground: [] };
+    let spriteManifest = { trees: {}, brush: {}, ground: [], floor: {} };
     try {
       const response = await fetch('/api/terrain/sprites');
       spriteManifest = await response.json();
@@ -234,7 +279,8 @@ export class Renderer {
       spriteManifest = {
         trees: {},
         brush: {},
-        ground: ['grass', 'open', 'water']
+        ground: ['grass', 'open', 'water'],
+        floor: {}
       };
     }
 
@@ -261,11 +307,18 @@ export class Renderer {
       promises.push(this._loadImage(key, path, this._images.brush));
     }
 
+    // Floor patch sprites - discrete sprites with variants
+    console.log('[Renderer] Floor sprites from API:', spriteManifest.floor);
+    for (const [key, path] of Object.entries(spriteManifest.floor || {})) {
+      promises.push(this._loadImage(key, path, this._images.floor));
+    }
+
     await Promise.all(promises);
     console.log('[Renderer] Images loaded:', {
       ground: Object.keys(this._images.ground).length,
       trees: Object.keys(this._images.trees).length,
-      brush: Object.keys(this._images.brush).length
+      brush: Object.keys(this._images.brush).length,
+      floor: Object.keys(this._images.floor).length
     });
 
     // Invalidate caches now that images are loaded
@@ -295,6 +348,14 @@ export class Renderer {
 
   _startRenderLoop() {
     const loop = () => {
+      // Update animations (returns true if any are still active)
+      const animating = hasActiveAnimations();
+      if (animating) {
+        updateAnimations();
+        // Request render to show animated items (don't invalidate cache)
+        this._needsRender = true;
+      }
+
       if (this._needsRender) {
         this._render();
         this._needsRender = false;
@@ -328,6 +389,15 @@ export class Renderer {
     const viewport = this._state.viewport;
     const dpr = this._dpr || 1;
 
+    // Check if rendering mode changed - invalidate caches if so
+    const useScatter = this._state.viewSettings.useScatterRendering || false;
+    if (this._useScatterRendering !== useScatter) {
+      this._useScatterRendering = useScatter;
+      this._invalidateGroundCache();
+      this._invalidateCanopyCache();
+      console.log(`[Renderer] Rendering mode changed to: ${useScatter ? 'scatter' : 'legacy'}`);
+    }
+
     // Clear all canvases and apply viewport transform (with DPR scaling)
     Object.entries(this._contexts).forEach(([layer, ctx]) => {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -358,20 +428,29 @@ export class Renderer {
     const ctx = this._contexts.ground;
     ctx.imageSmoothingEnabled = false;
     const terrainMap = this._state.terrainMap;
-    const width = this._state.canvasWidth;
-    const height = this._state.canvasHeight;
 
     // Check if we need to rebuild the ground cache
-    // Rebuild when strokes or trees change (trees affect forest floor layer)
     const strokeCount = terrainMap.strokes?.length || 0;
     const treeCount = terrainMap.trees?.length || 0;
-    if (!this._groundCacheValid || terrainMap.dirty ||
+    const floorPatchCount = terrainMap.floorPatches?.length || 0;
+    const scatterCount = terrainMap.scatterItems?.length || 0;
+
+    const needsRebuild = !this._groundCacheValid || terrainMap.dirty ||
         this._groundCacheStrokeCount !== strokeCount ||
-        this._groundCacheTreeCount !== treeCount) {
+        this._groundCacheTreeCount !== treeCount ||
+        this._groundCacheFloorPatchCount !== floorPatchCount ||
+        this._groundCacheScatterCount !== scatterCount;
+
+    // Skip ground cache rebuild during drag painting (too expensive even at preview quality)
+    // New strokes are shown via the paint preview canvas instead
+    // Full rebuild happens on mouseup via endDragPaint()
+    if (needsRebuild && !this._isDragPainting) {
       this._rebuildGroundCache();
       this._groundCacheStrokeCount = strokeCount;
       this._groundCacheTreeCount = treeCount;
-      terrainMap.dirty = false;  // Reset dirty flag after rebuild
+      this._groundCacheFloorPatchCount = floorPatchCount;
+      this._groundCacheScatterCount = scatterCount;
+      terrainMap.dirty = false;
     }
 
     // Draw cached ground layer
@@ -390,9 +469,11 @@ export class Renderer {
 
   /**
    * Rebuild the cached ground layer with all strokes
+   * @param {boolean} previewMode - Use lower resolution for faster rendering during drag painting
    */
-  _rebuildGroundCache() {
+  _rebuildGroundCache(previewMode = false) {
     const terrainMap = this._state.terrainMap;
+    const viewSettings = this._state.viewSettings;
     const groundImg = this._images.ground[terrainMap.baseLayer];
     const width = this._state.canvasWidth;
     const height = this._state.canvasHeight;
@@ -425,28 +506,44 @@ export class Renderer {
     ensureRasterized(terrainMap);
     for (const stroke of terrainMap.strokes) {
       if (stroke.type === 'groundTexture' && !stroke.isShore) {
-        this._renderGroundTextureStroke(cacheCtx, stroke);
+        this._renderGroundTextureStroke(cacheCtx, stroke, previewMode);
       }
     }
 
-    // Draw tree-based forest floor (radiating from each tree)
-    this._renderTreeBasedGroundLayer(cacheCtx);
+    // Draw forest floor (ground texture radiating from each tree)
+    if (viewSettings.useScatterRendering) {
+      // SCATTER SYSTEM: Discrete floor sprites
+      const viewport = { x: 0, y: 0, width, height };
+      const images = {
+        tree: this._images.trees,
+        brush: this._images.brush,
+        floor: this._images.floor,
+        particle: this._images.brush
+      };
+      // Get post-processing settings from state (applied at render time)
+      const postProcessing = this._state.toolOptions?.seasonOverrides || {};
+      renderScatterLayer(cacheCtx, terrainMap, 'ground', viewport, images, { postProcessing });
+    } else {
+      // LEGACY SYSTEM: Forest-floor ground texture radiating from each tree
+      this._renderTreeBasedGroundLayer(cacheCtx, previewMode);
+    }
 
     // Draw shore strokes (on top of regular ground textures, under water)
     for (const stroke of terrainMap.strokes) {
       if (stroke.type === 'groundTexture' && stroke.isShore) {
-        this._renderGroundTextureStroke(cacheCtx, stroke);
+        this._renderGroundTextureStroke(cacheCtx, stroke, previewMode);
       }
     }
 
     // Draw water strokes
     for (const stroke of terrainMap.strokes) {
       if (stroke.type === 'water') {
-        this._renderWaterStroke(cacheCtx, stroke);
+        this._renderWaterStroke(cacheCtx, stroke, previewMode);
       }
     }
 
     this._groundCacheValid = true;
+    this._groundCacheIsPreview = previewMode;
   }
 
   /**
@@ -475,7 +572,14 @@ export class Renderer {
         'water-pond': '#2a4a5a',
         'water-river': '#2a3a4a',
         'water-ocean': '#2a3a4a',
-        'water-marsh': '#2a3a2a'
+        'water-marsh': '#2a3a2a',
+        // Floor patch types (tree-specific)
+        'floor-oak': '#5a4a35',
+        'floor-pine': '#5a3530',
+        'floor-birch': '#6a6550',
+        'floor-damp': '#3a3025',
+        'floor-bare': '#4a4035',
+        'floor-mixed': '#5a4a3a'
       };
       ctx.fillStyle = fallbackColors[textureType] || '#4a4a3a';
       ctx.globalAlpha = intensity;
@@ -548,11 +652,80 @@ export class Renderer {
   }
 
   /**
-   * Render tree-based ground layer
-   * Each tree creates a circular forest-floor texture radiating outward
+   * Render floor patches as discrete sprites
+   * Floor patches are pre-generated and stored in terrainMap.floorPatches
    * @param {CanvasRenderingContext2D} ctx - Target canvas context
    */
-  _renderTreeBasedGroundLayer(ctx) {
+  _renderFloorPatches(ctx) {
+    const terrainMap = this._state.terrainMap;
+    const patches = terrainMap.floorPatches || [];
+
+    if (patches.length === 0) return;
+
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+
+    for (const patch of patches) {
+      this._renderFloorPatch(ctx, patch);
+    }
+
+    ctx.restore();
+  }
+
+  /**
+   * Render a single floor patch sprite
+   */
+  _renderFloorPatch(ctx, patch) {
+    // Get sprite image: floor-oak-1, floor-pine-2, etc.
+    const spriteKey = `${patch.floorType}-${patch.variant}`;
+    const img = this._images.floor[spriteKey];
+
+    if (!img) {
+      // Fallback: draw colored circle if sprite not loaded
+      const fallbackColors = {
+        'floor-leaf': '#4a6a40',
+        'floor-leaf-fall': '#7a5540',
+        'floor-leaf-dry': '#5a4a35',
+        'floor-needle': '#5a3530',
+        'floor-debris': '#4a4035'
+      };
+      ctx.globalAlpha = patch.alpha;
+      ctx.fillStyle = fallbackColors[patch.floorType] || '#4a4a3a';
+      ctx.beginPath();
+      ctx.arc(patch.x, patch.y, 10 * patch.scale, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      return;
+    }
+
+    // Calculate sprite size (256px base, scaled by patch.scale)
+    const baseSize = 256;
+    const size = baseSize * patch.scale;
+    const halfSize = size / 2;
+
+    ctx.save();
+    ctx.globalAlpha = patch.alpha;
+
+    // Apply color variation via filter
+    if (patch.hueShift || patch.brightness !== 1 || patch.saturation !== 1) {
+      ctx.filter = `hue-rotate(${patch.hueShift || 0}deg) brightness(${patch.brightness || 1}) saturate(${patch.saturation || 1})`;
+    }
+
+    // Translate to patch center, rotate, then draw
+    ctx.translate(patch.x, patch.y);
+    ctx.rotate((patch.rotation || 0) * Math.PI / 180);
+    ctx.drawImage(img, -halfSize, -halfSize, size, size);
+
+    ctx.restore();
+  }
+
+  /**
+   * Render tree-based ground layer (LEGACY SYSTEM)
+   * Each tree creates a circular forest-floor texture radiating outward
+   * Uses tree.floorRadiusPercent, tree.floorIntensity, tree.floorFade for settings
+   * @param {CanvasRenderingContext2D} ctx - Target canvas context
+   */
+  _renderTreeBasedGroundLayer(ctx, previewMode = false) {
     const terrainMap = this._state.terrainMap;
     const trees = terrainMap.trees || [];
 
@@ -584,7 +757,6 @@ export class Renderer {
       const floorFadePercent = tree.floorFade ?? 100;
 
       // Render from center (innerRadius=0) to floor radius
-      // A ring with inner radius 0 is just a filled circle
       this._renderTextureRing(
         ctx,
         'forest-floor',
@@ -593,9 +765,19 @@ export class Renderer {
         0,  // Start from center
         floorRadius,
         intensity,
-        floorFadePercent
+        floorFadePercent,
+        'source-over',
+        previewMode
       );
     }
+  }
+
+  /**
+   * Simple seeded random for consistent patch placement
+   */
+  _seededRandom(seed) {
+    const x = Math.sin(seed) * 10000;
+    return x - Math.floor(x);
   }
 
   /**
@@ -610,8 +792,9 @@ export class Renderer {
    * @param {number} outerRadius - Outer edge (floor extent)
    * @param {number} intensity - Max alpha at inner edge
    * @param {number} fadePercent - Percentage of ring that fades (0=hard edge, 100=full fade)
+   * @param {string} blendMode - Composite operation (default 'source-over', use 'multiply' for darkening overlaps)
    */
-  _renderTextureRing(ctx, textureType, x, y, innerRadius, outerRadius, intensity, fadePercent = 100) {
+  _renderTextureRing(ctx, textureType, x, y, innerRadius, outerRadius, intensity, fadePercent = 100, blendMode = 'source-over', previewMode = false) {
     const textureImg = this._images.ground[textureType];
 
     if (!textureImg) {
@@ -627,7 +810,7 @@ export class Renderer {
       return;
     }
 
-    const scale = 2; // Resolution scale
+    const scale = previewMode ? 1 : 2; // Lower resolution during drag painting
     const tileSize = 256 * GROUND_TEXTURE_SCALE * scale;
     const scaledOuter = outerRadius * scale;
     const scaledInner = innerRadius * scale;
@@ -661,39 +844,49 @@ export class Renderer {
       }
     }
 
-    // Apply ring mask with gradient
-    // fadePercent controls how much of the ring fades vs stays solid
-    // 100% = entire ring fades, 50% = inner half solid + outer half fades, 0% = hard edge
+    // Apply circular mask with fade
+    // fadePercent controls the width of the fade zone at the outer edge
+    // 100% = fade starts from center, 50% = outer half fades, 0% = hard edge (no fade)
     tempCtx.globalCompositeOperation = 'destination-in';
 
     const ringWidth = scaledOuter - scaledInner;
     const solidPortion = 1 - (fadePercent / 100);
     const fadeStartRadius = scaledInner + (ringWidth * solidPortion);
 
-    const gradient = tempCtx.createRadialGradient(
-      scaledOuter, scaledOuter, fadeStartRadius,
-      scaledOuter, scaledOuter, scaledOuter
-    );
-    gradient.addColorStop(0, 'rgba(0,0,0,1)');  // Full opacity at fade start
-    gradient.addColorStop(1, 'rgba(0,0,0,0)');  // Transparent at outer edge
-
-    // If there's a solid portion, fill it first
-    if (solidPortion > 0.01) {
+    // Hard edge case (fade < 1%): just fill solid circle, no gradient
+    if (fadePercent < 1) {
       tempCtx.fillStyle = 'rgba(0,0,0,1)';
       tempCtx.beginPath();
-      tempCtx.arc(scaledOuter, scaledOuter, fadeStartRadius, 0, Math.PI * 2);
-      tempCtx.arc(scaledOuter, scaledOuter, scaledInner, 0, Math.PI * 2, true);
+      tempCtx.arc(scaledOuter, scaledOuter, scaledOuter, 0, Math.PI * 2);
+      if (scaledInner > 0) {
+        tempCtx.arc(scaledOuter, scaledOuter, scaledInner, 0, Math.PI * 2, true);
+      }
       tempCtx.fill();
-    }
+    } else {
+      // Gradient fade case
+      // The radial gradient automatically handles the solid inner portion:
+      // - Inside fadeStartRadius: uses first color stop (fully opaque)
+      // - Between fadeStartRadius and scaledOuter: fades from opaque to transparent
+      // - Outside scaledOuter: uses last color stop (fully transparent)
+      const gradient = tempCtx.createRadialGradient(
+        scaledOuter, scaledOuter, fadeStartRadius,
+        scaledOuter, scaledOuter, scaledOuter
+      );
+      gradient.addColorStop(0, 'rgba(0,0,0,1)');  // Full opacity at fade start
+      gradient.addColorStop(1, 'rgba(0,0,0,0)');  // Transparent at outer edge
 
-    // Apply the gradient fade
-    tempCtx.fillStyle = gradient;
-    tempCtx.fillRect(0, 0, size, size);
+      // Apply gradient mask to entire canvas - no separate solid fill needed
+      tempCtx.fillStyle = gradient;
+      tempCtx.fillRect(0, 0, size, size);
+    }
 
     // Draw to main canvas
     ctx.save();
     ctx.imageSmoothingEnabled = false;
     ctx.globalAlpha = intensity;
+    if (blendMode && blendMode !== 'source-over') {
+      ctx.globalCompositeOperation = blendMode;
+    }
     ctx.drawImage(tempCanvas, 0, 0, size, size, x - outerRadius, y - outerRadius, outerRadius * 2, outerRadius * 2);
     ctx.restore();
   }
@@ -785,94 +978,206 @@ export class Renderer {
     const terrainMap = this._state.terrainMap;
 
     // Check if we need to rebuild the canopy cache
-    // Use terrainMap.trees, brushes, and particles length change as a proxy for changes during painting
+    // Use terrainMap.trees, brushes, particles, and scatterItems length change as proxy for changes during painting
     const treeCount = terrainMap.trees?.length || 0;
     const brushCount = terrainMap.brushes?.length || 0;
     const particleCount = terrainMap.particles?.length || 0;
-    if (!this._canopyCacheValid || this._canopyCacheTreeCount !== treeCount || this._canopyCacheBrushCount !== brushCount || this._canopyCacheParticleCount !== particleCount) {
+    const scatterCount = terrainMap.scatterItems?.length || 0;
+
+    // Throttle cache rebuild during drag painting, skip during animations
+    const animating = hasActiveAnimations();
+    const needsRebuild = !this._canopyCacheValid ||
+        this._canopyCacheTreeCount !== treeCount ||
+        this._canopyCacheBrushCount !== brushCount ||
+        this._canopyCacheParticleCount !== particleCount ||
+        this._canopyCacheScatterCount !== scatterCount;
+
+    if (needsRebuild && !this._isDragPainting && !animating) {
       this._rebuildCanopyCache();
     }
 
-    // Draw cached canopy layer
-    // Cache is at DPR-scaled resolution, draw at map size (transform handles scaling)
+    // Draw cached canopy layer (rendered at 1x DPR / map size)
     if (this._canopyCache) {
       const width = this._state.canvasWidth;
       const height = this._state.canvasHeight;
       ctx.drawImage(this._canopyCache, 0, 0, width, height);
     }
+
+    // Render items that aren't in the cache yet (added since last cache rebuild)
+    // This includes both currently animating items AND items that finished animating
+    // but cache hasn't been rebuilt yet
+    if (terrainMap.scatterItems && scatterCount > this._canopyCacheScatterCount) {
+      // Items with index >= cachedCount are not in the cache
+      const uncachedItems = terrainMap.scatterItems.slice(this._canopyCacheScatterCount);
+      if (uncachedItems.length > 0) {
+        // Prepare images for scatter renderer
+        const images = {
+          tree: this._images.trees,
+          brush: this._images.brush,
+          floor: this._images.floor,
+          particle: this._images.brush
+        };
+
+        // Sort uncached items (smaller scale first, then by Y for proper layering)
+        uncachedItems.sort((a, b) => {
+          const scaleA = a._renderScale ?? a.scale;
+          const scaleB = b._renderScale ?? b.scale;
+          return (scaleA - scaleB) || (a.y - b.y);
+        });
+
+        // Render each uncached item (with animated positions if available)
+        // Skip CSS filters for live rendering - filters applied during cache rebuild
+        for (const item of uncachedItems) {
+          renderScatterItem(ctx, item, images, { skipFilters: true });
+        }
+      }
+    }
   }
 
   _rebuildCanopyCache() {
     const terrainMap = this._state.terrainMap;
-    const dpr = this._dpr || 1;
+    const viewSettings = this._state.viewSettings;
     ensureRasterized(terrainMap);
-    // Pass DPR for high-resolution rendering on high-DPI displays
-    // Pass tree, brush, and particle images for rendering
-    // Particles use brush images folder, so pass brush images as particleImages too
-    this._canopyCache = renderCanopyLayer(terrainMap, this._state.cellSize, this._images.trees, dpr, this._images.brush, this._images.brush);
+
+    // Always render canopy at 1x DPR - pixel art doesn't need subpixel rendering
+    // This saves 4x memory and GPU work on 2x displays
+    const canopyDpr = 1;
+
+    // Check which rendering system to use
+    if (viewSettings.useScatterRendering) {
+      // NEW: Scatter system rendering with viewport culling
+      this._canopyCache = this._buildScatterCanopyCache(terrainMap);
+    } else {
+      // LEGACY: Old rendering system
+      // Pass tree, brush, and particle images for rendering
+      // Particles use brush images folder, so pass brush images as particleImages too
+      this._canopyCache = renderCanopyLayer(terrainMap, this._state.cellSize, this._images.trees, canopyDpr, this._images.brush, this._images.brush);
+    }
+
     this._canopyCacheValid = true;
     this._canopyCacheTreeCount = terrainMap.trees?.length || 0;
     this._canopyCacheBrushCount = terrainMap.brushes?.length || 0;
     this._canopyCacheParticleCount = terrainMap.particles?.length || 0;
-    console.log(`[Renderer] Canopy cache rebuilt (${this._canopyCacheTreeCount} trees, ${this._canopyCacheBrushCount} brush, ${this._canopyCacheParticleCount} particles, dpr=${dpr})`);
+    this._canopyCacheScatterCount = terrainMap.scatterItems?.length || 0;
+    const scatterCount = terrainMap.scatterItems?.length || 0;
+    const mode = viewSettings.useScatterRendering ? 'scatter' : 'legacy';
+    console.log(`[Renderer] Canopy cache rebuilt [${mode}] (${this._canopyCacheTreeCount} trees, ${this._canopyCacheBrushCount} brush, ${this._canopyCacheParticleCount} particles, ${scatterCount} scatter, dpr=${canopyDpr})`);
   }
 
   /**
-   * Lightweight render - redraws ground, features, and UI
-   * Rebuilds caches if stroke/tree counts changed (for live preview during painting)
+   * Build canopy cache using the new scatter system
+   * @param {object} terrainMap - TerrainMap with scatterItems[]
+   * @returns {HTMLCanvasElement} - Rendered canopy cache
+   */
+  _buildScatterCanopyCache(terrainMap) {
+    const width = this._state.canvasWidth;
+    const height = this._state.canvasHeight;
+
+    // Create cache canvas at 1x resolution (pixel art doesn't need subpixel rendering)
+    const cache = document.createElement('canvas');
+    cache.width = width;
+    cache.height = height;
+    const ctx = cache.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+
+    // Full map viewport (render everything for the cache)
+    const viewport = { x: 0, y: 0, width, height };
+
+    // Prepare images for scatter renderer
+    // Map legacy image collections to scatter categories
+    const images = {
+      tree: this._images.trees,      // trees → tree category
+      brush: this._images.brush,     // brush → brush category
+      floor: this._images.floor,     // floor patches
+      particle: this._images.brush   // particles use brush sprites for now
+    };
+
+    // Get post-processing settings from state (applied at render time, not generation)
+    const postProcessing = this._state.toolOptions?.seasonOverrides || {};
+
+    // Render layers in order: particle (under trees) → canopy (trees, brush)
+    renderScatterLayer(ctx, terrainMap, 'particle', viewport, images, { postProcessing });
+    renderScatterLayer(ctx, terrainMap, 'canopy', viewport, images, { postProcessing });
+
+    return cache;
+  }
+
+  /**
+   * Lightweight render - only redraws what's needed
+   * Fast path: if only brush cursor moved, only redraws UI canvas
+   * Full path: if data changed (paint preview, counts), redraws affected layers
    */
   _renderUIOnly() {
     const viewport = this._state.viewport;
     const dpr = this._dpr || 1;
     const terrainMap = this._state.terrainMap;
 
-    // Check if ground cache needs rebuild (stroke or tree count changed during painting)
+    // Check if ground or features data changed
     const strokeCount = terrainMap.strokes?.length || 0;
     const treeCount = terrainMap.trees?.length || 0;
-    if (!this._groundCacheValid ||
+    const floorPatchCount = terrainMap.floorPatches?.length || 0;
+
+    const groundDataChanged = !this._groundCacheValid ||
         this._groundCacheStrokeCount !== strokeCount ||
-        this._groundCacheTreeCount !== treeCount) {
+        this._groundCacheTreeCount !== treeCount ||
+        this._groundCacheFloorPatchCount !== floorPatchCount;
+
+    const hasPaintPreview = this._paintPreview && this._paintPreviewStrokes.length > 0;
+
+    // Rebuild ground cache if data changed (skip during drag painting)
+    if (groundDataChanged && !this._isDragPainting) {
       this._rebuildGroundCache();
       this._groundCacheStrokeCount = strokeCount;
       this._groundCacheTreeCount = treeCount;
+      this._groundCacheFloorPatchCount = floorPatchCount;
     }
 
-    // Redraw ground from cache + preview
-    const groundCtx = this._contexts.ground;
-    groundCtx.setTransform(1, 0, 0, 1, 0, 0);
-    groundCtx.clearRect(0, 0, groundCtx.canvas.width, groundCtx.canvas.height);
-    groundCtx.imageSmoothingEnabled = false;
-    groundCtx.fillStyle = '#0d0d1a';
-    groundCtx.fillRect(0, 0, groundCtx.canvas.width, groundCtx.canvas.height);
-    groundCtx.setTransform(
-      viewport.zoom * dpr, 0, 0, viewport.zoom * dpr,
-      viewport.x * dpr, viewport.y * dpr
-    );
+    // Redraw ground canvas if cache was rebuilt or paint preview needs showing
+    const needsGroundRedraw = (groundDataChanged && !this._isDragPainting) || hasPaintPreview;
+    if (needsGroundRedraw) {
+      const groundCtx = this._contexts.ground;
+      groundCtx.setTransform(1, 0, 0, 1, 0, 0);
+      groundCtx.clearRect(0, 0, groundCtx.canvas.width, groundCtx.canvas.height);
+      groundCtx.imageSmoothingEnabled = false;
+      groundCtx.fillStyle = '#0d0d1a';
+      groundCtx.fillRect(0, 0, groundCtx.canvas.width, groundCtx.canvas.height);
+      groundCtx.setTransform(
+        viewport.zoom * dpr, 0, 0, viewport.zoom * dpr,
+        viewport.x * dpr, viewport.y * dpr
+      );
 
-    if (this._groundCache) {
-      groundCtx.drawImage(this._groundCache, 0, 0);
+      if (this._groundCache) {
+        groundCtx.drawImage(this._groundCache, 0, 0);
+      }
+      if (hasPaintPreview) {
+        groundCtx.drawImage(this._paintPreview, 0, 0);
+      }
+      this._renderGrid(groundCtx);
     }
-    if (this._paintPreview && this._paintPreviewStrokes.length > 0) {
-      groundCtx.drawImage(this._paintPreview, 0, 0);
+
+    // Only redraw features if counts changed (skip during drag painting)
+    const scatterCount = terrainMap.scatterItems?.length || 0;
+    const featuresDataChanged = !this._canopyCacheValid ||
+        this._canopyCacheTreeCount !== treeCount ||
+        this._canopyCacheBrushCount !== (terrainMap.brushes?.length || 0) ||
+        this._canopyCacheParticleCount !== (terrainMap.particles?.length || 0) ||
+        this._canopyCacheScatterCount !== scatterCount;
+
+    if (featuresDataChanged && !this._isDragPainting) {
+      const wasDirty = this._state.terrainMap.dirty;
+      const featuresCtx = this._contexts.features;
+      featuresCtx.setTransform(1, 0, 0, 1, 0, 0);
+      featuresCtx.clearRect(0, 0, featuresCtx.canvas.width, featuresCtx.canvas.height);
+      featuresCtx.imageSmoothingEnabled = false;
+      featuresCtx.setTransform(
+        viewport.zoom * dpr, 0, 0, viewport.zoom * dpr,
+        viewport.x * dpr, viewport.y * dpr
+      );
+      this._renderFeatures();
+      if (wasDirty) this._state.terrainMap.dirty = true;
     }
-    this._renderGrid(groundCtx);
 
-    // Redraw features (trees) - this uses pre-generated tree data, not expensive
-    // Preserve dirty flag since ensureRasterized() clears it
-    const wasDirty = this._state.terrainMap.dirty;
-    const featuresCtx = this._contexts.features;
-    featuresCtx.setTransform(1, 0, 0, 1, 0, 0);
-    featuresCtx.clearRect(0, 0, featuresCtx.canvas.width, featuresCtx.canvas.height);
-    featuresCtx.imageSmoothingEnabled = false;
-    featuresCtx.setTransform(
-      viewport.zoom * dpr, 0, 0, viewport.zoom * dpr,
-      viewport.x * dpr, viewport.y * dpr
-    );
-    this._renderFeatures();
-    // Restore dirty flag so ground cache rebuilds on mouse-up
-    if (wasDirty) this._state.terrainMap.dirty = true;
-
-    // Redraw UI
+    // Always redraw UI canvas (brush preview, selection, boundary)
     const uiCtx = this._contexts.ui;
     uiCtx.setTransform(1, 0, 0, 1, 0, 0);
     uiCtx.clearRect(0, 0, uiCtx.canvas.width, uiCtx.canvas.height);
@@ -896,6 +1201,11 @@ export class Renderer {
       this._renderParticleDebugRings(ctx);
     }
 
+    // Render scatter preview (semi-transparent preview of next stroke)
+    if (this._scatterPreview && this._scatterPreview.length > 0) {
+      this._renderScatterPreview(ctx);
+    }
+
     // Render selection highlights
     this._renderSelection(ctx);
 
@@ -903,6 +1213,67 @@ export class Renderer {
     if (this._brushPreview) {
       this._renderBrushPreview(ctx);
     }
+  }
+
+  /**
+   * Render scatter preview items (semi-transparent preview of what will spawn)
+   */
+  _renderScatterPreview(ctx) {
+    const items = this._scatterPreview;
+    if (!items || items.length === 0) return;
+
+    const images = {
+      tree: this._images.trees,
+      brush: this._images.brush,
+      floor: this._images.floor,
+      particle: this._images.brush
+    };
+
+    ctx.save();
+    ctx.globalAlpha = 0.45;
+
+    // Sort: smaller scale first, then by Y for proper layering
+    const sorted = [...items].sort((a, b) => (a.scale - b.scale) || (a.y - b.y));
+
+    // DEBUG: Log tree items being rendered (match getSpriteKey logic exactly)
+    const treeItems = sorted.filter(i => SCATTER_TYPES[i.type]?.category === 'tree');
+    if (treeItems.length > 0) {
+      for (const tree of treeItems) {
+        const config = SCATTER_TYPES[tree.type];
+        // Match getSpriteKey logic exactly
+        let treeType = tree.type.replace('tree-', '');
+        if (treeType === 'dead') treeType = 'oak';
+        const spriteKey = (tree.isDead || config?.isDead)
+          ? `${treeType}-${tree.age}-dead-${tree.variant}`
+          : `${treeType}-${tree.age}-${tree.variant}`;
+        const hasSprite = !!images.tree?.[spriteKey];
+        console.log(`[Preview] Tree: ${tree.type}, age=${tree.age}, variant=${tree.variant}, isDead=${tree.isDead}, layer=${config?.layer}, pos=(${Math.round(tree.x)},${Math.round(tree.y)}), spriteKey=${spriteKey}, hasSprite=${hasSprite}`);
+      }
+    }
+
+    // Render layers in order: ground → particle → canopy
+    for (const item of sorted) {
+      const config = SCATTER_TYPES[item.type];
+      if (config && config.layer === 'ground') {
+        renderScatterItem(ctx, item, images, { skipFilters: true });
+      }
+    }
+
+    for (const item of sorted) {
+      const config = SCATTER_TYPES[item.type];
+      if (config && config.layer === 'particle') {
+        renderScatterItem(ctx, item, images, { skipFilters: true });
+      }
+    }
+
+    for (const item of sorted) {
+      const config = SCATTER_TYPES[item.type];
+      if (config && config.layer === 'canopy') {
+        renderScatterItem(ctx, item, images, { skipFilters: true });
+      }
+    }
+
+    ctx.restore();
   }
 
   _renderBoundary(ctx) {
@@ -1026,6 +1397,23 @@ export class Renderer {
 
   clearBrushPreview() {
     this._brushPreview = null;
+    this._requestUIRender();
+  }
+
+  /**
+   * Set scatter preview items (shown semi-transparent on UI layer)
+   * @param {object[]} items - Array of ScatterItem objects to preview
+   */
+  setScatterPreview(items) {
+    this._scatterPreview = items;
+    this._requestUIRender();
+  }
+
+  /**
+   * Clear scatter preview
+   */
+  clearScatterPreview() {
+    this._scatterPreview = null;
     this._requestUIRender();
   }
 

@@ -4,7 +4,12 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { EventEmitter, Events } from './events.js';
-import { createTerrainMap, generateTreesForStroke, removeTreesForStroke, removeTreesInRadius, generateBrushForStroke, removeBrushForStroke, removeBrushInRadius, generateParticlesForStroke, removeParticlesForStroke, removeParticlesInRadius, removeParticlesForParent } from '../world-builder/index.js';
+// Legacy imports (deprecated - keeping for backwards compatibility)
+import { createTerrainMap, generateTreesForStroke, removeTreesForStroke, removeTreesInRadius, generateBrushForStroke, removeBrushForStroke, removeBrushInRadius, generateParticlesForStroke, removeParticlesForStroke, removeParticlesInRadius, removeParticlesForParent, generateFloorPatchesForStroke, removeFloorPatchesForStroke, removeFloorPatchesInRadius, removeFloorPatchesForParent } from '../world-builder/index.js';
+// NEW: Unified scatter system
+import { generateScatter, generateForestItems, removeScatterByStroke, removeScatterInRadius, getScatterByCategory, SCATTER_TYPES, rebuildSpatialHash } from '../world-builder/index.js';
+// NEW: Animation system
+import { animateNewItems } from '../world-builder/scatter-animation.js';
 
 /**
  * Default editor configuration
@@ -28,7 +33,8 @@ const DEFAULT_TOOL_OPTIONS = {
   treeType: 'oak',              // Legacy single type (fallback)
   treeTypes: ['oak'],           // Multi-select tree types (includes dead variants like 'oak-dead')
   treeRatios: { oak: 1.0 },     // Ratios for each selected type
-  treeDensity: 5,
+  treeDensity: 1.0,             // Density multiplier (0.5-2.0): affects spacing between trees
+  treeSpacing: 1.0,             // Spacing multiplier (0.5-1.5): scales tree-to-tree collision radius
   treeScale: 0.35,              // Global scale multiplier for trees (0.03-0.6)
   selectedAges: ['young', 'transitional', 'old'],  // Which ages to include
   ageRatios: { young: 0.333, transitional: 0.333, old: 0.334 },  // Ratios for each selected age
@@ -47,13 +53,22 @@ const DEFAULT_TOOL_OPTIONS = {
   shoreWidth: 24,               // Width of shore ring around water
   treesInWater: false,          // Allow trees to spawn in water areas
 
-  // Brush/Undergrowth options
+  // Animation options
+  animationStyle: 'digitize',   // 'none', 'digitize', 'scan', 'deploy', 'flash'
+
+  // Brush/Undergrowth options (independent of trees, with own floor/particles)
   brushType: 'bush-small',      // Legacy single type (fallback)
   brushTypes: ['bush-small'],   // Multi-select brush types
   brushRatios: { 'bush-small': 1.0 },  // Ratios for each selected type
-  brushDensity: 4,              // Brush items per stroke (lowered for more natural look)
-  brushScale: 0.12,             // Global scale multiplier for brush
+  brushDensity: 1.0,            // Density multiplier (0-2.0): affects spacing between brush
+  brushScale: 0.25,             // Global scale multiplier for brush
   brushInWater: false,          // Allow brush to spawn in water areas
+
+  // Category toggles (enable/disable each category independently)
+  treesEnabled: true,           // Generate trees
+  floorEnabled: true,           // Generate floor (as children or direct)
+  particlesEnabled: true,       // Generate particles (as children or direct)
+  brushEnabled: true,           // Generate brush
 
   // Particle options (auto-scatter with forest strokes)
   autoParticles: true,          // Auto-generate particles with forest strokes
@@ -62,8 +77,47 @@ const DEFAULT_TOOL_OPTIONS = {
   particleFalloff: 0.4,         // Falloff exponent (0.2=concentrated, 1.0=uniform)
   particleScale: 0.15,          // Global particle scale (0.05-0.40)
 
+  // Environment presets
+  biome: 'temperate',           // Biome preset key (sets tree ratios, brush, etc.)
+  season: 'summer',             // 'spring', 'summer', 'fall', 'winter'
+
+  // Generation system
+  useScatterSystem: false,      // false = legacy system, true = new scatter system
+
+  // Child spawn overrides (scatter system)
+  childSpawnOverrides: {
+    floor: {
+      enabled: true,
+      type: 'auto',          // 'auto' = match tree type, or specific floor type
+      density: 6,            // Base density per tree
+      scale: 0.5,            // Scale multiplier (0.1 = 10%, 1.0 = 100%)
+      radius: 1.3,           // Max radius as % of canopy (1.3 = 130%)
+      alphaMin: 0.3,         // Min alpha for floor patches
+      alphaMax: 0.9          // Max alpha for floor patches
+    },
+    particle: {
+      enabled: true,
+      type: 'auto',          // 'auto' = match tree type, or specific particle type
+      density: 4,            // Base density per tree
+      scale: 0.35,           // Scale multiplier
+      radiusMin: 0.9,        // Min radius as % of canopy
+      radiusMax: 1.5         // Max radius as % of canopy
+    },
+    brush: {
+      enabled: true,
+      type: 'auto',          // 'auto' = match tree type, or specific brush type
+      density: 1,            // Base density per tree
+      scale: 0.25,           // Scale multiplier
+      radiusMin: 0.9,        // Min radius as % of canopy
+      radiusMax: 1.4         // Max radius as % of canopy
+    }
+  },
+
   // Delete behavior
-  cascadeDelete: true           // Remove particles when deleting trees/brush
+  cascadeDelete: true,          // Remove particles when deleting trees/brush
+
+  // Preview seed (shared between sidebar and on-canvas preview, applied to strokes on paint)
+  previewSeed: Math.floor(Math.random() * 1000000)
 };
 
 /**
@@ -71,9 +125,11 @@ const DEFAULT_TOOL_OPTIONS = {
  */
 const DEFAULT_VIEW_SETTINGS = {
   showGrid: true,
-  gridOpacity: 0.1,
+  gridOpacity: 0.35,
   showBoundary: true,
-  showParticleDebug: false
+  showParticleDebug: false,
+  useScatterRendering: false,  // Toggle between legacy and new scatter system rendering
+  showScatterPreview: false    // Show scatter preview on canvas at cursor position
 };
 
 /**
@@ -175,36 +231,94 @@ export class EditorState extends EventEmitter {
   addStroke(stroke, skipRender = false, options = {}) {
     this._terrainMap.strokes.push(stroke);
 
-    // Generate trees for forest strokes
-    if (stroke.treeType) {
-      generateTreesForStroke(this._terrainMap, stroke);
+    const useScatter = this._toolOptions.useScatterSystem ?? false;
+    const skipAnimation = options.skipAnimation ?? false;  // Skip for loading, PCG, etc.
+    let newItems = [];
 
-      // Auto-generate particles around trees (if enabled)
-      const autoParticles = options.autoParticles ?? this._toolOptions.autoParticles ?? true;
-      const particleDensity = options.particleDensity ?? this._toolOptions.particleDensity ?? 8;
-      const particleRadius = options.particleRadius ?? this._toolOptions.particleRadius ?? 60;
-      const particleFalloff = options.particleFalloff ?? this._toolOptions.particleFalloff ?? 0.4;
-      const particleScale = options.particleScale ?? this._toolOptions.particleScale ?? 0.15;
-      if (autoParticles && particleDensity > 0) {
-        generateParticlesForStroke(this._terrainMap, stroke.id, {
-          density: particleDensity,
-          radius: particleRadius,
-          falloff: particleFalloff,
-          scale: particleScale
-        });
+    // ═══════════════════════════════════════════════════════════════
+    // TREE STROKES
+    // ═══════════════════════════════════════════════════════════════
+    if (stroke.treeType || (stroke.treeTypes && stroke.treeTypes.length > 0)) {
+      if (useScatter) {
+        // SCATTER SYSTEM: Use shared forest generation (single source of truth)
+        const treeTypes = stroke.treeTypes && stroke.treeTypes.length > 0
+          ? stroke.treeTypes
+          : [stroke.treeType || 'oak'];
+
+        const items = generateForestItems(this._terrainMap,
+          { ...stroke, seed: stroke.seed ?? Math.floor(Math.random() * 1000000) },
+          {
+            treeTypes,
+            treeRatios: stroke.treeRatios || {},
+            treeDensity: stroke.density ?? this._toolOptions.treeDensity ?? 1.0,
+            treeScale: stroke.treeScale ?? this._toolOptions.treeScale ?? 0.35,
+            treeSpacing: this._toolOptions.treeSpacing ?? 1.0,
+            selectedAges: stroke.selectedAges ?? this._toolOptions.selectedAges ?? ['young', 'transitional', 'old'],
+            ageRatios: stroke.ageRatios ?? this._toolOptions.ageRatios ?? null,
+            brushTypes: this._toolOptions.brushTypes || ['bush-small'],
+            brushRatios: this._toolOptions.brushRatios || {},
+            brushDensity: this._toolOptions.brushDensity ?? 1.0,
+            brushScale: this._toolOptions.brushScale ?? 0.25,
+            season: this._toolOptions.season ?? 'summer',
+            biome: this._toolOptions.biome ?? 'temperate',
+            seasonOverrides: this._toolOptions.seasonOverrides ?? {},
+            childSpawnOverrides: this._toolOptions.childSpawnOverrides ?? {},
+            // Category toggles
+            treesEnabled: this._toolOptions.treesEnabled ?? true,
+            floorEnabled: this._toolOptions.floorEnabled ?? true,
+            particlesEnabled: this._toolOptions.particlesEnabled ?? true,
+            brushEnabled: this._toolOptions.brushEnabled ?? true,
+            strokeId: stroke.id
+          }
+        );
+        newItems.push(...items);
+      } else {
+        // LEGACY SYSTEM: Trees + particles (floor uses ground texture, not discrete sprites)
+        generateTreesForStroke(this._terrainMap, stroke);
+
+        // Particles still use discrete sprites
+        const autoParticles = options.autoParticles ?? this._toolOptions.autoParticles ?? true;
+        const particleDensity = options.particleDensity ?? this._toolOptions.particleDensity ?? 8;
+        if (autoParticles && particleDensity > 0) {
+          generateParticlesForStroke(this._terrainMap, stroke.id, {
+            density: particleDensity,
+            radius: options.particleRadius ?? this._toolOptions.particleRadius ?? 60,
+            falloff: options.particleFalloff ?? this._toolOptions.particleFalloff ?? 0.4,
+            scale: options.particleScale ?? this._toolOptions.particleScale ?? 0.15
+          });
+        }
       }
     }
 
-    // Generate brush items for brush strokes
+    // ═══════════════════════════════════════════════════════════════
+    // BRUSH STROKES
+    // ═══════════════════════════════════════════════════════════════
     if (stroke.brushType) {
-      generateBrushForStroke(this._terrainMap, stroke);
+      if (useScatter) {
+        // SCATTER SYSTEM
+        const items = generateScatter(this._terrainMap, stroke, stroke.brushType, {
+          density: stroke.density ?? this._toolOptions.brushDensity ?? 4,
+          scale: stroke.brushScale ?? this._toolOptions.brushScale ?? 0.12,
+          strokeId: stroke.id,
+          spawnChildren: false
+        });
+        newItems.push(...items);
+      } else {
+        // LEGACY SYSTEM
+        generateBrushForStroke(this._terrainMap, stroke);
+      }
+    }
+
+    // Trigger placement animations for newly created scatter items
+    if (newItems.length > 0 && !skipAnimation) {
+      const animStyle = this._toolOptions.animationStyle ?? 'digitize';
+      animateNewItems(newItems, SCATTER_TYPES, animStyle);
     }
 
     this._terrainMap.dirty = true;
     this._markDirty();
     this.emit(Events.STROKE_ADDED, { stroke });
 
-    // Allow batching - skip render during drag painting
     if (!skipRender) {
       this.emit(Events.RENDER_REQUESTED);
     }
@@ -223,10 +337,14 @@ export class EditorState extends EventEmitter {
     if (index !== -1) {
       const stroke = this._terrainMap.strokes.splice(index, 1)[0];
 
-      // Remove associated trees, brush, and particles
+      // NEW: Remove from unified scatter system
+      removeScatterByStroke(this._terrainMap, strokeId);
+
+      // LEGACY: Also remove from old arrays for backwards compatibility
       removeTreesForStroke(this._terrainMap, strokeId);
       removeBrushForStroke(this._terrainMap, strokeId);
       removeParticlesForStroke(this._terrainMap, strokeId);
+      removeFloorPatchesForStroke(this._terrainMap, strokeId);
 
       this._terrainMap.dirty = true;
       this._markDirty();
@@ -255,11 +373,16 @@ export class EditorState extends EventEmitter {
     });
 
     if (removed.length > 0) {
-      // Remove associated trees, brush, and particles for all removed strokes
+      // Remove associated items for all removed strokes
       removed.forEach(stroke => {
+        // NEW: Remove from unified scatter system
+        removeScatterByStroke(this._terrainMap, stroke.id);
+
+        // LEGACY: Also remove from old arrays
         removeTreesForStroke(this._terrainMap, stroke.id);
         removeBrushForStroke(this._terrainMap, stroke.id);
         removeParticlesForStroke(this._terrainMap, stroke.id);
+        removeFloorPatchesForStroke(this._terrainMap, stroke.id);
       });
 
       this._terrainMap.dirty = true;
@@ -273,9 +396,15 @@ export class EditorState extends EventEmitter {
 
   clearStrokes() {
     this._terrainMap.strokes = [];
-    this._terrainMap.trees = [];      // Clear all trees too
-    this._terrainMap.brushes = [];    // Clear all brush too
-    this._terrainMap.particles = [];  // Clear all particles too
+    this._terrainMap.trees = [];        // Clear all trees too
+    this._terrainMap.brushes = [];      // Clear all brush too
+    this._terrainMap.particles = [];    // Clear all particles too
+    this._terrainMap.floorPatches = []; // Clear all floor patches too
+    this._terrainMap.scatterItems = []; // NEW: Clear unified scatter items
+    // Clear spatial hash index
+    if (this._terrainMap._spatialHash) {
+      this._terrainMap._spatialHash.clear();
+    }
     this._terrainMap.dirty = true;
     this._markDirty();
     this.emit(Events.STROKES_CLEARED);
@@ -285,7 +414,14 @@ export class EditorState extends EventEmitter {
   clearTreesAt(x, y, radius, falloff = 'hard', options = {}) {
     const cascadeDelete = options.cascadeDelete ?? this._toolOptions.cascadeDelete ?? true;
 
-    // If cascading, first find trees to be removed and delete their particles
+    // NEW: Remove from unified scatter system (cascade is automatic)
+    const scatterRemoved = removeScatterInRadius(this._terrainMap, x, y, radius, {
+      categories: ['tree'],
+      cascade: cascadeDelete,
+      falloff
+    });
+
+    // LEGACY: If cascading, first find trees to be removed and delete their particles and floor patches
     if (cascadeDelete) {
       const treesToRemove = this._terrainMap.trees.filter(tree => {
         const dx = tree.x - x;
@@ -294,22 +430,30 @@ export class EditorState extends EventEmitter {
       });
       treesToRemove.forEach(tree => {
         removeParticlesForParent(this._terrainMap, tree.id);
+        removeFloorPatchesForParent(this._terrainMap, tree.id);
       });
     }
 
     const removed = removeTreesInRadius(this._terrainMap, x, y, radius, falloff);
-    if (removed > 0) {
+    if (removed > 0 || scatterRemoved > 0) {
       this._terrainMap.dirty = true;
       this._markDirty();
       this.emit(Events.RENDER_REQUESTED);
     }
-    return removed;
+    return removed + scatterRemoved;
   }
 
   clearBrushAt(x, y, radius, falloff = 'hard', options = {}) {
     const cascadeDelete = options.cascadeDelete ?? this._toolOptions.cascadeDelete ?? true;
 
-    // If cascading, first find brush to be removed and delete their particles
+    // NEW: Remove from unified scatter system
+    const scatterRemoved = removeScatterInRadius(this._terrainMap, x, y, radius, {
+      categories: ['brush'],
+      cascade: cascadeDelete,
+      falloff
+    });
+
+    // LEGACY: If cascading, first find brush to be removed and delete their particles
     if (cascadeDelete) {
       const brushToRemove = (this._terrainMap.brushes || []).filter(brush => {
         const dx = brush.x - x;
@@ -322,22 +466,29 @@ export class EditorState extends EventEmitter {
     }
 
     const removed = removeBrushInRadius(this._terrainMap, x, y, radius, falloff);
-    if (removed > 0) {
+    if (removed > 0 || scatterRemoved > 0) {
       this._terrainMap.dirty = true;
       this._markDirty();
       this.emit(Events.RENDER_REQUESTED);
     }
-    return removed;
+    return removed + scatterRemoved;
   }
 
   clearParticlesAt(x, y, radius) {
+    // NEW: Remove from unified scatter system
+    const scatterRemoved = removeScatterInRadius(this._terrainMap, x, y, radius, {
+      categories: ['particle'],
+      cascade: false
+    });
+
+    // LEGACY
     const removed = removeParticlesInRadius(this._terrainMap, x, y, radius);
-    if (removed > 0) {
+    if (removed > 0 || scatterRemoved > 0) {
       this._terrainMap.dirty = true;
       this._markDirty();
       this.emit(Events.RENDER_REQUESTED);
     }
-    return removed;
+    return removed + scatterRemoved;
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -518,21 +669,25 @@ export class EditorState extends EventEmitter {
 
   toJSON() {
     return {
-      version: 3,  // Bumped for particle/brush registry support
+      version: 5,  // Bumped for unified scatter system
       metadata: { ...this._metadata },
       baseLayer: this._terrainMap.baseLayer,
       gridWidth: this._terrainMap.gridWidth,
       gridHeight: this._terrainMap.gridHeight,
       cellSize: this._terrainMap.cellSize,
       strokes: this._terrainMap.strokes.map(s => ({ ...s })),
+      // Legacy arrays (for backwards compatibility)
       trees: this._terrainMap.trees.map(t => ({ ...t })),
       brushes: (this._terrainMap.brushes || []).map(b => ({ ...b })),
-      particles: (this._terrainMap.particles || []).map(p => ({ ...p }))
+      particles: (this._terrainMap.particles || []).map(p => ({ ...p })),
+      floorPatches: (this._terrainMap.floorPatches || []).map(f => ({ ...f })),
+      // NEW: Unified scatter items
+      scatterItems: (this._terrainMap.scatterItems || []).map(item => ({ ...item }))
     };
   }
 
   loadFromJSON(data) {
-    if (!data || (data.version !== 1 && data.version !== 2 && data.version !== 3)) {
+    if (!data || (data.version !== 1 && data.version !== 2 && data.version !== 3 && data.version !== 4 && data.version !== 5)) {
       throw new Error('Invalid map data format');
     }
 
@@ -588,6 +743,34 @@ export class EditorState extends EventEmitter {
           });
         }
       }
+    }
+
+    // Load or regenerate floor patches
+    if (data.version >= 4 && data.floorPatches) {
+      this._terrainMap.floorPatches = data.floorPatches;
+    } else {
+      // Regenerate floor patches from trees (use defaults for old maps)
+      this._terrainMap.floorPatches = [];
+      for (const stroke of this._terrainMap.strokes) {
+        if (stroke.treeType) {
+          generateFloorPatchesForStroke(this._terrainMap, stroke.id, {
+            scale: 0.5
+          });
+        }
+      }
+    }
+
+    // NEW: Load or migrate scatterItems (version 5+)
+    if (data.version >= 5 && data.scatterItems) {
+      this._terrainMap.scatterItems = data.scatterItems;
+      // Rebuild spatial hash for O(1) collision lookups
+      rebuildSpatialHash(this._terrainMap);
+    } else {
+      // Migration from v1-4: Convert legacy arrays to scatterItems
+      // For now, just initialize empty - full migration happens when using scatter system
+      this._terrainMap.scatterItems = [];
+      // TODO: Migrate legacy trees/brushes/particles/floorPatches to scatterItems
+      // This will be done in a future phase when renderer is updated
     }
 
     this._terrainMap.dirty = true;

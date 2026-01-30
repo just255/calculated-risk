@@ -478,13 +478,9 @@ function drawSingleTree(ctx, image, x, y, scale, hueShift, brightness, saturatio
   // Ensure smoothing stays disabled
   ctx.imageSmoothingEnabled = false;
 
-  // Color variation filter disabled for testing - may cause blur
-  // ctx.filter = `hue-rotate(${hueShift}deg) brightness(${brightness}) saturate(${saturation})`;
-
   // Draw tree centered at position (use integer offsets)
   ctx.drawImage(image, Math.round(-treeWidth / 2), Math.round(-treeHeight / 2), treeWidth, treeHeight);
 
-  ctx.filter = 'none';
   ctx.restore();
 }
 
@@ -710,14 +706,9 @@ function drawTreeStroke(ctx, stroke, treeImages) {
     // Ensure smoothing stays disabled
     ctx.imageSmoothingEnabled = false;
 
-    // Color variation filter disabled for testing - may cause blur
-    // ctx.filter = `hue-rotate(${hueShift}deg) brightness(${brightness}) saturate(${saturation})`;
-
     // Draw tree centered at position (use integer offsets)
     ctx.drawImage(treeImage, Math.round(-treeWidth / 2), Math.round(-treeHeight / 2), treeWidth, treeHeight);
 
-    // Restore context
-    ctx.filter = 'none';
     ctx.restore();
   }
 }

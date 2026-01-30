@@ -45,17 +45,50 @@
       flex-shrink: 0;
     }
 
-    .header #map-name {
-      flex: 1;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      min-width: 100px;
-      max-width: 400px;
+    .header-input {
+      background: #0f3460;
+      border: 1px solid transparent;
+      color: #eee;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 13px;
+      width: 120px;
+    }
+
+    .header-input:focus {
+      outline: none;
+      border-color: #e94560;
+    }
+
+    .header-select {
+      background: #0f3460;
+      border: 1px solid transparent;
+      color: #eee;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .header-select:hover {
+      background: #1a4a7e;
+    }
+
+    .header-divider {
+      width: 1px;
+      height: 24px;
+      background: #0f3460;
+      margin: 0 8px;
     }
 
     .header-actions {
       display: flex;
+      gap: 8px;
+    }
+
+    .header-map-settings {
+      display: flex;
+      align-items: center;
       gap: 8px;
       margin-left: auto;
     }
@@ -127,6 +160,24 @@
       margin: 8px 0;
     }
 
+    .toolbar-label {
+      font-size: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #666;
+      text-align: center;
+      margin: 4px 0 2px;
+    }
+
+    .tool-btn.feature-tool {
+      font-size: 16px;
+    }
+
+    .tool-btn.feature-tool.active {
+      border-color: #4ade80;
+      background: #1a4a7e;
+    }
+
     /* Canvas Area */
     .canvas-area {
       background: #0d0d1a;
@@ -168,6 +219,10 @@
 
     .prop-row {
       margin-bottom: 12px;
+    }
+
+    .prop-row.compact {
+      margin-bottom: 8px;
     }
 
     .prop-label {
@@ -272,6 +327,464 @@
       border-color: #4ade80;
     }
 
+    /* Stroke Output - Hierarchical density controls */
+    .stroke-output {
+      background: rgba(0, 0, 0, 0.15);
+      border-radius: 6px;
+      padding: 10px;
+      margin-bottom: 12px;
+    }
+
+    .stroke-output-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .stroke-output-row:last-child {
+      margin-bottom: 0;
+    }
+
+    .stroke-output-row.parent {
+      padding-bottom: 6px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      margin-bottom: 10px;
+    }
+
+    .stroke-output-row.child {
+      padding-left: 16px;
+      position: relative;
+    }
+
+    .stroke-output-row.child::before {
+      content: '';
+      position: absolute;
+      left: 6px;
+      top: 50%;
+      width: 8px;
+      height: 1px;
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .stroke-output-row.child:not(:last-child)::after {
+      content: '';
+      position: absolute;
+      left: 6px;
+      top: 0;
+      bottom: -4px;
+      width: 1px;
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .stroke-output-row.child:last-child::after {
+      content: '';
+      position: absolute;
+      left: 6px;
+      top: 0;
+      height: 50%;
+      width: 1px;
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .stroke-output-label {
+      font-size: 11px;
+      color: #94a3b8;
+      min-width: 70px;
+      flex-shrink: 0;
+    }
+
+    .stroke-output-label.parent-label {
+      color: #e2e8f0;
+      font-weight: 500;
+    }
+
+    .stroke-output-label .multiplier {
+      color: #60a5fa;
+      font-weight: 600;
+      margin-left: 2px;
+    }
+
+    .stroke-output-slider {
+      flex: 1;
+      height: 4px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: #1e293b;
+      border-radius: 2px;
+      outline: none;
+    }
+
+    .stroke-output-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #e94560;
+      cursor: pointer;
+      border: 2px solid #16213e;
+    }
+
+    .stroke-output-slider::-moz-range-thumb {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #e94560;
+      cursor: pointer;
+      border: 2px solid #16213e;
+    }
+
+    .stroke-output-slider.child-slider::-webkit-slider-thumb {
+      background: #60a5fa;
+    }
+
+    .stroke-output-slider.child-slider::-moz-range-thumb {
+      background: #60a5fa;
+    }
+
+    .stroke-output-value {
+      font-size: 11px;
+      color: #e94560;
+      min-width: 32px;
+      text-align: right;
+      font-family: monospace;
+    }
+
+    .stroke-output-value.child-value {
+      color: #60a5fa;
+    }
+
+    .stroke-output-hint {
+      font-size: 9px;
+      color: #64748b;
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    /* Category Cards */
+    .category-card {
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 6px;
+      margin-bottom: 8px;
+      overflow: hidden;
+    }
+
+    .category-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      background: rgba(0, 0, 0, 0.15);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .category-header:hover {
+      background: rgba(0, 0, 0, 0.25);
+    }
+
+    .category-icon {
+      font-size: 14px;
+      width: 20px;
+      text-align: center;
+    }
+
+    .category-name {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #e2e8f0;
+      flex-shrink: 0;
+    }
+
+    .category-slider-wrap {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: auto;
+    }
+
+    .category-slider {
+      flex: 1;
+      height: 4px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: #1e293b;
+      border-radius: 2px;
+      outline: none;
+      max-width: 80px;
+    }
+
+    .category-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #e94560;
+      cursor: pointer;
+      border: 2px solid #16213e;
+    }
+
+    .category-slider::-moz-range-thumb {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #e94560;
+      cursor: pointer;
+      border: 2px solid #16213e;
+    }
+
+    .category-slider.off::-webkit-slider-thumb {
+      background: #4a5568;
+    }
+
+    .category-slider.off::-moz-range-thumb {
+      background: #4a5568;
+    }
+
+    .category-value {
+      font-size: 11px;
+      font-family: monospace;
+      color: #e94560;
+      min-width: 28px;
+      text-align: right;
+    }
+
+    .category-value.off {
+      color: #4a5568;
+    }
+
+    .category-expand {
+      font-size: 10px;
+      color: #64748b;
+      transition: transform 0.2s;
+    }
+
+    .category-header.collapsed .category-expand {
+      transform: rotate(-90deg);
+    }
+
+    .category-body {
+      padding: 8px 10px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .category-body.collapsed {
+      display: none;
+    }
+
+    .category-card.disabled {
+      opacity: 0.5;
+    }
+
+    .category-card.disabled .category-body {
+      display: none;
+    }
+
+    /* Category toggle switch */
+    .category-toggle {
+      position: relative;
+      width: 32px;
+      height: 16px;
+      margin-left: auto;
+      margin-right: 8px;
+    }
+
+    .category-toggle input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .category-toggle .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #1a1a2e;
+      transition: 0.2s;
+      border-radius: 16px;
+    }
+
+    .category-toggle .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 12px;
+      width: 12px;
+      left: 2px;
+      bottom: 2px;
+      background-color: #666;
+      transition: 0.2s;
+      border-radius: 50%;
+    }
+
+    .category-toggle input:checked + .toggle-slider {
+      background-color: #0f3460;
+    }
+
+    .category-toggle input:checked + .toggle-slider:before {
+      transform: translateX(16px);
+      background-color: #4ade80;
+    }
+
+    /* Variant grid inside category */
+    .variant-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-bottom: 8px;
+    }
+
+    .variant-btn {
+      background: #0f3460;
+      border: 2px solid transparent;
+      color: #94a3b8;
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 10px;
+      text-align: center;
+      transition: all 0.15s;
+    }
+
+    .variant-btn:hover {
+      background: #1a4a7e;
+      color: #e2e8f0;
+    }
+
+    .variant-btn.active {
+      border-color: #4ade80;
+      color: #e2e8f0;
+    }
+
+    .variant-btn.dead {
+      opacity: 0.7;
+    }
+
+    /* Ratio mini-sliders */
+    .ratio-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .ratio-label {
+      font-size: 10px;
+      color: #64748b;
+      min-width: 50px;
+    }
+
+    .ratio-slider {
+      flex: 1;
+      height: 3px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: #1e293b;
+      border-radius: 2px;
+    }
+
+    .ratio-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #60a5fa;
+      cursor: pointer;
+    }
+
+    .ratio-value {
+      font-size: 10px;
+      color: #60a5fa;
+      min-width: 32px;
+      text-align: right;
+    }
+
+    /* Tuning row with +/- buttons */
+    .tune-row {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .tune-row .ratio-label {
+      min-width: 60px;
+    }
+
+    .tune-btn {
+      width: 18px;
+      height: 18px;
+      padding: 0;
+      border: 1px solid #4a5568;
+      background: #1e293b;
+      color: #94a3b8;
+      font-size: 12px;
+      font-weight: bold;
+      line-height: 1;
+      border-radius: 3px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .tune-btn:hover {
+      background: #334155;
+      color: #e2e8f0;
+      border-color: #60a5fa;
+    }
+
+    .tune-btn:active {
+      background: #475569;
+    }
+
+    /* Collapsible sections */
+    .collapsible-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      user-select: none;
+      padding: 8px 0;
+    }
+
+    .collapsible-header:hover {
+      color: #e94560;
+    }
+
+    .collapsible-arrow {
+      font-size: 10px;
+      transition: transform 0.2s;
+    }
+
+    .collapsible-header.collapsed .collapsible-arrow {
+      transform: rotate(-90deg);
+    }
+
+    .collapsible-body {
+      overflow: hidden;
+      transition: max-height 0.2s ease-out;
+    }
+
+    .collapsible-body.collapsed {
+      max-height: 0 !important;
+      padding: 0;
+      margin: 0;
+    }
+
     /* Status Bar */
     .status-bar {
       grid-column: 1 / -1;
@@ -342,18 +855,49 @@
     <!-- Header -->
     <header class="header">
       <h1>Terrain Editor</h1>
-      <span id="map-name">Untitled Map</span>
       <div class="header-actions">
         <button class="header-btn" id="btn-new">New</button>
         <button class="header-btn" id="btn-load">Load</button>
         <button class="header-btn" id="btn-save">Save</button>
-        <button class="header-btn" id="btn-export">Export PNG</button>
+        <button class="header-btn" id="btn-export">Export</button>
+      </div>
+      <div class="header-map-settings">
+        <input type="text" class="header-input" id="map-name-header" value="Untitled Map" title="Map Name">
+        <select class="header-select" id="grid-size-header" title="Map Size">
+          <option value="12">12×12</option>
+          <option value="24" selected>24×24</option>
+          <option value="32">32×32</option>
+          <option value="48">48×48</option>
+          <option value="64">64×64</option>
+        </select>
+        <select class="header-select" id="base-layer-header" title="Base Ground">
+          <option value="grass-1" selected>Grass 1</option>
+          <option value="grass-2">Grass 2</option>
+          <option value="grass-3">Grass 3</option>
+          <option value="dirt-1">Dirt 1</option>
+          <option value="dirt-2">Dirt 2</option>
+          <option value="forest-floor">Forest Floor</option>
+          <option value="sand">Sand</option>
+        </select>
+        <div class="header-divider"></div>
+        <label class="header-btn" style="display: flex; align-items: center; gap: 4px; padding: 4px 8px;">
+          <input type="checkbox" id="show-grid-header" checked> Grid
+        </label>
+        <label class="header-btn" style="display: flex; align-items: center; gap: 4px; padding: 4px 8px;">
+          <input type="checkbox" id="show-boundary-header" checked> Bounds
+        </label>
       </div>
     </header>
 
     <!-- Toolbar -->
     <aside class="toolbar">
-      <button class="tool-btn active" data-tool="paint" title="Paint (P)">🖌️</button>
+      <div class="toolbar-label">Feature</div>
+      <button class="tool-btn feature-tool active" data-tool="forest" data-feature="forest" title="Forest (F)">🌲</button>
+      <button class="tool-btn feature-tool" data-tool="brush" data-feature="brush" title="Brush (B)">🌿</button>
+      <button class="tool-btn feature-tool" data-tool="water" data-feature="water" title="Water (W)">💧</button>
+      <button class="tool-btn feature-tool" data-tool="ground" data-feature="groundTexture" title="Ground (G)">🟫</button>
+      <div class="toolbar-divider"></div>
+      <div class="toolbar-label">Utility</div>
       <button class="tool-btn" data-tool="clear" title="Clear (C)">🧹</button>
       <button class="tool-btn" data-tool="select" title="Select (V)">⬚</button>
       <button class="tool-btn" data-tool="transform" title="Transform (T)">↔️</button>
@@ -370,29 +914,73 @@
 
     <!-- Properties Panel -->
     <aside class="properties">
-      <!-- Brush Settings -->
+      <!-- Generation System Toggle -->
       <div class="panel-section">
-        <div class="panel-title">Brush</div>
+        <div class="panel-title">Generation System</div>
+        <div class="prop-row" style="display: flex; gap: 8px;">
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; flex: 1; padding: 6px 8px; border-radius: 4px; background: #0f3460;" id="system-legacy-label">
+            <input type="radio" name="generation-system" id="system-legacy" value="legacy">
+            Legacy
+          </label>
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; flex: 1; padding: 6px 8px; border-radius: 4px; background: #0f3460;" id="system-scatter-label">
+            <input type="radio" name="generation-system" id="system-scatter" value="scatter" checked>
+            Scatter
+          </label>
+        </div>
+      </div>
+
+      <!-- SCATTER PREVIEW (shown when scatter selected, sticky) -->
+      <div class="panel-section" id="scatter-preview-section" style="display: none; position: sticky; top: 0; z-index: 10; background: #16213e; padding-bottom: 8px; margin-bottom: 12px;">
+        <div class="panel-title" style="display: flex; align-items: center; justify-content: space-between;">
+          Stroke Preview
+          <label style="font-size: 11px; font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+            <input type="checkbox" id="show-scatter-preview"> On Canvas
+          </label>
+        </div>
+        <div style="display: flex; justify-content: center; padding: 4px 0;">
+          <canvas id="scatter-preview-canvas" width="200" height="200" style="border: 1px solid #334155; border-radius: 4px; background: #0d0d1a;"></canvas>
+        </div>
+        <div id="scatter-preview-info" style="font-size: 10px; color: #64748b; text-align: center; padding: 2px 0;">
+          Preview of next stroke
+        </div>
+      </div>
+
+      <!-- STROKE SETTINGS (size, shape, falloff, animation) -->
+      <div class="panel-section" id="stroke-settings">
+        <div class="panel-title">Stroke</div>
         <div class="prop-row">
           <label class="prop-label">
             Size <span class="prop-value" id="brush-size-val">60</span>
           </label>
           <input type="range" class="prop-range" id="brush-size" min="10" max="200" value="60">
         </div>
-        <div class="prop-row">
-          <label class="prop-label">Falloff</label>
-          <select class="prop-select" id="falloff">
-            <option value="smooth">Smooth</option>
-            <option value="linear">Linear</option>
-            <option value="hard">Hard</option>
-          </select>
-        </div>
-        <div class="prop-row">
-          <label class="prop-label">Shape</label>
-          <select class="prop-select" id="brush-shape">
-            <option value="circle">Circle</option>
-            <option value="square">Square</option>
-          </select>
+        <div class="prop-row" style="display: flex; gap: 8px;">
+          <div style="flex: 1;">
+            <label class="prop-label">Shape</label>
+            <select class="prop-select" id="brush-shape">
+              <option value="circle">Circle</option>
+              <option value="square">Square</option>
+            </select>
+          </div>
+          <div style="flex: 1;">
+            <label class="prop-label">Falloff</label>
+            <select class="prop-select" id="falloff">
+              <option value="smooth">Smooth</option>
+              <option value="linear">Linear</option>
+              <option value="hard">Hard</option>
+            </select>
+          </div>
+          <div style="flex: 1;">
+            <label class="prop-label">Animation</label>
+            <select class="prop-select" id="animation-style">
+              <option value="none">Instant</option>
+              <option value="digitize" selected>Digitize</option>
+              <option value="scan">Scan</option>
+              <option value="drop">Drop</option>
+              <option value="deploy">Deploy</option>
+              <option value="flash">Flash</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -400,42 +988,66 @@
       <div class="panel-section" id="clear-settings" style="display: none;">
         <div class="panel-title">Clear Options</div>
         <div class="prop-row">
-          <label class="prop-label">Clear Mode</label>
+          <label class="prop-label">Target</label>
           <select class="prop-select" id="clear-mode">
             <option value="all">All Features</option>
             <option value="trees">Trees Only</option>
-            <option value="brush">Brush/Undergrowth Only</option>
+            <option value="brush">Brush Only</option>
             <option value="water">Water Only</option>
             <option value="groundTexture">Ground Textures Only</option>
-            <option value="forest">Forest Coverage Only</option>
           </select>
         </div>
       </div>
 
-      <!-- Feature Type -->
-      <div class="panel-section">
-        <div class="panel-title">Feature</div>
-        <div class="feature-grid">
-          <button class="feature-btn active" data-feature="forest">
-            <span class="feature-icon">🌲</span>
-            Forest
-          </button>
-          <button class="feature-btn" data-feature="brush">
-            <span class="feature-icon">🌿</span>
-            Brush
-          </button>
-          <button class="feature-btn" data-feature="water">
-            <span class="feature-icon">💧</span>
-            Water
-          </button>
-          <button class="feature-btn" data-feature="groundTexture">
-            <span class="feature-icon">🟫</span>
-            Ground
-          </button>
+      <!-- Hidden elements for compatibility -->
+      <select class="prop-select" id="grid-size" style="display:none;">
+        <option value="12">12</option>
+        <option value="24" selected>24</option>
+        <option value="32">32</option>
+        <option value="48">48</option>
+        <option value="64">64</option>
+      </select>
+      <select class="prop-select" id="base-layer" style="display:none;">
+        <option value="grass-1" selected>Grass 1</option>
+      </select>
+      <input type="text" id="map-name-input" value="Untitled Map" style="display:none;">
+      <input type="checkbox" id="show-grid" checked style="display:none;">
+      <input type="range" id="grid-opacity" value="10" style="display:none;">
+      <span id="grid-opacity-val" style="display:none;">10%</span>
+      <input type="checkbox" id="show-boundary" checked style="display:none;">
+      <input type="checkbox" id="show-particle-debug" style="display:none;">
+      <div id="particle-debug-row" style="display:none;"></div>
+      <input type="checkbox" id="use-scatter-rendering" style="display:none;">
+      <div id="scatter-system-settings" style="display:none;"></div>
+
+      <!-- LEGACY SYSTEM: Floor Settings (shown when legacy selected) -->
+      <div class="panel-section" id="legacy-system-settings">
+        <div class="panel-title">Floor Settings</div>
+        <div class="prop-row" style="display: flex; align-items: center; gap: 8px;">
+          <input type="checkbox" id="auto-ground-texture" checked>
+          <label for="auto-ground-texture" style="font-size: 12px; cursor: pointer;">Auto-paint forest floor</label>
+        </div>
+        <div class="prop-row" title="How far the floor extends beyond the tree canopy.">
+          <label class="prop-label">
+            Floor Radius <span class="prop-value" id="floor-radius-val">30%</span>
+          </label>
+          <input type="range" class="prop-range" id="floor-radius" min="10" max="100" value="30">
+        </div>
+        <div class="prop-row" title="How much of the floor fades out.">
+          <label class="prop-label">
+            Floor Fade <span class="prop-value" id="floor-fade-val">100%</span>
+          </label>
+          <input type="range" class="prop-range" id="floor-fade" min="0" max="100" value="100">
+        </div>
+        <div class="prop-row" title="Opacity of the floor texture.">
+          <label class="prop-label">
+            Floor Intensity <span class="prop-value" id="floor-intensity-val">70%</span>
+          </label>
+          <input type="range" class="prop-range" id="floor-intensity" min="30" max="100" value="70">
         </div>
       </div>
 
-      <!-- Ground Texture Settings (shown when ground selected) -->
+      <!-- Ground Texture Settings (shown when ground tool selected) -->
       <div class="panel-section" id="ground-settings" style="display: none;">
         <div class="panel-title">Ground Texture</div>
         <div class="prop-row">
@@ -467,47 +1079,15 @@
         </div>
       </div>
 
-      <!-- Auto Ground Texture Toggle (shown for forest) -->
-      <div class="panel-section" id="auto-ground-settings">
-        <div class="prop-row" style="display: flex; align-items: center; gap: 8px;">
-          <input type="checkbox" id="auto-ground-texture" checked>
-          <label for="auto-ground-texture" style="font-size: 12px; cursor: pointer;">Auto-paint forest floor</label>
-        </div>
-        <div class="prop-row">
-          <label class="prop-label">
-            Floor Radius <span class="prop-value" id="floor-radius-val">30%</span>
-          </label>
-          <input type="range" class="prop-range" id="floor-radius" min="10" max="100" value="30">
-        </div>
-        <div class="prop-row">
-          <label class="prop-label">
-            Floor Fade <span class="prop-value" id="floor-fade-val">100%</span>
-          </label>
-          <input type="range" class="prop-range" id="floor-fade" min="0" max="100" value="100">
-        </div>
-        <div class="prop-row">
-          <label class="prop-label">
-            Floor Intensity <span class="prop-value" id="floor-intensity-val">70%</span>
-          </label>
-          <input type="range" class="prop-range" id="floor-intensity" min="30" max="100" value="70">
-        </div>
-        <div class="prop-row" style="margin-top: 8px;">
-          <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; cursor: pointer;">
-            <input type="checkbox" id="trees-in-water"> Allow in water
-          </label>
-        </div>
-      </div>
-
-      <!-- Water Settings (shown when water selected) -->
+      <!-- Water Settings (shown when water tool selected) -->
       <div class="panel-section" id="water-settings" style="display: none;">
-        <div class="panel-title">Water Options</div>
+        <div class="panel-title">Water</div>
         <div class="prop-row">
-          <label class="prop-label">Water Texture</label>
+          <label class="prop-label">Type</label>
           <select class="prop-select" id="water-texture-type">
             <option value="water" selected>Water</option>
             <option value="water-pond">Pond</option>
             <option value="water-river">River</option>
-            <option value="water-ocean">Ocean</option>
             <option value="water-marsh">Marsh</option>
           </select>
         </div>
@@ -518,13 +1098,12 @@
           <input type="range" class="prop-range" id="water-fade-width" min="0" max="48" value="12">
         </div>
         <div class="prop-row">
-          <label class="prop-label">Shore Texture</label>
+          <label class="prop-label">Shore</label>
           <select class="prop-select" id="shore-texture-type">
             <option value="none">None</option>
             <option value="mud" selected>Mud</option>
             <option value="sand">Sand</option>
             <option value="dirt-1">Dirt</option>
-            <option value="grass-1">Grass</option>
           </select>
         </div>
         <div class="prop-row">
@@ -535,72 +1114,228 @@
         </div>
       </div>
 
-      <!-- Tree Settings (shown when forest selected) -->
-      <div class="panel-section" id="tree-settings">
-        <!-- Presets -->
-        <div class="panel-title">Presets</div>
-        <div class="prop-row" style="display: flex; gap: 6px; margin-bottom: 16px;">
-          <select class="prop-select" id="preset-select" style="flex: 1;">
-            <optgroup label="Built-in">
-              <option value="temperate">Temperate Forest</option>
-              <option value="boreal">Boreal/Conifer</option>
+      <!-- SCATTER: Preset (Biome & Season) - shown for forest/brush in scatter mode -->
+      <div class="panel-section" id="scatter-environment" style="display: none;">
+        <div class="panel-title">Preset</div>
+        <div class="prop-row" style="display: flex; gap: 8px;">
+          <div style="flex: 1;">
+            <label class="prop-label">Biome</label>
+            <select class="prop-select" id="biome-select">
+              <option value="temperate" selected>Temperate</option>
+              <option value="oak-forest">Oak Forest</option>
+              <option value="birch-grove">Birch Grove</option>
+              <option value="conifer">Conifer</option>
               <option value="wetland">Wetland</option>
-              <option value="mixed">Mixed Forest</option>
               <option value="dead-forest">Dead Forest</option>
-              <option value="sparse-old">Sparse Old Growth</option>
-            </optgroup>
-            <optgroup label="Custom" id="custom-presets-group">
-            </optgroup>
-          </select>
-          <button class="header-btn" id="btn-load-preset" title="Load Preset" style="padding: 6px 10px;">Load</button>
-          <button class="header-btn" id="btn-save-preset" title="Save Current as Preset" style="padding: 6px 10px;">Save</button>
-          <button class="header-btn" id="btn-delete-preset" title="Delete Custom Preset" style="padding: 6px 8px; opacity: 0.6;">✕</button>
+              <option value="custom">Custom</option>
+            </select>
+          </div>
+          <div style="flex: 1;">
+            <label class="prop-label">Season</label>
+            <select class="prop-select" id="season-select">
+              <option value="summer" selected>Summer</option>
+              <option value="fall">Fall</option>
+              <option value="winter">Winter</option>
+              <option value="spring">Spring</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Forest Settings - Category Cards (shown when forest tool selected) -->
+      <div class="panel-section" id="tree-settings">
+        <div class="panel-title">Forest Output</div>
+
+        <!-- TREES Category -->
+        <div class="category-card" id="cat-trees">
+          <div class="category-header" data-category="trees">
+            <span class="category-icon">🌳</span>
+            <span class="category-name">Trees</span>
+            <label class="category-toggle" title="Enable/disable trees">
+              <input type="checkbox" id="toggle-trees" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="category-body" id="cat-trees-body">
+            <div class="variant-grid">
+              <button class="variant-btn active" data-tree="oak">Oak</button>
+              <button class="variant-btn" data-tree="pine">Pine</button>
+              <button class="variant-btn" data-tree="birch">Birch</button>
+              <button class="variant-btn" data-tree="willow">Willow</button>
+              <button class="variant-btn dead" data-tree="oak-dead">☠ Oak</button>
+              <button class="variant-btn dead" data-tree="pine-dead">☠ Pine</button>
+              <button class="variant-btn dead" data-tree="birch-dead">☠ Birch</button>
+              <button class="variant-btn dead" data-tree="willow-dead">☠ Willow</button>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Density</span>
+              <input type="range" class="ratio-slider" id="scatter-tree-count" min="0.5" max="2.0" step="0.1" value="1.0">
+              <span class="ratio-value" id="scatter-tree-count-val">1.0×</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Spacing</span>
+              <input type="range" class="ratio-slider" id="tree-spacing" min="50" max="150" step="5" value="100">
+              <span class="ratio-value" id="tree-spacing-val">100%</span>
+            </div>
+            <div id="tree-ratios" style="display: none;">
+              <div id="ratio-sliders"></div>
+            </div>
+            <div style="margin-top: 8px;">
+              <div style="font-size: 10px; color: #64748b; margin-bottom: 4px;">Ages</div>
+              <div class="variant-grid">
+                <button class="variant-btn active" data-age="young">Young</button>
+                <button class="variant-btn active" data-age="transitional">Trans</button>
+                <button class="variant-btn active" data-age="old">Old</button>
+              </div>
+              <div id="age-ratios" style="display: none; margin-top: 6px;">
+                <div id="age-ratio-sliders"></div>
+              </div>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Scale</span>
+              <input type="range" class="ratio-slider" id="tree-scale" min="3" max="60" value="35">
+              <span class="ratio-value" id="scale-val">35%</span>
+            </div>
+          </div>
         </div>
 
-        <div class="panel-title">Tree Types <span style="font-size: 10px; opacity: 0.6">(multi-select)</span></div>
-        <div class="tree-grid" style="grid-template-columns: repeat(4, 1fr); gap: 4px;">
-          <button class="tree-btn active" data-tree="oak">Oak</button>
-          <button class="tree-btn" data-tree="pine">Pine</button>
-          <button class="tree-btn" data-tree="birch">Birch</button>
-          <button class="tree-btn" data-tree="willow">Willow</button>
-          <button class="tree-btn" data-tree="oak-dead" style="opacity: 0.7;">☠ Oak</button>
-          <button class="tree-btn" data-tree="pine-dead" style="opacity: 0.7;">☠ Pine</button>
-          <button class="tree-btn" data-tree="birch-dead" style="opacity: 0.7;">☠ Birch</button>
-          <button class="tree-btn" data-tree="willow-dead" style="opacity: 0.7;">☠ Willow</button>
+        <!-- FLOOR Category -->
+        <div class="category-card" id="cat-floor">
+          <div class="category-header" data-category="floor">
+            <span class="category-icon">🍂</span>
+            <span class="category-name">Floor</span>
+            <label class="category-toggle" title="Enable/disable floor">
+              <input type="checkbox" id="toggle-floor" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="category-body" id="cat-floor-body">
+            <div class="variant-grid">
+              <button class="variant-btn active" data-floor="floor-leaf">Leaf</button>
+              <button class="variant-btn" data-floor="floor-leaf-fall">Fall</button>
+              <button class="variant-btn" data-floor="floor-needle">Needle</button>
+              <button class="variant-btn" data-floor="floor-debris">Debris</button>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Density</span>
+              <input type="range" class="ratio-slider" id="floor-spawn-density" min="0" max="20" value="6">
+              <span class="ratio-value" id="floor-spawn-density-val">6</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Scale</span>
+              <input type="range" class="ratio-slider" id="floor-spawn-scale" min="10" max="150" value="50">
+              <span class="ratio-value" id="floor-spawn-scale-val">50%</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Radius</span>
+              <input type="range" class="ratio-slider" id="floor-spawn-radius" min="50" max="250" value="130">
+              <span class="ratio-value" id="floor-spawn-radius-val">130%</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Falloff</span>
+              <input type="range" class="ratio-slider" id="floor-spawn-falloff" min="0" max="100" value="50">
+              <span class="ratio-value" id="floor-spawn-falloff-val">50%</span>
+            </div>
+          </div>
         </div>
-        <!-- Ratio sliders (shown when multiple trees selected) -->
-        <div id="tree-ratios" style="display: none; margin-top: 8px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px;">
-          <div class="prop-label" style="margin-bottom: 6px; font-size: 11px;">Mix Ratios</div>
-          <div id="ratio-sliders"></div>
+
+        <!-- PARTICLES Category -->
+        <div class="category-card" id="cat-particles">
+          <div class="category-header" data-category="particles">
+            <span class="category-icon">✨</span>
+            <span class="category-name">Particles</span>
+            <label class="category-toggle" title="Enable/disable particles">
+              <input type="checkbox" id="toggle-particles" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="category-body" id="cat-particles-body">
+            <div class="variant-grid">
+              <button class="variant-btn active" data-particle="particle-leaf">Leaf</button>
+              <button class="variant-btn" data-particle="particle-leaf-fall">Fall</button>
+              <button class="variant-btn" data-particle="particle-needle">Needle</button>
+              <button class="variant-btn" data-particle="particle-twig">Twig</button>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Density</span>
+              <input type="range" class="ratio-slider" id="particle-spawn-density" min="0" max="20" value="4">
+              <span class="ratio-value" id="particle-spawn-density-val">4</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Scale</span>
+              <input type="range" class="ratio-slider" id="particle-spawn-scale" min="10" max="100" value="35">
+              <span class="ratio-value" id="particle-spawn-scale-val">35%</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Radius</span>
+              <input type="range" class="ratio-slider" id="particle-spawn-radius" min="50" max="200" value="120">
+              <span class="ratio-value" id="particle-spawn-radius-val">120%</span>
+            </div>
+          </div>
         </div>
-        <div class="prop-row" style="margin-top: 12px;">
-          <label class="prop-label">
-            Scale <span class="prop-value" id="scale-val">8%</span>
-          </label>
-          <input type="range" class="prop-range" id="tree-scale" min="3" max="60" value="35">
+
+        <!-- BRUSH Category -->
+        <div class="category-card" id="cat-brush">
+          <div class="category-header" data-category="brush">
+            <span class="category-icon">🌿</span>
+            <span class="category-name">Brush</span>
+            <label class="category-toggle" title="Enable/disable brush">
+              <input type="checkbox" id="toggle-brush" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="category-body" id="cat-brush-body">
+            <div class="variant-grid">
+              <button class="variant-btn active" data-brush="bush-small">Bush S</button>
+              <button class="variant-btn" data-brush="bush-large">Bush L</button>
+              <button class="variant-btn" data-brush="fern">Fern</button>
+              <button class="variant-btn" data-brush="reed">Reed</button>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Density</span>
+              <input type="range" class="ratio-slider" id="brush-spawn-density" min="0" max="2.0" step="0.1" value="1.0">
+              <span class="ratio-value" id="brush-spawn-density-val">1.0×</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Scale</span>
+              <input type="range" class="ratio-slider" id="brush-spawn-scale" min="10" max="80" value="25">
+              <span class="ratio-value" id="brush-spawn-scale-val">25%</span>
+            </div>
+          </div>
         </div>
-        <div class="prop-row">
+
+        <!-- Legacy density (shown when legacy system active) -->
+        <div class="prop-row" id="legacy-density-row" style="display: none; margin-top: 12px;">
           <label class="prop-label">
             Density <span class="prop-value" id="density-val">5</span>
           </label>
           <input type="range" class="prop-range" id="tree-density" min="1" max="15" value="5">
         </div>
+      </div>
+
+      <!-- Brush/Undergrowth Settings (standalone brush tool - hidden, now in category cards) -->
+      <div class="panel-section" id="brush-settings" style="display: none;">
+        <div class="panel-title">Brush Tool</div>
         <div class="prop-row">
-          <label class="prop-label">Tree Ages <span style="font-size: 10px; opacity: 0.6">(multi-select)</span></label>
-          <div class="tree-grid" style="grid-template-columns: repeat(3, 1fr);">
-            <button class="tree-btn active" data-age="young">Young</button>
-            <button class="tree-btn active" data-age="transitional">Trans</button>
-            <button class="tree-btn active" data-age="old">Old</button>
-          </div>
-          <!-- Age ratio sliders (shown when multiple ages selected) -->
-          <div id="age-ratios" style="display: none; margin-top: 8px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px;">
-            <div class="prop-label" style="margin-bottom: 6px; font-size: 11px;">Age Mix</div>
-            <div id="age-ratio-sliders"></div>
-          </div>
-        </div>
-        <div class="prop-row" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">
           <label class="prop-label">
-            <input type="checkbox" id="auto-particles" checked> Auto particles (leaves/needles)
+            Scale <span class="prop-value" id="brush-scale-val">12%</span>
+          </label>
+          <input type="range" class="prop-range" id="brush-scale" min="5" max="40" value="12">
+        </div>
+        <div class="prop-row">
+          <label class="prop-label">
+            Density <span class="prop-value" id="brush-density-val">8</span>
+          </label>
+          <input type="range" class="prop-range" id="brush-density" min="2" max="20" value="8">
+        </div>
+      </div>
+
+      <!-- Legacy Particle Settings (hidden in scatter mode) -->
+      <div class="panel-section" id="legacy-particle-settings">
+        <div class="panel-title">Particles (Legacy)</div>
+        <div class="prop-row">
+          <label class="prop-label">
+            <input type="checkbox" id="auto-particles" checked> Auto particles
           </label>
         </div>
         <div class="prop-row" id="particle-density-row">
@@ -627,114 +1362,125 @@
           </label>
           <input type="range" class="prop-range" id="particle-scale" min="5" max="40" value="15">
         </div>
-        <div class="prop-row" style="margin-top: 8px;">
-          <label class="prop-label">
-            <input type="checkbox" id="cascade-delete" checked> Cascade delete (remove particles with trees)
-          </label>
-        </div>
       </div>
 
-      <!-- Brush/Undergrowth Settings (shown when brush selected) -->
-      <div class="panel-section" id="brush-settings" style="display: none;">
-        <div class="panel-title">Brush Types <span style="font-size: 10px; opacity: 0.6">(multi-select)</span></div>
-        <div class="tree-grid" style="grid-template-columns: repeat(2, 1fr); gap: 4px;">
-          <button class="brush-type-btn active" data-brush="bush-small">Bush S</button>
-          <button class="brush-type-btn" data-brush="bush-large">Bush L</button>
-          <button class="brush-type-btn" data-brush="fern-small">Fern</button>
-          <button class="brush-type-btn" data-brush="leaf-particles">Leaves</button>
-        </div>
-        <!-- Ratio sliders (shown when multiple brush types selected) -->
-        <div id="brush-ratios" style="display: none; margin-top: 8px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px;">
-          <div class="prop-label" style="margin-bottom: 6px; font-size: 11px;">Mix Ratios</div>
-          <div id="brush-ratio-sliders"></div>
-        </div>
-        <div class="prop-row" style="margin-top: 12px;">
-          <label class="prop-label">
-            Scale <span class="prop-value" id="brush-scale-val">12%</span>
-          </label>
-          <input type="range" class="prop-range" id="brush-scale" min="5" max="40" value="12">
-        </div>
-        <div class="prop-row">
-          <label class="prop-label">
-            Density <span class="prop-value" id="brush-density-val">8</span>
-          </label>
-          <input type="range" class="prop-range" id="brush-density" min="2" max="20" value="8">
-        </div>
-        <div class="prop-row">
-          <label class="prop-label">
-            <input type="checkbox" id="brush-in-water"> Allow in water/shore
-          </label>
-        </div>
-      </div>
-
-      <!-- Ground Layer -->
-      <div class="panel-section">
-        <div class="panel-title">Ground Layer</div>
-        <select class="prop-select" id="base-layer">
-          <optgroup label="Grass">
-            <option value="grass-1" selected>Grass 1</option>
-            <option value="grass-2">Grass 2</option>
-            <option value="grass-3">Grass 3</option>
-            <option value="grass-4">Grass 4</option>
-          </optgroup>
-          <optgroup label="Dirt">
-            <option value="dirt-1">Dirt 1</option>
-            <option value="dirt-2">Dirt 2</option>
-            <option value="dirt-3">Dirt 3</option>
-            <option value="dirt-4">Dirt 4</option>
-          </optgroup>
-          <optgroup label="Other">
-            <option value="forest-floor">Forest Floor</option>
-            <option value="sand">Sand</option>
-            <option value="open">Open</option>
-          </optgroup>
-        </select>
-      </div>
-
-      <!-- View Settings -->
-      <div class="panel-section">
-        <div class="panel-title">View</div>
-        <div class="prop-row">
-          <label class="prop-label">
-            <input type="checkbox" id="show-grid" checked> Show Grid
-          </label>
-        </div>
-        <div class="prop-row">
-          <label class="prop-label">
-            Grid Opacity <span class="prop-value" id="grid-opacity-val">10%</span>
-          </label>
-          <input type="range" class="prop-range" id="grid-opacity" min="0" max="100" value="10">
-        </div>
-        <div class="prop-row">
-          <label class="prop-label">
-            <input type="checkbox" id="show-boundary" checked> Show Boundary
-          </label>
-        </div>
-        <div class="prop-row">
-          <label class="prop-label">
-            <input type="checkbox" id="show-particle-debug"> Show Particle Rings
-          </label>
-        </div>
-      </div>
-
-      <!-- Map Settings -->
-      <div class="panel-section">
-        <div class="panel-title">Map Info</div>
-        <div class="prop-row">
-          <label class="prop-label">Name</label>
-          <input type="text" class="prop-input" id="map-name-input" value="Untitled Map">
-        </div>
-        <div class="prop-row">
-          <label class="prop-label">Grid Size</label>
-          <select class="prop-select" id="grid-size">
-            <option value="12">12 x 12 (Small)</option>
-            <option value="24" selected>24 x 24 (Medium)</option>
-            <option value="32">32 x 32 (Large)</option>
-            <option value="48">48 x 48 (XL)</option>
-            <option value="64">64 x 64 (Huge)</option>
+      <!-- Legacy Presets (hidden in scatter mode) -->
+      <div class="panel-section" id="legacy-presets-section">
+        <div class="panel-title">Presets</div>
+        <div class="prop-row" style="display: flex; gap: 6px;">
+          <select class="prop-select" id="preset-select" style="flex: 1;">
+            <optgroup label="Built-in">
+              <option value="temperate">Temperate Forest</option>
+              <option value="boreal">Boreal/Conifer</option>
+              <option value="wetland">Wetland</option>
+              <option value="mixed">Mixed Forest</option>
+              <option value="dead-forest">Dead Forest</option>
+              <option value="sparse-old">Sparse Old Growth</option>
+            </optgroup>
+            <optgroup label="Custom" id="custom-presets-group">
+            </optgroup>
           </select>
+          <button class="header-btn" id="btn-load-preset" style="padding: 6px 10px;">Load</button>
+          <button class="header-btn" id="btn-save-preset" style="padding: 6px 10px;">Save</button>
         </div>
       </div>
+
+      <!-- POST-PROCESSING: Environment visual adjustments -->
+      <div class="panel-section" id="season-tuning-panel" style="display: none;">
+        <div class="panel-title collapsible-header collapsed" id="season-tuning-toggle">
+          Post-Processing
+          <span class="collapsible-arrow" id="season-tuning-arrow">▼</span>
+        </div>
+        <div class="collapsible-body collapsed" id="season-tuning-body" style="max-height: 800px;">
+          <div class="prop-row" style="font-size: 11px; color: #94a3b8; margin-bottom: 8px;">
+            <span id="season-tuning-label">Summer × Temperate</span>
+          </div>
+
+          <!-- Hidden inputs for compatibility -->
+          <input type="hidden" id="tune-floor-type" value="floor-leaf">
+          <input type="hidden" id="tune-particle-type" value="particle-leaf">
+          <input type="hidden" id="tune-floor-density" value="0.6">
+          <input type="hidden" id="tune-particle-density" value="0.3">
+          <input type="hidden" id="tune-brush-density" value="1.0">
+
+          <div style="font-size: 10px; color: #60a5fa; margin: 6px 0 6px; text-transform: uppercase; letter-spacing: 1px;">Canopy</div>
+          <div class="tune-row">
+            <span class="ratio-label">Hue Shift</span>
+            <button class="tune-btn" data-target="tune-canopy-hue" data-delta="-1">−</button>
+            <input type="range" class="ratio-slider" id="tune-canopy-hue" min="-180" max="180" step="1" value="0">
+            <button class="tune-btn" data-target="tune-canopy-hue" data-delta="1">+</button>
+            <span class="ratio-value" id="tune-canopy-hue-val">0°</span>
+          </div>
+          <div class="tune-row">
+            <span class="ratio-label">Saturation</span>
+            <button class="tune-btn" data-target="tune-canopy-sat" data-delta="-0.05">−</button>
+            <input type="range" class="ratio-slider" id="tune-canopy-sat" min="0" max="2" step="0.05" value="1.0">
+            <button class="tune-btn" data-target="tune-canopy-sat" data-delta="0.05">+</button>
+            <span class="ratio-value" id="tune-canopy-sat-val">1.00</span>
+          </div>
+          <div class="tune-row">
+            <span class="ratio-label">Brightness</span>
+            <button class="tune-btn" data-target="tune-canopy-bright" data-delta="-0.05">−</button>
+            <input type="range" class="ratio-slider" id="tune-canopy-bright" min="0" max="2" step="0.05" value="1.0">
+            <button class="tune-btn" data-target="tune-canopy-bright" data-delta="0.05">+</button>
+            <span class="ratio-value" id="tune-canopy-bright-val">1.00</span>
+          </div>
+
+          <div style="font-size: 10px; color: #60a5fa; margin: 10px 0 6px; text-transform: uppercase; letter-spacing: 1px;">Ground</div>
+          <div class="tune-row">
+            <span class="ratio-label">Tint</span>
+            <input type="color" id="tune-ground-tint" value="#4a5e3a" style="width: 32px; height: 20px; border: 1px solid #4a5568; background: transparent; cursor: pointer; flex-shrink: 0;">
+            <span class="ratio-value" id="tune-ground-tint-val" style="flex: 1;">#4a5e3a</span>
+          </div>
+          <div class="tune-row">
+            <span class="ratio-label">Brightness</span>
+            <button class="tune-btn" data-target="tune-ground-bright" data-delta="-0.05">−</button>
+            <input type="range" class="ratio-slider" id="tune-ground-bright" min="0" max="2" step="0.05" value="1.0">
+            <button class="tune-btn" data-target="tune-ground-bright" data-delta="0.05">+</button>
+            <span class="ratio-value" id="tune-ground-bright-val">1.00</span>
+          </div>
+
+          <div style="font-size: 10px; color: #60a5fa; margin: 10px 0 6px; text-transform: uppercase; letter-spacing: 1px;">Atmosphere</div>
+          <div class="tune-row">
+            <span class="ratio-label">Ambient</span>
+            <input type="color" id="tune-atm-ambient" value="#ffffff" style="width: 32px; height: 20px; border: 1px solid #4a5568; background: transparent; cursor: pointer; flex-shrink: 0;">
+            <span class="ratio-value" id="tune-atm-ambient-val" style="flex: 1;">#ffffff</span>
+          </div>
+          <div class="tune-row">
+            <span class="ratio-label">Shadow</span>
+            <button class="tune-btn" data-target="tune-atm-shadow" data-delta="-0.05">−</button>
+            <input type="range" class="ratio-slider" id="tune-atm-shadow" min="0" max="1" step="0.05" value="0.6">
+            <button class="tune-btn" data-target="tune-atm-shadow" data-delta="0.05">+</button>
+            <span class="ratio-value" id="tune-atm-shadow-val">0.60</span>
+          </div>
+          <div class="tune-row">
+            <span class="ratio-label">Wind</span>
+            <button class="tune-btn" data-target="tune-atm-wind" data-delta="-0.05">−</button>
+            <input type="range" class="ratio-slider" id="tune-atm-wind" min="0" max="1" step="0.05" value="0.3">
+            <button class="tune-btn" data-target="tune-atm-wind" data-delta="0.05">+</button>
+            <span class="ratio-value" id="tune-atm-wind-val">0.30</span>
+          </div>
+
+          <!-- Hidden environment controls for compatibility -->
+          <input type="checkbox" id="tune-env-snow" style="display:none;">
+          <input type="checkbox" id="tune-env-puddles" style="display:none;">
+          <input type="range" id="tune-env-fog" value="0" style="display:none;">
+          <span id="tune-env-fog-val" style="display:none;"></span>
+          <input type="checkbox" id="tune-env-frost" style="display:none;">
+
+          <div style="display: flex; gap: 6px; margin-top: 12px;">
+            <button class="header-btn" id="tune-reset" style="flex: 1; font-size: 11px;">Reset</button>
+            <button class="header-btn" id="tune-export" style="flex: 1; font-size: 11px;">Export</button>
+          </div>
+          <div id="tune-modified-list" style="font-size: 10px; color: #fbbf24; margin-top: 4px; display: none;">
+            Modified: <span id="tune-modified-fields"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hidden view options (now in header) -->
+      <input type="checkbox" id="show-grid-panel" checked style="display:none;">
+      <input type="checkbox" id="show-boundary-panel" checked style="display:none;">
     </aside>
 
     <!-- Status Bar -->
@@ -759,12 +1505,13 @@
         <span id="debug-max">max=-</span>
       </div>
       <div class="shortcuts-hint">
-        <kbd>P</kbd> Paint
-        <kbd>E</kbd> Erase
-        <kbd>V</kbd> Select
+        <kbd>F</kbd> Forest
+        <kbd>B</kbd> Brush
+        <kbd>W</kbd> Water
+        <kbd>G</kbd> Ground
+        <kbd>C</kbd> Clear
         <kbd>Scroll</kbd> Zoom
-        <kbd>Space+Drag</kbd> Pan
-        <kbd>Middle Mouse</kbd> Pan
+        <kbd>Space</kbd> Pan
         <kbd>Ctrl+Z</kbd> Undo
       </div>
     </footer>

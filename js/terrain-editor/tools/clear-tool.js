@@ -35,6 +35,8 @@ export const ClearTool = {
       this._lastClearPos = { x: e.x, y: e.y };
       this._strokesRemovedDuringDrag = 0;
       this._clear(e.x, e.y, state, false);
+      // Begin drag mode - defers cache rebuilds
+      renderer.beginDragPaint();
     }
   },
 
@@ -70,6 +72,8 @@ export const ClearTool = {
   },
 
   onMouseUp(e, state, renderer) {
+    // End drag mode - triggers cache rebuild
+    renderer.endDragPaint();
     // Final render after drag clearing
     if (this._isClearing && this._strokesRemovedDuringDrag > 0) {
       state.requestRender();
@@ -80,6 +84,10 @@ export const ClearTool = {
   },
 
   onMouseLeave(state, renderer) {
+    // End drag mode if we were clearing
+    if (this._isClearing) {
+      renderer.endDragPaint();
+    }
     // Final render if we were clearing when leaving
     if (this._isClearing && this._strokesRemovedDuringDrag > 0) {
       state.requestRender();

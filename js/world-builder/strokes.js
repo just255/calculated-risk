@@ -48,7 +48,14 @@ export const GROUND_TEXTURES = {
   dirt: { name: 'Dirt', file: 'dirt' },
   'forest-floor': { name: 'Forest Floor', file: 'forest-floor' },
   mud: { name: 'Mud', file: 'mud' },
-  sand: { name: 'Sand', file: 'sand' }
+  sand: { name: 'Sand', file: 'sand' },
+  // Floor patches for tree-based floor system (scatter-rendered)
+  'floor-oak': { name: 'Oak Leaves', file: 'floor-oak' },
+  'floor-pine': { name: 'Pine Needles', file: 'floor-pine' },
+  'floor-birch': { name: 'Birch Leaves', file: 'floor-birch' },
+  'floor-damp': { name: 'Damp Debris', file: 'floor-damp' },
+  'floor-bare': { name: 'Dead Debris', file: 'floor-bare' },
+  'floor-mixed': { name: 'Mixed Debris', file: 'floor-mixed' }
 };
 
 /**
@@ -188,6 +195,62 @@ export const TREE_TO_PARTICLES = {
 };
 
 /**
+ * Tree type to floor patch mapping
+ * Defines which floor patches scatter around each tree type
+ * See sprites/terrain/floor-prompts.md for sprite generation
+ */
+export const TREE_TO_FLOOR = {
+  // Deciduous trees use leaf-based floor (seasonal variants available)
+  'oak': 'floor-leaf-dry',      // Default to dry leaves (works for all seasons)
+  'birch': 'floor-leaf-dry',
+  'willow': 'floor-leaf-dry',
+  // Conifers use needle floor
+  'pine': 'floor-needle',
+  // Dead trees use debris
+  'dead': 'floor-debris'
+};
+
+/**
+ * Default floor type for mixed/unknown tree types
+ */
+export const DEFAULT_FLOOR = 'floor-debris';
+
+/**
+ * Floor patch type definitions
+ * Floor patches are discrete sprites scattered around trees on the ground layer
+ * Seasonal types: floor-leaf (green), floor-leaf-fall (autumn), floor-leaf-dry (brown)
+ * See sprites/terrain/floor-prompts.md for sprite generation
+ */
+export const FLOOR_PATCH_TYPES = {
+  // Seasonal floor types (primary)
+  'floor-leaf': {
+    baseScale: 0.4,
+    variants: 3,
+    noCollision: true
+  },
+  'floor-leaf-fall': {
+    baseScale: 0.4,
+    variants: 3,
+    noCollision: true
+  },
+  'floor-leaf-dry': {
+    baseScale: 0.4,
+    variants: 3,
+    noCollision: true
+  },
+  'floor-needle': {
+    baseScale: 0.35,
+    variants: 3,
+    noCollision: true
+  },
+  'floor-debris': {
+    baseScale: 0.38,
+    variants: 3,
+    noCollision: true
+  }
+};
+
+/**
  * Tree type to suggested brush mapping
  */
 export const TREE_TO_BRUSH = {
@@ -280,9 +343,13 @@ export function createStroke(type, x, y, radius, options = {}) {
 export function createTerrainMap(gridWidth, gridHeight, cellSize = 64, baseLayer = 'grass') {
   return {
     strokes: [],
+    // Legacy arrays (for backwards compatibility during migration)
     trees: [],              // Global tree registry for collision detection & rendering
     brushes: [],            // Global brush registry for collision detection & rendering
     particles: [],          // Global particle registry (leaves, needles, etc.)
+    floorPatches: [],       // Global floor patch registry (ground layer sprites)
+    // NEW: Unified scatter system (MVP)
+    scatterItems: [],       // All terrain elements in one array
     baseLayer,
     grid: [],
     gridWidth,
@@ -319,6 +386,7 @@ function seededRandom(seed) {
 }
 
 /**
+ * @deprecated Use generateScatter() from scatter.js instead
  * Generate trees for a stroke with collision detection
  * Adds trees to the global registry if they don't overlap existing trees
  * @param {object} terrainMap - TerrainMap with global tree registry
@@ -453,6 +521,7 @@ export function generateTreesForStroke(terrainMap, stroke, options = {}) {
 }
 
 /**
+ * @deprecated Use removeScatterByStroke() from scatter.js instead
  * Remove trees associated with a stroke
  * @param {object} terrainMap - TerrainMap with global tree registry
  * @param {string} strokeId - ID of stroke to remove trees for
@@ -465,6 +534,7 @@ export function removeTreesForStroke(terrainMap, strokeId) {
 }
 
 /**
+ * @deprecated Use removeScatterInRadius() from scatter.js instead
  * Remove trees within a radius (for clearing tool)
  * @param {object} terrainMap - TerrainMap with global tree registry
  * @param {number} x - Center X coordinate
@@ -524,6 +594,7 @@ export function getTreesSortedByScale(terrainMap) {
 // ═══════════════════════════════════════════════════════════════
 
 /**
+ * @deprecated Use generateScatter() from scatter.js instead
  * Generate brush/undergrowth for a stroke with collision detection
  * Adds brush items to the global registry if they don't overlap existing items
  * @param {object} terrainMap - TerrainMap with global brush registry
@@ -718,6 +789,7 @@ export function getBrushSortedByScale(terrainMap) {
 // ═══════════════════════════════════════════════════════════════
 
 /**
+ * @deprecated Use spawnChildren() from scatter.js instead (auto-spawns particles)
  * Generate particles around a tree
  * @param {object} terrainMap - TerrainMap with global particle registry
  * @param {object} tree - Tree object to generate particles around
@@ -880,4 +952,180 @@ export function removeParticlesInRadius(terrainMap, x, y, radius) {
 export function getParticlesSortedByY(terrainMap) {
   if (!terrainMap.particles) return [];
   return [...terrainMap.particles].sort((a, b) => a.y - b.y);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FLOOR PATCH GENERATION
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * @deprecated Use spawnChildren() from scatter.js instead (auto-spawns floor patches)
+ * Generate floor patches around a tree
+ * Floor patches are discrete sprites scattered under/around the tree canopy
+ * @param {object} terrainMap - TerrainMap with global floor patch registry
+ * @param {object} tree - Tree object to generate floor patches around
+ * @param {object} options - Generation options (overrides tree's baked settings)
+ * @returns {object[]} Array of floor patches that were added
+ */
+export function generateFloorPatchesForTree(terrainMap, tree, options = {}) {
+  // Ensure floorPatches array exists
+  if (!terrainMap.floorPatches) terrainMap.floorPatches = [];
+
+  // Get floor type for this tree type
+  const floorType = TREE_TO_FLOOR[tree.treeType] || DEFAULT_FLOOR;
+  const floorConfig = FLOOR_PATCH_TYPES[floorType];
+  if (!floorConfig) return [];
+
+  // Get floor settings from tree (baked at paint time) or options
+  const floorRadiusPercent = options.floorRadiusPercent ?? tree.floorRadiusPercent ?? 30;
+  const floorIntensity = options.floorIntensity ?? tree.floorIntensity ?? 70;
+  const floorFadePercent = options.floorFade ?? tree.floorFade ?? 100;
+
+  // Calculate coverage area based on canopy size
+  const canopyRadius = 115 * tree.scale;
+  const floorRadiusMultiplier = floorRadiusPercent / 100 + 1;
+  const maxRadius = canopyRadius * floorRadiusMultiplier;
+
+  // Skip very small trees
+  if (maxRadius < 15) return [];
+
+  // Base patch count scales with coverage area
+  const area = Math.PI * maxRadius * maxRadius;
+  const basePatchSize = 20; // Average patch covers ~20px
+  const baseDensity = Math.floor(area / (basePatchSize * basePatchSize * 3));
+  const density = Math.max(3, Math.min(50, baseDensity)); // Clamp 3-50 patches per tree
+
+  // Seeded random for consistent placement
+  const seed = options.seed ?? (parseInt(tree.id.split('_')[1]) || Date.now());
+
+  const addedPatches = [];
+
+  for (let i = 0; i < density; i++) {
+    const patchSeed = seed + i * 137;
+
+    // Random position within floor radius (concentrated under canopy)
+    const angle = seededRandom(patchSeed) * Math.PI * 2;
+    // Bias toward center (under canopy)
+    const distFactor = Math.pow(seededRandom(patchSeed + 1), 0.7);
+    const dist = distFactor * maxRadius;
+
+    const px = tree.x + Math.cos(angle) * dist;
+    const py = tree.y + Math.sin(angle) * dist;
+
+    // Random scale variation (±50%)
+    const scaleVariation = 0.5;
+    const scaleRand = 1 + (seededRandom(patchSeed + 2) - 0.5) * 2 * scaleVariation;
+    const globalScale = options.scale ?? 0.5; // User-controlled scale
+    const finalScale = floorConfig.baseScale * scaleRand * globalScale;
+
+    // Intensity decreases toward edge (based on floorFadePercent)
+    const distRatio = dist / maxRadius;
+    const edgeFade = floorFadePercent >= 100
+      ? 1 - (distRatio * distRatio * 0.5)  // Gradual fade
+      : distRatio < (1 - floorFadePercent / 100) ? 1 : 0;  // Hard cutoff
+    const baseAlpha = (floorIntensity / 100) * edgeFade;
+    // Add some random variation to alpha
+    const alpha = baseAlpha * (0.6 + seededRandom(patchSeed + 3) * 0.4);
+
+    // Skip very faint patches
+    if (alpha < 0.1) continue;
+
+    // Create floor patch object
+    const patch = {
+      id: `floorpatch_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+      strokeId: tree.strokeId,       // For bulk stroke delete
+      parentId: tree.id,             // For cascading delete from tree
+      floorType,
+      x: px,
+      y: py,
+      scale: finalScale,
+      alpha: Math.min(0.9, Math.max(0.2, alpha)),
+      rotation: seededRandom(patchSeed + 4) * 360,
+      variant: Math.floor(seededRandom(patchSeed + 5) * floorConfig.variants) + 1,
+      hueShift: (seededRandom(patchSeed + 6) - 0.5) * COLOR_VARIATION.hueRange * 0.5, // Less color variation
+      brightness: 1 + (seededRandom(patchSeed + 7) - 0.5) * COLOR_VARIATION.brightnessRange,
+      saturation: 1 + (seededRandom(patchSeed + 8) - 0.5) * COLOR_VARIATION.saturationRange
+    };
+
+    terrainMap.floorPatches.push(patch);
+    addedPatches.push(patch);
+  }
+
+  return addedPatches;
+}
+
+/**
+ * Generate floor patches for all trees in a stroke
+ * @param {object} terrainMap - TerrainMap
+ * @param {string} strokeId - Stroke ID
+ * @param {object} options - Generation options
+ * @returns {object[]} Array of floor patches added
+ */
+export function generateFloorPatchesForStroke(terrainMap, strokeId, options = {}) {
+  const trees = terrainMap.trees.filter(t => t.strokeId === strokeId);
+  const allPatches = [];
+
+  for (const tree of trees) {
+    const patches = generateFloorPatchesForTree(terrainMap, tree, options);
+    allPatches.push(...patches);
+  }
+
+  return allPatches;
+}
+
+/**
+ * Remove floor patches associated with a parent (tree)
+ * @param {object} terrainMap - TerrainMap
+ * @param {string} parentId - Parent tree ID
+ * @returns {number} Number of floor patches removed
+ */
+export function removeFloorPatchesForParent(terrainMap, parentId) {
+  if (!terrainMap.floorPatches) return 0;
+  const before = terrainMap.floorPatches.length;
+  terrainMap.floorPatches = terrainMap.floorPatches.filter(p => p.parentId !== parentId);
+  return before - terrainMap.floorPatches.length;
+}
+
+/**
+ * Remove floor patches associated with a stroke
+ * @param {object} terrainMap - TerrainMap
+ * @param {string} strokeId - Stroke ID
+ * @returns {number} Number of floor patches removed
+ */
+export function removeFloorPatchesForStroke(terrainMap, strokeId) {
+  if (!terrainMap.floorPatches) return 0;
+  const before = terrainMap.floorPatches.length;
+  terrainMap.floorPatches = terrainMap.floorPatches.filter(p => p.strokeId !== strokeId);
+  return before - terrainMap.floorPatches.length;
+}
+
+/**
+ * Remove floor patches within a radius
+ * @param {object} terrainMap - TerrainMap
+ * @param {number} x - Center X
+ * @param {number} y - Center Y
+ * @param {number} radius - Radius
+ * @returns {number} Number of floor patches removed
+ */
+export function removeFloorPatchesInRadius(terrainMap, x, y, radius) {
+  if (!terrainMap.floorPatches) return 0;
+  const before = terrainMap.floorPatches.length;
+  const radiusSq = radius * radius;
+
+  terrainMap.floorPatches = terrainMap.floorPatches.filter(p => {
+    const dx = p.x - x;
+    const dy = p.y - y;
+    return (dx * dx + dy * dy) > radiusSq;
+  });
+
+  return before - terrainMap.floorPatches.length;
+}
+
+/**
+ * Get all floor patches (no sorting needed - they're on ground layer)
+ * @param {object} terrainMap - TerrainMap
+ * @returns {object[]} All floor patches
+ */
+export function getFloorPatches(terrainMap) {
+  return terrainMap.floorPatches || [];
 }

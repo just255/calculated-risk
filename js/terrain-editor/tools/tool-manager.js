@@ -99,9 +99,25 @@ export class ToolManager {
   // ═══════════════════════════════════════════════════════════════
 
   _switchTool(toolName) {
-    const newTool = this._tools.get(toolName);
+    // Pan tool is handled specially - it activates pan mode
+    if (toolName === 'pan') {
+      this._isPanMode = true;
+      if (this._canvas) {
+        this._canvas.style.cursor = 'grab';
+      }
+      return;
+    }
+
+    // Exiting pan mode when switching to another tool
+    this._isPanMode = false;
+
+    // Feature tools (forest, brush, water, ground) map to the 'paint' tool
+    const featureTools = ['forest', 'brush', 'water', 'ground'];
+    const actualToolName = featureTools.includes(toolName) ? 'paint' : toolName;
+
+    const newTool = this._tools.get(actualToolName);
     if (!newTool) {
-      console.warn(`[ToolManager] Unknown tool: ${toolName}`);
+      console.warn(`[ToolManager] Unknown tool: ${toolName} (mapped to: ${actualToolName})`);
       return;
     }
 
@@ -129,11 +145,12 @@ export class ToolManager {
   }
 
   _onMouseDown(e) {
-    // Check for panning: middle mouse (button 1) OR space + left mouse (button 0)
+    // Check for panning: middle mouse (button 1) OR space + left mouse (button 0) OR pan mode active
     const isMiddleMouse = e.button === 1;
     const isSpaceLeftMouse = this._spaceHeld && e.button === 0;
+    const isPanModeLeftMouse = this._isPanMode && e.button === 0;
 
-    if (isMiddleMouse || isSpaceLeftMouse) {
+    if (isMiddleMouse || isSpaceLeftMouse || isPanModeLeftMouse) {
       this._isPanning = true;
       this._panStart = { x: e.clientX, y: e.clientY };
       this._canvas.style.cursor = 'grabbing';
@@ -187,8 +204,8 @@ export class ToolManager {
     if (this._isPanning) {
       this._isPanning = false;
       this._panStart = null;
-      // Restore cursor based on space state or active tool
-      if (this._spaceHeld) {
+      // Restore cursor based on space state, pan mode, or active tool
+      if (this._spaceHeld || this._isPanMode) {
         this._canvas.style.cursor = 'grab';
       } else if (this._activeTool) {
         this._canvas.style.cursor = this._activeTool.cursor || 'default';
@@ -246,19 +263,35 @@ export class ToolManager {
       return;
     }
 
-    // Tool shortcuts
+    // Tool shortcuts - feature tools map to 'paint' internally but set different feature types
     const shortcuts = {
-      'p': 'paint',
-      'c': 'clear',
-      'v': 'select',
-      't': 'transform'
+      'f': { tool: 'forest', feature: 'forest' },    // Forest (F)
+      'b': { tool: 'brush', feature: 'brush' },      // Brush (B)
+      'w': { tool: 'water', feature: 'water' },      // Water (W)
+      'g': { tool: 'ground', feature: 'groundTexture' }, // Ground (G)
+      'c': { tool: 'clear' },                        // Clear (C)
+      'v': { tool: 'select' },                       // Select (V)
+      't': { tool: 'transform' },                    // Transform (T)
+      'p': { tool: 'pan' }                           // Pan (P)
     };
 
-    const tool = shortcuts[e.key.toLowerCase()];
-    if (tool && this._tools.has(tool)) {
-      e.preventDefault();
-      this._state.activeTool = tool;
-      return;
+    const shortcut = shortcuts[e.key.toLowerCase()];
+    if (shortcut) {
+      // Feature tools map to 'paint' internally
+      const featureTools = ['forest', 'brush', 'water', 'ground'];
+      const actualTool = featureTools.includes(shortcut.tool) ? 'paint' : shortcut.tool;
+
+      // Check if the actual tool exists
+      if (this._tools.has(actualTool) || shortcut.tool === 'pan') {
+        e.preventDefault();
+        this._state.activeTool = shortcut.tool;
+
+        // If it's a feature tool, also set the feature type
+        if (shortcut.feature) {
+          this._state.setToolOption('featureType', shortcut.feature);
+        }
+        return;
+      }
     }
 
     // Undo/Redo

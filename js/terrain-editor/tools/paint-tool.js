@@ -4,6 +4,15 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { createStroke, FEATURE_DEFS, BRUSH_TYPES } from '../../world-builder/strokes.js';
+import { generateForestItems, SCATTER_TYPES } from '../../world-builder/scatter.js';
+
+/**
+ * Simple seeded random (matches scatter.js seededRandom)
+ */
+function _seededRand(seed) {
+  const x = Math.sin(seed) * 10000;
+  return x - Math.floor(x);
+}
 
 /**
  * Feature type colors for brush preview
@@ -27,6 +36,10 @@ export const PaintTool = {
   _isPainting: false,
   _lastPaintPos: null,
   _strokesAddedDuringDrag: 0,  // Track strokes for batch render
+  _lastPreviewPos: null,        // Throttle scatter preview repositioning
+  _cachedPreviewItems: null,    // Cached preview items (regenerated on settings change)
+  _cachedPreviewKey: null,      // Key to detect when settings changed
+  _cachedPreviewGenPos: null,   // Position where cached items were generated
 
   onActivate(state, renderer) {
     console.log('[PaintTool] Activated');
@@ -35,7 +48,12 @@ export const PaintTool = {
   onDeactivate(state, renderer) {
     this._isPainting = false;
     this._lastPaintPos = null;
+    this._lastPreviewPos = null;
+    this._cachedPreviewItems = null;
+    this._cachedPreviewKey = null;
+    this._cachedPreviewGenPos = null;
     renderer.clearBrushPreview();
+    renderer.clearScatterPreview();
   },
 
   onMouseDown(e, state, renderer) {
@@ -45,7 +63,8 @@ export const PaintTool = {
       this._lastPaintPos = { x: e.x, y: e.y };
       this._strokesAddedDuringDrag = 0;
       this._renderer = renderer;  // Store for preview rendering
-      // First stroke renders immediately
+      this._dragModeStarted = false;  // Track if we've started drag mode
+      // First stroke renders immediately (NOT in drag mode)
       this._paint(e.x, e.y, state, false);
     }
   },
@@ -68,6 +87,15 @@ export const PaintTool = {
       });
     }
 
+    // Scatter preview on canvas (shows what would spawn at cursor position)
+    const showPreview = state.viewSettings.showScatterPreview;
+    if (showPreview && inBounds && !this._isPainting && options.featureType === 'forest') {
+      this._updateScatterPreview(e.x, e.y, state, renderer);
+    } else if (this._lastPreviewPos) {
+      renderer.clearScatterPreview();
+      this._lastPreviewPos = null;
+    }
+
     // Drag painting (only in bounds)
     if (this._isPainting && e.buttons === 1 && inBounds) {
       const dx = e.x - this._lastPaintPos.x;
@@ -79,6 +107,12 @@ export const PaintTool = {
       const paintSpacing = Math.max(30, options.brushRadius * 0.6);
 
       if (dist >= paintSpacing) {
+        // Start drag mode on first drag stroke (not on initial click)
+        // This ensures single clicks get immediate cache rebuild
+        if (!this._dragModeStarted) {
+          renderer.beginDragPaint();
+          this._dragModeStarted = true;
+        }
         // Skip render during drag - batch them up, render on mouse up
         // But show in preview layer for visual feedback
         this._paint(e.x, e.y, state, true, renderer);
@@ -89,25 +123,37 @@ export const PaintTool = {
   },
 
   onMouseUp(e, state, renderer) {
-    // Final render after drag painting
-    if (this._isPainting && this._strokesAddedDuringDrag > 0) {
-      renderer.clearPaintPreview();  // Clear preview before full render
-      state.requestRender();
+    // End drag paint mode only if it was started (i.e., user actually dragged)
+    if (this._dragModeStarted) {
+      renderer.endDragPaint();
+      // Final render after drag painting
+      if (this._isPainting && this._strokesAddedDuringDrag > 0) {
+        renderer.clearPaintPreview();  // Clear preview before full render
+        state.requestRender();
+      }
     }
     this._isPainting = false;
     this._lastPaintPos = null;
     this._strokesAddedDuringDrag = 0;
+    this._dragModeStarted = false;
   },
 
   onMouseLeave(state, renderer) {
-    // Final render if we were painting when leaving
-    if (this._isPainting && this._strokesAddedDuringDrag > 0) {
-      renderer.clearPaintPreview();
-      state.requestRender();
+    // End drag paint mode if it was started
+    if (this._dragModeStarted) {
+      renderer.endDragPaint();
+      // Final render if we were painting when leaving
+      if (this._strokesAddedDuringDrag > 0) {
+        renderer.clearPaintPreview();
+        state.requestRender();
+      }
     }
     this._isPainting = false;
     this._lastPaintPos = null;
+    this._lastPreviewPos = null;
     this._strokesAddedDuringDrag = 0;
+    this._dragModeStarted = false;
+    renderer.clearScatterPreview();
   },
 
   onContextMenu(e, state, renderer) {
@@ -209,13 +255,23 @@ export const PaintTool = {
 
     // If painting trees, add tree-specific properties
     if (options.featureType === 'forest') {
-      // Pick tree type based on ratios (may include dead variants like "oak-dead")
-      const selectedType = this._pickTreeType(options);
+      // Use preview seed so the stroke matches what the preview showed
+      const paintSeed = options.previewSeed ?? Math.floor(Math.random() * 1000000);
+      stroke.seed = paintSeed;
 
-      // Parse dead variants: "oak-dead" → treeType="oak", isDead=true
-      const isDeadVariant = selectedType.endsWith('-dead');
-      stroke.treeType = isDeadVariant ? selectedType.replace('-dead', '') : selectedType;
-      stroke.forceAllDead = isDeadVariant;  // Force all trees in this stroke to be dead
+      // Store all selected tree types and their ratios for mixed generation
+      const treeTypes = options.treeTypes || [options.treeType || 'oak'];
+      const treeRatios = options.treeRatios || {};
+
+      // Filter out 'dead' as it's a modifier, not a real type
+      stroke.treeTypes = treeTypes.filter(t => t !== 'dead');
+      stroke.treeRatios = { ...treeRatios };
+
+      // Legacy single type for backwards compatibility (use first type)
+      const firstType = stroke.treeTypes[0] || 'oak';
+      const isDeadVariant = firstType.endsWith('-dead');
+      stroke.treeType = isDeadVariant ? firstType.replace('-dead', '') : firstType;
+      stroke.forceAllDead = isDeadVariant;
 
       stroke.density = options.treeDensity;
       stroke.treeScale = options.treeScale || 0.35;
@@ -245,13 +301,13 @@ export const PaintTool = {
     }
 
     // Auto-paint ground texture if enabled (paint first so it's behind trees)
-    // NOTE: For forests, we skip stroke-based floor - tree-based ground layer handles it
+    // NOTE: For forests, skip stroke-based floor - tree-based system renders floor radiating from each tree
     let autoGroundStroke = null;
     if (options.autoGroundTexture) {
       const featureDef = FEATURE_DEFS[options.featureType];
       const autoTexture = featureDef?.autoGroundTexture;
 
-      // Skip forest-floor strokes - tree-based system renders floor radiating from each tree
+      // Skip forest-floor strokes - tree-based system handles floor per-tree
       // Other auto textures (like mud around water) still use strokes
       if (autoTexture && autoTexture !== 'forest-floor') {
         const floorRadius = options.brushRadius + (options.floorExtend ?? 0);
@@ -275,6 +331,11 @@ export const PaintTool = {
 
     state.addStroke(stroke, skipRender);
 
+    // Generate new preview seed for next stroke (triggers preview refresh)
+    if (options.featureType === 'forest') {
+      state.setToolOption('previewSeed', Math.floor(Math.random() * 1000000));
+    }
+
     // Add ground texture to preview for visual feedback during drag
     if (skipRender && renderer && autoGroundStroke) {
       renderer.addToPaintPreview(autoGroundStroke);
@@ -291,6 +352,113 @@ export const PaintTool = {
 
     const options = state.toolOptions;
     state.removeStrokesAt(x, y, options.brushRadius);
+  },
+
+  /**
+   * Show cached scatter preview at cursor position.
+   * Generates at actual cursor position using real terrain (for accurate collision/water checks).
+   * Caches results and shifts for small cursor movements; regenerates for large moves or settings changes.
+   */
+  _updateScatterPreview(x, y, state, renderer) {
+    // Throttle minor movement
+    if (this._lastPreviewPos) {
+      const dx = x - this._lastPreviewPos.x;
+      const dy = y - this._lastPreviewPos.y;
+      if (dx * dx + dy * dy < 9) return; // Less than 3px movement
+    }
+    this._lastPreviewPos = { x, y };
+
+    const options = state.toolOptions;
+    const useScatter = options.useScatterSystem ?? false;
+    if (!useScatter) {
+      renderer.clearScatterPreview();
+      return;
+    }
+
+    // Build settings key (position-independent)
+    const seed = options.previewSeed ?? 42;
+    const settingsKey = [
+      (options.treeTypes || ['oak']).join(','),
+      JSON.stringify(options.treeRatios || {}),
+      options.treeDensity, options.treeScale, options.treeSpacing,
+      (options.selectedAges || []).join(','),
+      (options.brushTypes || ['bush-small']).join(','),
+      JSON.stringify(options.brushRatios || {}),
+      options.brushDensity, options.brushScale,
+      options.season, options.biome, options.brushRadius, seed,
+      JSON.stringify(options.seasonOverrides || {}),
+      JSON.stringify(options.childSpawnOverrides || {})
+    ].join('|');
+
+    // Regenerate when settings change OR cursor moves significantly
+    // (collision context changes over distance - water strokes, existing trees)
+    const radius = options.brushRadius;
+    const needsRegen = settingsKey !== this._cachedPreviewKey ||
+      !this._cachedPreviewGenPos ||
+      Math.abs(x - this._cachedPreviewGenPos.x) > radius ||
+      Math.abs(y - this._cachedPreviewGenPos.y) > radius;
+
+    if (needsRegen) {
+      this._cachedPreviewKey = settingsKey;
+      this._cachedPreviewGenPos = { x, y };
+
+      // Use shared forest generation function (single source of truth)
+      const mockTerrain = { scatterItems: [], strokes: [] };
+
+      const allItems = generateForestItems(mockTerrain,
+        { x, y, radius, seed },
+        {
+          treeTypes: options.treeTypes || ['oak'],
+          treeRatios: options.treeRatios || {},
+          treeDensity: options.treeDensity ?? 1.0,
+          treeScale: options.treeScale ?? 0.35,
+          treeSpacing: options.treeSpacing ?? 1.0,
+          selectedAges: options.selectedAges ?? ['young', 'transitional', 'old'],
+          ageRatios: options.ageRatios ?? null,
+          brushTypes: options.brushTypes || ['bush-small'],
+          brushRatios: options.brushRatios || {},
+          brushDensity: options.brushDensity ?? 1.0,
+          brushScale: options.brushScale ?? 0.25,
+          season: options.season ?? 'summer',
+          biome: options.biome ?? 'temperate',
+          seasonOverrides: options.seasonOverrides ?? {},
+          childSpawnOverrides: options.childSpawnOverrides ?? {},
+          // Category toggles
+          treesEnabled: options.treesEnabled ?? true,
+          floorEnabled: options.floorEnabled ?? true,
+          particlesEnabled: options.particlesEnabled ?? true,
+          brushEnabled: options.brushEnabled ?? true,
+          images: {
+            tree: renderer._images.trees,
+            brush: renderer._images.brush,
+            floor: renderer._images.floor,
+            particle: renderer._images.brush
+          }
+        }
+      );
+
+      this._cachedPreviewItems = allItems;
+    }
+
+    if (!this._cachedPreviewItems || this._cachedPreviewItems.length === 0) {
+      renderer.clearScatterPreview();
+      return;
+    }
+
+    // Shift cached items from generation position to current cursor
+    const dx = x - this._cachedPreviewGenPos.x;
+    const dy = y - this._cachedPreviewGenPos.y;
+
+    if (dx === 0 && dy === 0) {
+      renderer.setScatterPreview(this._cachedPreviewItems);
+    } else {
+      const positioned = this._cachedPreviewItems.map(item => ({
+        ...item,
+        x: item.x + dx,
+        y: item.y + dy
+      }));
+      renderer.setScatterPreview(positioned);
+    }
   },
 
   _getPreviewColor(options) {
@@ -333,29 +501,68 @@ export const PaintTool = {
 
   /**
    * Pick a tree type based on configured ratios
+   * "Dead" ratio is distributed proportionally across selected species
+   * @param {object} options - Tool options
+   * @param {number} [seed] - Optional seed for deterministic pick (matches preview)
+   * @returns {string} Tree type (e.g., 'oak', 'pine-dead', 'birch')
    */
-  _pickTreeType(options) {
-    const types = options.treeTypes || [options.treeType || 'oak'];
+  _pickTreeType(options, seed) {
+    const allTypes = options.treeTypes || [options.treeType || 'oak'];
     const ratios = options.treeRatios || {};
 
-    // If only one type, return it
-    if (types.length === 1) {
-      return types[0];
+    // Separate real species from the generic 'dead' type
+    // 'dead' ratio gets distributed proportionally across species as dead variants
+    const deadRatio = ratios['dead'] || 0;
+    const speciesTypes = allTypes.filter(t => t !== 'dead' && !t.endsWith('-dead'));
+    const deadVariants = allTypes.filter(t => t.endsWith('-dead'));
+
+    // Build effective types list: species + their dead variants based on deadRatio
+    // If user selected specific dead variants (oak-dead), include those directly
+    const effectiveTypes = [...speciesTypes, ...deadVariants];
+
+    // If only dead variants selected (no live species), use them directly
+    if (speciesTypes.length === 0) {
+      if (deadVariants.length === 1) return deadVariants[0];
+      const rand = seed != null ? _seededRand(seed) : Math.random();
+      let cumulative = 0;
+      for (const type of deadVariants) {
+        cumulative += ratios[type] || (1 / deadVariants.length);
+        if (rand < cumulative) return type;
+      }
+      return deadVariants[0] || 'oak-dead';
     }
 
-    // Pick based on ratio (weighted random)
-    const rand = Math.random();
-    let cumulative = 0;
+    // Calculate species weights (excluding 'dead' which is a modifier)
+    let speciesTotal = 0;
+    for (const type of speciesTypes) {
+      speciesTotal += ratios[type] || 0;
+    }
+    // If no ratios defined, distribute evenly
+    if (speciesTotal === 0) speciesTotal = speciesTypes.length;
 
-    for (const type of types) {
-      cumulative += ratios[type] || (1 / types.length);
-      if (rand < cumulative) {
-        return type;
+    // First roll: pick a species
+    const rand1 = seed != null ? _seededRand(seed) : Math.random();
+    let cumulative = 0;
+    let selectedSpecies = speciesTypes[0];
+
+    for (const type of speciesTypes) {
+      const weight = ratios[type] || (1 / speciesTypes.length);
+      cumulative += weight / (speciesTotal || 1) * (1 - deadRatio);
+      if (rand1 < cumulative) {
+        selectedSpecies = type;
+        break;
       }
     }
 
-    // Fallback
-    return types[0];
+    // Second roll: should this be dead? (using deadRatio)
+    // Use a different seed derivative for independence
+    const rand2 = seed != null ? _seededRand(seed + 7777) : Math.random();
+    if (deadRatio > 0 && rand2 < deadRatio) {
+      // Return dead variant of the selected species
+      return `${selectedSpecies}-dead`;
+    }
+
+    return selectedSpecies;
   },
 
   /**
