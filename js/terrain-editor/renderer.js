@@ -8,7 +8,7 @@ import { renderCanopyLayer, renderBaseLayer, ensureRasterized } from '../world-b
 // NEW: Unified scatter system rendering
 import { renderScatterLayer, renderScatterItem, getVisibleScatter, SCATTER_TYPES } from '../world-builder/index.js';
 // NEW: Animation system
-import { updateAnimations, hasActiveAnimations, getActiveAnimationCount } from '../world-builder/scatter-animation.js';
+import { updateAnimations, hasActiveAnimations, getActiveAnimationCount, animateStrokes } from '../world-builder/scatter-animation.js';
 
 // Ground texture scale (1 = native 256px, 0.25 = 64px tiles = matches cell size)
 const GROUND_TEXTURE_SCALE = 0.25;
@@ -63,6 +63,9 @@ export class Renderer {
     this._paintPreview = null;
     this._paintPreviewStrokes = [];
 
+    // Animating strokes (between drag end and cache bake)
+    this._animatingStrokes = [];
+
     // Cached canopy layer (trees/brush rendered once, reused until changed)
     this._canopyCache = null;
     this._canopyCacheValid = false;
@@ -80,7 +83,46 @@ export class Renderer {
     // Scatter preview (shown on UI layer when hovering with preview enabled)
     this._scatterPreview = null;
 
+    // Texture hover preview (shown during hover for water/ground texture)
+    this._textureHoverPreview = null;
+
+    // Canvas pool for pre-rendering strokes (reduces GC pressure)
+    this._canvasPool = [];
+    this._maxPoolSize = 20;
+
     this._init();
+  }
+
+  /**
+   * Get a canvas from the pool or create a new one
+   */
+  _acquireCanvas(size) {
+    // Try to find a canvas that's big enough
+    for (let i = 0; i < this._canvasPool.length; i++) {
+      const canvas = this._canvasPool[i];
+      if (canvas.width >= size && canvas.height >= size) {
+        this._canvasPool.splice(i, 1);
+        return canvas;
+      }
+    }
+    // Create new canvas if none available
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    return canvas;
+  }
+
+  /**
+   * Return a canvas to the pool for reuse
+   */
+  _releaseCanvas(canvas) {
+    if (this._canvasPool.length < this._maxPoolSize) {
+      // Clear it before pooling
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      this._canvasPool.push(canvas);
+    }
+    // If pool is full, just let it get GC'd
   }
 
   /**
@@ -91,11 +133,17 @@ export class Renderer {
   }
 
   /**
-   * End drag painting mode - triggers full quality cache rebuild
+   * End drag painting mode - let animations finish, then rebuild cache
    */
   endDragPaint() {
     this._isDragPainting = false;
-    this._invalidateGroundCache();
+
+    // If no animations running, rebuild cache immediately
+    if (this._animatingStrokes.length === 0) {
+      this._invalidateGroundCache();
+    }
+    // Otherwise, cache rebuild happens when animations complete (in _renderAnimatingStrokes)
+
     this._invalidateCanopyCache();
   }
 
@@ -135,11 +183,84 @@ export class Renderer {
 
   /**
    * Add a stroke to the paint preview (shown during drag painting)
+   * Water/shore strokes animate in during painting for smooth feel
    */
   addToPaintPreview(stroke) {
+    // Only groundTexture and water use the paint preview canvas
+    if (stroke.type !== 'groundTexture' && stroke.type !== 'water') {
+      return;
+    }
+
+    // Water strokes animate during painting (shore doesn't - it's not "poured")
+    if (stroke.type === 'water') {
+      // Start animation for this stroke
+      const animStyle = this._state.toolOptions?.animationStyle || 'ripple';
+      if (animStyle !== 'none') {
+        animateStrokes([stroke], animStyle);
+        this._animatingStrokes.push(stroke);
+
+        // Start pre-rendering the texture in the background
+        // By the time the animation finishes, this will be ready
+        this._preRenderStroke(stroke);
+      } else {
+        // No animation - add to regular preview
+        this._paintPreviewStrokes.push(stroke);
+        this._rebuildPaintPreview();
+      }
+      this._requestUIRender();
+      return;
+    }
+
+    // Shore strokes don't animate - just add to preview
+    if (stroke.isShore) {
+      this._paintPreviewStrokes.push(stroke);
+      this._rebuildPaintPreview();
+      this._requestUIRender();
+      return;
+    }
+
+    // Non-water strokes use incremental preview
+    const prevCount = this._paintPreviewStrokes.length;
     this._paintPreviewStrokes.push(stroke);
-    this._renderPaintPreviewStroke(stroke);
-    this._requestUIRender();  // Lightweight update to show preview
+
+    // Incremental render: if new stroke is same layer as previous, just draw it
+    if (prevCount > 0 && this._paintPreview) {
+      const prevStroke = this._paintPreviewStrokes[prevCount - 1];
+      const sameLayer = this._getStrokeLayer(stroke) === this._getStrokeLayer(prevStroke);
+
+      if (sameLayer) {
+        // Same layer - draw incrementally on top
+        const ctx = this._paintPreview.getContext('2d');
+        ctx.imageSmoothingEnabled = false;
+        this._renderStrokeToPreview(ctx, stroke);
+        this._requestUIRender();
+        return;
+      }
+    }
+
+    // Different layer or first stroke - need full rebuild for correct layering
+    this._rebuildPaintPreview();
+    this._requestUIRender();
+  }
+
+  /**
+   * Get the rendering layer for a stroke (for incremental render optimization)
+   */
+  _getStrokeLayer(stroke) {
+    if (stroke.type === 'water') return 2;
+    if (stroke.type === 'groundTexture' && stroke.isShore) return 1;
+    return 0; // regular ground texture
+  }
+
+  /**
+   * Render a single stroke to the preview canvas
+   */
+  _renderStrokeToPreview(ctx, stroke) {
+    if (stroke.type === 'water') {
+      this._renderWaterStroke(ctx, stroke, true);
+    } else {
+      this._renderGroundTextureStroke(ctx, stroke, true);
+    }
   }
 
   /**
@@ -154,17 +275,47 @@ export class Renderer {
   }
 
   /**
-   * Render a single stroke to the paint preview canvas
-   * Note: Water and forest strokes render via cache rebuild (stroke/tree count detection).
-   * Only groundTexture strokes use the preview canvas.
+   * Check if a circular stroke is completely occluded by another stroke
+   * A stroke is occluded if it's entirely inside another stroke of the same type
+   * @param {object} stroke - The stroke to check
+   * @param {object[]} otherStrokes - Array of strokes that might occlude it
+   * @returns {boolean} True if stroke is completely hidden
    */
-  _renderPaintPreviewStroke(stroke) {
-    // Water renders via ground cache (stroke count detection triggers rebuild)
-    // Only groundTexture uses the paint preview canvas
-    if (stroke.type !== 'groundTexture') {
-      return;
+  _isStrokeOccluded(stroke, otherStrokes) {
+    for (const other of otherStrokes) {
+      if (other === stroke) continue;
+      // Check if stroke is entirely inside other
+      // stroke is inside other if: distance(centers) + stroke.radius <= other.radius
+      const dx = stroke.x - other.x;
+      const dy = stroke.y - other.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist + stroke.radius <= other.radius) {
+        return true;
+      }
     }
+    return false;
+  }
 
+  /**
+   * Check if a stroke is visible within the viewport
+   * @param {object} stroke - Stroke with x, y, radius
+   * @param {object} viewport - Viewport bounds {x, y, width, height} in canvas coords
+   * @returns {boolean} True if stroke overlaps viewport
+   */
+  _isStrokeInViewport(stroke, viewport) {
+    // Stroke is visible if its bounding box overlaps viewport
+    return stroke.x + stroke.radius >= viewport.x &&
+           stroke.x - stroke.radius <= viewport.x + viewport.width &&
+           stroke.y + stroke.radius >= viewport.y &&
+           stroke.y - stroke.radius <= viewport.y + viewport.height;
+  }
+
+  /**
+   * Rebuild paint preview canvas with proper layering
+   * Renders all strokes with correct z-order: ground textures, then shores (isShore), then water
+   * Applies occlusion culling (skip strokes hidden by others) and viewport culling
+   */
+  _rebuildPaintPreview() {
     const width = this._state.canvasWidth;
     const height = this._state.canvasHeight;
 
@@ -177,8 +328,311 @@ export class Renderer {
 
     const ctx = this._paintPreview.getContext('2d');
     ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, width, height);
 
-    this._renderGroundTextureStroke(ctx, stroke, true);
+    const strokes = this._paintPreviewStrokes;
+    const len = strokes.length;
+    if (len === 0) return;
+
+    // Single pass: categorize and render in order
+    // Ground textures first, then shores, then water
+    // Uses inline occlusion check to avoid creating filter arrays
+
+    // Pass 1: Ground textures (non-shore)
+    for (let i = 0; i < len; i++) {
+      const s = strokes[i];
+      if (s.type !== 'groundTexture' || s.isShore) continue;
+      if (!this._isStrokeInViewportFast(s, width, height)) continue;
+      this._renderGroundTextureStroke(ctx, s, true);
+    }
+
+    // Pass 2: Shore textures with inline occlusion check
+    for (let i = 0; i < len; i++) {
+      const s = strokes[i];
+      if (s.type !== 'groundTexture' || !s.isShore) continue;
+      if (!this._isStrokeInViewportFast(s, width, height)) continue;
+      // Inline occlusion: check if any later shore stroke completely covers this one
+      let occluded = false;
+      for (let j = i + 1; j < len; j++) {
+        const other = strokes[j];
+        if (other.type !== 'groundTexture' || !other.isShore) continue;
+        const dx = s.x - other.x;
+        const dy = s.y - other.y;
+        if (Math.sqrt(dx * dx + dy * dy) + s.radius <= other.radius) {
+          occluded = true;
+          break;
+        }
+      }
+      if (!occluded) this._renderGroundTextureStroke(ctx, s, true);
+    }
+
+    // Pass 3: Water strokes with inline occlusion check
+    for (let i = 0; i < len; i++) {
+      const s = strokes[i];
+      if (s.type !== 'water') continue;
+      if (!this._isStrokeInViewportFast(s, width, height)) continue;
+      // Inline occlusion: check if any later water stroke completely covers this one
+      let occluded = false;
+      for (let j = i + 1; j < len; j++) {
+        const other = strokes[j];
+        if (other.type !== 'water') continue;
+        const dx = s.x - other.x;
+        const dy = s.y - other.y;
+        if (Math.sqrt(dx * dx + dy * dy) + s.radius <= other.radius) {
+          occluded = true;
+          break;
+        }
+      }
+      if (!occluded) this._renderWaterStroke(ctx, s, true);
+    }
+  }
+
+  /**
+   * Fast viewport check without object allocation
+   */
+  _isStrokeInViewportFast(stroke, width, height) {
+    return stroke.x + stroke.radius >= 0 &&
+           stroke.x - stroke.radius <= width &&
+           stroke.y + stroke.radius >= 0 &&
+           stroke.y - stroke.radius <= height;
+  }
+
+  /**
+   * Pre-render a stroke's texture to an offscreen canvas
+   * Called at animation start so the cached result is ready by animation end
+   * @param {object} stroke - The stroke to pre-render
+   */
+  _preRenderStroke(stroke) {
+    const radius = stroke.radius;
+
+    // For very large strokes, skip pre-rendering (too expensive)
+    // They'll use the fallback preview-mode rendering
+    if (radius > 200) {
+      stroke._skipCache = true;
+      this._precalcDotPositions(stroke);
+      return;
+    }
+
+    const size = Math.ceil(radius * 2) + 4;
+
+    // Get canvas from pool (reduces GC pressure)
+    const cache = this._acquireCanvas(size);
+    const ctx = cache.getContext('2d');
+    ctx.clearRect(0, 0, cache.width, cache.height);
+    ctx.imageSmoothingEnabled = false;
+
+    // Render the texture centered in the cache canvas
+    // Use full quality (not preview mode) since we have time during animation
+    ctx.save();
+    ctx.translate(size / 2, size / 2);
+
+    // Reuse a temporary object instead of spreading
+    this._cacheStrokeTemp = this._cacheStrokeTemp || {};
+    const temp = this._cacheStrokeTemp;
+    temp.x = 0;
+    temp.y = 0;
+    temp.radius = stroke.radius;
+    temp.intensity = stroke.intensity;
+    temp.fadeWidth = stroke.fadeWidth;
+    temp.textureType = stroke.textureType;
+    temp.depthFade = stroke.depthFade;
+    temp.type = stroke.type;
+
+    if (stroke.type === 'water') {
+      this._renderWaterStroke(ctx, temp, false);  // false = full quality
+    } else {
+      this._renderGroundTextureStroke(ctx, temp, false);
+    }
+
+    ctx.restore();
+
+    // Store the cached canvas on the stroke for later use
+    stroke._cachedTexture = cache;
+    stroke._cacheSize = size;
+
+    // Pre-calculate dot positions for this stroke (avoid recalculating each frame)
+    this._precalcDotPositions(stroke);
+  }
+
+  /**
+   * Pre-calculate foam dot positions for a stroke
+   */
+  _precalcDotPositions(stroke) {
+    // Fewer dots for large strokes (diminishing returns visually, big perf cost)
+    const baseCount = Math.floor(stroke.radius * 0.5);
+    const dotCount = stroke.radius > 150 ? Math.min(40, baseCount) : Math.min(80, baseCount);
+    const seed = stroke.id ? parseInt(stroke.id.replace(/\D/g, '')) || 0 : 0;
+
+    const dots = new Float32Array(dotCount * 3); // x, y, size per dot
+
+    for (let i = 0; i < dotCount; i++) {
+      const r1 = Math.abs(Math.sin(seed + i * 127.1) * 43758.5453 % 1);
+      const r2 = Math.abs(Math.sin(seed + i * 269.5) * 43758.5453 % 1);
+      const r3 = Math.abs(Math.sin(seed + i * 183.3) * 43758.5453 % 1);
+
+      const angle = r1 * Math.PI * 2;
+      const distRatio = Math.sqrt(r2); // Store ratio, multiply by animatedRadius at render time
+
+      dots[i * 3] = Math.cos(angle) * distRatio;     // x ratio
+      dots[i * 3 + 1] = Math.sin(angle) * distRatio; // y ratio
+      dots[i * 3 + 2] = 2 + r3 * 3;                  // size
+    }
+
+    stroke._dotPositions = dots;
+    stroke._dotCount = dotCount;
+  }
+
+  /**
+   * Render strokes that are currently animating
+   * Ripple effect: texture fills in behind the expanding ripple edge
+   * Uses pre-rendered cache when available for better performance
+   */
+  _renderAnimatingStrokes(ctx) {
+    const completed = [];
+
+    for (const stroke of this._animatingStrokes) {
+      // Get animated radius (ripple expanding outward)
+      const animatedRadius = stroke._renderRadius ?? stroke.radius;
+      const alpha = stroke._renderAlpha ?? stroke.intensity ?? 1.0;
+
+      // Skip if radius is too small
+      if (animatedRadius < 2) continue;
+
+      // Use pre-rendered cache if available (much faster than re-rendering each frame)
+      if (stroke._cachedTexture && !stroke._skipCache) {
+        const cache = stroke._cachedTexture;
+        const size = stroke._cacheSize;
+
+        // Clip to animated radius circle
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(stroke.x, stroke.y, animatedRadius, 0, Math.PI * 2);
+        ctx.clip();
+
+        // Draw the pre-rendered texture (centered on stroke position)
+        ctx.globalAlpha = alpha;
+        ctx.drawImage(cache, stroke.x - size / 2, stroke.y - size / 2);
+
+        ctx.restore();
+      } else {
+        // Fallback for large strokes or cache not ready: render directly in preview mode
+        this._cacheStrokeTemp = this._cacheStrokeTemp || {};
+        const temp = this._cacheStrokeTemp;
+        temp.x = stroke.x;
+        temp.y = stroke.y;
+        temp.radius = animatedRadius;
+        temp.intensity = stroke.intensity ?? 1.0;
+        temp.fadeWidth = stroke.fadeWidth;
+        temp.textureType = stroke.textureType;
+        temp.depthFade = stroke.depthFade;
+        temp.type = stroke.type;
+
+        if (stroke.type === 'water') {
+          this._renderWaterStroke(ctx, temp, true);
+        } else {
+          this._renderGroundTextureStroke(ctx, temp, true);
+        }
+      }
+
+
+      // Render ripples: expand out, bounce back to 60%, fade throughout
+      if (animatedRadius > 10) {
+        const progress = (animatedRadius / stroke.radius - 0.5) / 0.5; // 0 at start, 1 at end
+        // Fewer ripples for large strokes
+        const rippleCount = stroke.radius > 150 ? 2 : 4;
+        ctx.lineWidth = 1.5;
+
+        for (let r = 0; r < rippleCount; r++) {
+          // Stagger each ring's timing
+          const ringDelay = r * 0.15;
+          const ringProgress = Math.max(0, Math.min(1, (progress - ringDelay) / (1 - ringDelay)));
+
+          if (ringProgress <= 0) continue;
+
+          // Phase 1 (0-0.5): expand from center to edge
+          // Phase 2 (0.5-1): bounce back to 60%
+          let rippleRadius;
+          if (ringProgress < 0.5) {
+            // Expanding out: 0% -> 100%
+            const expandProgress = ringProgress / 0.5;
+            rippleRadius = animatedRadius * expandProgress;
+          } else {
+            // Bouncing back: 100% -> 60%
+            const bounceProgress = (ringProgress - 0.5) / 0.5;
+            rippleRadius = animatedRadius * (1 - 0.4 * bounceProgress);
+          }
+
+          // Fade quickly - gone by 60% progress
+          const rippleAlpha = Math.max(0, 1 - ringProgress * 2.5) * alpha;
+
+          if (rippleRadius > 5 && rippleAlpha > 0.02) {
+            ctx.strokeStyle = `rgba(255, 255, 255, ${rippleAlpha})`;
+            ctx.beginPath();
+            ctx.arc(stroke.x, stroke.y, rippleRadius, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        }
+      }
+
+      // Render foam/turbulence dots (fade out as water settles)
+      const foamProgress = 1 - (animatedRadius / stroke.radius - 0.5) / 0.5; // 1 at start, 0 at end
+      if (foamProgress > 0.05 && stroke._dotPositions) {
+        const foamAlpha = foamProgress * 1.0; // Bright white foam
+        ctx.fillStyle = `rgba(255, 255, 255, ${foamAlpha})`;
+
+        // Use pre-calculated dot positions
+        const dots = stroke._dotPositions;
+        const dotCount = stroke._dotCount;
+        const sx = stroke.x;
+        const sy = stroke.y;
+
+        ctx.beginPath();
+        for (let i = 0; i < dotCount; i++) {
+          const idx = i * 3;
+          const dotX = sx + dots[idx] * animatedRadius;
+          const dotY = sy + dots[idx + 1] * animatedRadius;
+          const size = dots[idx + 2];
+
+          ctx.rect(dotX - size * 0.5, dotY - size * 0.5, size, size);
+        }
+        ctx.fill();
+      }
+
+      // Check if animation is complete
+      if (!stroke._animating) {
+        completed.push(stroke);
+      }
+    }
+
+    // Move completed strokes to paint preview so they stay visible
+    if (completed.length > 0) {
+      // Add completed strokes to paint preview (they'll show at full quality)
+      for (const stroke of completed) {
+        // Return canvas to pool and clean up
+        if (stroke._cachedTexture) {
+          this._releaseCanvas(stroke._cachedTexture);
+          delete stroke._cachedTexture;
+        }
+        delete stroke._cacheSize;
+        delete stroke._dotPositions;
+        delete stroke._dotCount;
+        this._paintPreviewStrokes.push(stroke);
+      }
+
+      // Rebuild paint preview with the newly completed strokes
+      if (this._paintPreviewStrokes.length > 0) {
+        this._rebuildPaintPreview();
+      }
+
+      this._animatingStrokes = this._animatingStrokes.filter(s => s._animating);
+
+      // If all animations done and not drag painting, rebuild cache at full quality
+      if (this._animatingStrokes.length === 0 && !this._isDragPainting) {
+        // Clear paint preview now that all strokes will be in the cache
+        this.clearPaintPreview();
+        this._invalidateGroundCache();
+      }
+    }
   }
 
   _createCanvases() {
@@ -463,6 +917,16 @@ export class Renderer {
       ctx.drawImage(this._paintPreview, 0, 0);
     }
 
+    // Draw animating strokes (between drag end and cache bake)
+    if (this._animatingStrokes.length > 0) {
+      this._renderAnimatingStrokes(ctx);
+    }
+
+    // Draw texture hover preview (semi-transparent preview of water/ground texture)
+    if (this._textureHoverPreview) {
+      this._renderTextureHoverPreview(ctx);
+    }
+
     // Draw grid (on top, not cached)
     this._renderGrid(ctx);
   }
@@ -528,18 +992,18 @@ export class Renderer {
       this._renderTreeBasedGroundLayer(cacheCtx, previewMode);
     }
 
-    // Draw shore strokes (on top of regular ground textures, under water)
-    for (const stroke of terrainMap.strokes) {
-      if (stroke.type === 'groundTexture' && stroke.isShore) {
-        this._renderGroundTextureStroke(cacheCtx, stroke, previewMode);
-      }
+    // Draw shore strokes with occlusion culling (on top of regular ground textures, under water)
+    const shoreStrokes = terrainMap.strokes.filter(s => s.type === 'groundTexture' && s.isShore);
+    const visibleShoreStrokes = shoreStrokes.filter(s => !this._isStrokeOccluded(s, shoreStrokes));
+    for (const stroke of visibleShoreStrokes) {
+      this._renderGroundTextureStroke(cacheCtx, stroke, previewMode);
     }
 
-    // Draw water strokes
-    for (const stroke of terrainMap.strokes) {
-      if (stroke.type === 'water') {
-        this._renderWaterStroke(cacheCtx, stroke, previewMode);
-      }
+    // Draw water strokes with occlusion culling
+    const waterStrokes = terrainMap.strokes.filter(s => s.type === 'water');
+    const visibleWaterStrokes = waterStrokes.filter(s => !this._isStrokeOccluded(s, waterStrokes));
+    for (const stroke of visibleWaterStrokes) {
+      this._renderWaterStroke(cacheCtx, stroke, previewMode);
     }
 
     this._groundCacheValid = true;
@@ -590,11 +1054,11 @@ export class Renderer {
       return;
     }
 
-    // Use 2x for preview (faster), 4x for final render (crisp)
-    // Also reduce for very large strokes
-    let scale = previewMode ? 2 : 4;
-    if (radius > 200) scale = Math.min(scale, 2);
-    if (radius > 400) scale = 1;
+    // Use 1x for preview (fast), 4x for final render (crisp)
+    // Preview is temporary during drag - full quality on mouseup
+    let scale = previewMode ? 1 : 4;
+    if (!previewMode && radius > 200) scale = 2;
+    if (!previewMode && radius > 400) scale = 1;
     const tileSize = 256 * GROUND_TEXTURE_SCALE * scale; // = 256 (native)
     const scaledRadius = radius * scale;
     const scaledFadeWidth = fadeWidth * scale;
@@ -897,8 +1361,14 @@ export class Renderer {
   }
 
   _renderWaterStroke(ctx, stroke, previewMode = false) {
-    const { x, y, radius, intensity, fadeWidth, textureType } = stroke;
-    this._renderTextureStroke(ctx, textureType || 'water', x, y, radius, intensity, fadeWidth ?? 12, previewMode);
+    const { x, y, radius, intensity, fadeWidth, textureType, depthFade } = stroke;
+
+    if (depthFade && depthFade > 0) {
+      // Use depth-aware rendering for deeper center effect
+      this._renderTextureStrokeWithDepth(ctx, textureType || 'water', x, y, radius, intensity, fadeWidth ?? 12, depthFade, previewMode);
+    } else {
+      this._renderTextureStroke(ctx, textureType || 'water', x, y, radius, intensity, fadeWidth ?? 12, previewMode);
+    }
   }
 
   _renderGrid(ctx) {
@@ -1132,8 +1602,9 @@ export class Renderer {
       this._groundCacheFloorPatchCount = floorPatchCount;
     }
 
-    // Redraw ground canvas if cache was rebuilt or paint preview needs showing
-    const needsGroundRedraw = (groundDataChanged && !this._isDragPainting) || hasPaintPreview;
+    // Redraw ground canvas if cache was rebuilt or paint/hover preview needs showing
+    const hasTextureHover = this._textureHoverPreview !== null;
+    const needsGroundRedraw = (groundDataChanged && !this._isDragPainting) || hasPaintPreview || hasTextureHover;
     if (needsGroundRedraw) {
       const groundCtx = this._contexts.ground;
       groundCtx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1151,6 +1622,10 @@ export class Renderer {
       }
       if (hasPaintPreview) {
         groundCtx.drawImage(this._paintPreview, 0, 0);
+      }
+      // Render texture hover preview (semi-transparent)
+      if (hasTextureHover) {
+        this._renderTextureHoverPreview(groundCtx);
       }
       this._renderGrid(groundCtx);
     }
@@ -1257,6 +1732,181 @@ export class Renderer {
       }
     }
 
+    ctx.restore();
+  }
+
+  /**
+   * Render texture hover preview (semi-transparent preview of water/ground texture)
+   */
+  _renderTextureHoverPreview(ctx) {
+    const preview = this._textureHoverPreview;
+    if (!preview) return;
+
+    this.renderWaterPreview(ctx, preview.x, preview.y, {
+      waterType: preview.textureType,
+      waterRadius: preview.radius,
+      waterFadeWidth: preview.fadeWidth,
+      waterOpacity: preview.waterOpacity ?? 1.0,
+      waterDepthFade: preview.waterDepthFade ?? 0,
+      shoreType: preview.isWater ? preview.shoreType : null,
+      shoreWidth: preview.isWater ? preview.shoreWidth : 0,
+      shoreFadeWidth: preview.shoreFadeWidth ?? preview.fadeWidth,
+      alpha: 0.7
+    });
+  }
+
+  /**
+   * Render water/texture preview at a specific position
+   * Shared by on-canvas hover preview and panel preview
+   * @param {CanvasRenderingContext2D} ctx - Target canvas context
+   * @param {number} x - Center X position
+   * @param {number} y - Center Y position
+   * @param {object} options - Render options
+   */
+  renderWaterPreview(ctx, x, y, options = {}) {
+    const {
+      waterType = 'water',
+      waterRadius = 60,
+      waterFadeWidth = 12,
+      waterOpacity = 1.0,
+      waterDepthFade = 0,
+      shoreType = null,
+      shoreWidth = 0,
+      shoreFadeWidth = 12,
+      alpha = 1.0
+    } = options;
+
+    const hasShore = shoreType && shoreType !== 'none' && shoreWidth > 0;
+
+    // Render shore first (larger radius), then water on top
+    if (hasShore) {
+      this._renderTextureStroke(
+        ctx,
+        shoreType,
+        x, y,
+        waterRadius + shoreWidth,
+        alpha,
+        shoreFadeWidth,
+        true // preview mode
+      );
+    }
+
+    // Render water with opacity and optional depth fade
+    const effectiveWaterAlpha = alpha * waterOpacity;
+
+    if (waterDepthFade > 0) {
+      // Depth fade: render water with gradient opacity (edges more transparent)
+      this._renderTextureStrokeWithDepth(
+        ctx,
+        waterType,
+        x, y,
+        waterRadius,
+        effectiveWaterAlpha,
+        waterFadeWidth,
+        waterDepthFade,
+        true // preview mode
+      );
+    } else {
+      // Normal water rendering
+      this._renderTextureStroke(
+        ctx,
+        waterType,
+        x, y,
+        waterRadius,
+        effectiveWaterAlpha,
+        waterFadeWidth,
+        true // preview mode
+      );
+    }
+  }
+
+  /**
+   * Render texture stroke with depth fade effect (center more opaque than edges)
+   * Used for water depth effect. Reuses _tempCanvas for performance.
+   */
+  _renderTextureStrokeWithDepth(ctx, textureType, x, y, radius, intensity, fadeWidth, depthFade, previewMode = false) {
+    const textureImg = this._images.ground[textureType];
+
+    // Calculate edge opacity: at edges, opacity is reduced by depthFade amount
+    const edgeOpacity = intensity * (1 - depthFade);
+    const centerOpacity = intensity;
+
+    if (!textureImg) {
+      // Fallback: draw colored circle with depth gradient
+      const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
+      gradient.addColorStop(0, `rgba(30, 90, 140, ${centerOpacity})`);
+      const fadeStop = Math.max(0, 1 - (fadeWidth / radius));
+      gradient.addColorStop(fadeStop, `rgba(30, 90, 140, ${edgeOpacity})`);
+      gradient.addColorStop(1, 'rgba(30, 90, 140, 0)');
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+
+    // Use 1x for preview (fast), 2x for final render
+    // Preview is temporary during drag - full quality on mouseup
+    let scale = previewMode ? 1 : 2;
+    if (!previewMode && radius > 150) scale = 1;
+    const tileSize = 256 * GROUND_TEXTURE_SCALE * scale;
+    const scaledRadius = radius * scale;
+    const scaledFadeWidth = fadeWidth * scale;
+
+    // Reuse temp canvas (resize only if needed)
+    const size = Math.ceil(scaledRadius * 2) + 2;
+    if (!this._tempCanvas || this._tempCanvasSize < size) {
+      this._tempCanvas = document.createElement('canvas');
+      this._tempCanvas.width = size;
+      this._tempCanvas.height = size;
+      this._tempCtx = this._tempCanvas.getContext('2d');
+      this._tempCanvasSize = size;
+    }
+    const tempCanvas = this._tempCanvas;
+    const tempCtx = this._tempCtx;
+
+    // Clear and configure
+    tempCtx.setTransform(1, 0, 0, 1, 0, 0);
+    tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
+    tempCtx.globalCompositeOperation = 'source-over';
+    tempCtx.imageSmoothingEnabled = false;
+
+    // Tile texture
+    const startX = (x - radius) * scale;
+    const startY = (y - radius) * scale;
+    const offsetX = ((startX % tileSize) + tileSize) % tileSize;
+    const offsetY = ((startY % tileSize) + tileSize) % tileSize;
+
+    for (let ty = -offsetY; ty < size; ty += tileSize) {
+      for (let tx = -offsetX; tx < size; tx += tileSize) {
+        tempCtx.drawImage(textureImg, tx, ty, tileSize, tileSize);
+      }
+    }
+
+    // Apply circular mask with depth-aware opacity gradient
+    tempCtx.globalCompositeOperation = 'destination-in';
+    const innerRadius = Math.max(0, scaledRadius - scaledFadeWidth);
+
+    // Create gradient that goes from center opacity to edge opacity to transparent
+    const gradient = tempCtx.createRadialGradient(
+      scaledRadius, scaledRadius, 0,
+      scaledRadius, scaledRadius, scaledRadius
+    );
+    // Center is full opacity
+    gradient.addColorStop(0, `rgba(0,0,0,${centerOpacity})`);
+    // Just before fade zone, use edge opacity
+    const fadeStart = innerRadius / scaledRadius;
+    gradient.addColorStop(Math.max(0, fadeStart), `rgba(0,0,0,${edgeOpacity})`);
+    // Fade to transparent
+    gradient.addColorStop(1, 'rgba(0,0,0,0)');
+
+    tempCtx.fillStyle = gradient;
+    tempCtx.fillRect(0, 0, size, size);
+
+    // Draw to main canvas
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(tempCanvas, 0, 0, size, size, x - radius, y - radius, radius * 2, radius * 2);
     ctx.restore();
   }
 
@@ -1398,6 +2048,39 @@ export class Renderer {
    */
   clearScatterPreview() {
     this._scatterPreview = null;
+    this._requestUIRender();
+  }
+
+  /**
+   * Set texture hover preview (shown during hover for water/ground texture)
+   * @param {number} x - Center X position
+   * @param {number} y - Center Y position
+   * @param {number} radius - Brush radius
+   * @param {string} textureType - Texture type (e.g., 'water', 'grass-1')
+   * @param {object} options - Additional options (fadeWidth, intensity, isWater)
+   */
+  setTexturePreview(x, y, radius, textureType, options = {}) {
+    this._textureHoverPreview = {
+      x, y, radius, textureType,
+      fadeWidth: options.fadeWidth ?? 12,
+      intensity: options.intensity ?? 1.0,
+      isWater: options.isWater ?? false,
+      // Water-specific options
+      waterOpacity: options.waterOpacity ?? 1.0,
+      waterDepthFade: options.waterDepthFade ?? 0,
+      // Shore options
+      shoreType: options.shoreType || null,
+      shoreWidth: options.shoreWidth || 0,
+      shoreFadeWidth: options.shoreFadeWidth ?? options.fadeWidth ?? 12
+    };
+    this._requestUIRender();
+  }
+
+  /**
+   * Clear texture hover preview
+   */
+  clearTexturePreview() {
+    this._textureHoverPreview = null;
     this._requestUIRender();
   }
 

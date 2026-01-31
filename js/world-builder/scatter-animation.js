@@ -14,7 +14,10 @@ export const ANIMATION_STYLES = {
   scan: { label: 'Scan', description: 'Top-down reveal' },
   drop: { label: 'Drop', description: 'Falls into position from above' },
   deploy: { label: 'Deploy', description: 'Scale overshoot, settles into place' },
-  flash: { label: 'Flash', description: 'Bright flash in' }
+  flash: { label: 'Flash', description: 'Bright flash in' },
+  // Stroke-specific animations (water, ground textures)
+  ripple: { label: 'Ripple', description: 'Radius expands outward from center' },
+  fade: { label: 'Fade', description: 'Simple alpha fade in' }
 };
 
 /**
@@ -24,7 +27,11 @@ const BASE_DURATION = {
   tree: 500,
   brush: 400,
   floor: 350,
-  particle: 400
+  particle: 400,
+  // Stroke types (water, ground textures)
+  water: 500,
+  shore: 400,
+  ground: 350
 };
 
 /**
@@ -69,9 +76,10 @@ export function startPlacementAnimation(item, category, style = 'digitize') {
     style,
     startTime: performance.now(),
     duration,
-    targetAlpha: item.alpha ?? 1.0,
+    targetAlpha: item.alpha ?? item.intensity ?? 1.0,
     targetScale: item.scale,
-    targetY: item.y
+    targetY: item.y,
+    targetRadius: item.radius  // For stroke animations
   };
 
   // Set initial render values based on style
@@ -94,6 +102,14 @@ export function startPlacementAnimation(item, category, style = 'digitize') {
     case 'flash':
       item._renderAlpha = 2.0;
       item._renderBrightness = 2.0;
+      break;
+    // Stroke-specific animations
+    case 'ripple':
+      item._renderRadius = item.radius * 0.5;  // Start at 50%
+      item._renderAlpha = 0.7;
+      break;
+    case 'fade':
+      item._renderAlpha = 0;
       break;
   }
 
@@ -152,6 +168,22 @@ export function updateAnimations() {
         item._renderAlpha = Math.min(1, flashDecay) * state.targetAlpha;
         item._renderBrightness = flashDecay;
         break;
+
+      // Stroke-specific animations
+      case 'ripple':
+        // Radius expands from 50% to 100% (bubbles up)
+        item._renderRadius = state.targetRadius * (0.5 + 0.5 * eased);
+        // Alpha fades in from 70% to full
+        item._renderAlpha = (0.7 + 0.3 * eased) * state.targetAlpha;
+        // Quality: starts decent, improves to full
+        item._renderQuality = 0.5 + 0.5 * eased;
+        break;
+
+      case 'fade':
+        // Simple alpha fade with quality improvement
+        item._renderAlpha = eased * state.targetAlpha;
+        item._renderQuality = eased;
+        break;
     }
 
     // Check if animation is complete
@@ -163,6 +195,7 @@ export function updateAnimations() {
       delete item._renderScale;
       delete item._renderClipY;
       delete item._renderBrightness;
+      delete item._renderRadius;
       item._animating = false;
       completed.push(itemId);
     }
@@ -203,6 +236,7 @@ export function clearAnimations() {
     delete item._renderScale;
     delete item._renderClipY;
     delete item._renderBrightness;
+    delete item._renderRadius;
     delete item._animating;
   }
   activeAnimations.clear();
@@ -224,5 +258,24 @@ export function animateNewItems(items, SCATTER_TYPES, style = 'digitize') {
 
       startPlacementAnimation(item, config.category, style);
     }
+  }
+}
+
+/**
+ * Start animations for paint strokes (water, ground textures)
+ * @param {object[]} strokes - Array of stroke objects
+ * @param {string} style - Animation style ('ripple', 'fade', etc.)
+ */
+export function animateStrokes(strokes, style = 'ripple') {
+  for (const stroke of strokes) {
+    // Determine category from stroke type
+    let category = 'ground';
+    if (stroke.type === 'water') {
+      category = 'water';
+    } else if (stroke.isShore) {
+      category = 'shore';
+    }
+
+    startPlacementAnimation(stroke, category, style);
   }
 }

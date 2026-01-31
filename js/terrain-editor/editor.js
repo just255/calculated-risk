@@ -107,12 +107,29 @@ class TerrainEditor {
 
       // Water settings
       waterSettings: document.getElementById('water-settings'),
+      waterPreviewCanvas: document.getElementById('water-preview-canvas'),
       waterTextureType: document.getElementById('water-texture-type'),
+      waterOpacity: document.getElementById('water-opacity'),
+      waterOpacityVal: document.getElementById('water-opacity-val'),
       waterFadeWidth: document.getElementById('water-fade-width'),
       waterFadeWidthVal: document.getElementById('water-fade-width-val'),
+      waterDepthFade: document.getElementById('water-depth-fade'),
+      waterDepthFadeVal: document.getElementById('water-depth-fade-val'),
+      // Water type dropdown
+      waterTypeDropdown: document.getElementById('water-type-dropdown'),
+      waterTypeValue: document.getElementById('water-type-value'),
+      waterTypeMenu: document.getElementById('water-type-menu'),
+      // Shore settings
       shoreTextureType: document.getElementById('shore-texture-type'),
       shoreWidth: document.getElementById('shore-width'),
       shoreWidthVal: document.getElementById('shore-width-val'),
+      shoreFadeWidth: document.getElementById('shore-fade-width'),
+      shoreFadeWidthVal: document.getElementById('shore-fade-width-val'),
+      toggleShore: document.getElementById('toggle-shore'),
+      // Shore type dropdown
+      shoreTypeDropdown: document.getElementById('shore-type-dropdown'),
+      shoreTypeValue: document.getElementById('shore-type-value'),
+      shoreTypeMenu: document.getElementById('shore-type-menu'),
       treesInWater: document.getElementById('trees-in-water'),
 
       // Tree settings
@@ -122,6 +139,19 @@ class TerrainEditor {
       btnLoadPreset: document.getElementById('btn-load-preset'),
       btnSavePreset: document.getElementById('btn-save-preset'),
       btnDeletePreset: document.getElementById('btn-delete-preset'),
+      // Tree species dropdown
+      treeSpeciesDropdown: document.getElementById('tree-species-dropdown'),
+      treeSpeciesValue: document.getElementById('tree-species-value'),
+      treeSpeciesMenu: document.getElementById('tree-species-menu'),
+      // Tree ages dropdown
+      treeAgesDropdown: document.getElementById('tree-ages-dropdown'),
+      treeAgesValue: document.getElementById('tree-ages-value'),
+      treeAgesMenu: document.getElementById('tree-ages-menu'),
+      // Dead ratio slider
+      deadRatioRow: document.getElementById('dead-ratio-row'),
+      deadRatio: document.getElementById('dead-ratio'),
+      deadRatioVal: document.getElementById('dead-ratio-val'),
+      // Legacy (kept for compatibility)
       treeBtns: document.querySelectorAll('.variant-btn[data-tree]'),
       ageBtns: document.querySelectorAll('.variant-btn[data-age]'),
       ageRatiosContainer: document.getElementById('age-ratios'),
@@ -134,7 +164,10 @@ class TerrainEditor {
 
       // Brush/Undergrowth settings
       brushSettings: document.getElementById('brush-settings'),
-      brushTypeBtns: document.querySelectorAll('.variant-btn[data-brush]'),
+      brushTypesDropdown: document.getElementById('brush-types-dropdown'),
+      brushTypesValue: document.getElementById('brush-types-value'),
+      brushTypesMenu: document.getElementById('brush-types-menu'),
+      brushTypeBtns: document.querySelectorAll('.variant-btn[data-brush]'), // Legacy
       brushRatiosContainer: document.getElementById('brush-ratios'),
       brushRatioSliders: document.getElementById('brush-ratio-sliders'),
       brushScale: document.getElementById('brush-scale'),
@@ -143,13 +176,19 @@ class TerrainEditor {
       brushDensityVal: document.getElementById('brush-density-val'),
       brushInWater: document.getElementById('brush-in-water'),
 
-      // Floor variant buttons (category cards)
-      floorTypeBtns: document.querySelectorAll('.variant-btn[data-floor]'),
+      // Floor types dropdown (category cards)
+      floorTypesDropdown: document.getElementById('floor-types-dropdown'),
+      floorTypesValue: document.getElementById('floor-types-value'),
+      floorTypesMenu: document.getElementById('floor-types-menu'),
+      floorTypeBtns: document.querySelectorAll('.variant-btn[data-floor]'), // Legacy
       floorRatiosContainer: document.getElementById('floor-ratios'),
       floorRatioSliders: document.getElementById('floor-ratio-sliders'),
 
-      // Particle variant buttons (category cards)
-      particleTypeBtns: document.querySelectorAll('.variant-btn[data-particle]'),
+      // Particle types dropdown (category cards)
+      particleTypesDropdown: document.getElementById('particle-types-dropdown'),
+      particleTypesValue: document.getElementById('particle-types-value'),
+      particleTypesMenu: document.getElementById('particle-types-menu'),
+      particleTypeBtns: document.querySelectorAll('.variant-btn[data-particle]'), // Legacy
       particleRatiosContainer: document.getElementById('particle-ratios'),
       particleRatioSliders: document.getElementById('particle-ratio-sliders'),
 
@@ -218,6 +257,7 @@ class TerrainEditor {
       scatterPreviewCanvas: document.getElementById('scatter-preview-canvas'),
       scatterPreviewInfo: document.getElementById('scatter-preview-info'),
       showScatterPreview: document.getElementById('show-scatter-preview'),
+      reseedPreview: document.getElementById('reseed-preview'),
 
       // Status bar
       zoomLevel: document.getElementById('zoom-level'),
@@ -434,6 +474,17 @@ class TerrainEditor {
     if (this._elements.waterTextureType) {
       this._elements.waterTextureType.addEventListener('change', (e) => {
         this._state.setToolOption('waterTextureType', e.target.value);
+        this._refreshWaterPreview();
+      });
+    }
+
+    // Water opacity
+    if (this._elements.waterOpacity) {
+      this._elements.waterOpacity.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value);
+        this._state.setToolOption('waterOpacity', value);
+        this._elements.waterOpacityVal.textContent = `${value}%`;
+        this._refreshWaterPreview();
       });
     }
 
@@ -443,6 +494,17 @@ class TerrainEditor {
         const value = parseInt(e.target.value);
         this._state.setToolOption('waterFadeWidth', value);
         this._elements.waterFadeWidthVal.textContent = `${value}px`;
+        this._refreshWaterPreview();
+      });
+    }
+
+    // Water depth fade (center opacity boost)
+    if (this._elements.waterDepthFade) {
+      this._elements.waterDepthFade.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value);
+        this._state.setToolOption('waterDepthFade', value);
+        this._elements.waterDepthFadeVal.textContent = `${value}%`;
+        this._refreshWaterPreview();
       });
     }
 
@@ -450,6 +512,7 @@ class TerrainEditor {
     if (this._elements.shoreTextureType) {
       this._elements.shoreTextureType.addEventListener('change', (e) => {
         this._state.setToolOption('shoreTextureType', e.target.value);
+        this._refreshWaterPreview();
       });
     }
 
@@ -459,8 +522,54 @@ class TerrainEditor {
         const value = parseInt(e.target.value);
         this._state.setToolOption('shoreWidth', value);
         this._elements.shoreWidthVal.textContent = `${value}px`;
+        this._refreshWaterPreview();
       });
     }
+
+    // Shore fade width
+    if (this._elements.shoreFadeWidth) {
+      this._elements.shoreFadeWidth.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value);
+        this._state.setToolOption('shoreFadeWidth', value);
+        this._elements.shoreFadeWidthVal.textContent = `${value}px`;
+        this._refreshWaterPreview();
+      });
+    }
+
+    // Shore toggle
+    if (this._elements.toggleShore) {
+      this._elements.toggleShore.addEventListener('change', (e) => {
+        const enabled = e.target.checked;
+        const shoreBody = document.getElementById('cat-shore-body');
+        const shoreCard = document.getElementById('cat-shore');
+        if (shoreBody) shoreBody.style.display = enabled ? '' : 'none';
+        if (shoreCard) shoreCard.classList.toggle('disabled', !enabled);
+        // Update shore texture type to none if disabled
+        if (!enabled) {
+          this._state.setToolOption('shoreTextureType', 'none');
+          if (this._elements.shoreTextureType) this._elements.shoreTextureType.value = 'none';
+        } else {
+          const currentType = this._elements.shoreTextureType?.value || 'mud';
+          this._state.setToolOption('shoreTextureType', currentType === 'none' ? 'mud' : currentType);
+          if (this._elements.shoreTextureType) this._elements.shoreTextureType.value = currentType === 'none' ? 'mud' : currentType;
+        }
+        this._refreshWaterPreview();
+      });
+    }
+
+    // Water type dropdown (radio buttons)
+    this._initRadioDropdown('waterType', (value) => {
+      this._state.setToolOption('waterTextureType', value);
+      if (this._elements.waterTextureType) this._elements.waterTextureType.value = value;
+      this._refreshWaterPreview();
+    });
+
+    // Shore type dropdown (radio buttons)
+    this._initRadioDropdown('shoreType', (value) => {
+      this._state.setToolOption('shoreTextureType', value);
+      if (this._elements.shoreTextureType) this._elements.shoreTextureType.value = value;
+      this._refreshWaterPreview();
+    });
 
     // Trees in water toggle
     if (this._elements.treesInWater) {
@@ -469,18 +578,26 @@ class TerrainEditor {
       });
     }
 
-    // Tree type buttons (multi-select)
-    this._elements.treeBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
-        btn.classList.toggle('active');
-        this._updateSelectedTreeTypes();
-
-        // In scatter mode, manual tree type change switches biome to "Custom"
-        if (this._state.toolOptions.useScatterSystem) {
-          this._switchBiomeToCustom();
-        }
-      });
+    // Tree species dropdown
+    this._initDropdown('treeSpecies', () => {
+      this._updateSelectedTreeTypes();
+      // In scatter mode, manual tree type change switches biome to "Custom"
+      if (this._state.toolOptions.useScatterSystem) {
+        this._switchBiomeToCustom();
+      }
     });
+
+    // Dead ratio slider
+    if (this._elements.deadRatio) {
+      this._elements.deadRatio.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value);
+        this._state.setToolOption('deadRatio', value / 100);
+        if (this._elements.deadRatioVal) {
+          this._elements.deadRatioVal.textContent = `${value}%`;
+        }
+        this._refreshScatterPreview();
+      });
+    }
 
     // Tree scale
     this._elements.treeScale.addEventListener('input', (e) => {
@@ -525,48 +642,29 @@ class TerrainEditor {
     // Load custom presets into dropdown on init
     this._loadCustomPresetsIntoDropdown();
 
-    // Age toggles (multiselect)
-    this._elements.ageBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
-        btn.classList.toggle('active');
-        this._updateSelectedAges();
-
-        // In scatter mode, manual age change switches biome to "Custom"
-        if (this._state.toolOptions.useScatterSystem) {
-          this._switchBiomeToCustom();
-        }
-      });
+    // Tree ages dropdown
+    this._initDropdown('treeAges', () => {
+      this._updateSelectedAges();
+      // In scatter mode, manual age change switches biome to "Custom"
+      if (this._state.toolOptions.useScatterSystem) {
+        this._switchBiomeToCustom();
+      }
     });
 
-    // Brush type buttons (multi-select)
-    if (this._elements.brushTypeBtns) {
-      this._elements.brushTypeBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-          btn.classList.toggle('active');
-          this._updateSelectedBrushTypes();
-        });
-      });
-    }
+    // Brush types dropdown
+    this._initDropdown('brushTypes', () => {
+      this._updateSelectedBrushTypes();
+    });
 
-    // Floor type buttons (multi-select)
-    if (this._elements.floorTypeBtns) {
-      this._elements.floorTypeBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-          btn.classList.toggle('active');
-          this._updateSelectedFloorTypes();
-        });
-      });
-    }
+    // Floor types dropdown
+    this._initDropdown('floorTypes', () => {
+      this._updateSelectedFloorTypes();
+    });
 
-    // Particle type buttons (multi-select)
-    if (this._elements.particleTypeBtns) {
-      this._elements.particleTypeBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-          btn.classList.toggle('active');
-          this._updateSelectedParticleTypes();
-        });
-      });
-    }
+    // Particle types dropdown
+    this._initDropdown('particleTypes', () => {
+      this._updateSelectedParticleTypes();
+    });
 
     // Brush scale
     if (this._elements.brushScale) {
@@ -874,6 +972,16 @@ class TerrainEditor {
       });
     }
 
+    // Re-seed preview button
+    if (this._elements.reseedPreview) {
+      this._elements.reseedPreview.addEventListener('click', () => {
+        const newSeed = Math.floor(Math.random() * 1000000);
+        this._state.setToolOption('previewSeed', newSeed);
+        // Directly refresh preview (previewSeed excluded from previewKeys for performance)
+        this._refreshScatterPreview();
+      });
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // CHILD SPAWN CONTROLS
     // ═══════════════════════════════════════════════════════════════
@@ -931,12 +1039,26 @@ class TerrainEditor {
 
     // Refresh scatter preview when relevant options change
     this._state.on(Events.TOOL_OPTIONS_CHANGED, ({ key }) => {
-      const previewKeys = ['treeType', 'treeTypes', 'treeRatios', 'treeScale', 'treeDensity',
-        'selectedAges', 'ageRatios', 'brushTypes', 'brushRatios', 'brushDensity', 'brushScale',
+      // Note: previewSeed intentionally excluded - it changes on every stroke and would
+      // cause expensive preview regeneration during drag painting. The re-seed button
+      // directly calls _refreshScatterPreview() instead.
+      const scatterPreviewKeys = ['treeType', 'treeTypes', 'treeRatios', 'deadTypes', 'deadRatio',
+        'treeScale', 'treeDensity', 'selectedAges', 'ageRatios',
+        'brushTypes', 'brushRatios', 'brushDensity', 'brushScale',
         'season', 'biome', 'seasonOverrides', 'childSpawnOverrides', 'brushRadius',
-        'useScatterSystem', 'previewSeed'];
-      if (!key || previewKeys.includes(key)) {
+        'useScatterSystem', 'treesEnabled', 'floorEnabled',
+        'particlesEnabled', 'brushEnabled', 'floorTypes', 'particleTypes'];
+      if (!key || scatterPreviewKeys.includes(key)) {
         this._refreshScatterPreview();
+      }
+
+      // Refresh water preview when water-related options change
+      const waterPreviewKeys = [
+        'waterTextureType', 'waterFadeWidth', 'waterOpacity', 'waterDepthFade',
+        'shoreTextureType', 'shoreWidth', 'shoreFadeWidth', 'brushRadius'
+      ];
+      if (!key || waterPreviewKeys.includes(key)) {
+        this._refreshWaterPreview();
       }
     });
   }
@@ -1166,19 +1288,32 @@ class TerrainEditor {
     if (!biomePreset || biome === 'custom') return;
 
     // Convert biome tree format to preset format
-    // biome: { 'tree-oak': 0.6 } → preset: { oak: 0.6 }
+    // biome: { 'tree-oak': 0.6, 'tree-dead': 0.1 } → preset: { oak: 0.6 }, deadTypes: [], deadRatio: 0
+    // Note: Old biome format uses 'tree-dead' as a separate type, but we now use deadTypes/deadRatio
+    // For now, we filter out 'dead' and don't enable dead variants (user can enable manually)
     const treeTypes = [];
     const treeRatios = {};
     for (const [key, ratio] of Object.entries(biomePreset.trees)) {
       const treeType = key.replace('tree-', '');
+      // Skip 'dead' - it's handled separately via deadTypes/deadRatio now
+      if (treeType === 'dead') continue;
       treeTypes.push(treeType);
       treeRatios[treeType] = ratio;
+    }
+
+    // Normalize ratios after removing 'dead' so they sum to 1
+    const totalRatio = Object.values(treeRatios).reduce((sum, r) => sum + r, 0);
+    if (totalRatio > 0 && totalRatio !== 1) {
+      for (const type of Object.keys(treeRatios)) {
+        treeRatios[type] = treeRatios[type] / totalRatio;
+      }
     }
 
     // Build preset object compatible with _applyPreset
     const preset = {
       treeTypes,
       treeRatios,
+      deadTypes: [],      // Don't enable dead variants by default
       selectedAges: Object.keys(biomePreset.ageRatios),
       ageRatios: biomePreset.ageRatios,
       treeScale: this._state.toolOptions.treeScale || 0.08,
@@ -1246,6 +1381,16 @@ class TerrainEditor {
     // Show/hide water settings
     if (this._elements.waterSettings) {
       this._elements.waterSettings.style.display = feature === 'water' ? 'block' : 'none';
+      if (feature === 'water') {
+        this._refreshWaterPreview();
+      }
+    }
+
+    // Show/hide scatter preview - only for forest/brush in scatter mode, hide for water/ground
+    const showScatterPreview = useScatter && (feature === 'forest' || feature === 'brush');
+    if (this._elements.scatterPreviewSection) {
+      this._elements.scatterPreviewSection.style.display = showScatterPreview ? 'block' : 'none';
+      if (showScatterPreview) this._refreshScatterPreview();
     }
 
     // Show/hide scatter environment (biome/season) - for forest OR brush in scatter mode
@@ -1313,11 +1458,35 @@ class TerrainEditor {
     this._state.setToolOption('treeScale', preset.treeScale);
     this._state.setToolOption('treeDensity', preset.treeDensity);
 
-    // Update tree type buttons
-    this._elements.treeBtns.forEach(btn => {
-      const isSelected = preset.treeTypes.includes(btn.dataset.tree);
-      btn.classList.toggle('active', isSelected);
-    });
+    // Update tree species dropdown checkboxes
+    const presetDeadTypes = preset.deadTypes || [];
+    const speciesMenu = this._elements.treeSpeciesMenu;
+    if (speciesMenu) {
+      speciesMenu.querySelectorAll('.dropdown-item').forEach(item => {
+        const species = item.dataset.species;
+        const checkbox = item.querySelector(`#tree-${species}`);
+        const label = item.querySelector('.dropdown-item-label');
+        const deadToggle = item.querySelector('.dropdown-dead-toggle');
+        const deadCheckbox = item.querySelector(`#tree-${species}-dead`);
+        if (checkbox) {
+          const isSelected = preset.treeTypes.includes(species);
+          checkbox.checked = isSelected;
+          if (label) label.classList.toggle('checked', isSelected);
+          if (deadToggle) deadToggle.classList.toggle('disabled', !isSelected);
+          // Set dead checkbox based on preset (or uncheck if preset doesn't include dead settings)
+          if (deadCheckbox) {
+            const deadKey = `${species}-dead`;
+            const isDeadSelected = presetDeadTypes.includes(deadKey);
+            deadCheckbox.checked = isDeadSelected;
+            if (deadToggle) deadToggle.classList.toggle('checked', isDeadSelected);
+          }
+        }
+      });
+      this._updateDropdownValue('treeSpecies');
+    }
+
+    // Update dead types in state from preset
+    this._state.setToolOption('deadTypes', presetDeadTypes);
 
     // Update tree ratio sliders
     if (preset.treeTypes.length > 1) {
@@ -1331,28 +1500,49 @@ class TerrainEditor {
       if (ratioContainer) ratioContainer.style.display = 'none';
     }
 
-    // Update age buttons
-    this._elements.ageBtns.forEach(btn => {
-      const isSelected = preset.selectedAges.includes(btn.dataset.age);
-      btn.classList.toggle('active', isSelected);
-    });
+    // Update age dropdown checkboxes
+    const agesMenu = this._elements.treeAgesMenu;
+    if (agesMenu) {
+      agesMenu.querySelectorAll('.dropdown-item').forEach(item => {
+        const age = item.dataset.age;
+        const checkbox = item.querySelector(`#age-${age}`);
+        const label = item.querySelector('.dropdown-item-label');
+        if (checkbox) {
+          const isSelected = preset.selectedAges.includes(age);
+          checkbox.checked = isSelected;
+          if (label) label.classList.toggle('checked', isSelected);
+        }
+      });
+      this._updateDropdownValue('treeAges');
+    }
 
     // Update age ratio sliders
-    if (preset.selectedAges.length > 1) {
+    if (preset.selectedAges.length > 1 && this._elements.ageRatiosContainer) {
       this._elements.ageRatiosContainer.style.display = 'block';
       this._renderAgeRatioSliders(preset.selectedAges, preset.ageRatios);
-    } else {
+    } else if (this._elements.ageRatiosContainer) {
       this._elements.ageRatiosContainer.style.display = 'none';
     }
 
     // Update scale slider
     const scalePercent = Math.round(preset.treeScale * 100);
-    this._elements.treeScale.value = scalePercent;
-    this._elements.scaleVal.textContent = `${scalePercent}%`;
+    if (this._elements.treeScale) {
+      this._elements.treeScale.value = scalePercent;
+    }
+    if (this._elements.scaleVal) {
+      this._elements.scaleVal.textContent = `${scalePercent}%`;
+    }
 
     // Update density slider
-    this._elements.treeDensity.value = preset.treeDensity;
-    this._elements.densityVal.textContent = preset.treeDensity;
+    if (this._elements.treeDensity) {
+      this._elements.treeDensity.value = preset.treeDensity;
+    }
+    if (this._elements.densityVal) {
+      this._elements.densityVal.textContent = preset.treeDensity;
+    }
+
+    // Update dead ratio slider visibility based on dead checkboxes
+    this._updateDeadRatioVisibility();
   }
 
   /**
@@ -1407,36 +1597,269 @@ class TerrainEditor {
   }
 
   // ═══════════════════════════════════════════════════════════════
+  // DROPDOWN CHECKBOX COMPONENT
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Initialize a dropdown checkbox component
+   * @param {string} name - Dropdown name (e.g., 'treeSpecies', 'floorTypes')
+   * @param {function} onChange - Callback when selection changes
+   */
+  _initDropdown(name, onChange) {
+    const dropdown = this._elements[`${name}Dropdown`];
+    const menu = this._elements[`${name}Menu`];
+    if (!dropdown || !menu) return;
+
+    const trigger = dropdown.querySelector('.dropdown-trigger');
+    if (!trigger) return;
+
+    // Toggle dropdown on trigger click
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = trigger.classList.contains('open');
+
+      // Close all other dropdowns first
+      document.querySelectorAll('.dropdown-trigger.open').forEach(t => {
+        t.classList.remove('open');
+        t.closest('.dropdown-select')?.querySelector('.dropdown-menu')?.classList.remove('open');
+      });
+
+      if (!isOpen) {
+        trigger.classList.add('open');
+        menu.classList.add('open');
+      }
+    });
+
+    // Handle checkbox changes
+    menu.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+      // Skip dead toggle checkboxes - they have their own handler
+      if (checkbox.closest('.dropdown-dead-toggle')) return;
+
+      checkbox.addEventListener('change', (e) => {
+        e.stopPropagation();
+        const label = checkbox.closest('.dropdown-item')?.querySelector('.dropdown-item-label');
+        if (label) {
+          label.classList.toggle('checked', checkbox.checked);
+        }
+
+        // For tree species: enable/disable dead toggle based on species selection
+        if (name === 'treeSpecies') {
+          const deadToggle = checkbox.closest('.dropdown-item-row')?.querySelector('.dropdown-dead-toggle');
+          if (deadToggle) {
+            deadToggle.classList.toggle('disabled', !checkbox.checked);
+            // If species unchecked, also uncheck dead variant
+            if (!checkbox.checked) {
+              const deadCheckbox = deadToggle.querySelector('input[type="checkbox"]');
+              if (deadCheckbox && deadCheckbox.checked) {
+                deadCheckbox.checked = false;
+                deadToggle.classList.remove('checked');
+              }
+            }
+          }
+          // Update dead ratio slider visibility
+          this._updateDeadRatioVisibility();
+        }
+
+        onChange();
+        this._updateDropdownValue(name);
+        this._refreshScatterPreview();
+      });
+    });
+
+    // For tree dead toggles - separate handler
+    if (name === 'treeSpecies') {
+      menu.querySelectorAll('.dropdown-dead-toggle input[type="checkbox"]').forEach(deadCheckbox => {
+        deadCheckbox.addEventListener('change', (e) => {
+          e.stopPropagation();
+          const deadToggle = deadCheckbox.closest('.dropdown-dead-toggle');
+          if (deadToggle) {
+            deadToggle.classList.toggle('checked', deadCheckbox.checked);
+          }
+          this._updateDeadRatioVisibility();
+          onChange();
+          this._refreshScatterPreview();
+        });
+      });
+    }
+
+    // Close dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!dropdown.contains(e.target)) {
+        trigger.classList.remove('open');
+        menu.classList.remove('open');
+      }
+    });
+
+    // Initialize display value
+    this._updateDropdownValue(name);
+  }
+
+  /**
+   * Initialize a radio button dropdown (single selection)
+   * @param {string} name - Dropdown name (e.g., 'waterType', 'shoreType')
+   * @param {function} onChange - Callback when selection changes
+   */
+  _initRadioDropdown(name, onChange) {
+    const dropdown = this._elements[`${name}Dropdown`];
+    const menu = this._elements[`${name}Menu`];
+    const valueEl = this._elements[`${name}Value`];
+    if (!dropdown || !menu) return;
+
+    const trigger = dropdown.querySelector('.dropdown-trigger');
+    if (!trigger) return;
+
+    // Toggle dropdown on trigger click
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = trigger.classList.contains('open');
+
+      // Close all other dropdowns first
+      document.querySelectorAll('.dropdown-trigger.open').forEach(t => {
+        t.classList.remove('open');
+        t.closest('.dropdown-select')?.querySelector('.dropdown-menu')?.classList.remove('open');
+      });
+
+      if (!isOpen) {
+        trigger.classList.add('open');
+        menu.classList.add('open');
+      }
+    });
+
+    // Handle radio changes
+    menu.querySelectorAll('input[type="radio"]').forEach(radio => {
+      radio.addEventListener('change', (e) => {
+        e.stopPropagation();
+        const item = radio.closest('.dropdown-item');
+        const value = item?.dataset.water || item?.dataset.shore || radio.value;
+
+        // Update labels
+        menu.querySelectorAll('.dropdown-item-label').forEach(l => l.classList.remove('checked'));
+        const label = item?.querySelector('.dropdown-item-label');
+        if (label) {
+          label.classList.add('checked');
+          if (valueEl) valueEl.textContent = label.textContent.trim();
+        }
+
+        // Close dropdown after selection
+        trigger.classList.remove('open');
+        menu.classList.remove('open');
+
+        onChange(value);
+      });
+    });
+
+    // Also handle clicking on the item row
+    menu.querySelectorAll('.dropdown-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        if (e.target.tagName === 'INPUT') return; // Let radio handle it
+        const radio = item.querySelector('input[type="radio"]');
+        if (radio && !radio.checked) {
+          radio.checked = true;
+          radio.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      });
+    });
+
+    // Close dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!dropdown.contains(e.target)) {
+        trigger.classList.remove('open');
+        menu.classList.remove('open');
+      }
+    });
+  }
+
+  /**
+   * Update the display value of a dropdown
+   * @param {string} name - Dropdown name
+   */
+  _updateDropdownValue(name) {
+    const valueEl = this._elements[`${name}Value`];
+    const menu = this._elements[`${name}Menu`];
+    if (!valueEl || !menu) return;
+
+    const selected = [];
+    menu.querySelectorAll('.dropdown-item').forEach(item => {
+      const checkbox = item.querySelector('input[type="checkbox"]');
+      const label = item.querySelector('.dropdown-item-label');
+      if (checkbox?.checked && label) {
+        selected.push(label.textContent.trim());
+      }
+    });
+
+    if (selected.length === 0) {
+      valueEl.textContent = 'None';
+      valueEl.classList.add('empty');
+    } else if (selected.length <= 2) {
+      valueEl.textContent = selected.join(', ');
+      valueEl.classList.remove('empty');
+    } else {
+      valueEl.textContent = `${selected.length} selected`;
+      valueEl.classList.remove('empty');
+    }
+  }
+
+  /**
+   * Update dead ratio slider visibility based on dead variant selections
+   */
+  _updateDeadRatioVisibility() {
+    const menu = this._elements.treeSpeciesMenu;
+    if (!menu) return;
+
+    let hasDeadSelected = false;
+    menu.querySelectorAll('.dropdown-dead-toggle input[type="checkbox"]').forEach(cb => {
+      if (cb.checked) hasDeadSelected = true;
+    });
+
+    if (this._elements.deadRatioRow) {
+      this._elements.deadRatioRow.style.display = hasDeadSelected ? 'flex' : 'none';
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   // TREE TYPE SELECTION
   // ═══════════════════════════════════════════════════════════════
 
   /**
-   * Update selected tree types and ratio UI
+   * Update selected tree types and ratio UI (from dropdown checkboxes)
    */
   _updateSelectedTreeTypes() {
+    const menu = this._elements.treeSpeciesMenu;
+    if (!menu) return;
+
     const selectedTypes = [];
-    this._elements.treeBtns.forEach(b => {
-      if (b.classList.contains('active')) {
-        selectedTypes.push(b.dataset.tree);
+    const deadTypes = [];
+
+    menu.querySelectorAll('.dropdown-item').forEach(item => {
+      const species = item.dataset.species;
+      const checkbox = item.querySelector(`#tree-${species}`);
+      const deadCheckbox = item.querySelector(`#tree-${species}-dead`);
+
+      if (checkbox?.checked) {
+        selectedTypes.push(species);
+      }
+      if (deadCheckbox?.checked && checkbox?.checked) {
+        deadTypes.push(`${species}-dead`);
       }
     });
 
-    // Ensure at least one is selected
-    if (selectedTypes.length === 0) {
-      const firstBtn = this._elements.treeBtns[0];
-      firstBtn.classList.add('active');
-      selectedTypes.push(firstBtn.dataset.tree);
-    }
+    // Allow zero selection (no trees)
 
     // Update state with selected types (equal ratios by default)
     const ratios = {};
-    const equalRatio = 1 / selectedTypes.length;
-    selectedTypes.forEach(type => {
-      ratios[type] = equalRatio;
-    });
+    if (selectedTypes.length > 0) {
+      const equalRatio = 1 / selectedTypes.length;
+      selectedTypes.forEach(type => {
+        ratios[type] = equalRatio;
+      });
+    }
 
-    this._state.setToolOption('treeTypes', selectedTypes);
-    this._state.setToolOption('treeRatios', ratios);
+    // Set all tree-related options at once to avoid multiple event fires
+    this._state.setToolOptions({
+      treeTypes: selectedTypes,
+      treeRatios: ratios,
+      deadTypes: deadTypes
+    });
 
     // Show/hide ratio sliders
     const ratioContainer = document.getElementById('tree-ratios');
@@ -1451,29 +1874,31 @@ class TerrainEditor {
   }
 
   /**
-   * Update selected ages and ratio UI
+   * Update selected ages and ratio UI (from dropdown checkboxes)
    */
   _updateSelectedAges() {
+    const menu = this._elements.treeAgesMenu;
+    if (!menu) return;
+
     const selectedAges = [];
-    this._elements.ageBtns.forEach(b => {
-      if (b.classList.contains('active')) {
-        selectedAges.push(b.dataset.age);
+    menu.querySelectorAll('.dropdown-item').forEach(item => {
+      const age = item.dataset.age;
+      const checkbox = item.querySelector(`#age-${age}`);
+      if (checkbox?.checked) {
+        selectedAges.push(age);
       }
     });
 
-    // Ensure at least one is selected
-    if (selectedAges.length === 0) {
-      const firstBtn = this._elements.ageBtns[0];
-      firstBtn.classList.add('active');
-      selectedAges.push(firstBtn.dataset.age);
-    }
+    // Allow zero selection (defaults handled in generation)
 
     // Update state with selected ages (equal ratios by default)
     const ratios = {};
-    const equalRatio = 1 / selectedAges.length;
-    selectedAges.forEach(age => {
-      ratios[age] = equalRatio;
-    });
+    if (selectedAges.length > 0) {
+      const equalRatio = 1 / selectedAges.length;
+      selectedAges.forEach(age => {
+        ratios[age] = equalRatio;
+      });
+    }
 
     this._state.setToolOption('selectedAges', selectedAges);
     this._state.setToolOption('ageRatios', ratios);
@@ -1488,29 +1913,31 @@ class TerrainEditor {
   }
 
   /**
-   * Update selected brush types and ratio UI
+   * Update selected brush types and ratio UI (from dropdown checkboxes)
    */
   _updateSelectedBrushTypes() {
+    const menu = this._elements.brushTypesMenu;
+    if (!menu) return;
+
     const selectedTypes = [];
-    this._elements.brushTypeBtns.forEach(b => {
-      if (b.classList.contains('active')) {
-        selectedTypes.push(b.dataset.brush);
+    menu.querySelectorAll('.dropdown-item').forEach(item => {
+      const brushType = item.dataset.brush;
+      const checkbox = item.querySelector(`input[type="checkbox"]`);
+      if (checkbox?.checked) {
+        selectedTypes.push(brushType);
       }
     });
 
-    // Ensure at least one is selected
-    if (selectedTypes.length === 0) {
-      const firstBtn = this._elements.brushTypeBtns[0];
-      firstBtn.classList.add('active');
-      selectedTypes.push(firstBtn.dataset.brush);
-    }
+    // Allow zero selection (no brush)
 
     // Update state with selected types (equal ratios by default)
     const ratios = {};
-    const equalRatio = 1 / selectedTypes.length;
-    selectedTypes.forEach(type => {
-      ratios[type] = equalRatio;
-    });
+    if (selectedTypes.length > 0) {
+      const equalRatio = 1 / selectedTypes.length;
+      selectedTypes.forEach(type => {
+        ratios[type] = equalRatio;
+      });
+    }
 
     this._state.setToolOption('brushTypes', selectedTypes);
     this._state.setToolOption('brushRatios', ratios);
@@ -1608,24 +2035,22 @@ class TerrainEditor {
   }
 
   /**
-   * Update selected floor types from variant buttons
+   * Update selected floor types from dropdown checkboxes
    */
   _updateSelectedFloorTypes() {
+    const menu = this._elements.floorTypesMenu;
+    if (!menu) return;
+
     const selectedTypes = [];
-    this._elements.floorTypeBtns.forEach(b => {
-      if (b.classList.contains('active')) {
-        selectedTypes.push(b.dataset.floor);
+    menu.querySelectorAll('.dropdown-item').forEach(item => {
+      const floorType = item.dataset.floor;
+      const checkbox = item.querySelector(`input[type="checkbox"]`);
+      if (checkbox?.checked) {
+        selectedTypes.push(floorType);
       }
     });
 
-    // Ensure at least one is selected
-    if (selectedTypes.length === 0) {
-      const firstBtn = this._elements.floorTypeBtns[0];
-      if (firstBtn) {
-        firstBtn.classList.add('active');
-        selectedTypes.push(firstBtn.dataset.floor);
-      }
-    }
+    // Allow zero selection (no floor)
 
     // Update state
     this._state.setToolOption('floorTypes', selectedTypes);
@@ -1641,29 +2066,25 @@ class TerrainEditor {
     } else if (this._elements.floorRatiosContainer) {
       this._elements.floorRatiosContainer.style.display = 'none';
     }
-
-    this._refreshScatterPreview();
   }
 
   /**
-   * Update selected particle types from variant buttons
+   * Update selected particle types from dropdown checkboxes
    */
   _updateSelectedParticleTypes() {
+    const menu = this._elements.particleTypesMenu;
+    if (!menu) return;
+
     const selectedTypes = [];
-    this._elements.particleTypeBtns.forEach(b => {
-      if (b.classList.contains('active')) {
-        selectedTypes.push(b.dataset.particle);
+    menu.querySelectorAll('.dropdown-item').forEach(item => {
+      const particleType = item.dataset.particle;
+      const checkbox = item.querySelector(`input[type="checkbox"]`);
+      if (checkbox?.checked) {
+        selectedTypes.push(particleType);
       }
     });
 
-    // Ensure at least one is selected
-    if (selectedTypes.length === 0) {
-      const firstBtn = this._elements.particleTypeBtns[0];
-      if (firstBtn) {
-        firstBtn.classList.add('active');
-        selectedTypes.push(firstBtn.dataset.particle);
-      }
-    }
+    // Allow zero selection (no particles)
 
     // Update state
     this._state.setToolOption('particleTypes', selectedTypes);
@@ -2217,6 +2638,9 @@ class TerrainEditor {
     const options = this._state.toolOptions;
     if (!options.useScatterSystem) return;
 
+    // Invalidate paint tool's on-canvas preview cache so it regenerates
+    PaintTool.invalidatePreviewCache();
+
     // Use shared forest generation function (single source of truth)
     const mockTerrain = { scatterItems: [], strokes: [] };
     const virtualCx = 1000;
@@ -2228,6 +2652,8 @@ class TerrainEditor {
       {
         treeTypes: options.treeTypes || [options.treeType || 'oak'],
         treeRatios: options.treeRatios || {},
+        deadTypes: options.deadTypes || [],
+        deadRatio: options.deadRatio ?? 0,
         treeDensity: options.treeDensity ?? 1.0,
         treeScale: options.treeScale ?? 0.35,
         treeSpacing: options.treeSpacing ?? 1.0,
@@ -2477,6 +2903,79 @@ class TerrainEditor {
 
     const zoomStr = zoom && zoom < 0.99 ? `<br><i>Preview zoom: ${Math.round(zoom * 100)}%</i>` : '';
     el.innerHTML = lines.join('<br>') + zoomStr;
+  }
+
+  /**
+   * Refresh the sidebar water preview canvas
+   * Uses same renderWaterPreview() as on-canvas hover preview
+   */
+  _refreshWaterPreview() {
+    const canvas = this._elements.waterPreviewCanvas;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+
+    // Clear
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Background - use base ground texture
+    const baseLayer = this._state.baseLayer || 'grass-1';
+    const groundImg = this._renderer._images?.ground?.[baseLayer];
+    if (groundImg) {
+      const pattern = ctx.createPattern(groundImg, 'repeat');
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    } else {
+      ctx.fillStyle = '#1a2f1a';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    const options = this._state.toolOptions;
+    const brushRadius = options.brushRadius || 60;
+    const shoreWidth = options.shoreWidth || 0;
+    const waterFadeWidth = options.waterFadeWidth ?? 12;
+    const shoreFadeWidth = options.shoreFadeWidth ?? 12;
+    const hasShore = options.shoreTextureType && options.shoreTextureType !== 'none' && shoreWidth > 0;
+
+    // Scale to fit preview with padding
+    const padding = 10;
+    const maxRadius = (canvas.width / 2) - padding;
+    const outerFade = hasShore ? shoreFadeWidth : waterFadeWidth;
+    const totalRadius = brushRadius + (hasShore ? shoreWidth : 0) + outerFade;
+    const scale = maxRadius / totalRadius;
+
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+
+    // Use shared renderWaterPreview (same as on-canvas hover)
+    this._renderer.renderWaterPreview(ctx, centerX, centerY, {
+      waterType: options.waterTextureType || 'water',
+      waterRadius: brushRadius * scale,
+      waterFadeWidth: waterFadeWidth * scale,
+      waterOpacity: (options.waterOpacity ?? 100) / 100,
+      waterDepthFade: (options.waterDepthFade ?? 0) / 100,
+      shoreType: options.shoreTextureType,
+      shoreWidth: shoreWidth * scale,
+      shoreFadeWidth: shoreFadeWidth * scale,
+      alpha: 1.0
+    });
+
+    // Draw subtle guide lines
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, brushRadius * scale, 0, Math.PI * 2);
+    ctx.stroke();
+
+    if (hasShore) {
+      ctx.strokeStyle = 'rgba(180, 140, 80, 0.4)';
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, (brushRadius + shoreWidth) * scale, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
   }
 
   _setTuneSlider(slider, valEl, value, decimals = 2, suffix = '') {

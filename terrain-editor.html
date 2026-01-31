@@ -668,6 +668,160 @@
       opacity: 0.7;
     }
 
+    /* Dropdown Checkbox Component */
+    .dropdown-select {
+      position: relative;
+      margin-bottom: 8px;
+    }
+
+    .dropdown-trigger {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #0f3460;
+      border: 1px solid #1e4a7a;
+      border-radius: 4px;
+      padding: 6px 10px;
+      cursor: pointer;
+      font-size: 11px;
+      color: #e2e8f0;
+      transition: all 0.15s;
+    }
+
+    .dropdown-trigger:hover {
+      background: #1a4a7e;
+      border-color: #2a5a8e;
+    }
+
+    .dropdown-trigger.open {
+      border-color: #4ade80;
+      border-bottom-left-radius: 0;
+      border-bottom-right-radius: 0;
+    }
+
+    .dropdown-label {
+      font-size: 10px;
+      color: #64748b;
+      margin-right: 8px;
+      flex-shrink: 0;
+    }
+
+    .dropdown-value {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .dropdown-value.empty {
+      color: #64748b;
+      font-style: italic;
+    }
+
+    .dropdown-arrow {
+      margin-left: 8px;
+      font-size: 8px;
+      transition: transform 0.15s;
+    }
+
+    .dropdown-trigger.open .dropdown-arrow {
+      transform: rotate(180deg);
+    }
+
+    .dropdown-menu {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: #1a2744;
+      border: 1px solid #4ade80;
+      border-top: none;
+      border-bottom-left-radius: 4px;
+      border-bottom-right-radius: 4px;
+      z-index: 100;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    .dropdown-menu.open {
+      display: block;
+    }
+
+    .dropdown-item {
+      display: flex;
+      align-items: center;
+      padding: 6px 10px;
+      cursor: pointer;
+      font-size: 11px;
+      color: #94a3b8;
+      transition: background 0.1s;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .dropdown-item:last-child {
+      border-bottom: none;
+    }
+
+    .dropdown-item:hover {
+      background: rgba(74, 222, 128, 0.1);
+    }
+
+    .dropdown-item input[type="checkbox"] {
+      width: 14px;
+      height: 14px;
+      margin-right: 8px;
+      accent-color: #4ade80;
+      cursor: pointer;
+    }
+
+    .dropdown-item-label {
+      flex: 1;
+    }
+
+    .dropdown-item-label.checked {
+      color: #e2e8f0;
+    }
+
+    /* Tree species row with dead toggle */
+    .dropdown-item-row {
+      display: flex;
+      align-items: center;
+      width: 100%;
+    }
+
+    .dropdown-dead-toggle {
+      display: flex;
+      align-items: center;
+      margin-left: auto;
+      padding-left: 12px;
+      font-size: 10px;
+      color: #64748b;
+    }
+
+    .dropdown-dead-toggle input[type="checkbox"] {
+      width: 12px;
+      height: 12px;
+      margin-left: 4px;
+      accent-color: #f87171;
+    }
+
+    .dropdown-dead-toggle.checked {
+      color: #f87171;
+    }
+
+    .dropdown-dead-toggle.disabled {
+      opacity: 0.4;
+      pointer-events: none;
+    }
+
+    /* Section divider within category cards */
+    .section-divider {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(74, 222, 128, 0.3), transparent);
+      margin: 10px 0;
+    }
+
     /* Ratio mini-sliders */
     .ratio-row {
       display: flex;
@@ -929,22 +1083,6 @@
         </div>
       </div>
 
-      <!-- SCATTER PREVIEW (shown when scatter selected, sticky) -->
-      <div class="panel-section" id="scatter-preview-section" style="display: none; position: sticky; top: 0; z-index: 10; background: #16213e; padding-bottom: 8px; margin-bottom: 12px;">
-        <div class="panel-title" style="display: flex; align-items: center; justify-content: space-between;">
-          Stroke Preview
-          <label style="font-size: 11px; font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 4px;">
-            <input type="checkbox" id="show-scatter-preview"> On Canvas
-          </label>
-        </div>
-        <div style="display: flex; justify-content: center; padding: 4px 0;">
-          <canvas id="scatter-preview-canvas" width="200" height="200" style="border: 1px solid #334155; border-radius: 4px; background: #0d0d1a;"></canvas>
-        </div>
-        <div id="scatter-preview-info" style="font-size: 10px; color: #64748b; text-align: center; padding: 2px 0;">
-          Preview of next stroke
-        </div>
-      </div>
-
       <!-- STROKE SETTINGS (size, shape, falloff, animation) -->
       <div class="panel-section" id="stroke-settings">
         <div class="panel-title">Stroke</div>
@@ -974,12 +1112,35 @@
             <label class="prop-label">Animation</label>
             <select class="prop-select" id="animation-style">
               <option value="none">Instant</option>
-              <option value="digitize" selected>Digitize</option>
+              <option value="digitize">Digitize</option>
               <option value="scan">Scan</option>
               <option value="drop">Drop</option>
-              <option value="deploy">Deploy</option>
+              <option value="deploy" selected>Deploy</option>
               <option value="flash">Flash</option>
+              <option value="ripple">Ripple</option>
+              <option value="fade">Fade</option>
             </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- SCATTER PREVIEW (shown when scatter selected, sticky) -->
+      <div class="panel-section" id="scatter-preview-section" style="display: none; position: sticky; top: 0; z-index: 10; background: #16213e; padding-bottom: 8px; margin-bottom: 12px;">
+        <div class="panel-title" style="display: flex; align-items: center; justify-content: space-between;">
+          Stroke Preview
+          <label style="font-size: 11px; font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+            <input type="checkbox" id="show-scatter-preview"> On Canvas
+          </label>
+        </div>
+        <div style="display: flex; justify-content: center; padding: 4px 0;">
+          <canvas id="scatter-preview-canvas" width="200" height="200" style="border: 1px solid #334155; border-radius: 4px; background: #0d0d1a;"></canvas>
+        </div>
+        <div style="display: flex; justify-content: center; padding: 2px 0;">
+          <button id="reseed-preview" style="width: 200px; background: #0f3460; border: 1px solid #1e4a7a; color: #94a3b8; padding: 4px 8px; border-radius: 3px; cursor: pointer; font-size: 10px;" title="Generate new random arrangement">🎲 Re-roll</button>
+        </div>
+        <div style="display: flex; align-items: center; justify-content: center; padding: 4px 0;">
+          <div id="scatter-preview-info" style="font-size: 10px; color: #64748b;">
+            Preview of next stroke
           </div>
         </div>
       </div>
@@ -1081,36 +1242,127 @@
 
       <!-- Water Settings (shown when water tool selected) -->
       <div class="panel-section" id="water-settings" style="display: none;">
-        <div class="panel-title">Water</div>
-        <div class="prop-row">
-          <label class="prop-label">Type</label>
-          <select class="prop-select" id="water-texture-type">
-            <option value="water" selected>Water</option>
-            <option value="water-pond">Pond</option>
-            <option value="water-river">River</option>
-            <option value="water-marsh">Marsh</option>
-          </select>
+        <div class="panel-title">Water Output</div>
+
+        <!-- Preview -->
+        <div style="display: flex; justify-content: center; padding: 4px 0 8px;">
+          <canvas id="water-preview-canvas" width="200" height="200" style="border: 1px solid #334155; border-radius: 4px; background: #0d0d1a;"></canvas>
         </div>
-        <div class="prop-row">
-          <label class="prop-label">
-            Edge Fade <span class="prop-value" id="water-fade-width-val">12px</span>
-          </label>
-          <input type="range" class="prop-range" id="water-fade-width" min="0" max="48" value="12">
+
+        <!-- WATER Category -->
+        <div class="category-card" id="cat-water">
+          <div class="category-header" data-category="water">
+            <span class="category-icon">💧</span>
+            <span class="category-name">Water</span>
+          </div>
+          <div class="category-body" id="cat-water-body">
+            <!-- Water Type Dropdown -->
+            <div class="dropdown-select" id="water-type-dropdown">
+              <div class="dropdown-trigger">
+                <span class="dropdown-label">Type</span>
+                <span class="dropdown-value" id="water-type-value">Water</span>
+                <span class="dropdown-arrow">▼</span>
+              </div>
+              <div class="dropdown-menu" id="water-type-menu">
+                <div class="dropdown-item" data-water="water">
+                  <input type="radio" name="water-type" id="water-type-water" checked>
+                  <span class="dropdown-item-label checked">Water</span>
+                </div>
+                <div class="dropdown-item" data-water="water-pond">
+                  <input type="radio" name="water-type" id="water-type-pond">
+                  <span class="dropdown-item-label">Pond</span>
+                </div>
+                <div class="dropdown-item" data-water="water-river">
+                  <input type="radio" name="water-type" id="water-type-river">
+                  <span class="dropdown-item-label">River</span>
+                </div>
+                <div class="dropdown-item" data-water="water-marsh">
+                  <input type="radio" name="water-type" id="water-type-marsh">
+                  <span class="dropdown-item-label">Marsh</span>
+                </div>
+                <div class="dropdown-item" data-water="water-deep">
+                  <input type="radio" name="water-type" id="water-type-deep">
+                  <span class="dropdown-item-label">Deep</span>
+                </div>
+              </div>
+            </div>
+            <!-- Hidden select for compatibility -->
+            <select class="prop-select" id="water-texture-type" style="display: none;">
+              <option value="water" selected>Water</option>
+              <option value="water-pond">Pond</option>
+              <option value="water-river">River</option>
+              <option value="water-marsh">Marsh</option>
+              <option value="water-deep">Deep Water</option>
+            </select>
+            <div class="ratio-row">
+              <span class="ratio-label">Opacity</span>
+              <input type="range" class="ratio-slider" id="water-opacity" min="20" max="100" value="100">
+              <span class="ratio-value" id="water-opacity-val">100%</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Edge Fade</span>
+              <input type="range" class="ratio-slider" id="water-fade-width" min="0" max="48" value="12">
+              <span class="ratio-value" id="water-fade-width-val">12px</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Depth</span>
+              <input type="range" class="ratio-slider" id="water-depth-fade" min="0" max="80" value="0">
+              <span class="ratio-value" id="water-depth-fade-val">0%</span>
+            </div>
+          </div>
         </div>
-        <div class="prop-row">
-          <label class="prop-label">Shore</label>
-          <select class="prop-select" id="shore-texture-type">
-            <option value="none">None</option>
-            <option value="mud" selected>Mud</option>
-            <option value="sand">Sand</option>
-            <option value="dirt-1">Dirt</option>
-          </select>
-        </div>
-        <div class="prop-row">
-          <label class="prop-label">
-            Shore Width <span class="prop-value" id="shore-width-val">24px</span>
-          </label>
-          <input type="range" class="prop-range" id="shore-width" min="0" max="64" value="24">
+
+        <!-- SHORE Category -->
+        <div class="category-card" id="cat-shore">
+          <div class="category-header" data-category="shore">
+            <span class="category-icon">🏖️</span>
+            <span class="category-name">Shore</span>
+            <label class="category-toggle" title="Enable/disable shore">
+              <input type="checkbox" id="toggle-shore" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="category-body" id="cat-shore-body">
+            <!-- Shore Type Dropdown -->
+            <div class="dropdown-select" id="shore-type-dropdown">
+              <div class="dropdown-trigger">
+                <span class="dropdown-label">Type</span>
+                <span class="dropdown-value" id="shore-type-value">Mud</span>
+                <span class="dropdown-arrow">▼</span>
+              </div>
+              <div class="dropdown-menu" id="shore-type-menu">
+                <div class="dropdown-item" data-shore="mud">
+                  <input type="radio" name="shore-type" id="shore-type-mud" checked>
+                  <span class="dropdown-item-label checked">Mud</span>
+                </div>
+                <div class="dropdown-item" data-shore="sand">
+                  <input type="radio" name="shore-type" id="shore-type-sand">
+                  <span class="dropdown-item-label">Sand</span>
+                </div>
+                <div class="dropdown-item" data-shore="dirt-1">
+                  <input type="radio" name="shore-type" id="shore-type-dirt">
+                  <span class="dropdown-item-label">Dirt</span>
+                </div>
+              </div>
+            </div>
+            <!-- Hidden select for compatibility -->
+            <select class="prop-select" id="shore-texture-type" style="display: none;">
+              <option value="none">None</option>
+              <option value="mud" selected>Mud</option>
+              <option value="sand">Sand</option>
+              <option value="dirt-1">Dirt</option>
+            </select>
+            <div class="ratio-row">
+              <span class="ratio-label">Width</span>
+              <input type="range" class="ratio-slider" id="shore-width" min="0" max="64" value="24">
+              <span class="ratio-value" id="shore-width-val">24px</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Edge Fade</span>
+              <input type="range" class="ratio-slider" id="shore-fade-width" min="0" max="48" value="12">
+              <span class="ratio-value" id="shore-fade-width-val">12px</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1121,10 +1373,10 @@
           <div style="flex: 1;">
             <label class="prop-label">Biome</label>
             <select class="prop-select" id="biome-select">
-              <option value="temperate" selected>Temperate</option>
+              <option value="temperate">Temperate</option>
               <option value="oak-forest">Oak Forest</option>
               <option value="birch-grove">Birch Grove</option>
-              <option value="conifer">Conifer</option>
+              <option value="conifer" selected>Conifer</option>
               <option value="wetland">Wetland</option>
               <option value="dead-forest">Dead Forest</option>
               <option value="custom">Custom</option>
@@ -1157,15 +1409,61 @@
             </label>
           </div>
           <div class="category-body" id="cat-trees-body">
-            <div class="variant-grid">
-              <button class="variant-btn active" data-tree="oak">Oak</button>
-              <button class="variant-btn" data-tree="pine">Pine</button>
-              <button class="variant-btn" data-tree="birch">Birch</button>
-              <button class="variant-btn" data-tree="willow">Willow</button>
-              <button class="variant-btn dead" data-tree="oak-dead">☠ Oak</button>
-              <button class="variant-btn dead" data-tree="pine-dead">☠ Pine</button>
-              <button class="variant-btn dead" data-tree="birch-dead">☠ Birch</button>
-              <button class="variant-btn dead" data-tree="willow-dead">☠ Willow</button>
+            <!-- Species Dropdown -->
+            <div class="dropdown-select" id="tree-species-dropdown">
+              <div class="dropdown-trigger">
+                <span class="dropdown-label">Species</span>
+                <span class="dropdown-value" id="tree-species-value">Oak</span>
+                <span class="dropdown-arrow">▼</span>
+              </div>
+              <div class="dropdown-menu" id="tree-species-menu">
+                <div class="dropdown-item" data-species="oak">
+                  <div class="dropdown-item-row">
+                    <input type="checkbox" id="tree-oak" checked>
+                    <span class="dropdown-item-label checked">Oak</span>
+                    <div class="dropdown-dead-toggle">
+                      <span>Dead</span>
+                      <input type="checkbox" id="tree-oak-dead" title="Include dead oak trees">
+                    </div>
+                  </div>
+                </div>
+                <div class="dropdown-item" data-species="pine">
+                  <div class="dropdown-item-row">
+                    <input type="checkbox" id="tree-pine">
+                    <span class="dropdown-item-label">Pine</span>
+                    <div class="dropdown-dead-toggle disabled">
+                      <span>Dead</span>
+                      <input type="checkbox" id="tree-pine-dead" title="Include dead pine trees">
+                    </div>
+                  </div>
+                </div>
+                <div class="dropdown-item" data-species="birch">
+                  <div class="dropdown-item-row">
+                    <input type="checkbox" id="tree-birch">
+                    <span class="dropdown-item-label">Birch</span>
+                    <div class="dropdown-dead-toggle disabled">
+                      <span>Dead</span>
+                      <input type="checkbox" id="tree-birch-dead" title="Include dead birch trees">
+                    </div>
+                  </div>
+                </div>
+                <div class="dropdown-item" data-species="willow">
+                  <div class="dropdown-item-row">
+                    <input type="checkbox" id="tree-willow">
+                    <span class="dropdown-item-label">Willow</span>
+                    <div class="dropdown-dead-toggle disabled">
+                      <span>Dead</span>
+                      <input type="checkbox" id="tree-willow-dead" title="Include dead willow trees">
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <!-- Dead Ratio (only shown when dead variants selected) -->
+            <div class="ratio-row" id="dead-ratio-row" style="display: none;">
+              <span class="ratio-label">Dead %</span>
+              <input type="range" class="ratio-slider" id="dead-ratio" min="0" max="100" value="20">
+              <span class="ratio-value" id="dead-ratio-val">20%</span>
             </div>
             <div class="ratio-row">
               <span class="ratio-label">Density</span>
@@ -1180,21 +1478,45 @@
             <div id="tree-ratios" style="display: none;">
               <div id="ratio-sliders"></div>
             </div>
-            <div style="margin-top: 8px;">
-              <div style="font-size: 10px; color: #64748b; margin-bottom: 4px;">Ages</div>
-              <div class="variant-grid">
-                <button class="variant-btn active" data-age="young">Young</button>
-                <button class="variant-btn active" data-age="transitional">Trans</button>
-                <button class="variant-btn active" data-age="old">Old</button>
+            <!-- Section Divider -->
+            <div class="section-divider"></div>
+            <!-- Ages Dropdown -->
+            <div class="dropdown-select" id="tree-ages-dropdown">
+              <div class="dropdown-trigger">
+                <span class="dropdown-label">Ages</span>
+                <span class="dropdown-value" id="tree-ages-value">Young, Trans, Old</span>
+                <span class="dropdown-arrow">▼</span>
               </div>
-              <div id="age-ratios" style="display: none; margin-top: 6px;">
-                <div id="age-ratio-sliders"></div>
+              <div class="dropdown-menu" id="tree-ages-menu">
+                <div class="dropdown-item" data-age="young">
+                  <input type="checkbox" id="age-young" checked>
+                  <span class="dropdown-item-label checked">Young</span>
+                </div>
+                <div class="dropdown-item" data-age="transitional">
+                  <input type="checkbox" id="age-transitional" checked>
+                  <span class="dropdown-item-label checked">Transitional</span>
+                </div>
+                <div class="dropdown-item" data-age="old">
+                  <input type="checkbox" id="age-old" checked>
+                  <span class="dropdown-item-label checked">Old</span>
+                </div>
               </div>
+            </div>
+            <div id="age-ratios" style="display: none; margin-top: 6px;">
+              <div id="age-ratio-sliders"></div>
             </div>
             <div class="ratio-row">
               <span class="ratio-label">Scale</span>
               <input type="range" class="ratio-slider" id="tree-scale" min="3" max="60" value="35">
               <span class="ratio-value" id="scale-val">35%</span>
+            </div>
+            <!-- Section Divider -->
+            <div class="section-divider"></div>
+            <div class="ratio-row">
+              <label class="prop-label" style="display: flex; align-items: center; gap: 6px;">
+                <input type="checkbox" id="trees-in-water" class="prop-checkbox">
+                <span>Spawn in Water</span>
+              </label>
             </div>
           </div>
         </div>
@@ -1210,11 +1532,35 @@
             </label>
           </div>
           <div class="category-body" id="cat-floor-body">
-            <div class="variant-grid">
-              <button class="variant-btn active" data-floor="floor-leaf">Leaf</button>
-              <button class="variant-btn" data-floor="floor-leaf-fall">Fall</button>
-              <button class="variant-btn" data-floor="floor-needle">Needle</button>
-              <button class="variant-btn" data-floor="floor-debris">Debris</button>
+            <!-- Floor Types Dropdown -->
+            <div class="dropdown-select" id="floor-types-dropdown">
+              <div class="dropdown-trigger">
+                <span class="dropdown-label">Types</span>
+                <span class="dropdown-value" id="floor-types-value">Leaf</span>
+                <span class="dropdown-arrow">▼</span>
+              </div>
+              <div class="dropdown-menu" id="floor-types-menu">
+                <div class="dropdown-item" data-floor="floor-leaf">
+                  <input type="checkbox" id="floor-leaf" checked>
+                  <span class="dropdown-item-label checked">Leaf</span>
+                </div>
+                <div class="dropdown-item" data-floor="floor-leaf-fall">
+                  <input type="checkbox" id="floor-leaf-fall">
+                  <span class="dropdown-item-label">Fall</span>
+                </div>
+                <div class="dropdown-item" data-floor="floor-leaf-dry">
+                  <input type="checkbox" id="floor-leaf-dry">
+                  <span class="dropdown-item-label">Dry</span>
+                </div>
+                <div class="dropdown-item" data-floor="floor-needle">
+                  <input type="checkbox" id="floor-needle">
+                  <span class="dropdown-item-label">Needle</span>
+                </div>
+                <div class="dropdown-item" data-floor="floor-debris">
+                  <input type="checkbox" id="floor-debris">
+                  <span class="dropdown-item-label">Debris</span>
+                </div>
+              </div>
             </div>
             <div class="ratio-row">
               <span class="ratio-label">Density</span>
@@ -1250,11 +1596,39 @@
             </label>
           </div>
           <div class="category-body" id="cat-particles-body">
-            <div class="variant-grid">
-              <button class="variant-btn active" data-particle="particle-leaf">Leaf</button>
-              <button class="variant-btn" data-particle="particle-leaf-fall">Fall</button>
-              <button class="variant-btn" data-particle="particle-needle">Needle</button>
-              <button class="variant-btn" data-particle="particle-twig">Twig</button>
+            <!-- Particle Types Dropdown -->
+            <div class="dropdown-select" id="particle-types-dropdown">
+              <div class="dropdown-trigger">
+                <span class="dropdown-label">Types</span>
+                <span class="dropdown-value" id="particle-types-value">Leaf</span>
+                <span class="dropdown-arrow">▼</span>
+              </div>
+              <div class="dropdown-menu" id="particle-types-menu">
+                <div class="dropdown-item" data-particle="particle-leaf">
+                  <input type="checkbox" id="particle-leaf" checked>
+                  <span class="dropdown-item-label checked">Leaf</span>
+                </div>
+                <div class="dropdown-item" data-particle="particle-leaf-fall">
+                  <input type="checkbox" id="particle-leaf-fall">
+                  <span class="dropdown-item-label">Fall</span>
+                </div>
+                <div class="dropdown-item" data-particle="particle-leaf-dry">
+                  <input type="checkbox" id="particle-leaf-dry">
+                  <span class="dropdown-item-label">Dry</span>
+                </div>
+                <div class="dropdown-item" data-particle="particle-needle">
+                  <input type="checkbox" id="particle-needle">
+                  <span class="dropdown-item-label">Needle</span>
+                </div>
+                <div class="dropdown-item" data-particle="particle-petal">
+                  <input type="checkbox" id="particle-petal">
+                  <span class="dropdown-item-label">Petal</span>
+                </div>
+                <div class="dropdown-item" data-particle="particle-twig">
+                  <input type="checkbox" id="particle-twig">
+                  <span class="dropdown-item-label">Twig</span>
+                </div>
+              </div>
             </div>
             <div class="ratio-row">
               <span class="ratio-label">Density</span>
@@ -1285,11 +1659,31 @@
             </label>
           </div>
           <div class="category-body" id="cat-brush-body">
-            <div class="variant-grid">
-              <button class="variant-btn active" data-brush="bush-small">Bush S</button>
-              <button class="variant-btn" data-brush="bush-large">Bush L</button>
-              <button class="variant-btn" data-brush="fern">Fern</button>
-              <button class="variant-btn" data-brush="reed">Reed</button>
+            <!-- Brush Types Dropdown -->
+            <div class="dropdown-select" id="brush-types-dropdown">
+              <div class="dropdown-trigger">
+                <span class="dropdown-label">Types</span>
+                <span class="dropdown-value" id="brush-types-value">Bush S</span>
+                <span class="dropdown-arrow">▼</span>
+              </div>
+              <div class="dropdown-menu" id="brush-types-menu">
+                <div class="dropdown-item" data-brush="bush-small">
+                  <input type="checkbox" id="brush-bush-small" checked>
+                  <span class="dropdown-item-label checked">Bush S</span>
+                </div>
+                <div class="dropdown-item" data-brush="bush-large">
+                  <input type="checkbox" id="brush-bush-large">
+                  <span class="dropdown-item-label">Bush L</span>
+                </div>
+                <div class="dropdown-item" data-brush="fern">
+                  <input type="checkbox" id="brush-fern">
+                  <span class="dropdown-item-label">Fern</span>
+                </div>
+                <div class="dropdown-item" data-brush="reed">
+                  <input type="checkbox" id="brush-reed">
+                  <span class="dropdown-item-label">Reed</span>
+                </div>
+              </div>
             </div>
             <div class="ratio-row">
               <span class="ratio-label">Density</span>
