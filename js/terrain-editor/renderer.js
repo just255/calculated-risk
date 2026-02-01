@@ -223,8 +223,14 @@ export class Renderer {
     const prevCount = this._paintPreviewStrokes.length;
     this._paintPreviewStrokes.push(stroke);
 
-    // Incremental render: if new stroke is same layer as previous, just draw it
-    if (prevCount > 0 && this._paintPreview) {
+    // Check if ground textures need water masking (forces full rebuild)
+    const terrainMap = this._state.terrainMap;
+    const hasExistingWater = terrainMap.strokes && terrainMap.strokes.some(s => s.type === 'water');
+    const hasPreviewWater = this._paintPreviewStrokes.some(s => s.type === 'water');
+    const needsWaterMasking = stroke.type === 'groundTexture' && !stroke.isShore && (hasExistingWater || hasPreviewWater);
+
+    // Incremental render: if new stroke is same layer as previous and no water masking needed
+    if (prevCount > 0 && this._paintPreview && !needsWaterMasking) {
       const prevStroke = this._paintPreviewStrokes[prevCount - 1];
       const sameLayer = this._getStrokeLayer(stroke) === this._getStrokeLayer(prevStroke);
 
@@ -238,7 +244,7 @@ export class Renderer {
       }
     }
 
-    // Different layer or first stroke - need full rebuild for correct layering
+    // Different layer, first stroke, or needs water masking - full rebuild
     this._rebuildPaintPreview();
     this._requestUIRender();
   }
@@ -254,35 +260,12 @@ export class Renderer {
 
   /**
    * Render a single stroke to the preview canvas
-   * Ground textures are clipped to exclude water areas
+   * Note: Water masking for ground textures is handled by full rebuild path
    */
   _renderStrokeToPreview(ctx, stroke) {
     if (stroke.type === 'water') {
       this._renderWaterStroke(ctx, stroke, true);
-    } else if (stroke.type === 'groundTexture' && !stroke.isShore) {
-      // Clip ground textures to exclude water areas
-      const terrainMap = this._state.terrainMap;
-      const existingWater = terrainMap.strokes ? terrainMap.strokes.filter(s => s.type === 'water') : [];
-      const previewWater = this._paintPreviewStrokes.filter(s => s.type === 'water');
-      const allWaterStrokes = [...existingWater, ...previewWater];
-
-      if (allWaterStrokes.length > 0) {
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(0, 0, ctx.canvas.width, ctx.canvas.height);
-        for (const water of allWaterStrokes) {
-          const effectiveRadius = water.radius + (water.shoreWidth || 0);
-          ctx.moveTo(water.x + effectiveRadius, water.y);
-          ctx.arc(water.x, water.y, effectiveRadius, 0, Math.PI * 2, true);
-        }
-        ctx.clip('evenodd');
-        this._renderGroundTextureStroke(ctx, stroke, true);
-        ctx.restore();
-      } else {
-        this._renderGroundTextureStroke(ctx, stroke, true);
-      }
     } else {
-      // Shore strokes render without clipping
       this._renderGroundTextureStroke(ctx, stroke, true);
     }
   }
@@ -362,25 +345,13 @@ export class Renderer {
     // Ground textures first, then shores, then water
     // Uses inline occlusion check to avoid creating filter arrays
 
-    // Collect all water strokes (existing + being painted) for clipping ground textures
+    // Collect all water strokes (existing + being painted) for masking ground textures
     const terrainMap = this._state.terrainMap;
     const existingWater = terrainMap.strokes ? terrainMap.strokes.filter(s => s.type === 'water') : [];
     const previewWater = strokes.filter(s => s.type === 'water');
     const allWaterStrokes = [...existingWater, ...previewWater];
 
-    // Pass 1: Ground textures (non-shore) - clipped to exclude water areas
-    if (allWaterStrokes.length > 0) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(0, 0, width, height);
-      for (const water of allWaterStrokes) {
-        const effectiveRadius = water.radius + (water.shoreWidth || 0);
-        ctx.moveTo(water.x + effectiveRadius, water.y);
-        ctx.arc(water.x, water.y, effectiveRadius, 0, Math.PI * 2, true);
-      }
-      ctx.clip('evenodd');
-    }
-
+    // Pass 1: Ground textures (non-shore) - then erase water areas
     for (let i = 0; i < len; i++) {
       const s = strokes[i];
       if (s.type !== 'groundTexture' || s.isShore) continue;
@@ -388,7 +359,16 @@ export class Renderer {
       this._renderGroundTextureStroke(ctx, s, true);
     }
 
+    // Erase water areas from ground textures using destination-out
     if (allWaterStrokes.length > 0) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'destination-out';
+      for (const water of allWaterStrokes) {
+        const effectiveRadius = water.radius + (water.shoreWidth || 0);
+        ctx.beginPath();
+        ctx.arc(water.x, water.y, effectiveRadius, 0, Math.PI * 2);
+        ctx.fill();
+      }
       ctx.restore();
     }
 
@@ -1881,13 +1861,13 @@ export class Renderer {
 
   /**
    * Render texture hover preview (semi-transparent preview of water/ground texture)
-   * Ground textures are clipped to not render over water strokes
+   * Ground textures are masked to not render over water strokes
    */
   _renderTextureHoverPreview(ctx) {
     const preview = this._textureHoverPreview;
     if (!preview) return;
 
-    // For ground textures (not water), clip to exclude water areas
+    // For ground textures, check if we need water masking
     const isGroundTexture = !preview.isWater;
     const terrainMap = this._state.terrainMap;
     const waterStrokes = isGroundTexture && terrainMap.strokes
@@ -1895,41 +1875,55 @@ export class Renderer {
       : [];
 
     if (isGroundTexture && waterStrokes.length > 0) {
-      ctx.save();
+      // Use temp canvas for masked preview
+      const size = (preview.radius + preview.fadeWidth + 20) * 2;
+      const tempCanvas = this._acquireCanvas(size);
+      const tempCtx = tempCanvas.getContext('2d');
+      tempCtx.clearRect(0, 0, size, size);
 
-      // Create clipping path: full canvas minus water circles
-      const width = this._state.canvasWidth;
-      const height = this._state.canvasHeight;
+      // Render preview centered in temp canvas
+      const cx = size / 2;
+      const cy = size / 2;
+      this.renderWaterPreview(tempCtx, cx, cy, {
+        waterType: preview.textureType,
+        waterRadius: preview.radius,
+        waterFadeWidth: preview.fadeWidth,
+        waterOpacity: preview.waterOpacity ?? 1.0,
+        waterDepthFade: preview.waterDepthFade ?? 0,
+        shoreType: null,
+        shoreWidth: 0,
+        shoreFadeWidth: preview.fadeWidth,
+        alpha: 0.7
+      });
 
-      ctx.beginPath();
-      // Outer rectangle (clockwise)
-      ctx.rect(0, 0, width, height);
-
-      // Cut out water circles (counter-clockwise to create holes)
+      // Erase water areas from temp canvas
+      tempCtx.globalCompositeOperation = 'destination-out';
       for (const water of waterStrokes) {
-        // Include shore width in the exclusion zone
         const effectiveRadius = water.radius + (water.shoreWidth || 0);
-        ctx.moveTo(water.x + effectiveRadius, water.y);
-        ctx.arc(water.x, water.y, effectiveRadius, 0, Math.PI * 2, true);
+        // Transform water position to temp canvas coords
+        const wx = water.x - preview.x + cx;
+        const wy = water.y - preview.y + cy;
+        tempCtx.beginPath();
+        tempCtx.arc(wx, wy, effectiveRadius, 0, Math.PI * 2);
+        tempCtx.fill();
       }
 
-      ctx.clip('evenodd');
-    }
-
-    this.renderWaterPreview(ctx, preview.x, preview.y, {
-      waterType: preview.textureType,
-      waterRadius: preview.radius,
-      waterFadeWidth: preview.fadeWidth,
-      waterOpacity: preview.waterOpacity ?? 1.0,
-      waterDepthFade: preview.waterDepthFade ?? 0,
-      shoreType: preview.isWater ? preview.shoreType : null,
-      shoreWidth: preview.isWater ? preview.shoreWidth : 0,
-      shoreFadeWidth: preview.shoreFadeWidth ?? preview.fadeWidth,
-      alpha: 0.7
-    });
-
-    if (isGroundTexture && waterStrokes.length > 0) {
-      ctx.restore();
+      // Draw masked preview to main canvas
+      ctx.drawImage(tempCanvas, preview.x - cx, preview.y - cy);
+      this._releaseCanvas(tempCanvas);
+    } else {
+      // No water masking needed - render directly
+      this.renderWaterPreview(ctx, preview.x, preview.y, {
+        waterType: preview.textureType,
+        waterRadius: preview.radius,
+        waterFadeWidth: preview.fadeWidth,
+        waterOpacity: preview.waterOpacity ?? 1.0,
+        waterDepthFade: preview.waterDepthFade ?? 0,
+        shoreType: preview.isWater ? preview.shoreType : null,
+        shoreWidth: preview.isWater ? preview.shoreWidth : 0,
+        shoreFadeWidth: preview.shoreFadeWidth ?? preview.fadeWidth,
+        alpha: 0.7
+      });
     }
   }
 
