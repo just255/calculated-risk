@@ -912,6 +912,11 @@ export class Renderer {
       ctx.drawImage(this._groundCache, 0, 0);
     }
 
+    // During drag painting, render uncached floor items (not in ground cache yet)
+    if (this._isDragPainting && this._state.viewSettings.useScatterRendering) {
+      this._renderUncachedFloorItems(ctx);
+    }
+
     // Draw paint preview layer (strokes being painted, not yet in cache)
     if (this._paintPreview && this._paintPreviewStrokes.length > 0) {
       ctx.drawImage(this._paintPreview, 0, 0);
@@ -1371,6 +1376,58 @@ export class Renderer {
     }
   }
 
+  /**
+   * Render uncached floor items during drag painting
+   * Floor patches are on the 'ground' layer and need to appear on the ground canvas
+   */
+  _renderUncachedFloorItems(ctx) {
+    const terrainMap = this._state.terrainMap;
+    const scatterCount = terrainMap.scatterItems?.length || 0;
+
+    // Only render items added after the last cache build
+    if (!terrainMap.scatterItems || scatterCount <= this._groundCacheScatterCount) {
+      return;
+    }
+
+    const uncachedItems = terrainMap.scatterItems.slice(this._groundCacheScatterCount);
+
+    // Filter to floor items only (ground layer)
+    const floorItems = uncachedItems.filter(item => {
+      const config = SCATTER_TYPES[item.type];
+      return config && config.layer === 'ground';
+    });
+
+    if (floorItems.length === 0) return;
+
+    // Viewport culling
+    const vp = this._state.viewport;
+    const vpLeft = -vp.x / vp.zoom;
+    const vpTop = -vp.y / vp.zoom;
+    const vpRight = vpLeft + this._viewportWidth / vp.zoom;
+    const vpBottom = vpTop + this._viewportHeight / vp.zoom;
+    const margin = 100;
+
+    const visibleFloor = floorItems.filter(item => {
+      return item.x > vpLeft - margin && item.x < vpRight + margin &&
+             item.y > vpTop - margin && item.y < vpBottom + margin;
+    });
+
+    if (visibleFloor.length === 0) return;
+
+    // Prepare images
+    const images = {
+      tree: this._images.trees,
+      brush: this._images.brush,
+      floor: this._images.floor,
+      particle: this._images.brush
+    };
+
+    // Render floor items
+    for (const item of visibleFloor) {
+      renderScatterItem(ctx, item, images, { skipFilters: true });
+    }
+  }
+
   _renderGrid(ctx) {
     const viewSettings = this._state.viewSettings;
     if (!viewSettings.showGrid) return;
@@ -1488,53 +1545,58 @@ export class Renderer {
           particle: this._images.brush
         };
 
-        // PERFORMANCE: Get current viewport for culling
-        const vp = this._state.viewport;
-        const vpLeft = -vp.x / vp.zoom;
-        const vpTop = -vp.y / vp.zoom;
-        const vpRight = vpLeft + this._viewportWidth / vp.zoom;
-        const vpBottom = vpTop + this._viewportHeight / vp.zoom;
-        const margin = 150; // Extra margin for large sprites
-
-        // Filter to visible items only (viewport culling)
-        const visibleItems = uncachedItems.filter(item => {
-          const x = item._renderX ?? item.x;
-          const y = item._renderY ?? item.y;
-          return x > vpLeft - margin && x < vpRight + margin &&
-                 y > vpTop - margin && y < vpBottom + margin;
+        // Filter to canopy/particle layer items only (floor is handled by _renderUncachedFloorItems)
+        const canopyItems = uncachedItems.filter(item => {
+          const config = SCATTER_TYPES[item.type];
+          return config && (config.layer === 'canopy' || config.layer === 'particle');
         });
 
-        // PERFORMANCE: Zoom-based LOD + frame cap during drag painting
-        // When zoomed out, skip particles/floor entirely - they're too small to see
-        const zoom = vp.zoom;
-        let itemsToRender = visibleItems;
+        if (canopyItems.length > 0) {
+          // PERFORMANCE: Get current viewport for culling
+          const vp = this._state.viewport;
+          const vpLeft = -vp.x / vp.zoom;
+          const vpTop = -vp.y / vp.zoom;
+          const vpRight = vpLeft + this._viewportWidth / vp.zoom;
+          const vpBottom = vpTop + this._viewportHeight / vp.zoom;
+          const margin = 150; // Extra margin for large sprites
 
-        // LOD: When zoomed out, skip small detail items
-        if (zoom < 0.5) {
-          // Very zoomed out: only trees
-          itemsToRender = visibleItems.filter(i => SCATTER_TYPES[i.type]?.category === 'tree');
-        } else if (zoom < 0.75) {
-          // Moderately zoomed out: trees + brush, skip particles/floor
-          itemsToRender = visibleItems.filter(i => {
-            const cat = SCATTER_TYPES[i.type]?.category;
-            return cat === 'tree' || cat === 'brush';
+          // Filter to visible items only (viewport culling)
+          const visibleItems = canopyItems.filter(item => {
+            const x = item._renderX ?? item.x;
+            const y = item._renderY ?? item.y;
+            return x > vpLeft - margin && x < vpRight + margin &&
+                   y > vpTop - margin && y < vpBottom + margin;
           });
-        }
 
-        // No hard limits - render all visible items
-        // Viewport culling above already filters to visible items only
+          // PERFORMANCE: Zoom-based LOD
+          // When zoomed out, skip particles entirely - they're too small to see
+          const zoom = vp.zoom;
+          let itemsToRender = visibleItems;
 
-        // Sort items to render (smaller scale first, then by Y for proper layering)
-        itemsToRender.sort((a, b) => {
-          const scaleA = a._renderScale ?? a.scale;
-          const scaleB = b._renderScale ?? b.scale;
-          return (scaleA - scaleB) || (a.y - b.y);
-        });
+          // LOD: When zoomed out, skip small detail items
+          if (zoom < 0.5) {
+            // Very zoomed out: only trees
+            itemsToRender = visibleItems.filter(i => SCATTER_TYPES[i.type]?.category === 'tree');
+          } else if (zoom < 0.75) {
+            // Moderately zoomed out: trees + brush, skip particles
+            itemsToRender = visibleItems.filter(i => {
+              const cat = SCATTER_TYPES[i.type]?.category;
+              return cat === 'tree' || cat === 'brush';
+            });
+          }
 
-        // Render each item
-        // Skip CSS filters for live rendering - filters applied during cache rebuild
-        for (const item of itemsToRender) {
-          renderScatterItem(ctx, item, images, { skipFilters: true });
+          // Sort items to render (smaller scale first, then by Y for proper layering)
+          itemsToRender.sort((a, b) => {
+            const scaleA = a._renderScale ?? a.scale;
+            const scaleB = b._renderScale ?? b.scale;
+            return (scaleA - scaleB) || (a.y - b.y);
+          });
+
+          // Render each item
+          // Skip CSS filters for live rendering - filters applied during cache rebuild
+          for (const item of itemsToRender) {
+            renderScatterItem(ctx, item, images, { skipFilters: true });
+          }
         }
       }
     }
