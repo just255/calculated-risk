@@ -5,6 +5,8 @@
 
 import { createStroke, FEATURE_DEFS, BRUSH_TYPES } from '../../world-builder/strokes.js';
 import { generateForestItems, SCATTER_TYPES } from '../../world-builder/scatter.js';
+import { hasActiveAnimations } from '../../world-builder/scatter-animation.js';
+import { Events } from '../events.js';
 
 /**
  * Simple seeded random (matches scatter.js seededRandom)
@@ -51,9 +53,18 @@ export const PaintTool = {
     this._lastPreviewPos = null;
     this._cachedPreviewItems = null;
     this._cachedPreviewKey = null;
+    renderer.clearTexturePreview();
     this._cachedPreviewGenPos = null;
     renderer.clearBrushPreview();
     renderer.clearScatterPreview();
+  },
+
+  /**
+   * Invalidate the cached preview so it regenerates on next mouse move
+   */
+  invalidatePreviewCache() {
+    this._cachedPreviewKey = null;
+    this._cachedPreviewItems = null;
   },
 
   onMouseDown(e, state, renderer) {
@@ -64,8 +75,23 @@ export const PaintTool = {
       this._strokesAddedDuringDrag = 0;
       this._renderer = renderer;  // Store for preview rendering
       this._dragModeStarted = false;  // Track if we've started drag mode
-      // First stroke renders immediately (NOT in drag mode)
-      this._paint(e.x, e.y, state, false);
+      this._state = state;  // Store for event emission
+      // Clear hover preview when painting starts
+      renderer.clearTexturePreview();
+
+      const options = state.toolOptions;
+      // Track if painting a scatter feature (for preview refresh on mouse up)
+      this._paintingScatterFeature = options.featureType === 'forest' || options.featureType === 'brush';
+      // For water, use preview mode even for first stroke to ensure proper shore/water layering
+      if (options.featureType === 'water') {
+        renderer.beginDragPaint();
+        this._dragModeStarted = true;
+        this._paint(e.x, e.y, state, true, renderer);
+        this._strokesAddedDuringDrag++;
+      } else {
+        // First stroke renders immediately (NOT in drag mode)
+        this._paint(e.x, e.y, state, false);
+      }
     }
   },
 
@@ -89,11 +115,42 @@ export const PaintTool = {
 
     // Scatter preview on canvas (shows what would spawn at cursor position)
     const showPreview = state.viewSettings.showScatterPreview;
-    if (showPreview && inBounds && !this._isPainting && options.featureType === 'forest') {
+    const isScatterFeature = options.featureType === 'forest' || options.featureType === 'brush';
+    if (showPreview && inBounds && !this._isPainting && isScatterFeature) {
       this._updateScatterPreview(e.x, e.y, state, renderer);
-    } else if (this._lastPreviewPos) {
+    } else if (this._lastPreviewPos && !isScatterFeature) {
       renderer.clearScatterPreview();
       this._lastPreviewPos = null;
+    }
+
+    // Texture preview for water/ground (shows what texture would be painted)
+    // Always show for water/ground (no panel preview alternative), scatter uses showScatterPreview toggle
+    const isTextureFeature = options.featureType === 'water' || options.featureType === 'groundTexture';
+    if (inBounds && !this._isPainting && isTextureFeature) {
+      if (options.featureType === 'water') {
+        renderer.setTexturePreview(e.x, e.y, options.brushRadius, options.waterTextureType || 'water', {
+          fadeWidth: options.waterFadeWidth ?? 12,
+          intensity: options.intensity || 1.0,
+          isWater: true,
+          // Water-specific options
+          waterOpacity: (options.waterOpacity ?? 100) / 100,
+          waterDepthFade: (options.waterDepthFade ?? 0) / 100,
+          // Shore options
+          shoreType: options.shoreTextureType,
+          shoreWidth: options.shoreWidth || 0,
+          shoreFadeWidth: options.shoreFadeWidth ?? 12
+        });
+      } else {
+        renderer.setTexturePreview(e.x, e.y, options.brushRadius, options.groundTextureType || 'grass-1', {
+          fadeWidth: options.fadeWidth ?? 12,
+          intensity: options.intensity || 1.0,
+          isWater: false
+        });
+      }
+    } else if (!isTextureFeature) {
+      renderer.clearTexturePreview();
+    } else {
+      renderer.clearTexturePreview();
     }
 
     // Drag painting (only in bounds)
@@ -128,14 +185,27 @@ export const PaintTool = {
       renderer.endDragPaint();
       // Final render after drag painting
       if (this._isPainting && this._strokesAddedDuringDrag > 0) {
-        renderer.clearPaintPreview();  // Clear preview before full render
+        // Only clear preview if no animations running - otherwise let animations complete
+        // and the renderer will clear it when cache is rebuilt
+        if (!hasActiveAnimations()) {
+          renderer.clearPaintPreview();
+        }
         state.requestRender();
       }
     }
+
+    // For scatter features (forest/brush), regenerate seed and notify for preview refresh
+    // This happens ONCE at the end of painting, not per stroke during drag
+    if (this._paintingScatterFeature && this._state) {
+      this._state.setToolOption('previewSeed', Math.floor(Math.random() * 1000000));
+      this._state.emit(Events.PAINTING_FINISHED, { featureType: state.toolOptions.featureType });
+    }
+
     this._isPainting = false;
     this._lastPaintPos = null;
     this._strokesAddedDuringDrag = 0;
     this._dragModeStarted = false;
+    this._paintingScatterFeature = false;
   },
 
   onMouseLeave(state, renderer) {
@@ -144,15 +214,26 @@ export const PaintTool = {
       renderer.endDragPaint();
       // Final render if we were painting when leaving
       if (this._strokesAddedDuringDrag > 0) {
-        renderer.clearPaintPreview();
+        // Only clear preview if no animations running
+        if (!hasActiveAnimations()) {
+          renderer.clearPaintPreview();
+        }
         state.requestRender();
       }
     }
+
+    // For scatter features (forest/brush), regenerate seed and notify for preview refresh
+    if (this._paintingScatterFeature && this._state) {
+      this._state.setToolOption('previewSeed', Math.floor(Math.random() * 1000000));
+      this._state.emit(Events.PAINTING_FINISHED, { featureType: state.toolOptions.featureType });
+    }
+
     this._isPainting = false;
     this._lastPaintPos = null;
     this._lastPreviewPos = null;
     this._strokesAddedDuringDrag = 0;
     this._dragModeStarted = false;
+    this._paintingScatterFeature = false;
     renderer.clearScatterPreview();
   },
 
@@ -210,7 +291,7 @@ export const PaintTool = {
             intensity: 1.0,
             falloff: options.falloff,
             textureType: options.shoreTextureType,
-            fadeWidth: options.fadeWidth ?? 12,
+            fadeWidth: options.shoreFadeWidth ?? 12,
             isShore: true  // Mark as shore so it renders after regular ground textures
           }
         );
@@ -218,25 +299,30 @@ export const PaintTool = {
       }
 
       // Paint water on top
+      const waterOpacity = (options.waterOpacity ?? 100) / 100;
       const waterStroke = createStroke(
         'water',
         x,
         y,
         options.brushRadius,
         {
-          intensity: options.intensity || 1.0,
+          intensity: waterOpacity,
           falloff: options.falloff,
           textureType: options.waterTextureType || 'water',
           fadeWidth: options.waterFadeWidth ?? 12,
+          depthFade: (options.waterDepthFade ?? 0) / 100,
           shoreWidth: options.shoreWidth || 0  // Store shore width for forest avoidance
         }
       );
       state.addStroke(waterStroke, skipRender);
 
-      // Both shore and water render via ground cache rebuild (stroke count detection)
-      // Don't add shore to paint preview - it would be drawn ON TOP of water from cache
+      // Add shore and water to paint preview for live feedback during drag painting
+      // Preview rebuilds with proper layering: all shores first, then all waters
       if (skipRender && renderer) {
-        renderer.requestUIRender();
+        if (shoreStroke) {
+          renderer.addToPaintPreview(shoreStroke);
+        }
+        renderer.addToPaintPreview(waterStroke);
       }
       return;
     }
@@ -255,9 +341,8 @@ export const PaintTool = {
 
     // If painting trees, add tree-specific properties
     if (options.featureType === 'forest') {
-      // Use preview seed so the stroke matches what the preview showed
-      const paintSeed = options.previewSeed ?? Math.floor(Math.random() * 1000000);
-      stroke.seed = paintSeed;
+      // First click uses previewSeed to match preview, subsequent strokes get fresh seeds
+      stroke.seed = options.previewSeed ?? Math.floor(Math.random() * 1000000);
 
       // Store all selected tree types and their ratios for mixed generation
       const treeTypes = options.treeTypes || [options.treeType || 'oak'];
@@ -290,14 +375,28 @@ export const PaintTool = {
       stroke.maxAge = [...ageOrder].reverse().find(a => selected.includes(a)) || 'old';
     }
 
-    // If painting brush/undergrowth, add brush-specific properties
+    // If painting brush/undergrowth, add brush-specific properties (like forest)
     if (options.featureType === 'brush') {
-      // Pick brush type based on ratios
-      const selectedType = this._pickBrushType(options);
-      stroke.brushType = selectedType;
-      stroke.density = options.brushDensity || 8;
-      stroke.brushScale = options.brushScale || 0.12;
+      // First click uses previewSeed to match preview, subsequent strokes get fresh seeds
+      stroke.seed = options.previewSeed ?? Math.floor(Math.random() * 1000000);
+
+      // Store all selected brush types and their ratios for mixed generation
+      const brushTypes = options.brushTypes || [options.brushType || 'bush-small'];
+      const brushRatios = options.brushRatios || {};
+
+      stroke.brushTypes = brushTypes;
+      stroke.brushRatios = { ...brushRatios };
+
+      // Legacy single type for backwards compatibility (use first type)
+      stroke.brushType = brushTypes[0] || 'bush-small';
+
+      stroke.density = options.brushDensity ?? 1.0;
+      stroke.brushScale = options.brushScale ?? 0.25;
       stroke.allowBrushInWater = options.brushInWater || false;
+
+      // Floor/particle toggles
+      stroke.floorEnabled = options.floorEnabled ?? true;
+      stroke.particlesEnabled = options.particlesEnabled ?? true;
     }
 
     // Auto-paint ground texture if enabled (paint first so it's behind trees)
@@ -331,8 +430,8 @@ export const PaintTool = {
 
     state.addStroke(stroke, skipRender);
 
-    // Generate new preview seed for next stroke (triggers preview refresh)
-    if (options.featureType === 'forest') {
+    // Regenerate seed for next stroke (gives variation during drag painting)
+    if (options.featureType === 'forest' || options.featureType === 'brush') {
       state.setToolOption('previewSeed', Math.floor(Math.random() * 1000000));
     }
 
@@ -378,13 +477,17 @@ export const PaintTool = {
     // Build settings key (position-independent)
     const seed = options.previewSeed ?? 42;
     const settingsKey = [
+      options.featureType,  // Include feature type so brush/forest have separate caches
       (options.treeTypes || ['oak']).join(','),
       JSON.stringify(options.treeRatios || {}),
+      (options.deadTypes || []).join(','),
+      options.deadRatio ?? 0,
       options.treeDensity, options.treeScale, options.treeSpacing,
       (options.selectedAges || []).join(','),
       (options.brushTypes || ['bush-small']).join(','),
       JSON.stringify(options.brushRatios || {}),
       options.brushDensity, options.brushScale,
+      options.floorEnabled ?? true, options.particlesEnabled ?? true,
       options.season, options.biome, options.brushRadius, seed,
       JSON.stringify(options.seasonOverrides || {}),
       JSON.stringify(options.childSpawnOverrides || {})
@@ -410,6 +513,8 @@ export const PaintTool = {
         {
           treeTypes: options.treeTypes || ['oak'],
           treeRatios: options.treeRatios || {},
+          deadTypes: options.deadTypes || [],
+          deadRatio: options.deadRatio ?? 0,
           treeDensity: options.treeDensity ?? 1.0,
           treeScale: options.treeScale ?? 0.35,
           treeSpacing: options.treeSpacing ?? 1.0,
@@ -423,8 +528,8 @@ export const PaintTool = {
           biome: options.biome ?? 'temperate',
           seasonOverrides: options.seasonOverrides ?? {},
           childSpawnOverrides: options.childSpawnOverrides ?? {},
-          // Category toggles
-          treesEnabled: options.treesEnabled ?? true,
+          // Category toggles - for brush tool, trees are disabled
+          treesEnabled: options.featureType === 'brush' ? false : (options.treesEnabled ?? true),
           floorEnabled: options.floorEnabled ?? true,
           particlesEnabled: options.particlesEnabled ?? true,
           brushEnabled: options.brushEnabled ?? true,

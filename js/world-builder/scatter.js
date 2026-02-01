@@ -1078,20 +1078,10 @@ export function getSpriteKey(item) {
     return `${treeType}-${item.age}-${item.variant}`;
   }
 
-  // Particles: particle-leaf → leaf-particles-1, particle-leaf-fall → leaf-fall-particles-1
-  if (config.category === 'particle') {
-    const particleType = item.type.replace('particle-', '');
-    return `${particleType}-particles-${item.variant}`;
-  }
-
-  // Fern: fern → fern-small-1 (existing sprite naming)
-  if (item.type === 'fern') {
-    return `fern-small-${item.variant}`;
-  }
-
-  // All other types use simple {type}-{variant} format
-  // bush-small-1, bush-large-1, floor-leaf-1, floor-leaf-fall-1, etc.
-  return `${item.type}-${item.variant}`;
+  // Use spriteBase if defined, otherwise use type name
+  // This allows flexible sprite naming without hardcoded transformations
+  const spriteBase = config.spriteBase || item.type;
+  return `${spriteBase}-${item.variant}`;
 }
 
 /**
@@ -1181,7 +1171,10 @@ export function generateForestItems(terrainMap, stroke, options = {}) {
   // Filter out 'dead' from types - it's a modifier, not a real type
   const speciesTypes = treeTypes.filter(t => t !== 'dead' && !t.endsWith('-dead'));
   const deadVariantTypes = treeTypes.filter(t => t.endsWith('-dead'));
-  const deadRatio = treeRatios['dead'] || 0;
+  // Support both old format (treeRatios['dead']) and new format (options.deadRatio)
+  const deadRatio = options.deadRatio ?? treeRatios['dead'] ?? 0;
+  // Which species can have dead variants (new UI format: ['oak-dead', 'pine-dead'])
+  const deadTypes = options.deadTypes || [];
 
   let typeSeed = seed;
 
@@ -1258,14 +1251,20 @@ export function generateForestItems(terrainMap, stroke, options = {}) {
     // ─────────────────────────────────────────────────────────────
     // APPLY DEAD RATIO - Convert some live trees to dead
     // Note: Dead sprites only exist for young and old ages, not transitional
+    // Only applies if user has selected specific species for dead variants
     // ─────────────────────────────────────────────────────────────
-    if (deadRatio > 0) {
+    if (deadRatio > 0 && deadTypes.length > 0) {
       let deadSeed = seed + 77777;
       for (const item of allItems) {
         const config = SCATTER_TYPES[item.type];
         if (!config || config.category !== 'tree') continue;
         if (item.isDead) continue;
         if (item.age === 'transitional') continue;
+
+        // Only apply to species the user has selected for dead variants
+        const species = item.type.replace('tree-', '');
+        const deadKey = `${species}-dead`;
+        if (!deadTypes.includes(deadKey)) continue;
 
         const rand = Math.sin(deadSeed) * 10000;
         const roll = rand - Math.floor(rand);

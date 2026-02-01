@@ -468,7 +468,7 @@
       background: rgba(0, 0, 0, 0.2);
       border-radius: 6px;
       margin-bottom: 8px;
-      overflow: hidden;
+      /* overflow: visible allows dropdowns to extend beyond card bounds */
     }
 
     .category-header {
@@ -1707,20 +1707,99 @@
         </div>
       </div>
 
-      <!-- Brush/Undergrowth Settings (standalone brush tool - hidden, now in category cards) -->
+      <!-- Brush Tool Settings (shown when brush tool is selected) -->
       <div class="panel-section" id="brush-settings" style="display: none;">
-        <div class="panel-title">Brush Tool</div>
-        <div class="prop-row">
-          <label class="prop-label">
-            Scale <span class="prop-value" id="brush-scale-val">12%</span>
-          </label>
-          <input type="range" class="prop-range" id="brush-scale" min="5" max="40" value="12">
+        <div class="panel-title">Brush Output</div>
+
+        <!-- BRUSH Category (primary) -->
+        <div class="category-card" id="cat-brush-standalone">
+          <div class="category-header" data-category="brush-standalone">
+            <span class="category-icon">🌿</span>
+            <span class="category-name">Brush</span>
+          </div>
+          <div class="category-body" id="cat-brush-standalone-body">
+            <!-- Brush Types Dropdown -->
+            <div class="dropdown-select" id="brush-standalone-types-dropdown">
+              <div class="dropdown-trigger">
+                <span class="dropdown-label">Types</span>
+                <span class="dropdown-value" id="brush-standalone-types-value">Bush S</span>
+                <span class="dropdown-arrow">▼</span>
+              </div>
+              <div class="dropdown-menu" id="brush-standalone-types-menu">
+                <div class="dropdown-item" data-brush="bush-small">
+                  <input type="checkbox" id="brush-standalone-bush-small" checked>
+                  <span class="dropdown-item-label checked">Bush S</span>
+                </div>
+                <div class="dropdown-item" data-brush="bush-large">
+                  <input type="checkbox" id="brush-standalone-bush-large">
+                  <span class="dropdown-item-label">Bush L</span>
+                </div>
+                <div class="dropdown-item" data-brush="fern">
+                  <input type="checkbox" id="brush-standalone-fern">
+                  <span class="dropdown-item-label">Fern</span>
+                </div>
+                <div class="dropdown-item" data-brush="reed">
+                  <input type="checkbox" id="brush-standalone-reed">
+                  <span class="dropdown-item-label">Reed</span>
+                </div>
+                <div class="dropdown-item" data-brush="dead-brush">
+                  <input type="checkbox" id="brush-standalone-dead-brush">
+                  <span class="dropdown-item-label">Dead</span>
+                </div>
+              </div>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Density</span>
+              <input type="range" class="ratio-slider" id="brush-standalone-density" min="0.1" max="2.0" step="0.1" value="1.0">
+              <span class="ratio-value" id="brush-standalone-density-val">1.0×</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Scale</span>
+              <input type="range" class="ratio-slider" id="brush-standalone-scale" min="10" max="80" value="25">
+              <span class="ratio-value" id="brush-standalone-scale-val">25%</span>
+            </div>
+          </div>
         </div>
-        <div class="prop-row">
+
+        <!-- FLOOR Category -->
+        <div class="category-card" id="cat-brush-floor">
+          <div class="category-header" data-category="brush-floor">
+            <span class="category-icon">🍂</span>
+            <span class="category-name">Floor</span>
+            <label class="category-toggle" title="Enable/disable floor">
+              <input type="checkbox" id="toggle-brush-floor" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="category-body" id="cat-brush-floor-body">
+            <div class="ratio-row">
+              <span class="ratio-label">Auto from brush type</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- PARTICLE Category -->
+        <div class="category-card" id="cat-brush-particles">
+          <div class="category-header" data-category="brush-particles">
+            <span class="category-icon">✨</span>
+            <span class="category-name">Particles</span>
+            <label class="category-toggle" title="Enable/disable particles">
+              <input type="checkbox" id="toggle-brush-particles" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="category-body" id="cat-brush-particles-body">
+            <div class="ratio-row">
+              <span class="ratio-label">Auto from brush type</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Additional Options -->
+        <div class="prop-row" style="margin-top: 8px;">
           <label class="prop-label">
-            Density <span class="prop-value" id="brush-density-val">8</span>
+            <input type="checkbox" id="brush-standalone-in-water"> Allow in water
           </label>
-          <input type="range" class="prop-range" id="brush-density" min="2" max="20" value="8">
         </div>
       </div>
 

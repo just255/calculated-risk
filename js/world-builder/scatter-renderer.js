@@ -2,6 +2,24 @@
 // SCATTER RENDERER - Unified rendering for scatter items
 // ═══════════════════════════════════════════════════════════════
 // Renders scatter items with viewport culling and proper layering.
+//
+// PREVIEW SCALE SYSTEM
+// --------------------
+// Similar to the ground texture system which uses 2x scale for preview
+// and 4x for final render, the scatter renderer supports a `previewScale`
+// option to reduce sprite resolution during previews:
+//
+//   previewScale: 1.0  = Full resolution (256px sprites) - for cache builds
+//   previewScale: 0.5  = Half resolution (128px effective) - for previews
+//   previewScale: 0.25 = Quarter resolution (64px effective) - for thumbnails
+//
+// This is used in:
+//   - Panel preview (200x200 canvas) - uses 0.5 scale
+//   - On-canvas scatter preview during painting - uses 0.5 scale
+//   - Final canopy cache - uses 1.0 scale (full quality)
+//
+// The scale is applied to the sprite's draw size, not the item's scale.
+// This means items maintain their relative sizes but use less GPU bandwidth.
 // ═══════════════════════════════════════════════════════════════
 
 import { SCATTER_TYPES, getVisibleScatter, getSpriteKey } from './scatter.js';
@@ -39,6 +57,10 @@ export function renderScatterLayer(ctx, terrainMap, layer, viewport, images, opt
  * @param {object} item - ScatterItem
  * @param {object} images - Image collections
  * @param {object} options - Rendering options
+ * @param {number} options.previewScale - Sprite resolution scale (1.0 = full, 0.5 = half, 0.25 = quarter)
+ * @param {boolean} options.skipFilters - Skip expensive CSS filters
+ * @param {object} options.postProcessing - Color adjustments { canopy: {}, ground: {} }
+ * @param {boolean} options.showMissing - Show placeholder for missing sprites
  */
 // Track logged warnings to avoid spam
 const _loggedWarnings = new Set();
@@ -86,9 +108,11 @@ export function renderScatterItem(ctx, item, images, options = {}) {
   }
 
   // Calculate size (use animated scale if available)
+  // Apply previewScale to reduce GPU bandwidth during previews
   const baseSize = img.width || 256;
   const effectiveScale = item._renderScale ?? item.scale;
-  const size = baseSize * effectiveScale;
+  const previewScale = options.previewScale ?? 1.0;
+  const size = baseSize * effectiveScale * previewScale;
 
   // Get render position (use animated position if available)
   const rx = item._renderX ?? item.x;

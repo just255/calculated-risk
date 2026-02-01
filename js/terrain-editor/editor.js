@@ -162,7 +162,7 @@ class TerrainEditor {
       densityVal: document.getElementById('density-val'),
       animationStyle: document.getElementById('animation-style'),
 
-      // Brush/Undergrowth settings
+      // Brush/Undergrowth settings (in forest output)
       brushSettings: document.getElementById('brush-settings'),
       brushTypesDropdown: document.getElementById('brush-types-dropdown'),
       brushTypesValue: document.getElementById('brush-types-value'),
@@ -175,6 +175,18 @@ class TerrainEditor {
       brushDensity: document.getElementById('brush-density'),
       brushDensityVal: document.getElementById('brush-density-val'),
       brushInWater: document.getElementById('brush-in-water'),
+
+      // Brush standalone settings (brush tool panel)
+      brushStandaloneTypesDropdown: document.getElementById('brush-standalone-types-dropdown'),
+      brushStandaloneTypesValue: document.getElementById('brush-standalone-types-value'),
+      brushStandaloneTypesMenu: document.getElementById('brush-standalone-types-menu'),
+      brushStandaloneDensity: document.getElementById('brush-standalone-density'),
+      brushStandaloneDensityVal: document.getElementById('brush-standalone-density-val'),
+      brushStandaloneScale: document.getElementById('brush-standalone-scale'),
+      brushStandaloneScaleVal: document.getElementById('brush-standalone-scale-val'),
+      brushStandaloneInWater: document.getElementById('brush-standalone-in-water'),
+      toggleBrushFloor: document.getElementById('toggle-brush-floor'),
+      toggleBrushParticles: document.getElementById('toggle-brush-particles'),
 
       // Floor types dropdown (category cards)
       floorTypesDropdown: document.getElementById('floor-types-dropdown'),
@@ -368,6 +380,13 @@ class TerrainEditor {
         if (feature) {
           this._state.setToolOption('featureType', feature);
           this._updateFeaturePanels(feature);
+
+          // Set default animation style per tool
+          const defaultAnim = feature === 'water' ? 'ripple' : 'deploy';
+          this._state.setToolOption('animationStyle', defaultAnim);
+          if (this._elements.animationStyle) {
+            this._elements.animationStyle.value = defaultAnim;
+          }
         }
       });
     });
@@ -665,6 +684,50 @@ class TerrainEditor {
     this._initDropdown('particleTypes', () => {
       this._updateSelectedParticleTypes();
     });
+
+    // Brush standalone types dropdown (for brush tool)
+    this._initDropdown('brushStandaloneTypes', () => {
+      this._updateSelectedBrushStandaloneTypes();
+    });
+
+    // Brush standalone density
+    if (this._elements.brushStandaloneDensity) {
+      this._elements.brushStandaloneDensity.addEventListener('input', (e) => {
+        const value = parseFloat(e.target.value);
+        this._state.setToolOption('brushDensity', value);
+        this._elements.brushStandaloneDensityVal.textContent = `${value.toFixed(1)}×`;
+      });
+    }
+
+    // Brush standalone scale
+    if (this._elements.brushStandaloneScale) {
+      this._elements.brushStandaloneScale.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value) / 100;
+        this._state.setToolOption('brushScale', value);
+        this._elements.brushStandaloneScaleVal.textContent = `${e.target.value}%`;
+      });
+    }
+
+    // Brush standalone in water toggle
+    if (this._elements.brushStandaloneInWater) {
+      this._elements.brushStandaloneInWater.addEventListener('change', (e) => {
+        this._state.setToolOption('brushInWater', e.target.checked);
+      });
+    }
+
+    // Brush floor toggle
+    if (this._elements.toggleBrushFloor) {
+      this._elements.toggleBrushFloor.addEventListener('change', (e) => {
+        this._state.setToolOption('floorEnabled', e.target.checked);
+      });
+    }
+
+    // Brush particles toggle
+    if (this._elements.toggleBrushParticles) {
+      this._elements.toggleBrushParticles.addEventListener('change', (e) => {
+        this._state.setToolOption('particlesEnabled', e.target.checked);
+      });
+    }
 
     // Brush scale
     if (this._elements.brushScale) {
@@ -1037,6 +1100,9 @@ class TerrainEditor {
     this._state.on(Events.MAP_LOADED, () => this._updateStrokeCount());
     this._state.on(Events.MAP_CLEARED, () => this._updateStrokeCount());
 
+    // Refresh scatter preview when painting finishes (new seed was generated)
+    this._state.on(Events.PAINTING_FINISHED, () => this._refreshScatterPreview());
+
     // Refresh scatter preview when relevant options change
     this._state.on(Events.TOOL_OPTIONS_CHANGED, ({ key }) => {
       // Note: previewSeed intentionally excluded - it changes on every stroke and would
@@ -1174,8 +1240,9 @@ class TerrainEditor {
       baseLayer: this._elements.baseLayer.value
     });
 
-    this._elements.mapNameInput.value = 'Untitled Map';
-    this._elements.mapName.textContent = 'Untitled Map';
+    if (this._elements.mapNameInput) this._elements.mapNameInput.value = 'Untitled Map';
+    if (this._elements.mapName) this._elements.mapName.textContent = 'Untitled Map';
+    if (this._elements.mapNameHeader) this._elements.mapNameHeader.value = 'Untitled Map';
   }
 
   _saveMap() {
@@ -1371,6 +1438,11 @@ class TerrainEditor {
     // Show/hide brush settings
     if (this._elements.brushSettings) {
       this._elements.brushSettings.style.display = feature === 'brush' ? 'block' : 'none';
+
+      // Sync brush standalone UI with current state when showing
+      if (feature === 'brush') {
+        this._syncBrushStandaloneUI();
+      }
     }
 
     // Show/hide ground settings
@@ -1428,11 +1500,22 @@ class TerrainEditor {
       });
     }
 
-    // Grid size: header -> hidden select
+    // Grid size: header -> hidden select (creates new map)
     if (el.gridSizeHeader) {
       el.gridSizeHeader.addEventListener('change', (e) => {
+        const size = parseInt(e.target.value);
         if (el.gridSize) el.gridSize.value = e.target.value;
-        this._state.setGridSize(parseInt(e.target.value));
+        if (confirm(`This will create a new ${size}x${size} map. Continue?`)) {
+          this._state.newMap({
+            gridWidth: size,
+            gridHeight: size,
+            cellSize: 64
+          });
+        } else {
+          // Reset select to current value
+          e.target.value = this._state.gridWidth;
+          if (el.gridSize) el.gridSize.value = this._state.gridWidth;
+        }
       });
     }
 
@@ -1956,6 +2039,126 @@ class TerrainEditor {
     }
 
     this._refreshScatterPreview();
+  }
+
+  /**
+   * Update selected brush types from standalone brush dropdown (brush tool panel)
+   * Uses the same state as forest brush dropdown
+   */
+  _updateSelectedBrushStandaloneTypes() {
+    const menu = this._elements.brushStandaloneTypesMenu;
+    if (!menu) return;
+
+    const selectedTypes = [];
+    menu.querySelectorAll('.dropdown-item').forEach(item => {
+      const brushType = item.dataset.brush;
+      const checkbox = item.querySelector(`input[type="checkbox"]`);
+      if (checkbox?.checked) {
+        selectedTypes.push(brushType);
+      }
+    });
+
+    // Require at least one brush type
+    if (selectedTypes.length === 0) {
+      // Re-check first type
+      const firstItem = menu.querySelector('.dropdown-item');
+      if (firstItem) {
+        const checkbox = firstItem.querySelector('input[type="checkbox"]');
+        if (checkbox) checkbox.checked = true;
+        selectedTypes.push(firstItem.dataset.brush);
+      }
+    }
+
+    // Update state with selected types (equal ratios by default)
+    const ratios = {};
+    const equalRatio = 1 / selectedTypes.length;
+    selectedTypes.forEach(type => {
+      ratios[type] = equalRatio;
+    });
+
+    this._state.setToolOption('brushTypes', selectedTypes);
+    this._state.setToolOption('brushRatios', ratios);
+
+    // Update display value
+    const labels = {
+      'bush-small': 'Bush S', 'bush-large': 'Bush L',
+      'fern': 'Fern', 'reed': 'Reed', 'dead-brush': 'Dead'
+    };
+    if (this._elements.brushStandaloneTypesValue) {
+      if (selectedTypes.length === 1) {
+        this._elements.brushStandaloneTypesValue.textContent = labels[selectedTypes[0]] || selectedTypes[0];
+      } else {
+        this._elements.brushStandaloneTypesValue.textContent = `${selectedTypes.length} types`;
+      }
+    }
+
+    this._refreshScatterPreview();
+  }
+
+  /**
+   * Sync brush standalone UI with current tool options state
+   */
+  _syncBrushStandaloneUI() {
+    const options = this._state.toolOptions;
+
+    // Sync brush types checkboxes
+    const menu = this._elements.brushStandaloneTypesMenu;
+    if (menu) {
+      const selectedTypes = options.brushTypes || ['bush-small'];
+      menu.querySelectorAll('.dropdown-item').forEach(item => {
+        const brushType = item.dataset.brush;
+        const checkbox = item.querySelector('input[type="checkbox"]');
+        if (checkbox) {
+          checkbox.checked = selectedTypes.includes(brushType);
+          const label = item.querySelector('.dropdown-item-label');
+          if (label) label.classList.toggle('checked', checkbox.checked);
+        }
+      });
+
+      // Update display value
+      const labels = {
+        'bush-small': 'Bush S', 'bush-large': 'Bush L',
+        'fern': 'Fern', 'reed': 'Reed', 'dead-brush': 'Dead'
+      };
+      if (this._elements.brushStandaloneTypesValue) {
+        if (selectedTypes.length === 1) {
+          this._elements.brushStandaloneTypesValue.textContent = labels[selectedTypes[0]] || selectedTypes[0];
+        } else {
+          this._elements.brushStandaloneTypesValue.textContent = `${selectedTypes.length} types`;
+        }
+      }
+    }
+
+    // Sync density slider
+    if (this._elements.brushStandaloneDensity) {
+      const density = options.brushDensity ?? 1.0;
+      this._elements.brushStandaloneDensity.value = density;
+      if (this._elements.brushStandaloneDensityVal) {
+        this._elements.brushStandaloneDensityVal.textContent = `${density.toFixed(1)}×`;
+      }
+    }
+
+    // Sync scale slider
+    if (this._elements.brushStandaloneScale) {
+      const scale = (options.brushScale ?? 0.25) * 100;
+      this._elements.brushStandaloneScale.value = scale;
+      if (this._elements.brushStandaloneScaleVal) {
+        this._elements.brushStandaloneScaleVal.textContent = `${Math.round(scale)}%`;
+      }
+    }
+
+    // Sync floor/particle toggles
+    if (this._elements.toggleBrushFloor) {
+      this._elements.toggleBrushFloor.checked = options.floorEnabled ?? true;
+    }
+    if (this._elements.toggleBrushParticles) {
+      this._elements.toggleBrushParticles.checked = options.particlesEnabled ?? true;
+    }
+
+    // Sync in water toggle
+    if (this._elements.brushStandaloneInWater) {
+      this._elements.brushStandaloneInWater.checked = options.brushInWater ?? false;
+    }
   }
 
   /**
@@ -2667,8 +2870,8 @@ class TerrainEditor {
         biome: options.biome ?? 'temperate',
         seasonOverrides: options.seasonOverrides ?? {},
         childSpawnOverrides: options.childSpawnOverrides ?? {},
-        // Category toggles
-        treesEnabled: options.treesEnabled ?? true,
+        // Category toggles - for brush tool, disable trees (brush is the parent)
+        treesEnabled: options.featureType === 'brush' ? false : (options.treesEnabled ?? true),
         brushEnabled: options.brushEnabled ?? true,
         floorEnabled: options.floorEnabled ?? true,
         particlesEnabled: options.particlesEnabled ?? true,

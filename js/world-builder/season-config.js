@@ -215,7 +215,8 @@ export const SCATTER_TYPES = {
     scaleVariance: 0.2,
     spacing: 90,
     variants: 3,
-    canopyRadius: 10     // Low ground cover
+    canopyRadius: 10,     // Low ground cover
+    spriteBase: 'fern-small'  // Maps to fern-small-1.png, etc.
   },
   'reed': {
     category: 'brush',
@@ -240,13 +241,15 @@ export const SCATTER_TYPES = {
 
   // ── PARTICLES ──────────────────────────────────────────────
   // Particles render in 'particle' layer (between ground and canopy)
+  // spriteBase maps type to actual sprite files: {spriteBase}-{variant}.png
   'particle-leaf': {
     category: 'particle',
     layer: 'particle',
     baseScale: 0.5,
     scaleVariance: 0.4,
     spacing: 0,
-    variants: 3
+    variants: 3,
+    spriteBase: 'leaf-particles'  // Maps to leaf-particles-1.png, etc.
   },
   'particle-leaf-fall': {
     category: 'particle',
@@ -254,7 +257,8 @@ export const SCATTER_TYPES = {
     baseScale: 0.5,
     scaleVariance: 0.4,
     spacing: 0,
-    variants: 3
+    variants: 3,
+    spriteBase: 'leaf-particles'  // Uses same sprites for now
   },
   'particle-leaf-dry': {
     category: 'particle',
@@ -262,7 +266,8 @@ export const SCATTER_TYPES = {
     baseScale: 0.45,
     scaleVariance: 0.35,
     spacing: 0,
-    variants: 3
+    variants: 3,
+    spriteBase: 'leaf-particles'  // Uses same sprites for now
   },
   'particle-petal': {
     category: 'particle',
@@ -270,7 +275,8 @@ export const SCATTER_TYPES = {
     baseScale: 0.4,
     scaleVariance: 0.3,
     spacing: 0,
-    variants: 3
+    variants: 3,
+    spriteBase: 'leaf-particles'  // Uses same sprites for now (needs petal sprites)
   },
   'particle-needle': {
     category: 'particle',
@@ -278,7 +284,8 @@ export const SCATTER_TYPES = {
     baseScale: 0.4,
     scaleVariance: 0.3,
     spacing: 0,
-    variants: 3
+    variants: 3,
+    spriteBase: 'leaf-particles'  // Uses same sprites for now (needs needle sprites)
   },
   'particle-twig': {
     category: 'particle',
@@ -286,7 +293,8 @@ export const SCATTER_TYPES = {
     baseScale: 0.45,
     scaleVariance: 0.35,
     spacing: 0,
-    variants: 3
+    variants: 3,
+    spriteBase: 'leaf-particles'  // Uses same sprites for now (needs twig sprites)
   }
 };
 
@@ -319,7 +327,7 @@ export const SPAWN_RULES = {
   'tree-pine': {
     spawns: [
       { type: 'floor-needle', density: 7, densityVariance: 2, scale: 0.4, distribution: 'under-canopy' },
-      { type: 'particle-needle', density: 3, densityVariance: 1, scale: 0.3, distribution: 'ring', minRadius: 0.85, maxRadius: 1.4 }
+      { type: 'particle-leaf', density: 3, densityVariance: 1, scale: 0.3, distribution: 'ring', minRadius: 0.85, maxRadius: 1.4 }
     ]
   },
 
@@ -327,7 +335,7 @@ export const SPAWN_RULES = {
   'tree-dead': {
     spawns: [
       { type: 'floor-debris', density: 5, densityVariance: 2, scale: 0.4, distribution: 'under-canopy' },
-      { type: 'particle-twig', density: 3, densityVariance: 1, scale: 0.25, distribution: 'ring', minRadius: 0.8, maxRadius: 1.3 }
+      { type: 'particle-leaf', density: 3, densityVariance: 1, scale: 0.25, distribution: 'ring', minRadius: 0.8, maxRadius: 1.3 }
     ]
   },
 
@@ -346,14 +354,14 @@ export const SPAWN_RULES = {
   },
   'fern': {
     spawns: [
-      { type: 'floor-needle', density: 2, densityVariance: 1, scale: 0.25, distribution: 'under-canopy' },
-      { type: 'particle-needle', density: 1, densityVariance: 1, scale: 0.2, distribution: 'ring', minRadius: 0.7, maxRadius: 1.2 }
+      { type: 'floor-leaf', density: 2, densityVariance: 1, scale: 0.25, distribution: 'under-canopy' },
+      { type: 'particle-leaf', density: 1, densityVariance: 1, scale: 0.2, distribution: 'ring', minRadius: 0.7, maxRadius: 1.2 }
     ]
   },
   'reed': {
     spawns: [
-      { type: 'floor-debris', density: 1, densityVariance: 1, scale: 0.2, distribution: 'under-canopy' },
-      { type: 'particle-twig', density: 1, densityVariance: 1, scale: 0.15, distribution: 'ring', minRadius: 0.6, maxRadius: 1.0 }
+      { type: 'floor-leaf', density: 1, densityVariance: 1, scale: 0.2, distribution: 'under-canopy' },
+      { type: 'particle-leaf', density: 1, densityVariance: 1, scale: 0.15, distribution: 'ring', minRadius: 0.6, maxRadius: 1.0 }
     ]
   }
 };

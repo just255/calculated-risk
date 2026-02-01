@@ -556,7 +556,8 @@ export {
   hasActiveAnimations,
   getActiveAnimationCount,
   clearAnimations,
-  animateNewItems
+  animateNewItems,
+  animateStrokes
 } from './scatter-animation.js';
 export { paint, paintTrees, erase, addStroke, removeStroke, clearStrokes, getStrokesAt } from './stroke-painter.js';
 export { rasterize, ensureRasterized } from './rasterize.js';

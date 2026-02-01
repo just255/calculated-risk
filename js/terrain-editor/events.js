@@ -19,6 +19,7 @@ export const Events = {
   STROKE_REMOVED: 'stroke:removed',
   STROKE_MODIFIED: 'stroke:modified',
   STROKES_CLEARED: 'strokes:cleared',
+  PAINTING_FINISHED: 'painting:finished',  // Fires when scatter painting ends (for preview refresh)
 
   // Selection events
   SELECTION_CHANGED: 'selection:changed',

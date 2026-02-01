@@ -30,9 +30,11 @@ const DEFAULT_TOOL_OPTIONS = {
   brushShape: 'circle',         // Brush shape: 'circle' or 'square'
   clearMode: 'all',             // What to clear: 'all', 'trees', 'water', 'groundTexture', 'forest'
   featureType: 'forest',
-  treeType: 'oak',              // Legacy single type (fallback)
-  treeTypes: ['oak'],           // Multi-select tree types (includes dead variants like 'oak-dead')
-  treeRatios: { oak: 1.0 },     // Ratios for each selected type
+  treeType: 'pine',             // Legacy single type (fallback)
+  treeTypes: ['pine'],          // Multi-select tree types
+  treeRatios: { pine: 1.0 },    // Ratios for each selected type
+  deadTypes: [],                // Which species can have dead variants (e.g., ['oak-dead', 'pine-dead'])
+  deadRatio: 0.2,               // Percentage of trees that spawn as dead (0-1)
   treeDensity: 1.0,             // Density multiplier (0.5-2.0): affects spacing between trees
   treeSpacing: 1.0,             // Spacing multiplier (0.5-1.5): scales tree-to-tree collision radius
   treeScale: 0.35,              // Global scale multiplier for trees (0.03-0.6)
@@ -49,17 +51,20 @@ const DEFAULT_TOOL_OPTIONS = {
   // Water options
   waterTextureType: 'water',    // Water texture to paint
   waterFadeWidth: 12,           // Water edge fade width
+  waterOpacity: 100,            // Water opacity (0-100%)
+  waterDepthFade: 0,            // Depth effect: 0=uniform, 100=edges fully transparent
   shoreTextureType: 'mud',      // Shore texture around water (or 'none')
   shoreWidth: 24,               // Width of shore ring around water
+  shoreFadeWidth: 12,           // Shore edge fade width (independent from water)
   treesInWater: false,          // Allow trees to spawn in water areas
 
   // Animation options
-  animationStyle: 'digitize',   // 'none', 'digitize', 'scan', 'deploy', 'flash'
+  animationStyle: 'deploy',     // 'none', 'digitize', 'scan', 'deploy', 'flash', 'ripple'
 
   // Brush/Undergrowth options (independent of trees, with own floor/particles)
-  brushType: 'bush-small',      // Legacy single type (fallback)
-  brushTypes: ['bush-small'],   // Multi-select brush types
-  brushRatios: { 'bush-small': 1.0 },  // Ratios for each selected type
+  brushType: 'fern',            // Legacy single type (fallback)
+  brushTypes: ['fern'],         // Multi-select brush types
+  brushRatios: { 'fern': 1.0 }, // Ratios for each selected type
   brushDensity: 1.0,            // Density multiplier (0-2.0): affects spacing between brush
   brushScale: 0.25,             // Global scale multiplier for brush
   brushInWater: false,          // Allow brush to spawn in water areas
@@ -78,7 +83,7 @@ const DEFAULT_TOOL_OPTIONS = {
   particleScale: 0.15,          // Global particle scale (0.05-0.40)
 
   // Environment presets
-  biome: 'temperate',           // Biome preset key (sets tree ratios, brush, etc.)
+  biome: 'conifer',             // Biome preset key (sets tree ratios, brush, etc.)
   season: 'summer',             // 'spring', 'summer', 'fall', 'winter'
 
   // Generation system
@@ -250,6 +255,8 @@ export class EditorState extends EventEmitter {
           {
             treeTypes,
             treeRatios: stroke.treeRatios || {},
+            deadTypes: this._toolOptions.deadTypes || [],
+            deadRatio: this._toolOptions.deadRatio ?? 0,
             treeDensity: stroke.density ?? this._toolOptions.treeDensity ?? 1.0,
             treeScale: stroke.treeScale ?? this._toolOptions.treeScale ?? 0.35,
             treeSpacing: this._toolOptions.treeSpacing ?? 1.0,
@@ -291,17 +298,38 @@ export class EditorState extends EventEmitter {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // BRUSH STROKES
+    // BRUSH STROKES - Brush as parent with floor/particle children
     // ═══════════════════════════════════════════════════════════════
-    if (stroke.brushType) {
+    if (stroke.brushType || (stroke.brushTypes && stroke.brushTypes.length > 0)) {
       if (useScatter) {
-        // SCATTER SYSTEM
-        const items = generateScatter(this._terrainMap, stroke, stroke.brushType, {
-          density: stroke.density ?? this._toolOptions.brushDensity ?? 4,
-          scale: stroke.brushScale ?? this._toolOptions.brushScale ?? 0.12,
-          strokeId: stroke.id,
-          spawnChildren: false
-        });
+        // SCATTER SYSTEM: Use shared forest generation with trees disabled
+        const brushTypes = stroke.brushTypes && stroke.brushTypes.length > 0
+          ? stroke.brushTypes
+          : [stroke.brushType || 'bush-small'];
+
+        const items = generateForestItems(this._terrainMap,
+          { ...stroke, seed: stroke.seed ?? Math.floor(Math.random() * 1000000) },
+          {
+            // Disable trees - brush is the parent
+            treesEnabled: false,
+            treeTypes: [],
+            // Brush settings
+            brushTypes,
+            brushRatios: stroke.brushRatios || this._toolOptions.brushRatios || {},
+            brushDensity: stroke.density ?? this._toolOptions.brushDensity ?? 1.0,
+            brushScale: stroke.brushScale ?? this._toolOptions.brushScale ?? 0.25,
+            brushEnabled: true,
+            // Floor/particle children
+            floorEnabled: stroke.floorEnabled ?? this._toolOptions.floorEnabled ?? true,
+            particlesEnabled: stroke.particlesEnabled ?? this._toolOptions.particlesEnabled ?? true,
+            // Season/biome
+            season: this._toolOptions.season ?? 'summer',
+            biome: this._toolOptions.biome ?? 'temperate',
+            seasonOverrides: this._toolOptions.seasonOverrides ?? {},
+            childSpawnOverrides: this._toolOptions.childSpawnOverrides ?? {},
+            strokeId: stroke.id
+          }
+        );
         newItems.push(...items);
       } else {
         // LEGACY SYSTEM
@@ -353,6 +381,41 @@ export class EditorState extends EventEmitter {
       return stroke;
     }
     return null;
+  }
+
+  /**
+   * Remove shore strokes that overlap with a water area
+   * Called when painting water to "absorb" existing shore
+   * @param {number} x - Center X
+   * @param {number} y - Center Y
+   * @param {number} radius - Water stroke radius
+   */
+  removeShoreStrokesAt(x, y, radius) {
+    const removed = [];
+
+    this._terrainMap.strokes = this._terrainMap.strokes.filter(stroke => {
+      // Only remove shore strokes
+      if (!stroke.isShore) return true;
+
+      const dx = stroke.x - x;
+      const dy = stroke.y - y;
+      const distSq = dx * dx + dy * dy;
+
+      // Remove if the shore center is inside the water radius
+      // This means the water covers the shore
+      if (distSq < radius * radius) {
+        removed.push(stroke);
+        return false;
+      }
+      return true;
+    });
+
+    if (removed.length > 0) {
+      this._terrainMap.dirty = true;
+      this._markDirty();
+    }
+
+    return removed;
   }
 
   removeStrokesAt(x, y, radius) {
@@ -664,10 +727,81 @@ export class EditorState extends EventEmitter {
   }
 
   // ═══════════════════════════════════════════════════════════════
+  // STROKE OPTIMIZATION
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Check if a stroke is completely occluded by another stroke of the same type
+   * @param {object} stroke - The stroke to check
+   * @param {object[]} sameTypeStrokes - Array of strokes of the same type
+   * @returns {boolean} True if stroke is completely hidden
+   */
+  _isStrokeOccluded(stroke, sameTypeStrokes) {
+    for (const other of sameTypeStrokes) {
+      if (other === stroke || other.id === stroke.id) continue;
+      // Stroke is inside other if: distance(centers) + stroke.radius <= other.radius
+      const dx = stroke.x - other.x;
+      const dy = stroke.y - other.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist + stroke.radius <= other.radius) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Remove strokes that are completely occluded by other strokes
+   * This optimizes the data by removing invisible strokes
+   * @returns {number} Number of strokes removed
+   */
+  purgeOccludedStrokes() {
+    const strokes = this._terrainMap.strokes;
+    const initialCount = strokes.length;
+
+    // Group strokes by type for occlusion testing
+    const waterStrokes = strokes.filter(s => s.type === 'water');
+    const shoreStrokes = strokes.filter(s => s.type === 'groundTexture' && s.isShore);
+    const groundStrokes = strokes.filter(s => s.type === 'groundTexture' && !s.isShore);
+
+    // Find occluded strokes in each group
+    const occludedIds = new Set();
+
+    for (const stroke of waterStrokes) {
+      if (this._isStrokeOccluded(stroke, waterStrokes)) {
+        occludedIds.add(stroke.id);
+      }
+    }
+
+    for (const stroke of shoreStrokes) {
+      if (this._isStrokeOccluded(stroke, shoreStrokes)) {
+        occludedIds.add(stroke.id);
+      }
+    }
+
+    for (const stroke of groundStrokes) {
+      if (this._isStrokeOccluded(stroke, groundStrokes)) {
+        occludedIds.add(stroke.id);
+      }
+    }
+
+    // Remove occluded strokes
+    if (occludedIds.size > 0) {
+      this._terrainMap.strokes = strokes.filter(s => !occludedIds.has(s.id));
+      this._terrainMap.dirty = true;
+      console.log(`[State] Purged ${occludedIds.size} occluded strokes`);
+    }
+
+    return occludedIds.size;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   // SERIALIZATION
   // ═══════════════════════════════════════════════════════════════
 
   toJSON() {
+    // Optimize data before saving - remove hidden strokes
+    this.purgeOccludedStrokes();
     return {
       version: 5,  // Bumped for unified scatter system
       metadata: { ...this._metadata },

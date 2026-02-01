@@ -194,7 +194,7 @@ export class Renderer {
     // Water strokes animate during painting (shore doesn't - it's not "poured")
     if (stroke.type === 'water') {
       // Start animation for this stroke
-      const animStyle = this._state.toolOptions?.animationStyle || 'ripple';
+      const animStyle = this._state.toolOptions?.animationStyle ?? 'none';
       if (animStyle !== 'none') {
         animateStrokes([stroke], animStyle);
         this._animatingStrokes.push(stroke);
@@ -1488,16 +1488,52 @@ export class Renderer {
           particle: this._images.brush
         };
 
-        // Sort uncached items (smaller scale first, then by Y for proper layering)
-        uncachedItems.sort((a, b) => {
+        // PERFORMANCE: Get current viewport for culling
+        const vp = this._state.viewport;
+        const vpLeft = -vp.x / vp.zoom;
+        const vpTop = -vp.y / vp.zoom;
+        const vpRight = vpLeft + this._viewportWidth / vp.zoom;
+        const vpBottom = vpTop + this._viewportHeight / vp.zoom;
+        const margin = 150; // Extra margin for large sprites
+
+        // Filter to visible items only (viewport culling)
+        const visibleItems = uncachedItems.filter(item => {
+          const x = item._renderX ?? item.x;
+          const y = item._renderY ?? item.y;
+          return x > vpLeft - margin && x < vpRight + margin &&
+                 y > vpTop - margin && y < vpBottom + margin;
+        });
+
+        // PERFORMANCE: Zoom-based LOD + frame cap during drag painting
+        // When zoomed out, skip particles/floor entirely - they're too small to see
+        const zoom = vp.zoom;
+        let itemsToRender = visibleItems;
+
+        // LOD: When zoomed out, skip small detail items
+        if (zoom < 0.5) {
+          // Very zoomed out: only trees
+          itemsToRender = visibleItems.filter(i => SCATTER_TYPES[i.type]?.category === 'tree');
+        } else if (zoom < 0.75) {
+          // Moderately zoomed out: trees + brush, skip particles/floor
+          itemsToRender = visibleItems.filter(i => {
+            const cat = SCATTER_TYPES[i.type]?.category;
+            return cat === 'tree' || cat === 'brush';
+          });
+        }
+
+        // No hard limits - render all visible items
+        // Viewport culling above already filters to visible items only
+
+        // Sort items to render (smaller scale first, then by Y for proper layering)
+        itemsToRender.sort((a, b) => {
           const scaleA = a._renderScale ?? a.scale;
           const scaleB = b._renderScale ?? b.scale;
           return (scaleA - scaleB) || (a.y - b.y);
         });
 
-        // Render each uncached item (with animated positions if available)
+        // Render each item
         // Skip CSS filters for live rendering - filters applied during cache rebuild
-        for (const item of uncachedItems) {
+        for (const item of itemsToRender) {
           renderScatterItem(ctx, item, images, { skipFilters: true });
         }
       }
