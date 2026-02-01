@@ -169,17 +169,25 @@ app.get('/api/terrain/sprites', (req, res) => {
     trees: {},
     brush: {},
     ground: [],
-    floor: {}  // Floor patches with variants (floor-oak-1, floor-oak-2, etc.)
+    water: [],   // Water sprites (terrain-water-*.png)
+    floor: {}    // Floor patches with variants (floor-oak-1, floor-oak-2, etc.)
   };
 
-  // Scan ground textures
+  // Scan ground textures (separating water sprites)
   if (fs.existsSync(groundDir)) {
     fs.readdirSync(groundDir)
       .filter(f => f.endsWith('.png'))
       .forEach(f => {
         const name = f.replace('.png', '').replace('terrain-', '');
-        result.ground.push(name);
+        // Separate water sprites into their own category
+        if (name.startsWith('water')) {
+          result.water.push(name);
+        } else {
+          result.ground.push(name);
+        }
       });
+    // Sort water types alphabetically
+    result.water.sort();
   }
 
   // Scan floor patch sprites (discrete sprites with variants)

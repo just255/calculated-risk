@@ -40,6 +40,9 @@ class TerrainEditor {
     // Load images
     await this._renderer.loadImages();
 
+    // Populate water dropdown from available sprites
+    this._populateWaterDropdown();
+
     // Create tool manager and register tools
     this._toolManager = createToolManager(this._state, this._renderer);
     this._toolManager.register(PaintTool);
@@ -1983,6 +1986,59 @@ class TerrainEditor {
 
     // Sync state from HTML on init (so checked checkboxes update state)
     onChange();
+  }
+
+  /**
+   * Populate water type dropdown from available sprites
+   * Called after images are loaded to dynamically build options
+   */
+  _populateWaterDropdown() {
+    const waterTypes = this._renderer.waterTypes;
+    const menu = this._elements.waterTypeMenu;
+    const hiddenSelect = this._elements.waterTextureType;
+
+    if (!menu || waterTypes.length === 0) return;
+
+    // Clear existing items
+    menu.innerHTML = '';
+    if (hiddenSelect) hiddenSelect.innerHTML = '';
+
+    // Build dropdown items from available water sprites
+    waterTypes.forEach((type, index) => {
+      // Create display name: 'water-pond' -> 'Pond', 'water' -> 'Water'
+      let displayName = type.replace('water-', '').replace(/-/g, ' ');
+      displayName = displayName.charAt(0).toUpperCase() + displayName.slice(1);
+      if (type === 'water') displayName = 'Water';
+
+      // Create dropdown item
+      const item = document.createElement('div');
+      item.className = 'dropdown-item';
+      item.dataset.water = type;
+      item.innerHTML = `
+        <input type="radio" name="water-type" id="water-type-${type}" ${index === 0 ? 'checked' : ''}>
+        <span class="dropdown-item-label ${index === 0 ? 'checked' : ''}">${displayName}</span>
+      `;
+      menu.appendChild(item);
+
+      // Also update hidden select for compatibility
+      if (hiddenSelect) {
+        const option = document.createElement('option');
+        option.value = type;
+        option.textContent = displayName;
+        if (index === 0) option.selected = true;
+        hiddenSelect.appendChild(option);
+      }
+    });
+
+    // Update display value to first item
+    if (this._elements.waterTypeValue && waterTypes.length > 0) {
+      let displayName = waterTypes[0].replace('water-', '').replace(/-/g, ' ');
+      displayName = displayName.charAt(0).toUpperCase() + displayName.slice(1);
+      if (waterTypes[0] === 'water') displayName = 'Water';
+      this._elements.waterTypeValue.textContent = displayName;
+    }
+
+    console.log('[Editor] Water dropdown populated with:', waterTypes);
   }
 
   /**

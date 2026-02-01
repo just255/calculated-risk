@@ -744,13 +744,21 @@ export class Renderer {
     return this._canvases.ui;
   }
 
+  /**
+   * Get list of available water types (populated after loadImages)
+   * @returns {string[]} Array of water type names (e.g., ['water', 'water-pond', 'water-river'])
+   */
+  get waterTypes() {
+    return this._waterTypes || [];
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // IMAGE LOADING
   // ═══════════════════════════════════════════════════════════════
 
   async loadImages() {
     // Fetch available sprites from server
-    let spriteManifest = { trees: {}, brush: {}, ground: [], floor: {} };
+    let spriteManifest = { trees: {}, brush: {}, ground: [], water: [], floor: {} };
     try {
       const response = await fetch('/api/terrain/sprites');
       spriteManifest = await response.json();
@@ -759,15 +767,29 @@ export class Renderer {
       spriteManifest = {
         trees: {},
         brush: {},
-        ground: ['grass', 'open', 'water'],
+        ground: ['grass', 'open'],
+        water: ['water', 'water-pond', 'water-river'],
         floor: {}
       };
     }
+
+    // Store water types for dropdown population
+    this._waterTypes = spriteManifest.water || [];
 
     const promises = [];
 
     // Ground textures - only load what exists
     spriteManifest.ground.forEach(type => {
+      promises.push(this._loadImage(
+        `ground-${type}`,
+        `/sprites/terrain/ground/terrain-${type}.png`,
+        this._images.ground,
+        type
+      ));
+    });
+
+    // Water textures - load separately (stored in ground folder but tracked separately)
+    (spriteManifest.water || []).forEach(type => {
       promises.push(this._loadImage(
         `ground-${type}`,
         `/sprites/terrain/ground/terrain-${type}.png`,
