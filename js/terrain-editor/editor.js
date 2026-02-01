@@ -53,6 +53,9 @@ class TerrainEditor {
     // Subscribe to state events for UI updates
     this._bindStateEvents();
 
+    // Apply biome+season config to floor/particle/brush dropdowns on init
+    this._applyBiomeSeasonToOutputs();
+
     // Refresh scatter preview now that state events are bound
     // (biome was applied during _bindUIEvents but preview listener wasn't ready yet)
     this._refreshScatterPreview();
@@ -925,6 +928,9 @@ class TerrainEditor {
           this._applyPreset(preset);
         }
 
+        // Apply biome+season config to floor/particle/brush dropdowns
+        this._applyBiomeSeasonToOutputs();
+
         this._refreshSeasonTuning();
         console.log(`[Editor] Biome set to: ${biome}`);
       });
@@ -934,6 +940,10 @@ class TerrainEditor {
     if (this._elements.seasonSelect) {
       this._elements.seasonSelect.addEventListener('change', (e) => {
         this._state.setToolOption('season', e.target.value);
+
+        // Apply biome+season config to floor/particle/brush dropdowns
+        this._applyBiomeSeasonToOutputs();
+
         this._refreshSeasonTuning();
         console.log(`[Editor] Season set to: ${e.target.value}`);
       });
@@ -1068,9 +1078,10 @@ class TerrainEditor {
         this._elements.legacyDensityRow.style.display = useScatter ? 'none' : 'block';
       }
 
-      // When switching to scatter, apply biome preset to tree types
+      // When switching to scatter, apply biome preset to tree types and output settings
       if (useScatter) {
         this._applyBiomeToTreeTypes();
+        this._applyBiomeSeasonToOutputs();
       }
 
       // Feature panel visibility depends on system mode, so re-run it
@@ -1479,6 +1490,124 @@ class TerrainEditor {
         this._elements.biomeDescription.textContent = BIOME_PRESETS.custom.description;
       }
     }
+  }
+
+  /**
+   * Apply biome+season config to floor/particle/brush dropdowns
+   * Called when biome or season changes
+   */
+  _applyBiomeSeasonToOutputs() {
+    const biome = this._state.toolOptions.biome || 'temperate';
+    const season = this._state.toolOptions.season || 'summer';
+
+    if (biome === 'custom') return; // Don't override in custom mode
+
+    const biomePreset = BIOME_PRESETS[biome];
+    const seasonConfig = getSeasonBiomeConfig(season, biome);
+
+    if (!biomePreset || !seasonConfig) return;
+
+    // Apply brush types from biome preset
+    if (biomePreset.brush && biomePreset.brush.length > 0) {
+      this._applyBrushTypesToDropdown(biomePreset.brush);
+    }
+
+    // Apply floor type from season+biome config
+    if (seasonConfig.scatter?.floorType) {
+      this._applyFloorTypeToDropdown(seasonConfig.scatter.floorType);
+    }
+
+    // Apply particle type from season+biome config
+    if (seasonConfig.scatter?.particleType) {
+      this._applyParticleTypeToDropdown(seasonConfig.scatter.particleType);
+    }
+
+    this._refreshScatterPreview();
+  }
+
+  /**
+   * Apply brush types to dropdown (checking the matching items)
+   */
+  _applyBrushTypesToDropdown(brushTypes) {
+    // Update forest tool's brush dropdown
+    const menu = this._elements.brushTypesMenu;
+    if (menu) {
+      menu.querySelectorAll('.dropdown-item').forEach(item => {
+        const brushType = item.dataset.brush;
+        const checkbox = item.querySelector('input[type="checkbox"]');
+        const label = item.querySelector('.dropdown-item-label');
+        if (checkbox) {
+          const shouldCheck = brushTypes.includes(brushType);
+          checkbox.checked = shouldCheck;
+          if (label) label.classList.toggle('checked', shouldCheck);
+        }
+      });
+      this._updateSelectedBrushTypes();
+      this._updateDropdownValue('brushTypes');
+    }
+
+    // Also update brush tool's standalone dropdown
+    const standaloneMenu = this._elements.brushStandaloneTypesMenu;
+    if (standaloneMenu) {
+      standaloneMenu.querySelectorAll('.dropdown-item').forEach(item => {
+        const brushType = item.dataset.brush;
+        const checkbox = item.querySelector('input[type="checkbox"]');
+        const label = item.querySelector('.dropdown-item-label');
+        if (checkbox) {
+          const shouldCheck = brushTypes.includes(brushType);
+          checkbox.checked = shouldCheck;
+          if (label) label.classList.toggle('checked', shouldCheck);
+        }
+      });
+      this._updateSelectedBrushStandaloneTypes();
+      this._updateDropdownValue('brushStandaloneTypes');
+    }
+  }
+
+  /**
+   * Apply floor type to dropdown (checking only the matching item)
+   */
+  _applyFloorTypeToDropdown(floorType) {
+    const menu = this._elements.floorTypesMenu;
+    if (!menu) return;
+
+    // Uncheck all, then check the matching one
+    menu.querySelectorAll('.dropdown-item').forEach(item => {
+      const itemFloorType = item.dataset.floor;
+      const checkbox = item.querySelector('input[type="checkbox"]');
+      const label = item.querySelector('.dropdown-item-label');
+      if (checkbox) {
+        const shouldCheck = itemFloorType === floorType;
+        checkbox.checked = shouldCheck;
+        if (label) label.classList.toggle('checked', shouldCheck);
+      }
+    });
+
+    this._updateSelectedFloorTypes();
+    this._updateDropdownValue('floorTypes');
+  }
+
+  /**
+   * Apply particle type to dropdown (checking only the matching item)
+   */
+  _applyParticleTypeToDropdown(particleType) {
+    const menu = this._elements.particleTypesMenu;
+    if (!menu) return;
+
+    // Uncheck all, then check the matching one
+    menu.querySelectorAll('.dropdown-item').forEach(item => {
+      const itemParticleType = item.dataset.particle;
+      const checkbox = item.querySelector('input[type="checkbox"]');
+      const label = item.querySelector('.dropdown-item-label');
+      if (checkbox) {
+        const shouldCheck = itemParticleType === particleType;
+        checkbox.checked = shouldCheck;
+        if (label) label.classList.toggle('checked', shouldCheck);
+      }
+    });
+
+    this._updateSelectedParticleTypes();
+    this._updateDropdownValue('particleTypes');
   }
 
   /**
