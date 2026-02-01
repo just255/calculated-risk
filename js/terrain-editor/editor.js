@@ -93,7 +93,11 @@ class TerrainEditor {
 
       // Ground settings
       groundSettings: document.getElementById('ground-settings'),
+      groundPreviewCanvas: document.getElementById('ground-preview-canvas'),
       groundTextureType: document.getElementById('ground-texture-type'),
+      groundTypeDropdown: document.getElementById('ground-type-dropdown'),
+      groundTypeValue: document.getElementById('ground-type-value'),
+      groundTypeMenu: document.getElementById('ground-type-menu'),
       fadeWidth: document.getElementById('fade-width'),
       fadeWidthVal: document.getElementById('fade-width-val'),
       autoGroundSettings: document.getElementById('auto-ground-settings'),
@@ -405,6 +409,8 @@ class TerrainEditor {
       const value = parseInt(e.target.value);
       this._state.setToolOption('brushRadius', value);
       this._elements.brushSizeVal.textContent = value;
+      this._refreshGroundPreview();
+      this._refreshWaterPreview();
     });
 
     // Falloff
@@ -438,10 +444,58 @@ class TerrainEditor {
     // Initialize feature panels based on default (forest)
     this._updateFeaturePanels('forest');
 
-    // Ground texture type
+    // Ground texture type (hidden select for compatibility)
     if (this._elements.groundTextureType) {
       this._elements.groundTextureType.addEventListener('change', (e) => {
         this._state.setToolOption('groundTextureType', e.target.value);
+        this._refreshGroundPreview();
+      });
+    }
+
+    // Ground type dropdown (visual dropdown UI)
+    if (this._elements.groundTypeDropdown) {
+      const dropdown = this._elements.groundTypeDropdown;
+      const trigger = dropdown.querySelector('.dropdown-trigger');
+      const menu = this._elements.groundTypeMenu;
+
+      trigger.addEventListener('click', () => {
+        menu.classList.toggle('open');
+      });
+
+      menu.addEventListener('click', (e) => {
+        const item = e.target.closest('.dropdown-item');
+        if (!item) return;
+
+        const groundType = item.dataset.ground;
+        if (!groundType) return;
+
+        // Update radio button
+        const radio = item.querySelector('input[type="radio"]');
+        if (radio) radio.checked = true;
+
+        // Update all labels
+        menu.querySelectorAll('.dropdown-item-label').forEach(label => {
+          label.classList.remove('checked');
+        });
+        item.querySelector('.dropdown-item-label').classList.add('checked');
+
+        // Update display value
+        const label = item.querySelector('.dropdown-item-label').textContent;
+        this._elements.groundTypeValue.textContent = label;
+
+        // Update hidden select and state
+        this._elements.groundTextureType.value = groundType;
+        this._state.setToolOption('groundTextureType', groundType);
+        this._refreshGroundPreview();
+
+        menu.classList.remove('open');
+      });
+
+      // Close on outside click
+      document.addEventListener('click', (e) => {
+        if (!dropdown.contains(e.target)) {
+          menu.classList.remove('open');
+        }
       });
     }
 
@@ -451,6 +505,7 @@ class TerrainEditor {
         const value = parseInt(e.target.value);
         this._state.setToolOption('fadeWidth', value);
         this._elements.fadeWidthVal.textContent = `${value}px`;
+        this._refreshGroundPreview();
       });
     }
 
@@ -1448,6 +1503,9 @@ class TerrainEditor {
     // Show/hide ground settings
     if (this._elements.groundSettings) {
       this._elements.groundSettings.style.display = feature === 'groundTexture' ? 'block' : 'none';
+      if (feature === 'groundTexture') {
+        this._refreshGroundPreview();
+      }
     }
 
     // Show/hide water settings
@@ -3106,6 +3164,68 @@ class TerrainEditor {
 
     const zoomStr = zoom && zoom < 0.99 ? `<br><i>Preview zoom: ${Math.round(zoom * 100)}%</i>` : '';
     el.innerHTML = lines.join('<br>') + zoomStr;
+  }
+
+  /**
+   * Refresh the sidebar ground preview canvas
+   * Uses same renderWaterPreview() as on-canvas hover preview (shared for texture rendering)
+   */
+  _refreshGroundPreview() {
+    const canvas = this._elements.groundPreviewCanvas;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+
+    // Clear
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Background - use base ground texture
+    const baseLayer = this._state.baseLayer || 'grass-1';
+    const groundImg = this._renderer._images?.ground?.[baseLayer];
+    if (groundImg) {
+      const pattern = ctx.createPattern(groundImg, 'repeat');
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    } else {
+      ctx.fillStyle = '#1a2f1a';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    const options = this._state.toolOptions;
+    const brushRadius = options.brushRadius || 60;
+    const fadeWidth = options.fadeWidth ?? 12;
+
+    // Scale to fit preview with padding
+    const padding = 10;
+    const maxRadius = (canvas.width / 2) - padding;
+    const totalRadius = brushRadius + fadeWidth;
+    const scale = maxRadius / totalRadius;
+
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+
+    // Use shared renderWaterPreview (works for any texture)
+    this._renderer.renderWaterPreview(ctx, centerX, centerY, {
+      waterType: options.groundTextureType || 'grass-1',
+      waterRadius: brushRadius * scale,
+      waterFadeWidth: fadeWidth * scale,
+      waterOpacity: 1.0,
+      waterDepthFade: 0,
+      shoreType: null,
+      shoreWidth: 0,
+      shoreFadeWidth: fadeWidth * scale,
+      alpha: 1.0
+    });
+
+    // Draw subtle guide line
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, brushRadius * scale, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 
   /**

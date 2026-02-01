@@ -783,6 +783,17 @@
       color: #e2e8f0;
     }
 
+    .dropdown-group-label {
+      padding: 6px 10px 4px;
+      font-size: 9px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #64748b;
+      background: rgba(0, 0, 0, 0.2);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
     /* Tree species row with dead toggle */
     .dropdown-item-row {
       display: flex;
@@ -1210,33 +1221,97 @@
 
       <!-- Ground Texture Settings (shown when ground tool selected) -->
       <div class="panel-section" id="ground-settings" style="display: none;">
-        <div class="panel-title">Ground Texture</div>
-        <div class="prop-row">
-          <select class="prop-select" id="ground-texture-type">
-            <optgroup label="Grass">
+        <div class="panel-title">Ground Output</div>
+
+        <!-- Preview -->
+        <div style="display: flex; justify-content: center; padding: 4px 0 8px;">
+          <canvas id="ground-preview-canvas" width="200" height="200" style="border: 1px solid #334155; border-radius: 4px; background: #0d0d1a;"></canvas>
+        </div>
+
+        <!-- GROUND Category -->
+        <div class="category-card" id="cat-ground">
+          <div class="category-header" data-category="ground">
+            <span class="category-icon">🟫</span>
+            <span class="category-name">Ground</span>
+          </div>
+          <div class="category-body" id="cat-ground-body">
+            <!-- Ground Type Dropdown -->
+            <div class="dropdown-select" id="ground-type-dropdown">
+              <div class="dropdown-trigger">
+                <span class="dropdown-label">Type</span>
+                <span class="dropdown-value" id="ground-type-value">Grass 1</span>
+                <span class="dropdown-arrow">▼</span>
+              </div>
+              <div class="dropdown-menu" id="ground-type-menu">
+                <div class="dropdown-group-label">Grass</div>
+                <div class="dropdown-item" data-ground="grass-1">
+                  <input type="radio" name="ground-type" id="ground-type-grass-1" checked>
+                  <span class="dropdown-item-label checked">Grass 1</span>
+                </div>
+                <div class="dropdown-item" data-ground="grass-2">
+                  <input type="radio" name="ground-type" id="ground-type-grass-2">
+                  <span class="dropdown-item-label">Grass 2</span>
+                </div>
+                <div class="dropdown-item" data-ground="grass-3">
+                  <input type="radio" name="ground-type" id="ground-type-grass-3">
+                  <span class="dropdown-item-label">Grass 3</span>
+                </div>
+                <div class="dropdown-item" data-ground="grass-4">
+                  <input type="radio" name="ground-type" id="ground-type-grass-4">
+                  <span class="dropdown-item-label">Grass 4</span>
+                </div>
+                <div class="dropdown-group-label">Dirt</div>
+                <div class="dropdown-item" data-ground="dirt-1">
+                  <input type="radio" name="ground-type" id="ground-type-dirt-1">
+                  <span class="dropdown-item-label">Dirt 1</span>
+                </div>
+                <div class="dropdown-item" data-ground="dirt-2">
+                  <input type="radio" name="ground-type" id="ground-type-dirt-2">
+                  <span class="dropdown-item-label">Dirt 2</span>
+                </div>
+                <div class="dropdown-item" data-ground="dirt-3">
+                  <input type="radio" name="ground-type" id="ground-type-dirt-3">
+                  <span class="dropdown-item-label">Dirt 3</span>
+                </div>
+                <div class="dropdown-item" data-ground="dirt-4">
+                  <input type="radio" name="ground-type" id="ground-type-dirt-4">
+                  <span class="dropdown-item-label">Dirt 4</span>
+                </div>
+                <div class="dropdown-group-label">Other</div>
+                <div class="dropdown-item" data-ground="forest-floor">
+                  <input type="radio" name="ground-type" id="ground-type-forest-floor">
+                  <span class="dropdown-item-label">Forest Floor</span>
+                </div>
+                <div class="dropdown-item" data-ground="mud">
+                  <input type="radio" name="ground-type" id="ground-type-mud">
+                  <span class="dropdown-item-label">Mud</span>
+                </div>
+                <div class="dropdown-item" data-ground="sand">
+                  <input type="radio" name="ground-type" id="ground-type-sand">
+                  <span class="dropdown-item-label">Sand</span>
+                </div>
+              </div>
+            </div>
+            <!-- Hidden select for compatibility -->
+            <select class="prop-select" id="ground-texture-type" style="display: none;">
               <option value="grass-1" selected>Grass 1</option>
               <option value="grass-2">Grass 2</option>
               <option value="grass-3">Grass 3</option>
               <option value="grass-4">Grass 4</option>
-            </optgroup>
-            <optgroup label="Dirt">
               <option value="dirt-1">Dirt 1</option>
               <option value="dirt-2">Dirt 2</option>
               <option value="dirt-3">Dirt 3</option>
               <option value="dirt-4">Dirt 4</option>
-            </optgroup>
-            <optgroup label="Other">
               <option value="forest-floor">Forest Floor</option>
               <option value="mud">Mud</option>
               <option value="sand">Sand</option>
-            </optgroup>
-          </select>
-        </div>
-        <div class="prop-row">
-          <label class="prop-label">
-            Edge Fade <span class="prop-value" id="fade-width-val">12px</span>
-          </label>
-          <input type="range" class="prop-range" id="fade-width" min="0" max="48" value="12">
+            </select>
+            <div class="ratio-row">
+              <span class="ratio-label">Edge Fade</span>
+              <input type="range" class="ratio-slider" id="fade-width" min="0" max="48" value="12">
+              <span class="ratio-value" id="fade-width-val">12px</span>
+            </div>
+          </div>
         </div>
       </div>
 
