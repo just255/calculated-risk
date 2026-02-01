@@ -1851,6 +1851,9 @@ class TerrainEditor {
 
     // Initialize display value
     this._updateDropdownValue(name);
+
+    // Sync state from HTML on init (so checked checkboxes update state)
+    onChange();
   }
 
   /**
