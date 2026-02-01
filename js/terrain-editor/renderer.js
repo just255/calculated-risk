@@ -1835,10 +1835,40 @@ export class Renderer {
 
   /**
    * Render texture hover preview (semi-transparent preview of water/ground texture)
+   * Ground textures are clipped to not render over water strokes
    */
   _renderTextureHoverPreview(ctx) {
     const preview = this._textureHoverPreview;
     if (!preview) return;
+
+    // For ground textures (not water), clip to exclude water areas
+    const isGroundTexture = !preview.isWater;
+    const terrainMap = this._state.terrainMap;
+    const waterStrokes = isGroundTexture && terrainMap.strokes
+      ? terrainMap.strokes.filter(s => s.type === 'water')
+      : [];
+
+    if (isGroundTexture && waterStrokes.length > 0) {
+      ctx.save();
+
+      // Create clipping path: full canvas minus water circles
+      const width = this._state.canvasWidth;
+      const height = this._state.canvasHeight;
+
+      ctx.beginPath();
+      // Outer rectangle (clockwise)
+      ctx.rect(0, 0, width, height);
+
+      // Cut out water circles (counter-clockwise to create holes)
+      for (const water of waterStrokes) {
+        // Include shore width in the exclusion zone
+        const effectiveRadius = water.radius + (water.shoreWidth || 0);
+        ctx.moveTo(water.x + effectiveRadius, water.y);
+        ctx.arc(water.x, water.y, effectiveRadius, 0, Math.PI * 2, true);
+      }
+
+      ctx.clip('evenodd');
+    }
 
     this.renderWaterPreview(ctx, preview.x, preview.y, {
       waterType: preview.textureType,
@@ -1851,6 +1881,10 @@ export class Renderer {
       shoreFadeWidth: preview.shoreFadeWidth ?? preview.fadeWidth,
       alpha: 0.7
     });
+
+    if (isGroundTexture && waterStrokes.length > 0) {
+      ctx.restore();
+    }
   }
 
   /**
