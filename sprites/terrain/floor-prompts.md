@@ -1,236 +1,398 @@
-# Forest Floor Texture Prompts (256px Pixel Art)
+# Forest Floor Patch Sprites (256px Pixel Art)
 
-Dense ground textures that tile under tree canopies. These replace individual particle scatter for better performance.
+Discrete floor patch sprites scattered around trees. Each sprite is a small cluster of debris that gets placed at random positions, rotated, and scaled. Rendered at 15-50px typically.
 
-Generate 2-3 images from each prompt for variants.
-
----
-
-## OAK LEAF LITTER
-
-Dense autumn leaf carpet for oak/deciduous forests.
-
-```
-Dense carpet of fallen autumn leaves viewed from directly above, modern pixel art style with chunky defined pixels. Seamless tileable texture. Transparent PNG with alpha channel.
-
-- Thick layer of overlapping fallen leaves covering entire frame
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, 90 degrees
-- Mix of leaf shapes: oak lobes, oval, pointed - all overlapping densely
-- Leaves at many different angles creating natural carpet
-- TILEABLE - edges must seamlessly repeat
-- 10-20% of frame shows dark ground peeking through gaps
-- Muted autumn color palette - subdued military tones
-- NOT vibrant - weathered, decomposing leaves
-- Light source directly overhead
-- EXACT COLOR PALETTE:
-  - Ground: #1a1815, #2a2520 (dark soil peeking through)
-  - Darks: #3a3025, #4a3a2a (dark decomposing leaves)
-  - Mids: #5a4a35, #6a5a40 (medium brown leaves)
-  - Lights: #7a6a4a, #8a7a55 (drier tan leaves on top)
-  - Accent: #5a4035 (reddish-brown variety)
-- Chunky pixel art with visible individual leaves
-- Dense coverage - this is a floor texture, not sparse scatter
-- Fills 100% of frame
-
-Transparent PNG, no checkered background. Edges must tile seamlessly.
-```
-
----
-
-## PINE NEEDLE BED
-
-Reddish-brown pine needle carpet for conifer forests.
-
-```
-Dense carpet of very thin fallen pine needles viewed from directly above, modern pixel art style with chunky defined pixels. Seamless tileable texture. Transparent PNG with alpha channel.
-
-- Thick layer of VERY THIN hair-like pine needles covering entire frame
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, 90 degrees
-- Needles are 1-2 pixels wide, many pixels long - NOT thick sticks
-- Chaotic criss-crossing pattern, NOT parallel or uniform
-- Small clumps mixed with scattered singles
-- TILEABLE - edges must seamlessly repeat
-- 30-40% of frame shows dark ground peeking through - SPARSER than leaf litter
-- Reddish-brown dried needle colors - like rust/cinnamon
-- NOT yellow, NOT tan, NOT uniform coverage
-- Light source directly overhead
-- EXACT COLOR PALETTE:
-  - Ground: #1a1815, #2a2520 (dark soil peeking through)
-  - Darks: #3a2520, #4a3025 (dark rust-brown decomposing)
-  - Mids: #5a3530, #6a4035 (reddish-brown needles)
-  - Lights: #7a5040, #8a6050 (lighter rust-brown)
-- Hair-thin needle shapes, chaotic layering
-- Dense coverage - this is a floor texture
-- Fills 100% of frame
-
-Transparent PNG, no checkered background. Edges must tile seamlessly.
-```
-
----
-
-## BIRCH LEAF LITTER
-
-Light yellow-tan leaf carpet for birch groves.
-
-```
-Dense carpet of small fallen birch leaves viewed from directly above, modern pixel art style with chunky defined pixels. Seamless tileable texture. Transparent PNG with alpha channel.
-
-- Thick layer of overlapping small birch leaves covering entire frame
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, 90 degrees
-- Small rounded/oval leaf shapes, lighter than oak
-- Leaves at many angles, some curled
-- TILEABLE - edges must seamlessly repeat
-- 10-20% of frame shows dark ground peeking through
-- Muted yellow-tan autumn palette - lighter than oak litter
-- NOT vibrant - subdued, weathered tones
-- Light source directly overhead
-- EXACT COLOR PALETTE:
-  - Ground: #1a1815, #2a2520 (dark soil peeking through)
-  - Darks: #4a4535, #5a5040 (darker decomposed leaves)
-  - Mids: #6a6550, #7a7560 (medium tan-yellow)
-  - Lights: #8a8570, #9a9580 (pale cream/tan top leaves)
-  - Accent: #5a5545 (gray-brown dead leaves)
-- Smaller leaf shapes than oak, more uniform size
-- Dense coverage - this is a floor texture
-- Fills 100% of frame
-
-Transparent PNG, no checkered background. Edges must tile seamlessly.
-```
-
----
-
-## DAMP FOREST FLOOR
-
-Dark muddy floor for willow/wetland areas.
-
-```
-Damp muddy forest floor viewed from directly above, modern pixel art style with chunky defined pixels. Seamless tileable texture. Transparent PNG with alpha channel.
-
-- Wet dark soil with scattered debris covering entire frame
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, 90 degrees
-- Mix of dark wet mud, small puddles, sparse dead vegetation
-- Some small twigs and decomposed leaf fragments
-- TILEABLE - edges must seamlessly repeat
-- Darker, wetter appearance than other floors
-- Muted dark brown/gray wet earth tones
-- Subtle wet sheen highlights
-- Light source directly overhead
-- EXACT COLOR PALETTE:
-  - Wet mud: #1a1815, #2a2520 (very dark wet soil)
-  - Damp areas: #3a3530, #4a4035 (dark brown)
-  - Drier patches: #5a5045, #6a6050 (medium brown)
-  - Puddles: #3a4045, #4a5055 (dark blue-gray water)
-  - Debris: #4a4540, #5a5550 (gray-brown fragments)
-- Organic muddy texture with moisture variation
-- Dense coverage - this is a floor texture
-- Fills 100% of frame
-
-Transparent PNG, no checkered background. Edges must tile seamlessly.
-```
-
----
-
-## BARE DEAD FLOOR
-
-Sparse dirt floor for dead/dying forests.
-
-```
-Bare forest floor with sparse dead debris viewed from directly above, modern pixel art style with chunky defined pixels. Seamless tileable texture. Transparent PNG with alpha channel.
-
-- Exposed dirt/soil with scattered dead organic matter
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, 90 degrees
-- Mostly bare earth with sparse dead leaves, twigs, bark fragments
-- Dry, lifeless appearance
-- TILEABLE - edges must seamlessly repeat
-- 60-70% bare ground visible, 30-40% sparse debris
-- Muted gray-brown dead palette
-- Dry, dusty appearance
-- Light source directly overhead
-- EXACT COLOR PALETTE:
-  - Bare soil: #3a3530, #4a4035 (gray-brown dirt)
-  - Soil variation: #4a4540, #5a5045 (slightly lighter patches)
-  - Dead leaves: #3a3025, #4a3a2a (dark brown)
-  - Twigs: #4a4035, #5a4a40 (wood brown)
-  - Bark: #2a2520, #3a3025 (dark bark fragments)
-- Sparse, desolate texture
-- Less dense than other floors - more ground showing
-- Fills 100% of frame
-
-Transparent PNG, no checkered background. Edges must tile seamlessly.
-```
-
----
-
-## MIXED FOREST FLOOR
-
-General purpose floor for mixed woodland.
-
-```
-Mixed forest floor with varied leaf litter viewed from directly above, modern pixel art style with chunky defined pixels. Seamless tileable texture. Transparent PNG with alpha channel.
-
-- Natural mix of different leaf types and forest debris
-- STRICTLY top-down view, camera PERFECTLY perpendicular to ground, 90 degrees
-- Mix of oak-like, birch-like leaves, some needles, small twigs
-- Organic varied coverage, not uniform
-- TILEABLE - edges must seamlessly repeat
-- 15-25% of frame shows dark ground peeking through
-- Muted autumn/earth tones - subdued military palette
+**Requirements:**
+- 256x256 pixels, transparent PNG background
+- Content in 4 corners, center EMPTY (for tiling)
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground
+- Chunky pixel art aesthetic, not photorealistic
+- Muted desaturated tones - subdued military color palette
 - NOT vibrant
-- Light source directly overhead
-- EXACT COLOR PALETTE:
-  - Ground: #1a1815, #2a2520 (dark soil)
-  - Darks: #3a3025, #4a3a2a (decomposed matter)
-  - Mids: #5a4a3a, #6a5a45 (brown leaves)
-  - Lights: #7a6a50, #8a7a5a (tan/dry leaves)
-  - Accent: #5a5540, #6a6550 (gray-tan variety)
-- Varied debris sizes and shapes
-- Dense but not uniform coverage
-- Fills 100% of frame
+- STRONG CONTRAST: Deep shadows, clear highlights
+- Light source directly overhead (noon)
 
-Transparent PNG, no checkered background. Edges must tile seamlessly.
+Generate 3 variants per type.
+
+---
+
+# SEASONAL FLOOR SPRITES (New System)
+
+These are the primary floor sprites used by the biome/season system.
+
+---
+
+## FLOOR-LEAF (Green Fallen Leaves - Stylistic Option)
+
+**Note:** Unrealistic for summer (leaves would still be on trees), but available for custom/stylistic maps.
+
+```
+Fallen green leaves in 4 corners on a 256x256 pixel canvas, viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
+
+- EXACTLY 4 fallen deciduous leaves, ONE in each corner
+- Leaves positioned near corners but not touching edges
+- Center of image is EMPTY (for tiling)
+- Mix of leaf shapes (oak-like lobed, birch-like oval)
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground
+- Muted desaturated tones - subdued military color palette
+- NOT vibrant - these are fallen leaves, slightly wilted
+- Chunky pixel art aesthetic, not photorealistic
+- Light source directly overhead (noon)
+
+EXACT ROTATIONS (stem pointing direction):
+- TOP-LEFT corner: leaf points UP (0°)
+- TOP-RIGHT corner: leaf points RIGHT (90°)
+- BOTTOM-LEFT corner: leaf points DOWN (180°)
+- BOTTOM-RIGHT corner: leaf points LEFT (270°)
+
+EXACT COLOR PALETTE (use only these colors):
+- Shadows: #1a2a1a, #2a3a2a (nearly black-green)
+- Midtones: #3a5530, #4a6a40 (muted olive-green)
+- Highlights: #5a7a4a, #6a8a5a (lighter olive)
+- Stems: #3a3025, #4a4035 (brown)
+
+PLACEMENT: 4 corners only. Center empty. 70% transparent space.
+
+Transparent PNG, no checkered background.
+```
+
+---
+
+## FLOOR-LEAF-FALL (Autumn Colored Leaves)
+
+```
+Fallen autumn leaves in 4 corners on a 256x256 pixel canvas, viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
+
+- EXACTLY 4 fallen autumn leaves, ONE in each corner
+- Leaves positioned near corners but not touching edges
+- Center of image is EMPTY (for tiling)
+- Mix of leaf shapes (oak-like lobed, birch-like oval)
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground
+- Muted desaturated tones - subdued military color palette
+- NOT vibrant - earthy autumn tones, not candy colors
+- Chunky pixel art aesthetic, not photorealistic
+- Light source directly overhead (noon)
+
+EXACT ROTATIONS (stem pointing direction):
+- TOP-LEFT corner: leaf points UP-RIGHT (45°)
+- TOP-RIGHT corner: leaf points DOWN-RIGHT (135°)
+- BOTTOM-LEFT corner: leaf points UP-LEFT (315°)
+- BOTTOM-RIGHT corner: leaf points DOWN-LEFT (225°)
+
+EXACT COLOR PALETTE (use only these colors):
+- Shadows: #2a1a15, #3a2520 (nearly black-brown)
+- Midtones: #6a4530, #7a5540, #8a6545 (muted orange-brown)
+- Highlights: #9a7550, #8a7a45 (lighter tan/yellow)
+- Stems: #3a3025, #4a4035 (dark brown)
+
+PLACEMENT: 4 corners only. Center empty. 70% transparent space.
+
+Transparent PNG, no checkered background.
+```
+
+---
+
+## FLOOR-LEAF-DRY (Brown Dried Leaves)
+
+```
+Dried brown leaves in 4 corners on a 256x256 pixel canvas, viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
+
+- EXACTLY 4 dried leaves, ONE in each corner
+- Leaves positioned near corners but not touching edges
+- Center of image is EMPTY (for tiling)
+- Some curled edges, some crumbling - weathered dead look
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground
+- Muted desaturated tones - subdued military color palette
+- NOT vibrant - lifeless gray-brown tones
+- Chunky pixel art aesthetic, not photorealistic
+- Light source directly overhead (noon)
+
+EXACT ROTATIONS (stem pointing direction):
+- TOP-LEFT corner: leaf points RIGHT (90°)
+- TOP-RIGHT corner: leaf points DOWN (180°)
+- BOTTOM-LEFT corner: leaf points UP (0°)
+- BOTTOM-RIGHT corner: leaf points LEFT (270°)
+
+EXACT COLOR PALETTE (use only these colors):
+- Shadows: #1a1815, #2a2520 (nearly black-brown)
+- Midtones: #3a3025, #4a4035, #5a4a35 (gray-brown)
+- Highlights: #6a5a45, #7a6a4a (muted tan)
+
+PLACEMENT: 4 corners only. Center empty. 70% transparent space.
+
+Transparent PNG, no checkered background.
+```
+
+---
+
+## FLOOR-NEEDLE (Pine Needles in Corners)
+
+```
+Pine needle clusters in 4 corners on a 256x256 pixel canvas, viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
+
+- 4 small clusters of 3-4 pine needles each, ONE cluster in each corner
+- Clusters positioned near corners but not touching edges
+- Center of image is EMPTY (for tiling)
+- Needles 1-2 pixels wide, slightly curved
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground
+- Muted desaturated tones - subdued military color palette
+- NOT vibrant - dried rust-brown tones
+- Chunky pixel art aesthetic, not photorealistic
+- Light source directly overhead (noon)
+
+EXACT ROTATIONS (cluster orientation):
+- TOP-LEFT corner: needles radiate UP-LEFT
+- TOP-RIGHT corner: needles radiate DOWN-RIGHT
+- BOTTOM-LEFT corner: needles radiate DOWN-LEFT
+- BOTTOM-RIGHT corner: needles radiate UP-RIGHT
+
+EXACT COLOR PALETTE (use only these colors):
+- Shadows: #2a1a15, #3a2520 (nearly black-brown)
+- Midtones: #4a3530, #5a4035 (rust-brown)
+- Highlights: #6a5040, #7a5545 (lighter rust)
+
+PLACEMENT: 4 corners only. Center empty. 70% transparent space.
+
+Transparent PNG, no checkered background.
+```
+
+---
+
+## FLOOR-DEBRIS (Dead Forest Debris)
+
+```
+Dead forest debris in 4 corners on a 256x256 pixel canvas, viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
+
+- EXACTLY 4 pieces of debris, ONE in each corner
+- Mix of: dead leaf fragments, small dry twigs, bark pieces
+- Items positioned near corners but not touching edges
+- Center of image is EMPTY (for tiling)
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground
+- Muted desaturated tones - subdued military color palette
+- NOT vibrant - lifeless gray-brown tones, decomposing look
+- Chunky pixel art aesthetic, not photorealistic
+- Light source directly overhead (noon)
+
+EXACT ROTATIONS:
+- TOP-LEFT corner: twig pointing DOWN-RIGHT (135°)
+- TOP-RIGHT corner: leaf fragment pointing LEFT (270°)
+- BOTTOM-LEFT corner: bark piece pointing UP (0°)
+- BOTTOM-RIGHT corner: twig pointing UP-LEFT (315°)
+
+EXACT COLOR PALETTE (use only these colors):
+- Shadows: #1a1815, #2a2520 (nearly black)
+- Midtones: #3a3025, #4a4035, #5a5045 (gray-brown)
+- Highlights: #5a5540, #6a6550 (muted tan-gray)
+
+PLACEMENT: 4 corners only. Center empty. 75% transparent space.
+
+Transparent PNG, no checkered background.
+```
+
+---
+
+# LEGACY FLOOR SPRITES (Tree-Specific, Centered Layout)
+
+These are older per-tree-type sprites with centered clusters (not 4-corner). Still usable for custom setups.
+
+---
+
+## FLOOR-OAK (Oak Leaf Litter)
+
+```
+Cluster of fallen oak leaves on a 256x256 pixel canvas, viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
+
+- 8-12 overlapping fallen oak leaves in center of frame
+- Lobed oak leaf shapes, some curled, some flat
+- Decomposing forest floor look
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground
+- Muted desaturated tones - subdued military color palette
+- NOT vibrant - weathered decomposing browns
+- Chunky pixel art aesthetic, not photorealistic
+- Light source directly overhead (noon)
+
+EXACT COLOR PALETTE (use only these colors):
+- Shadows: #1a1815, #2a2520 (nearly black-brown)
+- Midtones: #3a3025, #4a4035, #5a4a35 (gray-brown)
+- Highlights: #6a5a45, #7a6a4a (muted tan)
+
+Leaves fill center 60% of frame. Edges fade to transparent.
+
+Transparent PNG, no checkered background.
+```
+
+---
+
+## FLOOR-PINE (Pine Needle Pile)
+
+```
+Dense pile of pine needles on a 256x256 pixel canvas, viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
+
+- Dense cluster of thin crossed pine needles in center
+- Needles 1-2 pixels wide, criss-crossing chaotically
+- Dried conifer floor look
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground
+- Muted desaturated tones - subdued military color palette
+- NOT vibrant - dried rust-brown tones
+- Chunky pixel art aesthetic, not photorealistic
+- Light source directly overhead (noon)
+
+EXACT COLOR PALETTE (use only these colors):
+- Shadows: #2a1a15, #3a2520 (nearly black-brown)
+- Midtones: #4a3530, #5a3530 (rust-brown)
+- Highlights: #6a4540, #7a5040 (lighter rust)
+
+Needle pile fills center 50-60% of frame. Edges fade to transparent.
+
+Transparent PNG, no checkered background.
+```
+
+---
+
+## FLOOR-BIRCH (Birch Leaf Scatter)
+
+```
+Scattered birch leaves on a 256x256 pixel canvas, viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
+
+- 6-10 small oval birch leaves loosely grouped in center
+- Some leaves curled at edges, weathered look
+- Lighter tones than oak - pale autumn birch
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground
+- Muted desaturated tones - subdued military color palette
+- NOT vibrant - pale gray-tan weathered tones
+- Chunky pixel art aesthetic, not photorealistic
+- Light source directly overhead (noon)
+
+EXACT COLOR PALETTE (use only these colors):
+- Shadows: #3a3530, #4a4540 (gray-brown)
+- Midtones: #5a5040, #6a6050 (gray-tan)
+- Highlights: #7a7560, #8a8570 (pale tan)
+
+Leaves fill center 50-60% of frame. Edges fade to transparent.
+
+Transparent PNG, no checkered background.
+```
+
+---
+
+## FLOOR-DAMP (Wet Debris - Willow/Wetland)
+
+```
+Wet forest debris cluster on a 256x256 pixel canvas, viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
+
+- Mix of soggy leaves, small twigs, dark organic matter
+- Wet, dark appearance - swamp/wetland floor
+- Muddy browns and grays
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground
+- Muted desaturated tones - subdued military color palette
+- NOT vibrant - dark muddy waterlogged tones
+- Chunky pixel art aesthetic, not photorealistic
+- Light source directly overhead (noon)
+
+EXACT COLOR PALETTE (use only these colors):
+- Shadows: #1a1815, #2a2520 (nearly black)
+- Midtones: #3a3530, #4a4540, #5a5045 (dark muddy brown)
+- Highlights: #5a5540, #6a6550 (muted gray-brown)
+
+Debris fills center 60% of frame. Edges fade to transparent.
+
+Transparent PNG, no checkered background.
+```
+
+---
+
+## FLOOR-BARE (Dead/Dry Debris)
+
+```
+Dry dead debris on a 256x256 pixel canvas, viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
+
+- Dead leaf fragments, small dry twigs, bark pieces
+- Sparse, lifeless - dead forest floor
+- No moisture, completely dried out
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground
+- Muted desaturated tones - subdued military color palette
+- NOT vibrant - lifeless gray-brown tones
+- Chunky pixel art aesthetic, not photorealistic
+- Light source directly overhead (noon)
+
+EXACT COLOR PALETTE (use only these colors):
+- Shadows: #1a1815, #2a2520 (nearly black)
+- Midtones: #3a3025, #4a4035, #5a5045 (gray-brown)
+- Highlights: #5a5540, #6a6550 (muted tan-gray)
+
+Debris fills center 50% of frame. SPARSER than other types. Edges fade to transparent.
+
+Transparent PNG, no checkered background.
+```
+
+---
+
+## FLOOR-MIXED (Mixed Woodland Debris)
+
+```
+Mixed forest floor debris on a 256x256 pixel canvas, viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
+
+- Variety of items: different leaf shapes, needle bits, small twigs, bark
+- Mixed woodland look - not specific to one tree type
+- Decomposing organic matter
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground
+- Muted desaturated tones - subdued military color palette
+- NOT vibrant - earthy decomposed browns
+- Chunky pixel art aesthetic, not photorealistic
+- Light source directly overhead (noon)
+
+EXACT COLOR PALETTE (use only these colors):
+- Shadows: #1a1815, #2a2520 (nearly black)
+- Midtones: #3a3025, #4a4035, #5a4a3a (brown)
+- Highlights: #6a5a45, #7a6a50 (muted tan)
+
+Mixed debris fills center 60% of frame. Edges fade to transparent.
+
+Transparent PNG, no checkered background.
 ```
 
 ---
 
 ## Post-Processing
 
-See [imagemagick.md](imagemagick.md) for resize instructions.
-
 ```bash
+# Resize from AI output to 256px (if needed)
 magick input.png -filter point -resize 256x256 output.png
-```
 
-### File Naming
-```
-floors/
-  originals/
-    floor-oak-1.png, floor-oak-2.png
-    floor-pine-1.png, floor-pine-2.png
-    floor-birch-1.png, floor-birch-2.png
-    floor-damp-1.png, floor-damp-2.png
-    floor-bare-1.png, floor-bare-2.png
-    floor-mixed-1.png, floor-mixed-2.png
-  resized/
-    (same names after processing)
+# Ensure transparency is preserved
+magick input.png -background none output.png
 ```
 
 ---
 
-## Code Integration
+## File Naming
 
-Map tree types to floor types in `strokes.js`:
+Save with variant numbers:
+```
+sprites/terrain/floor/
+  # SEASONAL (Primary - used by biome/season system)
+  floor-leaf-1.png, floor-leaf-2.png, floor-leaf-3.png           # Green summer
+  floor-leaf-fall-1.png, floor-leaf-fall-2.png, floor-leaf-fall-3.png  # Autumn colors
+  floor-leaf-dry-1.png, floor-leaf-dry-2.png, floor-leaf-dry-3.png     # Brown dried
+  floor-needle-1.png, floor-needle-2.png, floor-needle-3.png     # Pine needles
+  floor-debris-1.png, floor-debris-2.png, floor-debris-3.png     # Twigs/bark (dead)
 
-```javascript
-export const TREE_TO_FLOOR = {
-  'oak': 'floor-oak',
-  'pine': 'floor-pine',
-  'birch': 'floor-birch',
-  'willow': 'floor-damp',
-  'dead': 'floor-bare'
-};
-
-// Fallback for mixed forests
-export const DEFAULT_FLOOR = 'floor-mixed';
+  # LEGACY (Tree-specific - still usable for custom)
+  floor-oak-1.png, floor-oak-2.png, floor-oak-3.png
+  floor-pine-1.png, floor-pine-2.png, floor-pine-3.png
+  floor-birch-1.png, floor-birch-2.png, floor-birch-3.png
+  floor-damp-1.png, floor-damp-2.png, floor-damp-3.png
+  floor-bare-1.png, floor-bare-2.png, floor-bare-3.png
+  floor-mixed-1.png, floor-mixed-2.png, floor-mixed-3.png
 ```
 
-Update forest stroke to auto-select floor based on dominant tree type, or allow manual override.
+---
+
+## How They Render
+
+The renderer scatters these sprites around each tree:
+- **Count**: 3-50 patches per tree (scales with tree size)
+- **Size**: Rendered at 15-50px (scaled from 256px source)
+- **Rotation**: Random 0-360°
+- **Alpha**: 0.2-0.9 (fades toward edge of coverage area)
+- **Distribution**: Concentrated under canopy, sparser toward edges

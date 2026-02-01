@@ -6,7 +6,197 @@ Generate 3 images from each prompt for variants.
 
 ---
 
-## LEAF PARTICLES
+# SEASONAL LEAF PARTICLES (New System)
+
+These are the primary particle sprites used by the biome/season system.
+
+---
+
+## LEAF-PARTICLES (Green Summer Leaves)
+
+```
+Fresh green fallen leaves in 4 corners on a 256x256 pixel canvas, viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
+
+- 256x256 pixel image
+- EXACTLY 4 fallen leaves, ONE in each corner
+- Leaves positioned near corners, not touching edges
+- CENTER IS EMPTY - no leaves in middle
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground
+- Mix of leaf shapes: some oak-like lobed, some oval birch-like
+- 70% of frame is transparent/empty (center area)
+- Fresh GREEN color palette - summer leaves
+
+EXACT ROTATIONS (stem pointing direction):
+- TOP-LEFT corner: leaf points UP (0°)
+- TOP-RIGHT corner: leaf points RIGHT (90°)
+- BOTTOM-LEFT corner: leaf points DOWN (180°)
+- BOTTOM-RIGHT corner: leaf points LEFT (270°)
+
+EXACT COLOR PALETTE:
+  - Darks: #2a4025, #3a5030 (dark green)
+  - Mids: #4a6540, #5a7550 (medium green)
+  - Lights: #6a8560, #7a9570 (light green)
+
+Transparent PNG, no checkered background.
+```
+
+---
+
+## LEAF-FALL-PARTICLES (Autumn Colored Leaves)
+
+```
+Colorful autumn fallen leaves in 4 corners on a 256x256 pixel canvas, viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
+
+- 256x256 pixel image
+- EXACTLY 4 fallen leaves, ONE in each corner
+- Leaves positioned near corners, not touching edges
+- CENTER IS EMPTY - no leaves in middle
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground
+- Mix of leaf shapes: some oak-like lobed, some oval birch-like
+- 70% of frame is transparent/empty (center area)
+- VIBRANT FALL color palette - oranges, reds, yellows
+
+EXACT ROTATIONS (stem pointing direction):
+- TOP-LEFT corner: leaf points UP-RIGHT (45°)
+- TOP-RIGHT corner: leaf points DOWN-RIGHT (135°)
+- BOTTOM-LEFT corner: leaf points UP-LEFT (315°)
+- BOTTOM-RIGHT corner: leaf points DOWN-LEFT (225°)
+
+EXACT COLOR PALETTE:
+  - Reds: #904525, #a05530 (red-orange)
+  - Oranges: #aa6030, #bb7040 (bright orange)
+  - Yellows: #aa8a30, #bb9a40 (golden yellow)
+
+Transparent PNG, no checkered background.
+```
+
+---
+
+## LEAF-DRY-PARTICLES (Brown Dried Leaves)
+
+```
+Dried brown fallen leaves in 4 corners on a 256x256 pixel canvas, viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
+
+- 256x256 pixel image
+- EXACTLY 4 fallen leaves, ONE in each corner
+- Leaves positioned near corners, not touching edges
+- CENTER IS EMPTY - no leaves in middle
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground
+- Mix of leaf shapes, some curled/crumbling at edges
+- 70% of frame is transparent/empty (center area)
+- DRIED BROWN color palette - dead winter leaves
+
+EXACT ROTATIONS (stem pointing direction):
+- TOP-LEFT corner: leaf points RIGHT (90°)
+- TOP-RIGHT corner: leaf points DOWN (180°)
+- BOTTOM-LEFT corner: leaf points UP (0°)
+- BOTTOM-RIGHT corner: leaf points LEFT (270°)
+
+EXACT COLOR PALETTE:
+  - Darks: #3a3025, #4a3a2a (dark brown)
+  - Mids: #5a4a35, #6a5a40 (medium brown/tan)
+  - Lights: #7a6a4a, #8a7a55 (light tan)
+
+Transparent PNG, no checkered background.
+```
+
+---
+
+## PETAL-PARTICLES (Spring Flower Petals)
+
+```
+Delicate flower petals in 4 corners on a 256x256 pixel canvas, viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
+
+- 256x256 pixel image
+- EXACTLY 4 small petals, ONE in each corner
+- Petals positioned near corners, not touching edges
+- CENTER IS EMPTY - no petals in middle
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground
+- Soft curved petal shapes, some oval, some teardrop
+- 75% of frame is transparent/empty (center area)
+- SOFT PINK/WHITE color palette - spring blossoms
+
+EXACT ROTATIONS (petal tip pointing direction):
+- TOP-LEFT corner: petal points DOWN-RIGHT (135°)
+- TOP-RIGHT corner: petal points DOWN-LEFT (225°)
+- BOTTOM-LEFT corner: petal points UP-RIGHT (45°)
+- BOTTOM-RIGHT corner: petal points UP-LEFT (315°)
+
+EXACT COLOR PALETTE:
+  - Pinks: #daa0a0, #e0b0b0 (soft pink)
+  - Whites: #f0e5e5, #fff0f0 (cream white)
+  - Accent: #c09090 (deeper pink shadow)
+
+Transparent PNG, no checkered background.
+```
+
+---
+
+## NEEDLE-PARTICLES (Pine Needles)
+
+```
+Pine needle clusters in 4 corners on a 256x256 pixel canvas, viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
+
+- 256x256 pixel image
+- 4 small clusters of 3-4 needles each, ONE cluster in each corner
+- Clusters positioned near corners, not touching edges
+- CENTER IS EMPTY - no needles in middle
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground
+- Thin elongated shapes, 1-2 pixels wide
+- 70% of frame is transparent/empty (center area)
+- ORANGE-BROWN dried needle colors
+
+EXACT ROTATIONS (cluster orientation):
+- TOP-LEFT corner: needles radiate UP-LEFT (pointing outward)
+- TOP-RIGHT corner: needles radiate DOWN (pointing down)
+- BOTTOM-LEFT corner: needles radiate RIGHT (pointing right)
+- BOTTOM-RIGHT corner: needles radiate UP (pointing up)
+
+EXACT COLOR PALETTE:
+  - Darks: #3a3025, #4a3a2a (dark brown)
+  - Mids: #5a4530, #6a5535 (orange-brown)
+  - Lights: #7a6540, #8a7550 (tan/straw)
+
+Transparent PNG, no checkered background.
+```
+
+---
+
+## TWIG-PARTICLES (Dead Tree Debris)
+
+```
+Small twigs in 4 corners on a 256x256 pixel canvas, viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
+
+- 256x256 pixel image
+- EXACTLY 4 small twigs/sticks, ONE in each corner
+- Twigs positioned near corners, not touching edges
+- CENTER IS EMPTY - no twigs in middle
+- STRICTLY top-down view, camera PERFECTLY perpendicular to ground
+- Mix of twig sizes: some short stubby, some longer thin
+- 75% of frame is transparent/empty (center area)
+- GRAY-BROWN dead wood tones
+
+EXACT ROTATIONS:
+- TOP-LEFT corner: twig horizontal, pointing RIGHT (90°)
+- TOP-RIGHT corner: twig diagonal, pointing DOWN-LEFT (225°)
+- BOTTOM-LEFT corner: twig vertical, pointing UP (0°)
+- BOTTOM-RIGHT corner: twig diagonal, pointing UP-LEFT (315°)
+
+EXACT COLOR PALETTE:
+  - Darks: #2a2520, #3a3025 (dark bark)
+  - Mids: #4a4035, #5a4a40 (medium wood)
+  - Lights: #6a5a4a, #7a6a55 (lighter wood)
+
+Transparent PNG, no checkered background.
+```
+
+---
+
+# OTHER PARTICLES (Existing)
+
+---
+
+## LEAF PARTICLES (Legacy - Autumn Browns)
 
 ```
 Randomly scattered fallen autumn leaves on a 256x256 pixel canvas, viewed from directly above, modern pixel art style with chunky defined pixels. Transparent PNG with alpha channel.
@@ -464,11 +654,17 @@ magick input.png -filter point -resize 256x256 output.png
 ### File Naming
 Generate 3 images from each prompt:
 ```
-particles/
-  leaf-particles-1.png, leaf-particles-2.png, leaf-particles-3.png
+sprites/terrain/brush/resized/  (or particles/)
+  # SEASONAL LEAVES (Primary - used by biome/season system)
+  leaf-particles-1.png, leaf-particles-2.png, leaf-particles-3.png           # Green summer
+  leaf-fall-particles-1.png, leaf-fall-particles-2.png, leaf-fall-particles-3.png  # Autumn
+  leaf-dry-particles-1.png, leaf-dry-particles-2.png, leaf-dry-particles-3.png     # Brown dried
+  petal-particles-1.png, petal-particles-2.png, petal-particles-3.png        # Spring petals
+  needle-particles-1.png, needle-particles-2.png, needle-particles-3.png     # Pine needles
+  twig-particles-1.png, twig-particles-2.png, twig-particles-3.png           # Dead tree debris
+
+  # OTHER PARTICLES
   pebbles-1.png, pebbles-2.png, pebbles-3.png
-  twigs-1.png, twigs-2.png, twigs-3.png
-  pine-needles-1.png, pine-needles-2.png, pine-needles-3.png
   acorns-1.png, acorns-2.png, acorns-3.png
   mushrooms-1.png, mushrooms-2.png, mushrooms-3.png
   moss-1.png, moss-2.png, moss-3.png

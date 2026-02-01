@@ -163,11 +163,13 @@ app.get('/api/terrain/sprites', (req, res) => {
   const treesDir = path.join(__dirname, 'sprites', 'terrain', 'trees');
   const brushDir = path.join(__dirname, 'sprites', 'terrain', 'brush');
   const groundDir = path.join(__dirname, 'sprites', 'terrain', 'ground');
+  const floorDir = path.join(__dirname, 'sprites', 'terrain', 'floor');
 
   const result = {
     trees: {},
     brush: {},
-    ground: []
+    ground: [],
+    floor: {}  // Floor patches with variants (floor-oak-1, floor-oak-2, etc.)
   };
 
   // Scan ground textures
@@ -177,6 +179,18 @@ app.get('/api/terrain/sprites', (req, res) => {
       .forEach(f => {
         const name = f.replace('.png', '').replace('terrain-', '');
         result.ground.push(name);
+      });
+  }
+
+  // Scan floor patch sprites (discrete sprites with variants)
+  const floorResizedDir = path.join(floorDir, 'resized');
+  if (fs.existsSync(floorResizedDir)) {
+    fs.readdirSync(floorResizedDir)
+      .filter(f => f.endsWith('.png'))
+      .forEach(f => {
+        // Format: floor-leaf-1.png -> key: floor-leaf-1
+        const key = f.replace('.png', '');
+        result.floor[key] = `/sprites/terrain/floor/resized/${f}`;
       });
   }
 
