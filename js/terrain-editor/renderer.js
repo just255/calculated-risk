@@ -254,11 +254,35 @@ export class Renderer {
 
   /**
    * Render a single stroke to the preview canvas
+   * Ground textures are clipped to exclude water areas
    */
   _renderStrokeToPreview(ctx, stroke) {
     if (stroke.type === 'water') {
       this._renderWaterStroke(ctx, stroke, true);
+    } else if (stroke.type === 'groundTexture' && !stroke.isShore) {
+      // Clip ground textures to exclude water areas
+      const terrainMap = this._state.terrainMap;
+      const existingWater = terrainMap.strokes ? terrainMap.strokes.filter(s => s.type === 'water') : [];
+      const previewWater = this._paintPreviewStrokes.filter(s => s.type === 'water');
+      const allWaterStrokes = [...existingWater, ...previewWater];
+
+      if (allWaterStrokes.length > 0) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        for (const water of allWaterStrokes) {
+          const effectiveRadius = water.radius + (water.shoreWidth || 0);
+          ctx.moveTo(water.x + effectiveRadius, water.y);
+          ctx.arc(water.x, water.y, effectiveRadius, 0, Math.PI * 2, true);
+        }
+        ctx.clip('evenodd');
+        this._renderGroundTextureStroke(ctx, stroke, true);
+        ctx.restore();
+      } else {
+        this._renderGroundTextureStroke(ctx, stroke, true);
+      }
     } else {
+      // Shore strokes render without clipping
       this._renderGroundTextureStroke(ctx, stroke, true);
     }
   }
@@ -338,12 +362,34 @@ export class Renderer {
     // Ground textures first, then shores, then water
     // Uses inline occlusion check to avoid creating filter arrays
 
-    // Pass 1: Ground textures (non-shore)
+    // Collect all water strokes (existing + being painted) for clipping ground textures
+    const terrainMap = this._state.terrainMap;
+    const existingWater = terrainMap.strokes ? terrainMap.strokes.filter(s => s.type === 'water') : [];
+    const previewWater = strokes.filter(s => s.type === 'water');
+    const allWaterStrokes = [...existingWater, ...previewWater];
+
+    // Pass 1: Ground textures (non-shore) - clipped to exclude water areas
+    if (allWaterStrokes.length > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, width, height);
+      for (const water of allWaterStrokes) {
+        const effectiveRadius = water.radius + (water.shoreWidth || 0);
+        ctx.moveTo(water.x + effectiveRadius, water.y);
+        ctx.arc(water.x, water.y, effectiveRadius, 0, Math.PI * 2, true);
+      }
+      ctx.clip('evenodd');
+    }
+
     for (let i = 0; i < len; i++) {
       const s = strokes[i];
       if (s.type !== 'groundTexture' || s.isShore) continue;
       if (!this._isStrokeInViewportFast(s, width, height)) continue;
       this._renderGroundTextureStroke(ctx, s, true);
+    }
+
+    if (allWaterStrokes.length > 0) {
+      ctx.restore();
     }
 
     // Pass 2: Shore textures with inline occlusion check
