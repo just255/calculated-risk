@@ -54,7 +54,8 @@ Colorful autumn fallen leaves in 4 corners on a 256x256 pixel canvas, viewed fro
 - STRICTLY top-down view, camera PERFECTLY perpendicular to ground
 - Mix of leaf shapes: some oak-like lobed, some oval birch-like
 - 70% of frame is transparent/empty (center area)
-- VIBRANT FALL color palette - oranges, reds, yellows
+- Muted desaturated tones - subdued military color palette
+- NOT vibrant - earthy autumn tones, not candy colors
 
 EXACT ROTATIONS (stem pointing direction):
 - TOP-LEFT corner: leaf points UP-RIGHT (45°)
@@ -62,10 +63,11 @@ EXACT ROTATIONS (stem pointing direction):
 - BOTTOM-LEFT corner: leaf points UP-LEFT (315°)
 - BOTTOM-RIGHT corner: leaf points DOWN-LEFT (225°)
 
-EXACT COLOR PALETTE:
-  - Reds: #904525, #a05530 (red-orange)
-  - Oranges: #aa6030, #bb7040 (bright orange)
-  - Yellows: #aa8a30, #bb9a40 (golden yellow)
+EXACT COLOR PALETTE (use only these colors):
+  - Shadows: #2a1a15, #3a2520 (nearly black-brown)
+  - Midtones: #6a4530, #7a5540, #8a6545 (muted orange-brown)
+  - Highlights: #9a7550, #8a7a45 (lighter tan/yellow)
+  - Stems: #3a3025, #4a4035 (dark brown)
 
 Transparent PNG, no checkered background.
 ```
