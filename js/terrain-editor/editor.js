@@ -448,15 +448,10 @@ class TerrainEditor {
     // Initialize feature panels based on default (forest)
     this._updateFeaturePanels('forest');
 
-    // Ground preview toggle (controls both panel preview and canvas preview)
+    // Ground canvas preview toggle
     if (this._elements.showGroundPreview) {
       this._elements.showGroundPreview.addEventListener('change', (e) => {
-        const show = e.target.checked;
-        this._state.setViewSetting('showGroundPreview', show);
-        if (this._elements.groundPreviewContainer) {
-          this._elements.groundPreviewContainer.style.display = show ? 'flex' : 'none';
-        }
-        if (show) this._refreshGroundPreview();
+        this._state.setViewSetting('showGroundPreview', e.target.checked);
       });
     }
 
@@ -568,15 +563,10 @@ class TerrainEditor {
       });
     }
 
-    // Water preview toggle (controls both panel preview and canvas preview)
+    // Water canvas preview toggle
     if (this._elements.showWaterPreview) {
       this._elements.showWaterPreview.addEventListener('change', (e) => {
-        const show = e.target.checked;
-        this._state.setViewSetting('showWaterPreview', show);
-        if (this._elements.waterPreviewContainer) {
-          this._elements.waterPreviewContainer.style.display = show ? 'flex' : 'none';
-        }
-        if (show) this._refreshWaterPreview();
+        this._state.setViewSetting('showWaterPreview', e.target.checked);
       });
     }
 
