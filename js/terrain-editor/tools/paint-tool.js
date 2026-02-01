@@ -124,10 +124,12 @@ export const PaintTool = {
     }
 
     // Texture preview for water/ground (shows what texture would be painted)
-    // Always show for water/ground (no panel preview alternative), scatter uses showScatterPreview toggle
     const isTextureFeature = options.featureType === 'water' || options.featureType === 'groundTexture';
+    const showWaterPreview = state.viewSettings.showWaterPreview;
+    const showGroundPreview = state.viewSettings.showGroundPreview;
+
     if (inBounds && !this._isPainting && isTextureFeature) {
-      if (options.featureType === 'water') {
+      if (options.featureType === 'water' && showWaterPreview) {
         renderer.setTexturePreview(e.x, e.y, options.brushRadius, options.waterTextureType || 'water', {
           fadeWidth: options.waterFadeWidth ?? 12,
           intensity: options.intensity || 1.0,
@@ -140,15 +142,15 @@ export const PaintTool = {
           shoreWidth: options.shoreWidth || 0,
           shoreFadeWidth: options.shoreFadeWidth ?? 12
         });
-      } else {
+      } else if (options.featureType === 'groundTexture' && showGroundPreview) {
         renderer.setTexturePreview(e.x, e.y, options.brushRadius, options.groundTextureType || 'grass-1', {
           fadeWidth: options.fadeWidth ?? 12,
           intensity: options.intensity || 1.0,
           isWater: false
         });
+      } else {
+        renderer.clearTexturePreview();
       }
-    } else if (!isTextureFeature) {
-      renderer.clearTexturePreview();
     } else {
       renderer.clearTexturePreview();
     }

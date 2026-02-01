@@ -134,7 +134,9 @@ const DEFAULT_VIEW_SETTINGS = {
   showBoundary: true,
   showParticleDebug: false,
   useScatterRendering: false,  // Toggle between legacy and new scatter system rendering
-  showScatterPreview: false    // Show scatter preview on canvas at cursor position
+  showScatterPreview: false,   // Show scatter preview on canvas at cursor position
+  showGroundPreview: true,     // Show ground texture preview on canvas
+  showWaterPreview: true       // Show water texture preview on canvas
 };
 
 /**
