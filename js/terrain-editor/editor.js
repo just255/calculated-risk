@@ -94,6 +94,8 @@ class TerrainEditor {
       // Ground settings
       groundSettings: document.getElementById('ground-settings'),
       groundPreviewCanvas: document.getElementById('ground-preview-canvas'),
+      groundPreviewContainer: document.getElementById('ground-preview-container'),
+      showGroundPreview: document.getElementById('show-ground-preview'),
       groundTextureType: document.getElementById('ground-texture-type'),
       groundTypeDropdown: document.getElementById('ground-type-dropdown'),
       groundTypeValue: document.getElementById('ground-type-value'),
@@ -112,6 +114,8 @@ class TerrainEditor {
       // Water settings
       waterSettings: document.getElementById('water-settings'),
       waterPreviewCanvas: document.getElementById('water-preview-canvas'),
+      waterPreviewContainer: document.getElementById('water-preview-container'),
+      showWaterPreview: document.getElementById('show-water-preview'),
       waterTextureType: document.getElementById('water-texture-type'),
       waterOpacity: document.getElementById('water-opacity'),
       waterOpacityVal: document.getElementById('water-opacity-val'),
@@ -444,6 +448,17 @@ class TerrainEditor {
     // Initialize feature panels based on default (forest)
     this._updateFeaturePanels('forest');
 
+    // Ground preview toggle
+    if (this._elements.showGroundPreview) {
+      this._elements.showGroundPreview.addEventListener('change', (e) => {
+        const show = e.target.checked;
+        if (this._elements.groundPreviewContainer) {
+          this._elements.groundPreviewContainer.style.display = show ? 'flex' : 'none';
+        }
+        if (show) this._refreshGroundPreview();
+      });
+    }
+
     // Ground texture type (hidden select for compatibility)
     if (this._elements.groundTextureType) {
       this._elements.groundTextureType.addEventListener('change', (e) => {
@@ -549,6 +564,17 @@ class TerrainEditor {
       this._elements.waterTextureType.addEventListener('change', (e) => {
         this._state.setToolOption('waterTextureType', e.target.value);
         this._refreshWaterPreview();
+      });
+    }
+
+    // Water preview toggle
+    if (this._elements.showWaterPreview) {
+      this._elements.showWaterPreview.addEventListener('change', (e) => {
+        const show = e.target.checked;
+        if (this._elements.waterPreviewContainer) {
+          this._elements.waterPreviewContainer.style.display = show ? 'flex' : 'none';
+        }
+        if (show) this._refreshWaterPreview();
       });
     }
 
@@ -3174,23 +3200,15 @@ class TerrainEditor {
     const canvas = this._elements.groundPreviewCanvas;
     if (!canvas) return;
 
+    // Skip if preview is hidden
+    if (this._elements.showGroundPreview && !this._elements.showGroundPreview.checked) return;
+
     const ctx = canvas.getContext('2d');
     ctx.imageSmoothingEnabled = false;
 
-    // Clear
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // Background - use base ground texture
-    const baseLayer = this._state.baseLayer || 'grass-1';
-    const groundImg = this._renderer._images?.ground?.[baseLayer];
-    if (groundImg) {
-      const pattern = ctx.createPattern(groundImg, 'repeat');
-      ctx.fillStyle = pattern;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-    } else {
-      ctx.fillStyle = '#1a2f1a';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }
+    // Clear with solid dark background for contrast
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     const options = this._state.toolOptions;
     const brushRadius = options.brushRadius || 60;
@@ -3235,6 +3253,9 @@ class TerrainEditor {
   _refreshWaterPreview() {
     const canvas = this._elements.waterPreviewCanvas;
     if (!canvas) return;
+
+    // Skip if preview is hidden
+    if (this._elements.showWaterPreview && !this._elements.showWaterPreview.checked) return;
 
     const ctx = canvas.getContext('2d');
     ctx.imageSmoothingEnabled = false;

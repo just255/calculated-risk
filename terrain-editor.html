@@ -1221,11 +1221,16 @@
 
       <!-- Ground Texture Settings (shown when ground tool selected) -->
       <div class="panel-section" id="ground-settings" style="display: none;">
-        <div class="panel-title">Ground Output</div>
+        <div class="panel-title" style="display: flex; align-items: center; justify-content: space-between;">
+          Ground Output
+          <label style="font-size: 11px; font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+            <input type="checkbox" id="show-ground-preview" checked> Preview
+          </label>
+        </div>
 
         <!-- Preview -->
-        <div style="display: flex; justify-content: center; padding: 4px 0 8px;">
-          <canvas id="ground-preview-canvas" width="200" height="200" style="border: 1px solid #334155; border-radius: 4px; background: #0d0d1a;"></canvas>
+        <div id="ground-preview-container" style="display: flex; justify-content: center; padding: 4px 0 8px;">
+          <canvas id="ground-preview-canvas" width="200" height="200" style="border: 1px solid #334155; border-radius: 4px; background: #1a1f2e;"></canvas>
         </div>
 
         <!-- GROUND Category -->
@@ -1317,11 +1322,16 @@
 
       <!-- Water Settings (shown when water tool selected) -->
       <div class="panel-section" id="water-settings" style="display: none;">
-        <div class="panel-title">Water Output</div>
+        <div class="panel-title" style="display: flex; align-items: center; justify-content: space-between;">
+          Water Output
+          <label style="font-size: 11px; font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+            <input type="checkbox" id="show-water-preview" checked> Preview
+          </label>
+        </div>
 
         <!-- Preview -->
-        <div style="display: flex; justify-content: center; padding: 4px 0 8px;">
-          <canvas id="water-preview-canvas" width="200" height="200" style="border: 1px solid #334155; border-radius: 4px; background: #0d0d1a;"></canvas>
+        <div id="water-preview-container" style="display: flex; justify-content: center; padding: 4px 0 8px;">
+          <canvas id="water-preview-canvas" width="200" height="200" style="border: 1px solid #334155; border-radius: 4px; background: #1a1f2e;"></canvas>
         </div>
 
         <!-- WATER Category -->
