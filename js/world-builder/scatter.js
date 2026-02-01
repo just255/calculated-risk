@@ -1153,7 +1153,9 @@ export function generateForestItems(terrainMap, stroke, options = {}) {
     treesEnabled = true,
     brushEnabled = true,
     floorEnabled = true,
-    particlesEnabled = true
+    particlesEnabled = true,
+    // Water collision
+    allowInWater = false
   } = options;
 
   const { x, y, radius, seed = 42 } = stroke;
@@ -1205,7 +1207,8 @@ export function generateForestItems(terrainMap, stroke, options = {}) {
           seasonOverrides,
           childSpawnOverrides: effectiveChildOverrides,
           images,
-          strokeId
+          strokeId,
+          allowInWater
         }
       );
       allItems.push(...items);
@@ -1241,7 +1244,8 @@ export function generateForestItems(terrainMap, stroke, options = {}) {
           seasonOverrides,
           childSpawnOverrides: effectiveChildOverrides,
           images,
-          strokeId
+          strokeId,
+          allowInWater
         }
       );
       allItems.push(...items);
@@ -1300,7 +1304,8 @@ export function generateForestItems(terrainMap, stroke, options = {}) {
           seasonOverrides,
           childSpawnOverrides: effectiveChildOverrides,
           images,
-          strokeId
+          strokeId,
+          allowInWater
         }
       );
       allItems.push(...brushItems);

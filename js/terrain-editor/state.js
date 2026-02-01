@@ -275,7 +275,9 @@ export class EditorState extends EventEmitter {
             floorEnabled: this._toolOptions.floorEnabled ?? true,
             particlesEnabled: this._toolOptions.particlesEnabled ?? true,
             brushEnabled: this._toolOptions.brushEnabled ?? true,
-            strokeId: stroke.id
+            strokeId: stroke.id,
+            // Water collision
+            allowInWater: stroke.allowTreesInWater ?? false
           }
         );
         newItems.push(...items);
@@ -327,7 +329,9 @@ export class EditorState extends EventEmitter {
             biome: this._toolOptions.biome ?? 'temperate',
             seasonOverrides: this._toolOptions.seasonOverrides ?? {},
             childSpawnOverrides: this._toolOptions.childSpawnOverrides ?? {},
-            strokeId: stroke.id
+            strokeId: stroke.id,
+            // Water collision
+            allowInWater: stroke.allowBrushInWater ?? false
           }
         );
         newItems.push(...items);
