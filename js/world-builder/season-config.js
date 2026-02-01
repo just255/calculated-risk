@@ -258,7 +258,7 @@ export const SCATTER_TYPES = {
     scaleVariance: 0.4,
     spacing: 0,
     variants: 3,
-    spriteBase: 'leaf-particles'  // Uses same sprites for now
+    spriteBase: 'leaf-fall-particles'
   },
   'particle-leaf-dry': {
     category: 'particle',
@@ -267,7 +267,7 @@ export const SCATTER_TYPES = {
     scaleVariance: 0.35,
     spacing: 0,
     variants: 3,
-    spriteBase: 'leaf-particles'  // Uses same sprites for now
+    spriteBase: 'leaf-dry-particles'
   },
   'particle-petal': {
     category: 'particle',
@@ -276,7 +276,7 @@ export const SCATTER_TYPES = {
     scaleVariance: 0.3,
     spacing: 0,
     variants: 3,
-    spriteBase: 'leaf-particles'  // Uses same sprites for now (needs petal sprites)
+    spriteBase: 'leaf-particles'  // Uses leaf for now (needs petal sprites)
   },
   'particle-needle': {
     category: 'particle',
@@ -285,7 +285,7 @@ export const SCATTER_TYPES = {
     scaleVariance: 0.3,
     spacing: 0,
     variants: 3,
-    spriteBase: 'leaf-particles'  // Uses same sprites for now (needs needle sprites)
+    spriteBase: 'needle-particles'
   },
   'particle-twig': {
     category: 'particle',
@@ -294,7 +294,7 @@ export const SCATTER_TYPES = {
     scaleVariance: 0.35,
     spacing: 0,
     variants: 3,
-    spriteBase: 'leaf-particles'  // Uses same sprites for now (needs twig sprites)
+    spriteBase: 'twig-particles'
   }
 };
 
