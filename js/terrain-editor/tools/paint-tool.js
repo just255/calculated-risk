@@ -82,10 +82,17 @@ export const PaintTool = {
       const options = state.toolOptions;
       // Track if painting a scatter feature (for preview refresh on mouse up)
       this._paintingScatterFeature = options.featureType === 'forest' || options.featureType === 'brush';
+
+      // Track water stroke path for depth gradient on mouseup
+      this._waterStrokePath = [];
+      this._waterStrokeRadius = options.brushRadius;
+      this._waterDepth = (options.waterDepth ?? 0) / 100;
+
       // For water, use preview mode even for first stroke to ensure proper shore/water layering
       if (options.featureType === 'water') {
         renderer.beginDragPaint();
         this._dragModeStarted = true;
+        this._waterStrokePath.push({ x: e.x, y: e.y });
         this._paint(e.x, e.y, state, true, renderer);
         this._strokesAddedDuringDrag++;
       } else {
@@ -176,6 +183,10 @@ export const PaintTool = {
           renderer.beginDragPaint();
           this._dragModeStarted = true;
         }
+        // Track water stroke path for depth gradient
+        if (options.featureType === 'water' && this._waterStrokePath) {
+          this._waterStrokePath.push({ x: e.x, y: e.y });
+        }
         // Skip render during drag - batch them up, render on mouse up
         // But show in preview layer for visual feedback
         this._paint(e.x, e.y, state, true, renderer);
@@ -200,6 +211,16 @@ export const PaintTool = {
       }
     }
 
+    // Apply water depth gradient along the painted path
+    if (this._waterStrokePath && this._waterStrokePath.length > 1 && this._waterDepth > 0) {
+      renderer.applyPathDepthGradient(
+        this._waterStrokePath,
+        this._waterStrokeRadius,
+        this._waterDepth
+      );
+      state.requestRender();
+    }
+
     // For scatter features (forest/brush), regenerate seed and notify for preview refresh
     // This happens ONCE at the end of painting, not per stroke during drag
     if (this._paintingScatterFeature && this._state) {
@@ -212,6 +233,7 @@ export const PaintTool = {
     this._strokesAddedDuringDrag = 0;
     this._dragModeStarted = false;
     this._paintingScatterFeature = false;
+    this._waterStrokePath = null;
   },
 
   onMouseLeave(state, renderer) {

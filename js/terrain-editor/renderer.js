@@ -1435,40 +1435,56 @@ export class Renderer {
   }
 
   _renderWaterStroke(ctx, stroke, previewMode = false) {
-    const { x, y, radius, intensity, fadeWidth, textureType, waterDepth } = stroke;
+    const { x, y, radius, intensity, fadeWidth, textureType } = stroke;
     const type = textureType || 'water';
     const fade = fadeWidth ?? 12;
 
-    // Render the water texture
+    // Render the water texture only - depth is applied separately per-drag
     this._renderTextureStroke(ctx, type, x, y, radius, intensity, fade, previewMode);
-
-    // Apply depth darkening overlay if depth > 0
-    const depth = waterDepth ?? 0;
-    if (depth > 0) {
-      this._renderDepthOverlay(ctx, x, y, radius, depth, fade);
-    }
   }
 
   /**
-   * Render a darkening gradient overlay for water depth effect
+   * Apply depth gradient along a painted path (called on mouseup)
+   * Creates a dark gradient along the path centerline that fades to the edges
+   * @param {Array} path - Array of {x, y} points
+   * @param {number} radius - Brush radius (width of the painted area)
+   * @param {number} depth - Depth intensity (0-1)
    */
-  _renderDepthOverlay(ctx, x, y, radius, depth, fadeWidth) {
-    const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
+  applyPathDepthGradient(path, radius, depth) {
+    if (!path || path.length < 2 || depth <= 0) return;
 
-    // depth controls intensity (0 = none, 1 = very dark center)
-    const centerAlpha = depth * 0.8;  // Strong effect
-    const fadeStop = Math.max(0.2, 1 - (fadeWidth / radius));
+    // Draw to the ground cache
+    const ctx = this._groundCache?.getContext('2d');
+    if (!ctx) return;
 
-    // Dark overlay gradient - much more visible
-    gradient.addColorStop(0, `rgba(0, 0, 0, ${centerAlpha})`);
-    gradient.addColorStop(fadeStop * 0.5, `rgba(0, 5, 15, ${centerAlpha * 0.5})`);
-    gradient.addColorStop(fadeStop, `rgba(0, 10, 25, ${centerAlpha * 0.2})`);
-    gradient.addColorStop(1, 'rgba(0, 15, 35, 0)');
+    const centerAlpha = depth * 0.6;
 
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.fill();
+    // Draw dark gradient along the path using thick strokes with gradient
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    // Multiple passes with decreasing width and alpha for smooth gradient
+    const passes = [
+      { width: radius * 0.3, alpha: centerAlpha },
+      { width: radius * 0.5, alpha: centerAlpha * 0.6 },
+      { width: radius * 0.7, alpha: centerAlpha * 0.3 },
+      { width: radius * 0.9, alpha: centerAlpha * 0.1 }
+    ];
+
+    for (const pass of passes) {
+      ctx.strokeStyle = `rgba(0, 5, 15, ${pass.alpha})`;
+      ctx.lineWidth = pass.width;
+      ctx.beginPath();
+      ctx.moveTo(path[0].x, path[0].y);
+      for (let i = 1; i < path.length; i++) {
+        ctx.lineTo(path[i].x, path[i].y);
+      }
+      ctx.stroke();
+    }
+
+    ctx.restore();
+    this._groundCacheValid = true;
   }
 
   /**
