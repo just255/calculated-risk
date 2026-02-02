@@ -2145,57 +2145,12 @@ export class Renderer {
   }
 
   /**
-   * Render deep water as a dark gradient overlay (no texture needed)
-   * Uses multiply blend mode so overlapping strokes blend smoothly
-   * - Depth controls overall darkness (0.1 = subtle, 1.0 = very dark)
-   * - Falloff controls gradient (0% = solid dark, 100% = full gradient center to edge)
-   * @param {CanvasRenderingContext2D} ctx - Target canvas context
-   * @param {string} textureType - Unused (kept for API compatibility)
-   * @param {number} x - Center X position
-   * @param {number} y - Center Y position
-   * @param {number} radius - Stroke radius
-   * @param {number} depth - Opacity/darkness (0.1-1.0)
-   * @param {number} fadeWidth - Edge fade zone width (0 = solid, radius = full gradient)
-   * @param {boolean} previewMode - Unused (gradient is fast)
+   * Render deep water using texture with depth-controlled opacity
+   * Just uses the regular texture stroke rendering with depth as intensity
    */
   _renderDeepWaterStroke(ctx, textureType, x, y, radius, depth, fadeWidth, previewMode = false) {
-    // Calculate falloff ratio (0 = no fade, 1 = full fade across radius)
-    const falloff = Math.min(1, fadeWidth / radius);
-
-    // Use multiply blend mode so overlapping strokes blend smoothly
-    // instead of showing distinct circles
-    ctx.save();
-    ctx.globalCompositeOperation = 'multiply';
-
-    // For multiply: white = no change, darker = darker result
-    // depth controls how dark the color is (1.0 = very dark, 0.1 = nearly white)
-    // We map depth to a gray value: high depth = darker gray
-    const darkness = Math.floor(255 * (1 - depth * 0.85));  // 0.85 prevents pure black
-    const edgeDarkness = Math.floor(255 * (1 - depth * 0.85 * (1 - falloff)));
-
-    const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
-
-    if (falloff < 0.05) {
-      // Nearly solid - no gradient
-      ctx.fillStyle = `rgb(${darkness}, ${darkness}, ${Math.floor(darkness * 1.1)})`;
-      ctx.beginPath();
-      ctx.arc(x, y, radius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-      return;
-    }
-
-    // Gradient from center (darker) to edge (lighter)
-    // Slight blue tint for water feel
-    gradient.addColorStop(0, `rgb(${darkness}, ${darkness}, ${Math.floor(darkness * 1.15)})`);
-    gradient.addColorStop(0.85, `rgb(${edgeDarkness}, ${edgeDarkness}, ${Math.floor(edgeDarkness * 1.1)})`);
-    gradient.addColorStop(1, `rgb(255, 255, 255)`);  // White = no change at edge
-
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
+    // Use normal texture rendering - depth controls opacity
+    this._renderTextureStroke(ctx, textureType, x, y, radius, depth, fadeWidth, previewMode);
   }
 
   _renderBoundary(ctx) {
