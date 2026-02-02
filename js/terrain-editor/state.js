@@ -821,7 +821,9 @@ export class EditorState extends EventEmitter {
       particles: (this._terrainMap.particles || []).map(p => ({ ...p })),
       floorPatches: (this._terrainMap.floorPatches || []).map(f => ({ ...f })),
       // NEW: Unified scatter items
-      scatterItems: (this._terrainMap.scatterItems || []).map(item => ({ ...item }))
+      scatterItems: (this._terrainMap.scatterItems || []).map(item => ({ ...item })),
+      // Water depth overlays
+      waterDepthPaths: (this._terrainMap.waterDepthPaths || []).map(dp => ({ ...dp }))
     };
   }
 
@@ -910,6 +912,13 @@ export class EditorState extends EventEmitter {
       this._terrainMap.scatterItems = [];
       // TODO: Migrate legacy trees/brushes/particles/floorPatches to scatterItems
       // This will be done in a future phase when renderer is updated
+    }
+
+    // Load water depth paths (path-based depth overlays)
+    if (data.waterDepthPaths) {
+      this._terrainMap.waterDepthPaths = data.waterDepthPaths;
+    } else {
+      this._terrainMap.waterDepthPaths = [];
     }
 
     this._terrainMap.dirty = true;

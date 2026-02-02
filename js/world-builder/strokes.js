@@ -351,6 +351,8 @@ export function createTerrainMap(gridWidth, gridHeight, cellSize = 64, baseLayer
     floorPatches: [],       // Global floor patch registry (ground layer sprites)
     // NEW: Unified scatter system (MVP)
     scatterItems: [],       // All terrain elements in one array
+    // Water depth overlays (path-based depth gradients)
+    waterDepthPaths: [],    // Array of { path: [{x,y}], radius, depth }
     baseLayer,
     grid: [],
     gridWidth,

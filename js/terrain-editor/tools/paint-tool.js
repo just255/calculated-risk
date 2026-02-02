@@ -87,7 +87,6 @@ export const PaintTool = {
       this._waterStrokePath = [];
       this._waterStrokeRadius = options.brushRadius;
       this._waterDepth = (options.waterDepth ?? 0) / 100;
-      console.log('Water depth set:', this._waterDepth, 'from options:', options.waterDepth);
 
       // For water, use preview mode even for first stroke to ensure proper shore/water layering
       if (options.featureType === 'water') {
@@ -214,11 +213,6 @@ export const PaintTool = {
 
     // Apply water depth gradient along the painted path
     if (this._waterStrokePath && this._waterStrokePath.length >= 1 && this._waterDepth > 0) {
-      console.log('Applying depth gradient:', {
-        pathLength: this._waterStrokePath.length,
-        radius: this._waterStrokeRadius,
-        depth: this._waterDepth
-      });
       // For single click (1 point), duplicate the point to create a valid path
       const path = this._waterStrokePath.length === 1
         ? [this._waterStrokePath[0], { x: this._waterStrokePath[0].x + 1, y: this._waterStrokePath[0].y }]
@@ -229,11 +223,6 @@ export const PaintTool = {
         this._waterDepth
       );
       state.requestRender();
-    } else if (this._waterStrokePath) {
-      console.log('Skipping depth gradient:', {
-        pathLength: this._waterStrokePath?.length,
-        depth: this._waterDepth
-      });
     }
 
     // For scatter features (forest/brush), regenerate seed and notify for preview refresh

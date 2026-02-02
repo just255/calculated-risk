@@ -1080,6 +1080,9 @@ export class Renderer {
       this._renderWaterStroke(cacheCtx, stroke, previewMode);
     }
 
+    // Render water depth overlays on top of water strokes
+    this._renderWaterDepthPaths(cacheCtx);
+
     this._groundCacheValid = true;
     this._groundCacheIsPreview = previewMode;
   }
@@ -1451,46 +1454,70 @@ export class Renderer {
    * @param {number} depth - Depth intensity (0-1)
    */
   applyPathDepthGradient(path, radius, depth) {
-    console.log('applyPathDepthGradient called:', { pathLength: path?.length, radius, depth });
     if (!path || path.length < 2 || depth <= 0) {
-      console.log('applyPathDepthGradient early return');
       return;
     }
 
-    // Draw to the ground cache
-    const ctx = this._groundCache?.getContext('2d');
-    if (!ctx) {
-      console.warn('applyPathDepthGradient: no ground cache available');
+    // Store the depth path in the terrain map so it persists across cache rebuilds
+    const terrainMap = this._state?.terrainMap;
+    if (!terrainMap) {
+      console.warn('applyPathDepthGradient: no terrain map available');
       return;
     }
-    console.log('applyPathDepthGradient: drawing to cache');
 
-    const centerAlpha = depth * 0.6;
+    // Initialize waterDepthPaths array if it doesn't exist (backwards compatibility)
+    if (!terrainMap.waterDepthPaths) {
+      terrainMap.waterDepthPaths = [];
+    }
 
-    // Draw dark gradient along the path using thick strokes
-    // Draw WIDEST (lightest) first, then progressively smaller (darker) on top
+    // Store the path data
+    terrainMap.waterDepthPaths.push({
+      path: path.map(p => ({ x: p.x, y: p.y })), // Clone the path
+      radius,
+      depth
+    });
+
+    // Invalidate the ground cache so it gets rebuilt with the new depth
+    this._groundCacheValid = false;
+  }
+
+  /**
+   * Render all stored water depth paths to a canvas context
+   * Called during ground cache rebuild
+   */
+  _renderWaterDepthPaths(ctx) {
+    const terrainMap = this._state?.terrainMap;
+    if (!terrainMap?.waterDepthPaths?.length) return;
+
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    // Multiple passes: largest width first (lightest), smallest last (darkest center)
-    const passes = [
-      { width: radius * 1.8, alpha: centerAlpha * 0.05 },
-      { width: radius * 1.4, alpha: centerAlpha * 0.1 },
-      { width: radius * 1.0, alpha: centerAlpha * 0.2 },
-      { width: radius * 0.6, alpha: centerAlpha * 0.4 },
-      { width: radius * 0.3, alpha: centerAlpha }
-    ];
+    for (const depthPath of terrainMap.waterDepthPaths) {
+      const { path, radius, depth } = depthPath;
+      if (!path || path.length < 2) continue;
 
-    for (const pass of passes) {
-      ctx.strokeStyle = `rgba(0, 5, 15, ${pass.alpha})`;
-      ctx.lineWidth = pass.width;
-      ctx.beginPath();
-      ctx.moveTo(path[0].x, path[0].y);
-      for (let i = 1; i < path.length; i++) {
-        ctx.lineTo(path[i].x, path[i].y);
+      const centerAlpha = depth * 0.6;
+
+      // Multiple passes: largest width first (lightest), smallest last (darkest center)
+      const passes = [
+        { width: radius * 1.8, alpha: centerAlpha * 0.05 },
+        { width: radius * 1.4, alpha: centerAlpha * 0.1 },
+        { width: radius * 1.0, alpha: centerAlpha * 0.2 },
+        { width: radius * 0.6, alpha: centerAlpha * 0.4 },
+        { width: radius * 0.3, alpha: centerAlpha }
+      ];
+
+      for (const pass of passes) {
+        ctx.strokeStyle = `rgba(0, 5, 15, ${pass.alpha})`;
+        ctx.lineWidth = pass.width;
+        ctx.beginPath();
+        ctx.moveTo(path[0].x, path[0].y);
+        for (let i = 1; i < path.length; i++) {
+          ctx.lineTo(path[i].x, path[i].y);
+        }
+        ctx.stroke();
       }
-      ctx.stroke();
     }
 
     ctx.restore();

@@ -129,6 +129,12 @@ export const ClearTool = {
     if (clearMode === 'all' || clearMode === 'water') {
       const removed = this._removeStrokesByType(state, x, y, radius, 'water');
       if (removed > 0) anyCleared = true;
+
+      // Also clear water depth paths in the cleared area
+      const terrainMap = state.terrainMap;
+      if (terrainMap?.waterDepthPaths?.length) {
+        this._clearDepthPathsInRadius(terrainMap, x, y, radius);
+      }
     }
 
     // Clear ground texture strokes if mode allows
@@ -175,5 +181,31 @@ export const ClearTool = {
       terrainMap.dirty = true;
     }
     return removed;
+  },
+
+  /**
+   * Clear water depth paths that overlap with the given area
+   * @param {object} terrainMap - The terrain map
+   * @param {number} x - Center X of clearing area
+   * @param {number} y - Center Y of clearing area
+   * @param {number} clearRadius - Radius of clearing area
+   */
+  _clearDepthPathsInRadius(terrainMap, x, y, clearRadius) {
+    if (!terrainMap.waterDepthPaths?.length) return;
+
+    // Filter out depth paths that have points within the clearing radius
+    terrainMap.waterDepthPaths = terrainMap.waterDepthPaths.filter(depthPath => {
+      // Check if any point in the path is within the clearing radius (accounting for path width)
+      for (const point of depthPath.path) {
+        const dx = point.x - x;
+        const dy = point.y - y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        // If any point + its radius overlaps with clearing circle, remove the entire path
+        if (dist < clearRadius + depthPath.radius) {
+          return false;
+        }
+      }
+      return true;
+    });
   }
 };
