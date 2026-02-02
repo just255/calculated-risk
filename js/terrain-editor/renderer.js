@@ -1435,13 +1435,13 @@ export class Renderer {
   }
 
   _renderWaterStroke(ctx, stroke, previewMode = false) {
-    const { x, y, radius, intensity, fadeWidth, textureType, depthFade } = stroke;
+    const { x, y, radius, intensity, fadeWidth, textureType, depthFade, waterDepth } = stroke;
     const type = textureType || 'water';
 
     // Deep water gets special full-radius depth gradient
     // (shaded throughout, not just at edges)
     if (type.includes('deep')) {
-      this._renderDeepWaterStroke(ctx, type, x, y, radius, intensity, fadeWidth ?? 12, previewMode);
+      this._renderDeepWaterStroke(ctx, type, x, y, radius, waterDepth ?? 0.7, fadeWidth ?? 12, previewMode);
     } else if (depthFade && depthFade > 0) {
       // Use depth-aware rendering for deeper center effect
       this._renderTextureStrokeWithDepth(ctx, type, x, y, radius, intensity, fadeWidth ?? 12, depthFade, previewMode);
@@ -1938,6 +1938,7 @@ export class Renderer {
         waterFadeWidth: preview.fadeWidth,
         waterOpacity: preview.waterOpacity ?? 1.0,
         waterDepthFade: preview.waterDepthFade ?? 0,
+        waterDepth: preview.waterDepth ?? 0.7,
         shoreType: null,
         shoreWidth: 0,
         shoreFadeWidth: preview.fadeWidth,
@@ -1967,6 +1968,7 @@ export class Renderer {
         waterFadeWidth: preview.fadeWidth,
         waterOpacity: preview.waterOpacity ?? 1.0,
         waterDepthFade: preview.waterDepthFade ?? 0,
+        waterDepth: preview.waterDepth ?? 0.7,
         shoreType: preview.isWater ? preview.shoreType : null,
         shoreWidth: preview.isWater ? preview.shoreWidth : 0,
         shoreFadeWidth: preview.shoreFadeWidth ?? preview.fadeWidth,
@@ -1990,6 +1992,7 @@ export class Renderer {
       waterFadeWidth = 12,
       waterOpacity = 1.0,
       waterDepthFade = 0,
+      waterDepth = 0.7,  // Deep water opacity (0.1-1.0)
       shoreType = null,
       shoreWidth = 0,
       shoreFadeWidth = 12,
@@ -2021,7 +2024,7 @@ export class Renderer {
         waterType,
         x, y,
         waterRadius,
-        effectiveWaterAlpha,
+        waterDepth * alpha,  // Use waterDepth to control darkness
         waterFadeWidth,
         true // preview mode
       );
@@ -2332,6 +2335,7 @@ export class Renderer {
       // Water-specific options
       waterOpacity: options.waterOpacity ?? 1.0,
       waterDepthFade: options.waterDepthFade ?? 0,
+      waterDepth: options.waterDepth ?? 0.7,  // Deep water opacity
       // Shore options
       shoreType: options.shoreType || null,
       shoreWidth: options.shoreWidth || 0,

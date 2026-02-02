@@ -125,6 +125,9 @@ class TerrainEditor {
       waterTextureType: document.getElementById('water-texture-type'),
       waterFalloff: document.getElementById('water-falloff'),
       waterFalloffVal: document.getElementById('water-falloff-val'),
+      waterDepth: document.getElementById('water-depth'),
+      waterDepthVal: document.getElementById('water-depth-val'),
+      deepWaterDepthRow: document.getElementById('deep-water-depth-row'),
       // Water type dropdown
       waterTypeDropdown: document.getElementById('water-type-dropdown'),
       waterTypeValue: document.getElementById('water-type-value'),
@@ -582,6 +585,16 @@ class TerrainEditor {
       });
     }
 
+    // Water depth (deep water opacity)
+    if (this._elements.waterDepth) {
+      this._elements.waterDepth.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value);
+        this._state.setToolOption('waterDepth', value);
+        this._elements.waterDepthVal.textContent = `${value}%`;
+        this._refreshWaterPreview();
+      });
+    }
+
     // Shore texture type
     if (this._elements.shoreTextureType) {
       this._elements.shoreTextureType.addEventListener('change', (e) => {
@@ -636,8 +649,14 @@ class TerrainEditor {
       this._state.setToolOption('waterTextureType', value);
       if (this._elements.waterTextureType) this._elements.waterTextureType.value = value;
 
+      // Show/hide depth slider for deep water
+      const isDeep = value && value.includes('deep');
+      if (this._elements.deepWaterDepthRow) {
+        this._elements.deepWaterDepthRow.style.display = isDeep ? 'flex' : 'none';
+      }
+
       // Auto-disable shore for deep water (it's meant to be painted on top of existing water)
-      if (value && value.includes('deep')) {
+      if (isDeep) {
         if (this._elements.toggleShore) {
           this._elements.toggleShore.checked = false;
           this._state.setToolOption('shoreEnabled', false);
@@ -1192,7 +1211,7 @@ class TerrainEditor {
 
       // Refresh water preview when water-related options change
       const waterPreviewKeys = [
-        'waterTextureType', 'waterFalloff',
+        'waterTextureType', 'waterFalloff', 'waterDepth',
         'shoreTextureType', 'shoreWidth', 'shoreFadeWidth', 'brushRadius'
       ];
       if (!key || waterPreviewKeys.includes(key)) {
@@ -3466,6 +3485,7 @@ class TerrainEditor {
       waterFadeWidth: waterFadeWidth * scale,
       waterOpacity: 1.0,
       waterDepthFade: 0,
+      waterDepth: (options.waterDepth ?? 70) / 100,  // Deep water opacity
       shoreType: options.shoreTextureType,
       shoreWidth: shoreWidth * scale,
       shoreFadeWidth: shoreFadeWidth * scale,
