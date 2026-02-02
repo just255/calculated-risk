@@ -310,7 +310,6 @@ export const PaintTool = {
       const waterFadeWidth = options.brushRadius * waterFalloff;
       const textureType = options.waterTextureType || 'water';
       const depthValue = (options.waterDepth ?? 0) / 100;
-      console.log('[PaintTool] Creating water stroke with depth:', depthValue, 'raw option:', options.waterDepth);
       const waterStroke = createStroke(
         'water',
         x,

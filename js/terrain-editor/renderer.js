@@ -1444,8 +1444,6 @@ export class Renderer {
 
     // Apply depth darkening overlay if depth > 0
     const depth = waterDepth ?? 0;
-    // Debug: see depth values (remove after testing)
-    if (depth > 0) console.log('Water stroke depth:', depth);
     if (depth > 0) {
       this._renderDepthOverlay(ctx, x, y, radius, depth, fade);
     }
@@ -1453,30 +1451,26 @@ export class Renderer {
 
   /**
    * Render a darkening gradient overlay for water depth effect
-   * Uses 'darken' blend so overlapping strokes don't accumulate darkness
+   * Uses low opacity so overlapping strokes don't accumulate too much
    */
   _renderDepthOverlay(ctx, x, y, radius, depth, fadeWidth) {
-    ctx.save();
-    ctx.globalCompositeOperation = 'darken';
-
     const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
 
-    // depth controls how dark the center gets (0 = none, 1 = very dark)
-    // Using RGB values - darken mode will take min of each channel
-    const dark = Math.floor(255 * (1 - depth * 0.6));  // 0.6 = max darkness
-    const fadeStop = Math.max(0.3, 1 - (fadeWidth / radius));
+    // Use lower alpha to reduce accumulation on overlapping strokes
+    // depth controls intensity (0 = none, 1 = visible darkening)
+    const centerAlpha = depth * 0.35;  // Lower max alpha
+    const fadeStop = Math.max(0.2, 1 - (fadeWidth / radius));
 
-    // Gradient from dark center to white (no change) at edges
-    gradient.addColorStop(0, `rgb(${dark}, ${dark + 10}, ${dark + 20})`);
-    gradient.addColorStop(fadeStop * 0.5, `rgb(${dark + 40}, ${dark + 50}, ${dark + 60})`);
-    gradient.addColorStop(fadeStop, `rgb(${Math.min(255, dark + 100)}, ${Math.min(255, dark + 105)}, ${Math.min(255, dark + 110)})`);
-    gradient.addColorStop(1, 'rgb(255, 255, 255)');  // White = no darkening
+    // Dark blue-black overlay gradient
+    gradient.addColorStop(0, `rgba(0, 8, 16, ${centerAlpha})`);
+    gradient.addColorStop(fadeStop * 0.6, `rgba(0, 12, 24, ${centerAlpha * 0.4})`);
+    gradient.addColorStop(fadeStop, `rgba(0, 16, 32, ${centerAlpha * 0.1})`);
+    gradient.addColorStop(1, 'rgba(0, 20, 40, 0)');
 
     ctx.fillStyle = gradient;
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, Math.PI * 2);
     ctx.fill();
-    ctx.restore();
   }
 
   /**
