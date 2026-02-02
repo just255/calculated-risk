@@ -1062,23 +1062,22 @@ export class Renderer {
       this._renderTreeBasedGroundLayer(cacheCtx, previewMode);
     }
 
-    // Draw shore strokes with occlusion culling (on top of regular ground textures, under water)
+    // Draw shore strokes (on top of regular ground textures, under water)
+    // No occlusion culling - O(n²) cost exceeds savings on cached canvas
     const shoreStrokes = terrainMap.strokes.filter(s => s.type === 'groundTexture' && s.isShore);
-    const visibleShoreStrokes = shoreStrokes.filter(s => !this._isStrokeOccluded(s, shoreStrokes));
-    for (const stroke of visibleShoreStrokes) {
+    for (const stroke of shoreStrokes) {
       this._renderGroundTextureStroke(cacheCtx, stroke, previewMode);
     }
 
-    // Draw water strokes with occlusion culling
+    // Draw water strokes
     // Sort so deep water always renders on top of regular water
     const waterStrokes = terrainMap.strokes.filter(s => s.type === 'water');
-    const visibleWaterStrokes = waterStrokes.filter(s => !this._isStrokeOccluded(s, waterStrokes));
-    visibleWaterStrokes.sort((a, b) => {
+    waterStrokes.sort((a, b) => {
       const aDeep = (a.textureType || '').includes('deep') ? 1 : 0;
       const bDeep = (b.textureType || '').includes('deep') ? 1 : 0;
       return aDeep - bDeep;  // Regular water first, deep water last
     });
-    for (const stroke of visibleWaterStrokes) {
+    for (const stroke of waterStrokes) {
       this._renderWaterStroke(cacheCtx, stroke, previewMode);
     }
 
