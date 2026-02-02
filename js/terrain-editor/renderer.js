@@ -1451,25 +1451,35 @@ export class Renderer {
    * @param {number} depth - Depth intensity (0-1)
    */
   applyPathDepthGradient(path, radius, depth) {
-    if (!path || path.length < 2 || depth <= 0) return;
+    console.log('applyPathDepthGradient called:', { pathLength: path?.length, radius, depth });
+    if (!path || path.length < 2 || depth <= 0) {
+      console.log('applyPathDepthGradient early return');
+      return;
+    }
 
     // Draw to the ground cache
     const ctx = this._groundCache?.getContext('2d');
-    if (!ctx) return;
+    if (!ctx) {
+      console.warn('applyPathDepthGradient: no ground cache available');
+      return;
+    }
+    console.log('applyPathDepthGradient: drawing to cache');
 
     const centerAlpha = depth * 0.6;
 
-    // Draw dark gradient along the path using thick strokes with gradient
+    // Draw dark gradient along the path using thick strokes
+    // Draw WIDEST (lightest) first, then progressively smaller (darker) on top
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    // Multiple passes with decreasing width and alpha for smooth gradient
+    // Multiple passes: largest width first (lightest), smallest last (darkest center)
     const passes = [
-      { width: radius * 0.3, alpha: centerAlpha },
-      { width: radius * 0.5, alpha: centerAlpha * 0.6 },
-      { width: radius * 0.7, alpha: centerAlpha * 0.3 },
-      { width: radius * 0.9, alpha: centerAlpha * 0.1 }
+      { width: radius * 1.8, alpha: centerAlpha * 0.05 },
+      { width: radius * 1.4, alpha: centerAlpha * 0.1 },
+      { width: radius * 1.0, alpha: centerAlpha * 0.2 },
+      { width: radius * 0.6, alpha: centerAlpha * 0.4 },
+      { width: radius * 0.3, alpha: centerAlpha }
     ];
 
     for (const pass of passes) {
@@ -1484,7 +1494,6 @@ export class Renderer {
     }
 
     ctx.restore();
-    this._groundCacheValid = true;
   }
 
   /**
