@@ -1488,6 +1488,30 @@ export class Renderer {
   }
 
   /**
+   * Render depth overlay for preview purposes only.
+   * A simple radial gradient to show what the depth will look like.
+   */
+  _renderDepthOverlay(ctx, x, y, radius, depth, fadeWidth) {
+    if (depth <= 0) return;
+
+    const centerAlpha = depth * 0.6;
+    const fade = fadeWidth ?? 12;
+    const fadeRatio = Math.max(0, 1 - (fade / radius));
+
+    // Create a radial gradient from dark center to transparent edge
+    const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
+    gradient.addColorStop(0, `rgba(0, 5, 15, ${centerAlpha})`);
+    gradient.addColorStop(fadeRatio * 0.5, `rgba(0, 5, 15, ${centerAlpha * 0.6})`);
+    gradient.addColorStop(fadeRatio, `rgba(0, 5, 15, ${centerAlpha * 0.2})`);
+    gradient.addColorStop(1, 'rgba(0, 5, 15, 0)');
+
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  /**
    * Render uncached floor items during drag painting
    * Floor patches are on the 'ground' layer and need to appear on the ground canvas
    */
