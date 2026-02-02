@@ -1458,34 +1458,68 @@ export class Renderer {
   }
 
   /**
-   * Render a water depth overlay stroke (dark gradient circle)
+   * Get or create a cached depth gradient canvas.
+   * The gradient is baked to a fixed-size canvas and reused for all depth strokes.
    */
-  _renderWaterDepthStroke(ctx, stroke, previewMode = false) {
-    const { x, y, radius, intensity, fadeWidth, depthFalloff } = stroke;
-    const falloff = depthFalloff ?? 0.5;
+  _getDepthGradientCache(intensity, falloff) {
+    const CACHE_SIZE = 128;  // Fixed size, will be scaled when drawn
 
-    // Create smooth radial gradient from dark center to transparent edge
-    const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
+    // Check if we can reuse existing cache
+    if (this._depthGradientCache &&
+        this._depthGradientCacheIntensity === intensity &&
+        this._depthGradientCacheFalloff === falloff) {
+      return this._depthGradientCache;
+    }
 
-    const maxAlpha = intensity;
-    const numStops = 12;
+    // Create or reuse cache canvas
+    if (!this._depthGradientCache) {
+      this._depthGradientCache = document.createElement('canvas');
+      this._depthGradientCache.width = CACHE_SIZE;
+      this._depthGradientCache.height = CACHE_SIZE;
+    }
+
+    const cacheCtx = this._depthGradientCache.getContext('2d');
+    const center = CACHE_SIZE / 2;
+    const radius = CACHE_SIZE / 2;
+
+    // Clear and draw gradient
+    cacheCtx.clearRect(0, 0, CACHE_SIZE, CACHE_SIZE);
+
+    const gradient = cacheCtx.createRadialGradient(center, center, 0, center, center, radius);
+    const falloffStrength = 0.5 + falloff * 3;
+    const numStops = 8;  // Fewer stops since it's cached
 
     for (let i = 0; i <= numStops; i++) {
-      const t = i / numStops;  // 0 = center, 1 = edge
-
-      // Adjust the falloff curve based on depthFalloff:
-      // At 0% falloff: almost flat (solid fill until edge)
-      // At 100% falloff: steep gaussian curve
-      const falloffStrength = 0.5 + falloff * 3;  // Range: 0.5 to 3.5
-      const alpha = maxAlpha * Math.exp(-t * t * falloffStrength);
-
+      const t = i / numStops;
+      const alpha = intensity * Math.exp(-t * t * falloffStrength);
       gradient.addColorStop(t, `rgba(0, 10, 25, ${alpha})`);
     }
 
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.fill();
+    cacheCtx.fillStyle = gradient;
+    cacheCtx.beginPath();
+    cacheCtx.arc(center, center, radius, 0, Math.PI * 2);
+    cacheCtx.fill();
+
+    // Store cache parameters
+    this._depthGradientCacheIntensity = intensity;
+    this._depthGradientCacheFalloff = falloff;
+
+    return this._depthGradientCache;
+  }
+
+  /**
+   * Render a water depth overlay stroke using cached gradient image
+   */
+  _renderWaterDepthStroke(ctx, stroke, previewMode = false) {
+    const { x, y, radius, intensity, depthFalloff } = stroke;
+    const falloff = depthFalloff ?? 0.5;
+
+    // Get cached gradient (creates/updates if needed)
+    const cache = this._getDepthGradientCache(intensity, falloff);
+    const size = radius * 2;
+
+    // Draw cached gradient scaled to stroke size
+    ctx.drawImage(cache, x - radius, y - radius, size, size);
   }
 
   /**
