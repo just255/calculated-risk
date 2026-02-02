@@ -309,6 +309,8 @@ export const PaintTool = {
       const waterFalloff = (options.waterFalloff ?? 30) / 100;
       const waterFadeWidth = options.brushRadius * waterFalloff;
       const textureType = options.waterTextureType || 'water';
+      const depthValue = (options.waterDepth ?? 0) / 100;
+      console.log('[PaintTool] Creating water stroke with depth:', depthValue, 'raw option:', options.waterDepth);
       const waterStroke = createStroke(
         'water',
         x,
@@ -319,8 +321,8 @@ export const PaintTool = {
           falloff: options.falloff,
           textureType: textureType,
           fadeWidth: waterFadeWidth,
-          // Depth effect: 0 = no darkening, 100 = max darkening at center
-          waterDepth: (options.waterDepth ?? 0) / 100,
+          // Depth effect: 0 = no darkening, 1 = max darkening at center
+          waterDepth: depthValue,
           shoreWidth: options.shoreWidth || 0  // Store shore width for forest avoidance
         }
       );
