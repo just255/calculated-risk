@@ -1451,21 +1451,19 @@ export class Renderer {
 
   /**
    * Render a darkening gradient overlay for water depth effect
-   * Uses low opacity so overlapping strokes don't accumulate too much
    */
   _renderDepthOverlay(ctx, x, y, radius, depth, fadeWidth) {
     const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
 
-    // Use lower alpha to reduce accumulation on overlapping strokes
-    // depth controls intensity (0 = none, 1 = visible darkening)
-    const centerAlpha = depth * 0.35;  // Lower max alpha
+    // depth controls intensity (0 = none, 1 = very dark center)
+    const centerAlpha = depth * 0.8;  // Strong effect
     const fadeStop = Math.max(0.2, 1 - (fadeWidth / radius));
 
-    // Dark blue-black overlay gradient
-    gradient.addColorStop(0, `rgba(0, 8, 16, ${centerAlpha})`);
-    gradient.addColorStop(fadeStop * 0.6, `rgba(0, 12, 24, ${centerAlpha * 0.4})`);
-    gradient.addColorStop(fadeStop, `rgba(0, 16, 32, ${centerAlpha * 0.1})`);
-    gradient.addColorStop(1, 'rgba(0, 20, 40, 0)');
+    // Dark overlay gradient - much more visible
+    gradient.addColorStop(0, `rgba(0, 0, 0, ${centerAlpha})`);
+    gradient.addColorStop(fadeStop * 0.5, `rgba(0, 5, 15, ${centerAlpha * 0.5})`);
+    gradient.addColorStop(fadeStop, `rgba(0, 10, 25, ${centerAlpha * 0.2})`);
+    gradient.addColorStop(1, 'rgba(0, 15, 35, 0)');
 
     ctx.fillStyle = gradient;
     ctx.beginPath();
