@@ -1083,9 +1083,15 @@ export class Renderer {
     }
 
     // Render water depth overlay strokes on top of water
+    // Use 'darken' blend mode so overlapping strokes don't accumulate
     const depthStrokes = terrainMap.strokes.filter(s => s.type === 'waterDepth');
-    for (const stroke of depthStrokes) {
-      this._renderWaterDepthStroke(cacheCtx, stroke, previewMode);
+    if (depthStrokes.length > 0) {
+      cacheCtx.save();
+      cacheCtx.globalCompositeOperation = 'darken';
+      for (const stroke of depthStrokes) {
+        this._renderWaterDepthStroke(cacheCtx, stroke, previewMode);
+      }
+      cacheCtx.restore();
     }
 
     this._groundCacheValid = true;
