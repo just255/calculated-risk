@@ -1435,19 +1435,41 @@ export class Renderer {
   }
 
   _renderWaterStroke(ctx, stroke, previewMode = false) {
-    const { x, y, radius, intensity, fadeWidth, textureType, depthFade, waterDepth } = stroke;
+    const { x, y, radius, intensity, fadeWidth, textureType, waterDepth } = stroke;
     const type = textureType || 'water';
+    const fade = fadeWidth ?? 12;
 
-    // Deep water gets special full-radius depth gradient
-    // (shaded throughout, not just at edges)
-    if (type.includes('deep')) {
-      this._renderDeepWaterStroke(ctx, type, x, y, radius, waterDepth ?? 0.7, fadeWidth ?? 12, previewMode);
-    } else if (depthFade && depthFade > 0) {
-      // Use depth-aware rendering for deeper center effect
-      this._renderTextureStrokeWithDepth(ctx, type, x, y, radius, intensity, fadeWidth ?? 12, depthFade, previewMode);
-    } else {
-      this._renderTextureStroke(ctx, type, x, y, radius, intensity, fadeWidth ?? 12, previewMode);
+    // Render the water texture
+    this._renderTextureStroke(ctx, type, x, y, radius, intensity, fade, previewMode);
+
+    // Apply depth darkening overlay if depth > 0
+    const depth = waterDepth ?? 0;
+    if (depth > 0) {
+      this._renderDepthOverlay(ctx, x, y, radius, depth, fade);
     }
+  }
+
+  /**
+   * Render a darkening gradient overlay for water depth effect
+   * Darker at center, transparent at edges
+   */
+  _renderDepthOverlay(ctx, x, y, radius, depth, fadeWidth) {
+    const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
+
+    // depth controls how dark the center gets (0 = none, 1 = very dark)
+    const centerAlpha = depth * 0.7;
+    const fadeStop = Math.max(0.3, 1 - (fadeWidth / radius));
+
+    // Dark overlay gradient
+    gradient.addColorStop(0, `rgba(0, 10, 20, ${centerAlpha})`);
+    gradient.addColorStop(fadeStop * 0.5, `rgba(0, 15, 30, ${centerAlpha * 0.5})`);
+    gradient.addColorStop(fadeStop, `rgba(0, 20, 40, ${centerAlpha * 0.15})`);
+    gradient.addColorStop(1, 'rgba(0, 25, 50, 0)');
+
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   /**
@@ -2017,40 +2039,20 @@ export class Renderer {
     // Render water with opacity and optional depth fade
     const effectiveWaterAlpha = alpha * waterOpacity;
 
-    // Deep water gets full-radius depth gradient (shaded throughout)
-    if (waterType.includes('deep')) {
-      this._renderDeepWaterStroke(
-        ctx,
-        waterType,
-        x, y,
-        waterRadius,
-        waterDepth * alpha,  // Use waterDepth to control darkness
-        waterFadeWidth,
-        true // preview mode
-      );
-    } else if (waterDepthFade > 0) {
-      // Depth fade: render water with gradient opacity (edges more transparent)
-      this._renderTextureStrokeWithDepth(
-        ctx,
-        waterType,
-        x, y,
-        waterRadius,
-        effectiveWaterAlpha,
-        waterFadeWidth,
-        waterDepthFade,
-        true // preview mode
-      );
-    } else {
-      // Normal water rendering
-      this._renderTextureStroke(
-        ctx,
-        waterType,
-        x, y,
-        waterRadius,
-        effectiveWaterAlpha,
-        waterFadeWidth,
-        true // preview mode
-      );
+    // Render water texture
+    this._renderTextureStroke(
+      ctx,
+      waterType,
+      x, y,
+      waterRadius,
+      effectiveWaterAlpha,
+      waterFadeWidth,
+      true // preview mode
+    );
+
+    // Apply depth overlay if depth > 0
+    if (waterDepth > 0) {
+      this._renderDepthOverlay(ctx, x, y, waterRadius, waterDepth * alpha, waterFadeWidth);
     }
   }
 
@@ -2142,15 +2144,6 @@ export class Renderer {
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(tempCanvas, 0, 0, size, size, x - radius, y - radius, radius * 2, radius * 2);
     ctx.restore();
-  }
-
-  /**
-   * Render deep water using texture with depth-controlled opacity
-   * Just uses the regular texture stroke rendering with depth as intensity
-   */
-  _renderDeepWaterStroke(ctx, textureType, x, y, radius, depth, fadeWidth, previewMode = false) {
-    // Use normal texture rendering - depth controls opacity
-    this._renderTextureStroke(ctx, textureType, x, y, radius, depth, fadeWidth, previewMode);
   }
 
   _renderBoundary(ctx) {

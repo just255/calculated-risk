@@ -320,9 +320,8 @@ export const PaintTool = {
           falloff: options.falloff,
           textureType: textureType,
           fadeWidth: waterFadeWidth,
-          depthFade: 0,
-          // Deep water gets depth/opacity setting
-          waterDepth: textureType.includes('deep') ? (options.waterDepth ?? 70) / 100 : 1.0,
+          // Depth effect: 0 = no darkening, 100 = max darkening at center
+          waterDepth: (options.waterDepth ?? 0) / 100,
           shoreWidth: options.shoreWidth || 0  // Store shore width for forest avoidance
         }
       );

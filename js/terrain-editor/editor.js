@@ -649,13 +649,13 @@ class TerrainEditor {
       this._state.setToolOption('waterTextureType', value);
       if (this._elements.waterTextureType) this._elements.waterTextureType.value = value;
 
-      // Show/hide depth slider for deep water
-      const isDeep = value && value.includes('deep');
+      // Always show depth slider (works for all water types now)
       if (this._elements.deepWaterDepthRow) {
-        this._elements.deepWaterDepthRow.style.display = isDeep ? 'flex' : 'none';
+        this._elements.deepWaterDepthRow.style.display = 'flex';
       }
 
       // Auto-disable shore for deep water (it's meant to be painted on top of existing water)
+      const isDeep = value && value.includes('deep');
       if (isDeep) {
         if (this._elements.toggleShore) {
           this._elements.toggleShore.checked = false;
