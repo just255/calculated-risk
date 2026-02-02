@@ -50,9 +50,7 @@ const DEFAULT_TOOL_OPTIONS = {
 
   // Water options
   waterTextureType: 'water',    // Water texture to paint
-  waterFadeWidth: 12,           // Water edge fade width
-  waterOpacity: 100,            // Water opacity (0-100%)
-  waterDepthFade: 0,            // Depth effect: 0=uniform, 100=edges fully transparent
+  waterFalloff: 30,             // Water edge falloff (0-100%): how soft the edges are
   shoreTextureType: 'mud',      // Shore texture around water (or 'none')
   shoreWidth: 24,               // Width of shore ring around water
   shoreFadeWidth: 12,           // Shore edge fade width (independent from water)

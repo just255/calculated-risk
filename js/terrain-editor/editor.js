@@ -123,12 +123,8 @@ class TerrainEditor {
       waterPreviewContainer: document.getElementById('water-preview-container'),
       showWaterPreview: document.getElementById('show-water-preview'),
       waterTextureType: document.getElementById('water-texture-type'),
-      waterOpacity: document.getElementById('water-opacity'),
-      waterOpacityVal: document.getElementById('water-opacity-val'),
-      waterFadeWidth: document.getElementById('water-fade-width'),
-      waterFadeWidthVal: document.getElementById('water-fade-width-val'),
-      waterDepthFade: document.getElementById('water-depth-fade'),
-      waterDepthFadeVal: document.getElementById('water-depth-fade-val'),
+      waterFalloff: document.getElementById('water-falloff'),
+      waterFalloffVal: document.getElementById('water-falloff-val'),
       // Water type dropdown
       waterTypeDropdown: document.getElementById('water-type-dropdown'),
       waterTypeValue: document.getElementById('water-type-value'),
@@ -576,32 +572,12 @@ class TerrainEditor {
       });
     }
 
-    // Water opacity
-    if (this._elements.waterOpacity) {
-      this._elements.waterOpacity.addEventListener('input', (e) => {
+    // Water falloff (edge softness)
+    if (this._elements.waterFalloff) {
+      this._elements.waterFalloff.addEventListener('input', (e) => {
         const value = parseInt(e.target.value);
-        this._state.setToolOption('waterOpacity', value);
-        this._elements.waterOpacityVal.textContent = `${value}%`;
-        this._refreshWaterPreview();
-      });
-    }
-
-    // Water fade width
-    if (this._elements.waterFadeWidth) {
-      this._elements.waterFadeWidth.addEventListener('input', (e) => {
-        const value = parseInt(e.target.value);
-        this._state.setToolOption('waterFadeWidth', value);
-        this._elements.waterFadeWidthVal.textContent = `${value}px`;
-        this._refreshWaterPreview();
-      });
-    }
-
-    // Water depth fade (center opacity boost)
-    if (this._elements.waterDepthFade) {
-      this._elements.waterDepthFade.addEventListener('input', (e) => {
-        const value = parseInt(e.target.value);
-        this._state.setToolOption('waterDepthFade', value);
-        this._elements.waterDepthFadeVal.textContent = `${value}%`;
+        this._state.setToolOption('waterFalloff', value);
+        this._elements.waterFalloffVal.textContent = `${value}%`;
         this._refreshWaterPreview();
       });
     }
@@ -659,6 +635,15 @@ class TerrainEditor {
     this._initRadioDropdown('waterType', (value) => {
       this._state.setToolOption('waterTextureType', value);
       if (this._elements.waterTextureType) this._elements.waterTextureType.value = value;
+
+      // Auto-disable shore for deep water (it's meant to be painted on top of existing water)
+      if (value && value.includes('deep')) {
+        if (this._elements.toggleShore) {
+          this._elements.toggleShore.checked = false;
+          this._state.setToolOption('shoreEnabled', false);
+        }
+      }
+
       this._refreshWaterPreview();
     });
 
@@ -1207,7 +1192,7 @@ class TerrainEditor {
 
       // Refresh water preview when water-related options change
       const waterPreviewKeys = [
-        'waterTextureType', 'waterFadeWidth', 'waterOpacity', 'waterDepthFade',
+        'waterTextureType', 'waterFalloff',
         'shoreTextureType', 'shoreWidth', 'shoreFadeWidth', 'brushRadius'
       ];
       if (!key || waterPreviewKeys.includes(key)) {
@@ -3458,7 +3443,9 @@ class TerrainEditor {
     const options = this._state.toolOptions;
     const brushRadius = options.brushRadius || 60;
     const shoreWidth = options.shoreWidth || 0;
-    const waterFadeWidth = options.waterFadeWidth ?? 12;
+    // Falloff: 0% = hard edge (fadeWidth=0), 100% = very soft (fadeWidth=radius)
+    const waterFalloff = (options.waterFalloff ?? 30) / 100;
+    const waterFadeWidth = brushRadius * waterFalloff;
     const shoreFadeWidth = options.shoreFadeWidth ?? 12;
     const hasShore = options.shoreTextureType && options.shoreTextureType !== 'none' && shoreWidth > 0;
 
@@ -3477,8 +3464,8 @@ class TerrainEditor {
       waterType: options.waterTextureType || 'water',
       waterRadius: brushRadius * scale,
       waterFadeWidth: waterFadeWidth * scale,
-      waterOpacity: (options.waterOpacity ?? 100) / 100,
-      waterDepthFade: (options.waterDepthFade ?? 0) / 100,
+      waterOpacity: 1.0,
+      waterDepthFade: 0,
       shoreType: options.shoreTextureType,
       shoreWidth: shoreWidth * scale,
       shoreFadeWidth: shoreFadeWidth * scale,

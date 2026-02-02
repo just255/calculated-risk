@@ -130,13 +130,16 @@ export const PaintTool = {
 
     if (inBounds && !this._isPainting && isTextureFeature) {
       if (options.featureType === 'water' && showWaterPreview) {
+        // Falloff: 0% = hard edge (fadeWidth=0), 100% = very soft (fadeWidth=radius)
+        const waterFalloff = (options.waterFalloff ?? 30) / 100;
+        const waterFadeWidth = options.brushRadius * waterFalloff;
         renderer.setTexturePreview(e.x, e.y, options.brushRadius, options.waterTextureType || 'water', {
-          fadeWidth: options.waterFadeWidth ?? 12,
-          intensity: options.intensity || 1.0,
+          fadeWidth: waterFadeWidth,
+          intensity: 1.0,
           isWater: true,
           // Water-specific options
-          waterOpacity: (options.waterOpacity ?? 100) / 100,
-          waterDepthFade: (options.waterDepthFade ?? 0) / 100,
+          waterOpacity: 1.0,
+          waterDepthFade: 0,
           // Shore options
           shoreType: options.shoreTextureType,
           shoreWidth: options.shoreWidth || 0,
@@ -301,18 +304,20 @@ export const PaintTool = {
       }
 
       // Paint water on top
-      const waterOpacity = (options.waterOpacity ?? 100) / 100;
+      // Falloff: 0% = hard edge (fadeWidth=0), 100% = very soft (fadeWidth=radius)
+      const waterFalloff = (options.waterFalloff ?? 30) / 100;
+      const waterFadeWidth = options.brushRadius * waterFalloff;
       const waterStroke = createStroke(
         'water',
         x,
         y,
         options.brushRadius,
         {
-          intensity: waterOpacity,
+          intensity: 1.0,
           falloff: options.falloff,
           textureType: options.waterTextureType || 'water',
-          fadeWidth: options.waterFadeWidth ?? 12,
-          depthFade: (options.waterDepthFade ?? 0) / 100,
+          fadeWidth: waterFadeWidth,
+          depthFade: 0,
           shoreWidth: options.shoreWidth || 0  // Store shore width for forest avoidance
         }
       );
