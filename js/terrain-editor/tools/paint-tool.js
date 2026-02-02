@@ -83,16 +83,10 @@ export const PaintTool = {
       // Track if painting a scatter feature (for preview refresh on mouse up)
       this._paintingScatterFeature = options.featureType === 'forest' || options.featureType === 'brush';
 
-      // Track water stroke path for depth gradient on mouseup
-      this._waterStrokePath = [];
-      this._waterStrokeRadius = options.brushRadius;
-      this._waterDepth = (options.waterDepth ?? 0) / 100;
-
       // For water, use preview mode even for first stroke to ensure proper shore/water layering
       if (options.featureType === 'water') {
         renderer.beginDragPaint();
         this._dragModeStarted = true;
-        this._waterStrokePath.push({ x: e.x, y: e.y });
         this._paint(e.x, e.y, state, true, renderer);
         this._strokesAddedDuringDrag++;
       } else {
@@ -183,10 +177,6 @@ export const PaintTool = {
           renderer.beginDragPaint();
           this._dragModeStarted = true;
         }
-        // Track water stroke path for depth gradient
-        if (options.featureType === 'water' && this._waterStrokePath) {
-          this._waterStrokePath.push({ x: e.x, y: e.y });
-        }
         // Skip render during drag - batch them up, render on mouse up
         // But show in preview layer for visual feedback
         this._paint(e.x, e.y, state, true, renderer);
@@ -209,20 +199,6 @@ export const PaintTool = {
         }
         state.requestRender();
       }
-    }
-
-    // Apply water depth gradient along the painted path
-    if (this._waterStrokePath && this._waterStrokePath.length >= 1 && this._waterDepth > 0) {
-      // For single click (1 point), duplicate the point to create a valid path
-      const path = this._waterStrokePath.length === 1
-        ? [this._waterStrokePath[0], { x: this._waterStrokePath[0].x + 1, y: this._waterStrokePath[0].y }]
-        : this._waterStrokePath;
-      renderer.applyPathDepthGradient(
-        path,
-        this._waterStrokeRadius,
-        this._waterDepth
-      );
-      state.requestRender();
     }
 
     // For scatter features (forest/brush), regenerate seed and notify for preview refresh
@@ -346,12 +322,30 @@ export const PaintTool = {
           falloff: options.falloff,
           textureType: textureType,
           fadeWidth: waterFadeWidth,
-          // Depth effect: 0 = no darkening, 1 = max darkening at center
-          waterDepth: depthValue,
           shoreWidth: options.shoreWidth || 0  // Store shore width for forest avoidance
         }
       );
       state.addStroke(waterStroke, skipRender);
+
+      // Add depth overlay stroke on top of water if depth > 0
+      let depthStroke = null;
+      if (depthValue > 0) {
+        // Depth stroke: smaller radius, dark color, soft fade
+        const depthRadius = options.brushRadius * 0.7;  // 70% of water radius
+        const depthFadeWidth = depthRadius * 0.8;  // Very soft fade (80% of radius)
+        depthStroke = createStroke(
+          'waterDepth',
+          x,
+          y,
+          depthRadius,
+          {
+            intensity: depthValue * 0.5,  // Max 50% opacity at full depth
+            fadeWidth: depthFadeWidth,
+            parentStrokeId: waterStroke.id  // Link to water stroke for deletion
+          }
+        );
+        state.addStroke(depthStroke, skipRender);
+      }
 
       // Add shore and water to paint preview for live feedback during drag painting
       // Preview rebuilds with proper layering: all shores first, then all waters
@@ -360,6 +354,9 @@ export const PaintTool = {
           renderer.addToPaintPreview(shoreStroke);
         }
         renderer.addToPaintPreview(waterStroke);
+        if (depthStroke) {
+          renderer.addToPaintPreview(depthStroke);
+        }
       }
       return;
     }

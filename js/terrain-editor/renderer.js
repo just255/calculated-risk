@@ -1080,8 +1080,11 @@ export class Renderer {
       this._renderWaterStroke(cacheCtx, stroke, previewMode);
     }
 
-    // Render water depth overlays on top of water strokes
-    this._renderWaterDepthPaths(cacheCtx);
+    // Render water depth overlay strokes on top of water
+    const depthStrokes = terrainMap.strokes.filter(s => s.type === 'waterDepth');
+    for (const stroke of depthStrokes) {
+      this._renderWaterDepthStroke(cacheCtx, stroke, previewMode);
+    }
 
     this._groundCacheValid = true;
     this._groundCacheIsPreview = previewMode;
@@ -1442,8 +1445,34 @@ export class Renderer {
     const type = textureType || 'water';
     const fade = fadeWidth ?? 12;
 
-    // Render the water texture only - depth is applied separately per-drag
+    // Render the water texture only - depth is applied via separate waterDepth strokes
     this._renderTextureStroke(ctx, type, x, y, radius, intensity, fade, previewMode);
+  }
+
+  /**
+   * Render a water depth overlay stroke (dark gradient circle)
+   */
+  _renderWaterDepthStroke(ctx, stroke, previewMode = false) {
+    const { x, y, radius, intensity, fadeWidth } = stroke;
+    const fade = fadeWidth ?? (radius * 0.8);
+
+    // Create smooth radial gradient from dark center to transparent edge
+    const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
+
+    // Use gaussian-like falloff with many stops for smooth transition
+    const maxAlpha = intensity;
+    const numStops = 10;
+    for (let i = 0; i <= numStops; i++) {
+      const t = i / numStops;
+      // Gaussian falloff: steep at center, gentle at edges
+      const alpha = maxAlpha * Math.exp(-t * t * 2.5);
+      gradient.addColorStop(t, `rgba(0, 10, 25, ${alpha})`);
+    }
+
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   /**
