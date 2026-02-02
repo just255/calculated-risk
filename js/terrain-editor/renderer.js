@@ -1419,12 +1419,17 @@ export class Renderer {
 
   _renderWaterStroke(ctx, stroke, previewMode = false) {
     const { x, y, radius, intensity, fadeWidth, textureType, depthFade } = stroke;
+    const type = textureType || 'water';
 
-    if (depthFade && depthFade > 0) {
+    // Deep water gets special full-radius depth gradient
+    // (shaded throughout, not just at edges)
+    if (type.includes('deep')) {
+      this._renderDeepWaterStroke(ctx, type, x, y, radius, intensity, fadeWidth ?? 12, previewMode);
+    } else if (depthFade && depthFade > 0) {
       // Use depth-aware rendering for deeper center effect
-      this._renderTextureStrokeWithDepth(ctx, textureType || 'water', x, y, radius, intensity, fadeWidth ?? 12, depthFade, previewMode);
+      this._renderTextureStrokeWithDepth(ctx, type, x, y, radius, intensity, fadeWidth ?? 12, depthFade, previewMode);
     } else {
-      this._renderTextureStroke(ctx, textureType || 'water', x, y, radius, intensity, fadeWidth ?? 12, previewMode);
+      this._renderTextureStroke(ctx, type, x, y, radius, intensity, fadeWidth ?? 12, previewMode);
     }
   }
 
@@ -1992,7 +1997,18 @@ export class Renderer {
     // Render water with opacity and optional depth fade
     const effectiveWaterAlpha = alpha * waterOpacity;
 
-    if (waterDepthFade > 0) {
+    // Deep water gets full-radius depth gradient (shaded throughout)
+    if (waterType.includes('deep')) {
+      this._renderDeepWaterStroke(
+        ctx,
+        waterType,
+        x, y,
+        waterRadius,
+        effectiveWaterAlpha,
+        waterFadeWidth,
+        true // preview mode
+      );
+    } else if (waterDepthFade > 0) {
       // Depth fade: render water with gradient opacity (edges more transparent)
       this._renderTextureStrokeWithDepth(
         ctx,
@@ -2097,6 +2113,110 @@ export class Renderer {
     gradient.addColorStop(Math.max(0, fadeStart), `rgba(0,0,0,${edgeOpacity})`);
     // Fade to transparent
     gradient.addColorStop(1, 'rgba(0,0,0,0)');
+
+    tempCtx.fillStyle = gradient;
+    tempCtx.fillRect(0, 0, size, size);
+
+    // Draw to main canvas
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(tempCanvas, 0, 0, size, size, x - radius, y - radius, radius * 2, radius * 2);
+    ctx.restore();
+  }
+
+  /**
+   * Render deep water with full-radius depth gradient
+   * Deep water is shaded throughout - darkest at center, lighter toward edges
+   * Only the very edge fades to fully transparent
+   * @param {CanvasRenderingContext2D} ctx - Target canvas context
+   * @param {string} textureType - Texture key (e.g., 'water-deep')
+   * @param {number} x - Center X position
+   * @param {number} y - Center Y position
+   * @param {number} radius - Stroke radius
+   * @param {number} intensity - Base alpha intensity (0-1)
+   * @param {number} fadeWidth - Edge fade zone where it goes fully transparent
+   * @param {boolean} previewMode - Use lower resolution for faster preview
+   */
+  _renderDeepWaterStroke(ctx, textureType, x, y, radius, intensity, fadeWidth, previewMode = false) {
+    const textureImg = this._images.ground[textureType];
+
+    // Deep water gradient: full opacity at center, reduced at edges, then transparent
+    // Center is full intensity, edge (before fade zone) is 30% of center
+    const centerOpacity = intensity;
+    const edgeOpacity = intensity * 0.3;  // 30% opacity at edge of solid area
+
+    if (!textureImg) {
+      // Fallback: draw colored circle with depth gradient (dark blue/black)
+      const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
+      gradient.addColorStop(0, `rgba(10, 30, 50, ${centerOpacity})`);
+      // Gradient spans entire radius up to fade zone
+      const fadeStop = Math.max(0.1, 1 - (fadeWidth / radius));
+      gradient.addColorStop(fadeStop, `rgba(20, 50, 80, ${edgeOpacity})`);
+      gradient.addColorStop(1, 'rgba(30, 70, 100, 0)');
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+
+    // Use 1x for preview (fast), 2x for final render
+    let scale = previewMode ? 1 : 2;
+    if (!previewMode && radius > 150) scale = 1;
+    const tileSize = 256 * GROUND_TEXTURE_SCALE * scale;
+    const scaledRadius = radius * scale;
+    const scaledFadeWidth = fadeWidth * scale;
+
+    // Reuse temp canvas (resize only if needed)
+    const size = Math.ceil(scaledRadius * 2) + 2;
+    if (!this._tempCanvas || this._tempCanvasSize < size) {
+      this._tempCanvas = document.createElement('canvas');
+      this._tempCanvas.width = size;
+      this._tempCanvas.height = size;
+      this._tempCtx = this._tempCanvas.getContext('2d');
+      this._tempCanvasSize = size;
+    }
+    const tempCanvas = this._tempCanvas;
+    const tempCtx = this._tempCtx;
+
+    // Clear and configure
+    tempCtx.setTransform(1, 0, 0, 1, 0, 0);
+    tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
+    tempCtx.globalCompositeOperation = 'source-over';
+    tempCtx.imageSmoothingEnabled = false;
+
+    // Tile texture
+    const startX = (x - radius) * scale;
+    const startY = (y - radius) * scale;
+    const offsetX = ((startX % tileSize) + tileSize) % tileSize;
+    const offsetY = ((startY % tileSize) + tileSize) % tileSize;
+
+    for (let ty = -offsetY; ty < size; ty += tileSize) {
+      for (let tx = -offsetX; tx < size; tx += tileSize) {
+        tempCtx.drawImage(textureImg, tx, ty, tileSize, tileSize);
+      }
+    }
+
+    // Apply full-radius depth gradient mask
+    // This creates the "shaded throughout" effect:
+    // - Center: full opacity (centerOpacity)
+    // - Solid area edge: reduced opacity (edgeOpacity)
+    // - Fade zone: edgeOpacity → 0 (transparent)
+    tempCtx.globalCompositeOperation = 'destination-in';
+
+    const innerRadius = Math.max(0, scaledRadius - scaledFadeWidth);
+    const fadeStart = innerRadius / scaledRadius;
+
+    const gradient = tempCtx.createRadialGradient(
+      scaledRadius, scaledRadius, 0,
+      scaledRadius, scaledRadius, scaledRadius
+    );
+
+    // Gradient spans full radius: center (full) → edge of solid (reduced) → outer edge (0)
+    gradient.addColorStop(0, `rgba(0,0,0,${centerOpacity})`);
+    gradient.addColorStop(fadeStart * 0.5, `rgba(0,0,0,${centerOpacity * 0.7})`);  // Midpoint
+    gradient.addColorStop(fadeStart, `rgba(0,0,0,${edgeOpacity})`);  // Edge of solid area
+    gradient.addColorStop(1, 'rgba(0,0,0,0)');  // Outer edge fully transparent
 
     tempCtx.fillStyle = gradient;
     tempCtx.fillRect(0, 0, size, size);
