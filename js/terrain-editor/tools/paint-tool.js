@@ -140,8 +140,7 @@ export const PaintTool = {
           isWater: true,
           // Water-specific options
           waterOpacity: 1.0,
-          waterDepthFade: 0,
-          waterDepth: textureType.includes('deep') ? (options.waterDepth ?? 70) / 100 : 1.0,
+          waterDepth: (options.waterDepth ?? 0) / 100,
           // Shore options
           shoreType: options.shoreTextureType,
           shoreWidth: options.shoreWidth || 0,

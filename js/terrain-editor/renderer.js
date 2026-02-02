@@ -476,7 +476,7 @@ export class Renderer {
     temp.intensity = stroke.intensity;
     temp.fadeWidth = stroke.fadeWidth;
     temp.textureType = stroke.textureType;
-    temp.depthFade = stroke.depthFade;
+    temp.waterDepth = stroke.waterDepth;
     temp.type = stroke.type;
 
     if (stroke.type === 'water') {
@@ -565,7 +565,7 @@ export class Renderer {
         temp.intensity = stroke.intensity ?? 1.0;
         temp.fadeWidth = stroke.fadeWidth;
         temp.textureType = stroke.textureType;
-        temp.depthFade = stroke.depthFade;
+        temp.waterDepth = stroke.waterDepth;
         temp.type = stroke.type;
 
         if (stroke.type === 'water') {
@@ -1444,6 +1444,8 @@ export class Renderer {
 
     // Apply depth darkening overlay if depth > 0
     const depth = waterDepth ?? 0;
+    // Debug: see depth values (remove after testing)
+    if (depth > 0) console.log('Water stroke depth:', depth);
     if (depth > 0) {
       this._renderDepthOverlay(ctx, x, y, radius, depth, fade);
     }
