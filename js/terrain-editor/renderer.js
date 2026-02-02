@@ -291,6 +291,8 @@ export class Renderer {
   _isStrokeOccluded(stroke, otherStrokes) {
     for (const other of otherStrokes) {
       if (other === stroke) continue;
+      // Only cull if same texture type (don't cull deep water inside regular water)
+      if (stroke.textureType !== other.textureType) continue;
       // Check if stroke is entirely inside other
       // stroke is inside other if: distance(centers) + stroke.radius <= other.radius
       const dx = stroke.x - other.x;
@@ -397,11 +399,13 @@ export class Renderer {
       const s = strokes[i];
       if (s.type !== 'water') continue;
       if (!this._isStrokeInViewportFast(s, width, height)) continue;
-      // Inline occlusion: check if any later water stroke completely covers this one
+      // Inline occlusion: check if any later water stroke of SAME texture completely covers this one
+      // (don't cull deep water that's inside regular water - they should layer)
       let occluded = false;
       for (let j = i + 1; j < len; j++) {
         const other = strokes[j];
         if (other.type !== 'water') continue;
+        if (s.textureType !== other.textureType) continue; // Only cull same texture types
         const dx = s.x - other.x;
         const dy = s.y - other.y;
         if (Math.sqrt(dx * dx + dy * dy) + s.radius <= other.radius) {
