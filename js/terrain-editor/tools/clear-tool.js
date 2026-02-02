@@ -129,6 +129,10 @@ export const ClearTool = {
     if (clearMode === 'all' || clearMode === 'water') {
       const removed = this._removeStrokesByType(state, x, y, radius, 'water');
       if (removed > 0) anyCleared = true;
+
+      // Also clear water depth overlay strokes
+      const depthRemoved = this._removeStrokesByType(state, x, y, radius, 'waterDepth');
+      if (depthRemoved > 0) anyCleared = true;
     }
 
     // Clear ground texture strokes if mode allows

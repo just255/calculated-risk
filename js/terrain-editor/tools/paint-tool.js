@@ -313,8 +313,6 @@ export const PaintTool = {
       const waterFadeWidth = options.brushRadius * waterFalloff;
       const textureType = options.waterTextureType || 'water';
       const depthValue = (options.waterDepth ?? 0) / 100;
-      // Store depth settings on the water stroke itself (no separate depth strokes)
-      const depthFalloff = (options.waterDepthFalloff ?? 50) / 100;
       const waterStroke = createStroke(
         'water',
         x,
@@ -325,21 +323,46 @@ export const PaintTool = {
           falloff: options.falloff,
           textureType: textureType,
           fadeWidth: waterFadeWidth,
-          shoreWidth: options.shoreWidth || 0,  // Store shore width for forest avoidance
-          // Depth settings (rendered as part of water stroke)
-          waterDepth: depthValue,
-          waterDepthFalloff: depthFalloff
+          shoreWidth: options.shoreWidth || 0  // Store shore width for forest avoidance
         }
       );
       state.addStroke(waterStroke, skipRender);
 
+      // Add depth overlay stroke on top of water if depth > 0
+      let depthStroke = null;
+      if (depthValue > 0) {
+        // Depth falloff: 0% = fill entire stroke, 100% = fade from center
+        const depthFalloff = (options.waterDepthFalloff ?? 50) / 100;
+
+        // At 0% falloff: radius = full water radius, minimal fade
+        // At 100% falloff: radius = 50% of water, large fade
+        const depthRadius = options.brushRadius * (1.0 - depthFalloff * 0.5);
+        const depthFadeWidth = depthRadius * depthFalloff;
+
+        depthStroke = createStroke(
+          'waterDepth',
+          x,
+          y,
+          depthRadius,
+          {
+            intensity: depthValue * 0.5,  // Max 50% opacity at full depth
+            fadeWidth: depthFadeWidth,
+            depthFalloff: depthFalloff,
+            parentStrokeId: waterStroke.id
+          }
+        );
+        state.addStroke(depthStroke, skipRender);
+      }
+
       // Add shore and water to paint preview for live feedback during drag painting
-      // Preview rebuilds with proper layering: all shores first, then all waters
       if (skipRender && renderer) {
         if (shoreStroke) {
           renderer.addToPaintPreview(shoreStroke);
         }
         renderer.addToPaintPreview(waterStroke);
+        if (depthStroke) {
+          renderer.addToPaintPreview(depthStroke);
+        }
       }
       return;
     }
