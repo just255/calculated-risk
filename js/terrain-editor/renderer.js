@@ -477,6 +477,7 @@ export class Renderer {
     temp.fadeWidth = stroke.fadeWidth;
     temp.textureType = stroke.textureType;
     temp.waterDepth = stroke.waterDepth;
+    temp.waterDepthFalloff = stroke.waterDepthFalloff;
     temp.type = stroke.type;
 
     if (stroke.type === 'water') {
@@ -566,6 +567,7 @@ export class Renderer {
         temp.fadeWidth = stroke.fadeWidth;
         temp.textureType = stroke.textureType;
         temp.waterDepth = stroke.waterDepth;
+        temp.waterDepthFalloff = stroke.waterDepthFalloff;
         temp.type = stroke.type;
 
         if (stroke.type === 'water') {
@@ -1080,12 +1082,6 @@ export class Renderer {
       this._renderWaterStroke(cacheCtx, stroke, previewMode);
     }
 
-    // Render water depth overlay strokes on top of water
-    const depthStrokes = terrainMap.strokes.filter(s => s.type === 'waterDepth');
-    for (const stroke of depthStrokes) {
-      this._renderWaterDepthStroke(cacheCtx, stroke, previewMode);
-    }
-
     this._groundCacheValid = true;
     this._groundCacheIsPreview = previewMode;
   }
@@ -1441,12 +1437,33 @@ export class Renderer {
   }
 
   _renderWaterStroke(ctx, stroke, previewMode = false) {
-    const { x, y, radius, intensity, fadeWidth, textureType } = stroke;
+    const { x, y, radius, intensity, fadeWidth, textureType, waterDepth, waterDepthFalloff } = stroke;
     const type = textureType || 'water';
     const fade = fadeWidth ?? 12;
 
-    // Render the water texture only - depth is applied via separate waterDepth strokes
+    // Render the water texture
     this._renderTextureStroke(ctx, type, x, y, radius, intensity, fade, previewMode);
+
+    // Render depth overlay if depth > 0 (integrated into water stroke for performance)
+    if (waterDepth > 0) {
+      const falloff = waterDepthFalloff ?? 0.5;
+      const depthRadius = radius * (1.0 - falloff * 0.5);
+      const maxAlpha = waterDepth * 0.5;
+
+      const gradient = ctx.createRadialGradient(x, y, 0, x, y, depthRadius);
+      const falloffStrength = 0.5 + falloff * 3;
+
+      // Simplified gradient with fewer stops for performance
+      gradient.addColorStop(0, `rgba(0, 10, 25, ${maxAlpha})`);
+      gradient.addColorStop(0.3, `rgba(0, 10, 25, ${maxAlpha * Math.exp(-0.09 * falloffStrength)})`);
+      gradient.addColorStop(0.6, `rgba(0, 10, 25, ${maxAlpha * Math.exp(-0.36 * falloffStrength)})`);
+      gradient.addColorStop(1, `rgba(0, 10, 25, ${maxAlpha * Math.exp(-falloffStrength)})`);
+
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(x, y, depthRadius, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   /**
