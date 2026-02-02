@@ -1453,25 +1453,30 @@ export class Renderer {
 
   /**
    * Render a darkening gradient overlay for water depth effect
-   * Darker at center, transparent at edges
+   * Uses 'darken' blend so overlapping strokes don't accumulate darkness
    */
   _renderDepthOverlay(ctx, x, y, radius, depth, fadeWidth) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'darken';
+
     const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
 
     // depth controls how dark the center gets (0 = none, 1 = very dark)
-    const centerAlpha = depth * 0.7;
+    // Using RGB values - darken mode will take min of each channel
+    const dark = Math.floor(255 * (1 - depth * 0.6));  // 0.6 = max darkness
     const fadeStop = Math.max(0.3, 1 - (fadeWidth / radius));
 
-    // Dark overlay gradient
-    gradient.addColorStop(0, `rgba(0, 10, 20, ${centerAlpha})`);
-    gradient.addColorStop(fadeStop * 0.5, `rgba(0, 15, 30, ${centerAlpha * 0.5})`);
-    gradient.addColorStop(fadeStop, `rgba(0, 20, 40, ${centerAlpha * 0.15})`);
-    gradient.addColorStop(1, 'rgba(0, 25, 50, 0)');
+    // Gradient from dark center to white (no change) at edges
+    gradient.addColorStop(0, `rgb(${dark}, ${dark + 10}, ${dark + 20})`);
+    gradient.addColorStop(fadeStop * 0.5, `rgb(${dark + 40}, ${dark + 50}, ${dark + 60})`);
+    gradient.addColorStop(fadeStop, `rgb(${Math.min(255, dark + 100)}, ${Math.min(255, dark + 105)}, ${Math.min(255, dark + 110)})`);
+    gradient.addColorStop(1, 'rgb(255, 255, 255)');  // White = no darkening
 
     ctx.fillStyle = gradient;
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
   }
 
   /**
