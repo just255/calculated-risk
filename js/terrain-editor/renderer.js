@@ -1484,6 +1484,7 @@ export class Renderer {
   /**
    * Render all stored water depth paths to a canvas context
    * Called during ground cache rebuild
+   * Uses many passes with gaussian falloff for smooth gradient
    */
   _renderWaterDepthPaths(ctx) {
     const terrainMap = this._state?.terrainMap;
@@ -1497,24 +1498,29 @@ export class Renderer {
       const { path, radius, depth } = depthPath;
       if (!path || path.length < 2) continue;
 
-      const centerAlpha = depth * 0.6;
+      const maxAlpha = depth * 0.5;
+      const numPasses = 25; // More passes = smoother gradient
 
-      // Multiple passes: largest width first (lightest), smallest last (darkest center)
-      const passes = [
-        { width: radius * 1.8, alpha: centerAlpha * 0.05 },
-        { width: radius * 1.4, alpha: centerAlpha * 0.1 },
-        { width: radius * 1.0, alpha: centerAlpha * 0.2 },
-        { width: radius * 0.6, alpha: centerAlpha * 0.4 },
-        { width: radius * 0.3, alpha: centerAlpha }
-      ];
+      // Draw from outside in, each pass slightly smaller and more opaque
+      // Uses gaussian-like curve: alpha increases slowly at edges, faster toward center
+      for (let i = 0; i < numPasses; i++) {
+        // t goes from 1.0 (outer) to 0.0 (inner)
+        const t = 1 - (i / (numPasses - 1));
 
-      for (const pass of passes) {
-        ctx.strokeStyle = `rgba(0, 5, 15, ${pass.alpha})`;
-        ctx.lineWidth = pass.width;
+        // Width: outer passes are wider
+        const width = radius * (0.1 + t * 1.4);
+
+        // Gaussian-like alpha curve: slow increase at edges, steeper toward center
+        // Using (1 - t^2) gives a nice smooth falloff
+        const normalizedAlpha = 1 - (t * t);
+        const alpha = maxAlpha * normalizedAlpha * 0.15; // Each pass adds a little
+
+        ctx.strokeStyle = `rgba(0, 8, 20, ${alpha})`;
+        ctx.lineWidth = width;
         ctx.beginPath();
         ctx.moveTo(path[0].x, path[0].y);
-        for (let i = 1; i < path.length; i++) {
-          ctx.lineTo(path[i].x, path[i].y);
+        for (let j = 1; j < path.length; j++) {
+          ctx.lineTo(path[j].x, path[j].y);
         }
         ctx.stroke();
       }
@@ -1530,20 +1536,23 @@ export class Renderer {
   _renderDepthOverlay(ctx, x, y, radius, depth, fadeWidth) {
     if (depth <= 0) return;
 
-    const centerAlpha = depth * 0.6;
-    const fade = fadeWidth ?? 12;
-    const fadeRatio = Math.max(0, 1 - (fade / radius));
+    const maxAlpha = depth * 0.5;
 
-    // Create a radial gradient from dark center to transparent edge
-    const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
-    gradient.addColorStop(0, `rgba(0, 5, 15, ${centerAlpha})`);
-    gradient.addColorStop(fadeRatio * 0.5, `rgba(0, 5, 15, ${centerAlpha * 0.6})`);
-    gradient.addColorStop(fadeRatio, `rgba(0, 5, 15, ${centerAlpha * 0.2})`);
-    gradient.addColorStop(1, 'rgba(0, 5, 15, 0)');
+    // Create a radial gradient with gaussian-like falloff (many stops for smooth transition)
+    const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius * 1.2);
+
+    // Add many color stops for smooth gaussian-like falloff
+    const numStops = 12;
+    for (let i = 0; i <= numStops; i++) {
+      const t = i / numStops; // 0 to 1 (center to edge)
+      // Gaussian falloff: e^(-t^2 * k) where k controls steepness
+      const alpha = maxAlpha * Math.exp(-t * t * 3);
+      gradient.addColorStop(t, `rgba(0, 8, 20, ${alpha})`);
+    }
 
     ctx.fillStyle = gradient;
     ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.arc(x, y, radius * 1.2, 0, Math.PI * 2);
     ctx.fill();
   }
 
