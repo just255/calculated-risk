@@ -395,6 +395,8 @@ export class Renderer {
     }
 
     // Pass 3: Water strokes with inline occlusion check
+    // Render regular water first, then deep water on top
+    const waterStrokes = [];
     for (let i = 0; i < len; i++) {
       const s = strokes[i];
       if (s.type !== 'water') continue;
@@ -413,7 +415,16 @@ export class Renderer {
           break;
         }
       }
-      if (!occluded) this._renderWaterStroke(ctx, s, true);
+      if (!occluded) waterStrokes.push(s);
+    }
+    // Sort: regular water first, deep water last
+    waterStrokes.sort((a, b) => {
+      const aDeep = (a.textureType || '').includes('deep') ? 1 : 0;
+      const bDeep = (b.textureType || '').includes('deep') ? 1 : 0;
+      return aDeep - bDeep;
+    });
+    for (const s of waterStrokes) {
+      this._renderWaterStroke(ctx, s, true);
     }
   }
 
@@ -1057,8 +1068,14 @@ export class Renderer {
     }
 
     // Draw water strokes with occlusion culling
+    // Sort so deep water always renders on top of regular water
     const waterStrokes = terrainMap.strokes.filter(s => s.type === 'water');
     const visibleWaterStrokes = waterStrokes.filter(s => !this._isStrokeOccluded(s, waterStrokes));
+    visibleWaterStrokes.sort((a, b) => {
+      const aDeep = (a.textureType || '').includes('deep') ? 1 : 0;
+      const bDeep = (b.textureType || '').includes('deep') ? 1 : 0;
+      return aDeep - bDeep;  // Regular water first, deep water last
+    });
     for (const stroke of visibleWaterStrokes) {
       this._renderWaterStroke(cacheCtx, stroke, previewMode);
     }
