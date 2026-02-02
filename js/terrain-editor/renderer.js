@@ -2146,6 +2146,7 @@ export class Renderer {
 
   /**
    * Render deep water as a dark gradient overlay (no texture needed)
+   * Uses multiply blend mode so overlapping strokes blend smoothly
    * - Depth controls overall darkness (0.1 = subtle, 1.0 = very dark)
    * - Falloff controls gradient (0% = solid dark, 100% = full gradient center to edge)
    * @param {CanvasRenderingContext2D} ctx - Target canvas context
@@ -2161,33 +2162,40 @@ export class Renderer {
     // Calculate falloff ratio (0 = no fade, 1 = full fade across radius)
     const falloff = Math.min(1, fadeWidth / radius);
 
-    // At 0 falloff: edge = center (solid)
-    // At 100% falloff: edge = 0 (full gradient)
-    const centerAlpha = depth * 0.9;  // Slightly less than full for blending
-    const edgeAlpha = centerAlpha * (1 - falloff);
+    // Use multiply blend mode so overlapping strokes blend smoothly
+    // instead of showing distinct circles
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+
+    // For multiply: white = no change, darker = darker result
+    // depth controls how dark the color is (1.0 = very dark, 0.1 = nearly white)
+    // We map depth to a gray value: high depth = darker gray
+    const darkness = Math.floor(255 * (1 - depth * 0.85));  // 0.85 prevents pure black
+    const edgeDarkness = Math.floor(255 * (1 - depth * 0.85 * (1 - falloff)));
 
     const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
 
     if (falloff < 0.05) {
-      // Nearly solid - no gradient, just solid dark circle
-      ctx.fillStyle = `rgba(5, 15, 25, ${centerAlpha})`;
+      // Nearly solid - no gradient
+      ctx.fillStyle = `rgb(${darkness}, ${darkness}, ${Math.floor(darkness * 1.1)})`;
       ctx.beginPath();
       ctx.arc(x, y, radius, 0, Math.PI * 2);
       ctx.fill();
+      ctx.restore();
       return;
     }
 
-    // Gradient from center to edge
-    // Dark blue-black color, varying only in alpha
-    gradient.addColorStop(0, `rgba(5, 15, 25, ${centerAlpha})`);
-    gradient.addColorStop(0.7, `rgba(8, 20, 35, ${centerAlpha * 0.5 + edgeAlpha * 0.5})`);
-    gradient.addColorStop(0.95, `rgba(12, 28, 45, ${edgeAlpha})`);
-    gradient.addColorStop(1, `rgba(15, 35, 55, 0)`);  // Always transparent at very edge
+    // Gradient from center (darker) to edge (lighter)
+    // Slight blue tint for water feel
+    gradient.addColorStop(0, `rgb(${darkness}, ${darkness}, ${Math.floor(darkness * 1.15)})`);
+    gradient.addColorStop(0.85, `rgb(${edgeDarkness}, ${edgeDarkness}, ${Math.floor(edgeDarkness * 1.1)})`);
+    gradient.addColorStop(1, `rgb(255, 255, 255)`);  // White = no change at edge
 
     ctx.fillStyle = gradient;
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
   }
 
   _renderBoundary(ctx) {
