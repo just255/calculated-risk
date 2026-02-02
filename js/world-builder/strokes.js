@@ -327,6 +327,7 @@ export function createStroke(type, x, y, radius, options = {}) {
     stroke.textureType = options.textureType || 'water';
     if (options.fadeWidth !== undefined) stroke.fadeWidth = options.fadeWidth;
     if (options.shoreWidth !== undefined) stroke.shoreWidth = options.shoreWidth;
+    if (options.waterDepth !== undefined) stroke.waterDepth = options.waterDepth;
   }
 
   return stroke;
