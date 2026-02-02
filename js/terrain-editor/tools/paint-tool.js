@@ -220,8 +220,9 @@ export const PaintTool = {
       const depthValue = this._waterDepthValue;
 
       for (const ws of this._waterStrokesForDepth) {
-        const depthRadius = ws.radius * (1.0 - depthFalloff * 0.5);
-        const depthFadeWidth = depthRadius * depthFalloff;
+        // Keep depth stroke at full radius to ensure overlap between strokes
+        // The depthFalloff controls gradient shape within the stroke, not stroke size
+        const depthRadius = ws.radius;
 
         const depthStroke = createStroke(
           'waterDepth',
@@ -230,7 +231,6 @@ export const PaintTool = {
           depthRadius,
           {
             intensity: depthValue * 0.5,
-            fadeWidth: depthFadeWidth,
             depthFalloff: depthFalloff,
             parentStrokeId: ws.strokeId
           }
@@ -274,8 +274,8 @@ export const PaintTool = {
       const depthValue = this._waterDepthValue;
 
       for (const ws of this._waterStrokesForDepth) {
-        const depthRadius = ws.radius * (1.0 - depthFalloff * 0.5);
-        const depthFadeWidth = depthRadius * depthFalloff;
+        // Keep depth stroke at full radius to ensure overlap between strokes
+        const depthRadius = ws.radius;
 
         const depthStroke = createStroke(
           'waterDepth',
@@ -284,7 +284,6 @@ export const PaintTool = {
           depthRadius,
           {
             intensity: depthValue * 0.5,
-            fadeWidth: depthFadeWidth,
             depthFalloff: depthFalloff,
             parentStrokeId: ws.strokeId
           }
