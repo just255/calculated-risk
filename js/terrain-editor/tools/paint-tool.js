@@ -142,6 +142,7 @@ export const PaintTool = {
           // Water-specific options
           waterOpacity: 1.0,
           waterDepth: (options.waterDepth ?? 0) / 100,
+          waterDepthFalloff: (options.waterDepthFalloff ?? 50) / 100,
           // Shore options
           shoreType: options.shoreTextureType,
           shoreWidth: options.shoreWidth || 0,
@@ -330,9 +331,14 @@ export const PaintTool = {
       // Add depth overlay stroke on top of water if depth > 0
       let depthStroke = null;
       if (depthValue > 0) {
-        // Depth stroke: smaller radius, dark color, soft fade
-        const depthRadius = options.brushRadius * 0.7;  // 70% of water radius
-        const depthFadeWidth = depthRadius * 0.8;  // Very soft fade (80% of radius)
+        // Depth falloff: 0% = fill entire stroke, 100% = fade from center
+        const depthFalloff = (options.waterDepthFalloff ?? 50) / 100;
+
+        // At 0% falloff: radius = full water radius, minimal fade
+        // At 100% falloff: radius = 50% of water, large fade
+        const depthRadius = options.brushRadius * (1.0 - depthFalloff * 0.5);  // 100% to 50% of water radius
+        const depthFadeWidth = depthRadius * depthFalloff;  // 0% to 100% of depth radius
+
         depthStroke = createStroke(
           'waterDepth',
           x,
@@ -341,6 +347,7 @@ export const PaintTool = {
           {
             intensity: depthValue * 0.5,  // Max 50% opacity at full depth
             fadeWidth: depthFadeWidth,
+            depthFalloff: depthFalloff,  // Store for rendering
             parentStrokeId: waterStroke.id  // Link to water stroke for deletion
           }
         );

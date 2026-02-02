@@ -127,6 +127,9 @@ class TerrainEditor {
       waterFalloffVal: document.getElementById('water-falloff-val'),
       waterDepth: document.getElementById('water-depth'),
       waterDepthVal: document.getElementById('water-depth-val'),
+      waterDepthFalloff: document.getElementById('water-depth-falloff'),
+      waterDepthFalloffVal: document.getElementById('water-depth-falloff-val'),
+      waterDepthFalloffRow: document.getElementById('water-depth-falloff-row'),
       deepWaterDepthRow: document.getElementById('deep-water-depth-row'),
       // Water type dropdown
       waterTypeDropdown: document.getElementById('water-type-dropdown'),
@@ -591,6 +594,17 @@ class TerrainEditor {
         const value = parseInt(e.target.value);
         this._state.setToolOption('waterDepth', value);
         this._elements.waterDepthVal.textContent = `${value}%`;
+        this._updateDepthFalloffVisibility(value);
+        this._refreshWaterPreview();
+      });
+    }
+
+    // Water depth falloff (how depth fades from center)
+    if (this._elements.waterDepthFalloff) {
+      this._elements.waterDepthFalloff.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value);
+        this._state.setToolOption('waterDepthFalloff', value);
+        this._elements.waterDepthFalloffVal.textContent = `${value}%`;
         this._refreshWaterPreview();
       });
     }
@@ -653,6 +667,8 @@ class TerrainEditor {
       if (this._elements.deepWaterDepthRow) {
         this._elements.deepWaterDepthRow.style.display = 'flex';
       }
+      // Show depth falloff if depth > 0
+      this._updateDepthFalloffVisibility(this._state.toolOptions.waterDepth);
 
       // Auto-disable shore for deep water (it's meant to be painted on top of existing water)
       const isDeep = value && value.includes('deep');
@@ -3413,7 +3429,7 @@ class TerrainEditor {
       waterRadius: brushRadius * scale,
       waterFadeWidth: fadeWidth * scale,
       waterOpacity: 1.0,
-      waterDepthFade: 0,
+      waterDepth: 0,
       shoreType: null,
       shoreWidth: 0,
       shoreFadeWidth: fadeWidth * scale,
@@ -3428,6 +3444,16 @@ class TerrainEditor {
     ctx.arc(centerX, centerY, brushRadius * scale, 0, Math.PI * 2);
     ctx.stroke();
     ctx.setLineDash([]);
+  }
+
+  /**
+   * Show/hide the depth falloff slider based on depth value
+   */
+  _updateDepthFalloffVisibility(depthValue) {
+    if (this._elements.waterDepthFalloffRow) {
+      // Show falloff slider only when depth > 0
+      this._elements.waterDepthFalloffRow.style.display = depthValue > 0 ? 'flex' : 'none';
+    }
   }
 
   /**
@@ -3484,8 +3510,8 @@ class TerrainEditor {
       waterRadius: brushRadius * scale,
       waterFadeWidth: waterFadeWidth * scale,
       waterOpacity: 1.0,
-      waterDepthFade: 0,
-      waterDepth: (options.waterDepth ?? 70) / 100,  // Deep water opacity
+      waterDepth: (options.waterDepth ?? 0) / 100,  // Deep water opacity
+      waterDepthFalloff: (options.waterDepthFalloff ?? 50) / 100,  // Depth falloff
       shoreType: options.shoreTextureType,
       shoreWidth: shoreWidth * scale,
       shoreFadeWidth: shoreFadeWidth * scale,

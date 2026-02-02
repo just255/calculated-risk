@@ -1453,19 +1453,24 @@ export class Renderer {
    * Render a water depth overlay stroke (dark gradient circle)
    */
   _renderWaterDepthStroke(ctx, stroke, previewMode = false) {
-    const { x, y, radius, intensity, fadeWidth } = stroke;
-    const fade = fadeWidth ?? (radius * 0.8);
+    const { x, y, radius, intensity, fadeWidth, depthFalloff } = stroke;
+    const falloff = depthFalloff ?? 0.5;
 
     // Create smooth radial gradient from dark center to transparent edge
     const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
 
-    // Use gaussian-like falloff with many stops for smooth transition
     const maxAlpha = intensity;
-    const numStops = 10;
+    const numStops = 12;
+
     for (let i = 0; i <= numStops; i++) {
-      const t = i / numStops;
-      // Gaussian falloff: steep at center, gentle at edges
-      const alpha = maxAlpha * Math.exp(-t * t * 2.5);
+      const t = i / numStops;  // 0 = center, 1 = edge
+
+      // Adjust the falloff curve based on depthFalloff:
+      // At 0% falloff: almost flat (solid fill until edge)
+      // At 100% falloff: steep gaussian curve
+      const falloffStrength = 0.5 + falloff * 3;  // Range: 0.5 to 3.5
+      const alpha = maxAlpha * Math.exp(-t * t * falloffStrength);
+
       gradient.addColorStop(t, `rgba(0, 10, 25, ${alpha})`);
     }
 
@@ -1559,29 +1564,34 @@ export class Renderer {
   }
 
   /**
-   * Render depth overlay for preview purposes only.
-   * A simple radial gradient to show what the depth will look like.
+   * Render depth overlay for preview purposes.
+   * Uses the same falloff curve as _renderWaterDepthStroke for consistency.
    */
-  _renderDepthOverlay(ctx, x, y, radius, depth, fadeWidth) {
+  _renderDepthOverlay(ctx, x, y, radius, depth, falloff = 0.5) {
     if (depth <= 0) return;
 
     const maxAlpha = depth * 0.5;
 
-    // Create a radial gradient with gaussian-like falloff (many stops for smooth transition)
-    const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius * 1.2);
+    // Compute depth radius based on falloff (same as paint-tool):
+    // At 0% falloff: radius = full water radius
+    // At 100% falloff: radius = 50% of water
+    const depthRadius = radius * (1.0 - falloff * 0.5);
 
-    // Add many color stops for smooth gaussian-like falloff
+    // Create a radial gradient with falloff-controlled curve
+    const gradient = ctx.createRadialGradient(x, y, 0, x, y, depthRadius);
+
     const numStops = 12;
     for (let i = 0; i <= numStops; i++) {
       const t = i / numStops; // 0 to 1 (center to edge)
-      // Gaussian falloff: e^(-t^2 * k) where k controls steepness
-      const alpha = maxAlpha * Math.exp(-t * t * 3);
-      gradient.addColorStop(t, `rgba(0, 8, 20, ${alpha})`);
+      // Adjust falloff curve strength based on falloff parameter
+      const falloffStrength = 0.5 + falloff * 3;  // Range: 0.5 to 3.5
+      const alpha = maxAlpha * Math.exp(-t * t * falloffStrength);
+      gradient.addColorStop(t, `rgba(0, 10, 25, ${alpha})`);
     }
 
     ctx.fillStyle = gradient;
     ctx.beginPath();
-    ctx.arc(x, y, radius * 1.2, 0, Math.PI * 2);
+    ctx.arc(x, y, depthRadius, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -2072,8 +2082,8 @@ export class Renderer {
         waterRadius: preview.radius,
         waterFadeWidth: preview.fadeWidth,
         waterOpacity: preview.waterOpacity ?? 1.0,
-        waterDepthFade: preview.waterDepthFade ?? 0,
-        waterDepth: preview.waterDepth ?? 0.7,
+        waterDepth: preview.waterDepth ?? 0,
+        waterDepthFalloff: preview.waterDepthFalloff ?? 0.5,
         shoreType: null,
         shoreWidth: 0,
         shoreFadeWidth: preview.fadeWidth,
@@ -2102,8 +2112,8 @@ export class Renderer {
         waterRadius: preview.radius,
         waterFadeWidth: preview.fadeWidth,
         waterOpacity: preview.waterOpacity ?? 1.0,
-        waterDepthFade: preview.waterDepthFade ?? 0,
-        waterDepth: preview.waterDepth ?? 0.7,
+        waterDepth: preview.waterDepth ?? 0,
+        waterDepthFalloff: preview.waterDepthFalloff ?? 0.5,
         shoreType: preview.isWater ? preview.shoreType : null,
         shoreWidth: preview.isWater ? preview.shoreWidth : 0,
         shoreFadeWidth: preview.shoreFadeWidth ?? preview.fadeWidth,
@@ -2126,8 +2136,8 @@ export class Renderer {
       waterRadius = 60,
       waterFadeWidth = 12,
       waterOpacity = 1.0,
-      waterDepthFade = 0,
-      waterDepth = 0.7,  // Deep water opacity (0.1-1.0)
+      waterDepth = 0,  // Deep water opacity (0-1.0)
+      waterDepthFalloff = 0.5,  // Depth falloff (0 = solid, 1 = fade from center)
       shoreType = null,
       shoreWidth = 0,
       shoreFadeWidth = 12,
@@ -2165,7 +2175,7 @@ export class Renderer {
 
     // Apply depth overlay if depth > 0
     if (waterDepth > 0) {
-      this._renderDepthOverlay(ctx, x, y, waterRadius, waterDepth * alpha, waterFadeWidth);
+      this._renderDepthOverlay(ctx, x, y, waterRadius, waterDepth * alpha, waterDepthFalloff);
     }
   }
 
@@ -2416,8 +2426,8 @@ export class Renderer {
       isWater: options.isWater ?? false,
       // Water-specific options
       waterOpacity: options.waterOpacity ?? 1.0,
-      waterDepthFade: options.waterDepthFade ?? 0,
-      waterDepth: options.waterDepth ?? 0.7,  // Deep water opacity
+      waterDepth: options.waterDepth ?? 0,  // Deep water opacity
+      waterDepthFalloff: options.waterDepthFalloff ?? 0.5,  // Depth falloff
       // Shore options
       shoreType: options.shoreType || null,
       shoreWidth: options.shoreWidth || 0,

@@ -332,6 +332,7 @@ export function createStroke(type, x, y, radius, options = {}) {
   // Add water depth overlay properties
   if (type === 'waterDepth') {
     if (options.fadeWidth !== undefined) stroke.fadeWidth = options.fadeWidth;
+    if (options.depthFalloff !== undefined) stroke.depthFalloff = options.depthFalloff;
     if (options.parentStrokeId !== undefined) stroke.parentStrokeId = options.parentStrokeId;
   }
 
