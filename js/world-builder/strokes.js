@@ -307,6 +307,12 @@ export function createStroke(type, x, y, radius, options = {}) {
     timestamp: Date.now()
   };
 
+  // Support for multi-center strokes (combined drag painting)
+  // If centers array provided, this is a path stroke
+  if (options.centers && options.centers.length > 0) {
+    stroke.centers = options.centers;
+  }
+
   // Add tree painting properties if specified
   if (options.treeType && TREE_TYPES[options.treeType]) {
     stroke.treeType = options.treeType;

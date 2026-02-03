@@ -1548,17 +1548,34 @@ export class Renderer {
   }
 
   _renderGroundTextureStroke(ctx, stroke, previewMode = false) {
-    const { x, y, radius, intensity, textureType, fadeWidth } = stroke;
-    this._renderTextureStroke(ctx, textureType, x, y, radius, intensity, fadeWidth ?? 12, previewMode);
+    const { radius, intensity, textureType, fadeWidth, centers } = stroke;
+    const fade = fadeWidth ?? 12;
+
+    // Multi-center stroke: render at each center position
+    if (centers && centers.length > 0) {
+      for (const center of centers) {
+        this._renderTextureStroke(ctx, textureType, center.x, center.y, radius, intensity, fade, previewMode);
+      }
+    } else {
+      // Single center (legacy)
+      this._renderTextureStroke(ctx, textureType, stroke.x, stroke.y, radius, intensity, fade, previewMode);
+    }
   }
 
   _renderWaterStroke(ctx, stroke, previewMode = false) {
-    const { x, y, radius, intensity, fadeWidth, textureType } = stroke;
+    const { radius, intensity, fadeWidth, textureType, centers } = stroke;
     const type = textureType || 'water';
     const fade = fadeWidth ?? 12;
 
-    // Render the water texture only - depth is rendered via separate waterDepth strokes
-    this._renderTextureStroke(ctx, type, x, y, radius, intensity, fade, previewMode);
+    // Multi-center stroke: render at each center position
+    if (centers && centers.length > 0) {
+      for (const center of centers) {
+        this._renderTextureStroke(ctx, type, center.x, center.y, radius, intensity, fade, previewMode);
+      }
+    } else {
+      // Single center (legacy)
+      this._renderTextureStroke(ctx, type, stroke.x, stroke.y, radius, intensity, fade, previewMode);
+    }
   }
 
   /**
@@ -1623,15 +1640,22 @@ export class Renderer {
    * Render a water depth overlay stroke using cached gradient image
    */
   _renderWaterDepthStroke(ctx, stroke, previewMode = false) {
-    const { x, y, radius, intensity, depthFalloff } = stroke;
+    const { radius, intensity, depthFalloff, centers } = stroke;
     const falloff = depthFalloff ?? 0.5;
 
     // Get cached gradient (creates/updates if needed)
     const cache = this._getDepthGradientCache(intensity, falloff);
     const size = radius * 2;
 
-    // Draw cached gradient scaled to stroke size
-    ctx.drawImage(cache, x - radius, y - radius, size, size);
+    // Multi-center stroke: render at each center position
+    if (centers && centers.length > 0) {
+      for (const center of centers) {
+        ctx.drawImage(cache, center.x - radius, center.y - radius, size, size);
+      }
+    } else {
+      // Single center (legacy)
+      ctx.drawImage(cache, stroke.x - radius, stroke.y - radius, size, size);
+    }
   }
 
   /**

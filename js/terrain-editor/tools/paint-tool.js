@@ -88,6 +88,9 @@ export const PaintTool = {
       this._waterDepthValue = (options.waterDepth ?? 0) / 100;
       this._waterDepthFalloff = (options.waterDepthFalloff ?? 50) / 100;
 
+      // Track stroke IDs created during this drag for merging on mouseUp
+      this._dragStrokeIds = [];
+
       // For water, use preview mode even for first stroke to ensure proper shore/water layering
       if (options.featureType === 'water') {
         renderer.beginDragPaint();
@@ -199,8 +202,15 @@ export const PaintTool = {
     // End drag paint mode only if it was started (i.e., user actually dragged)
     if (this._dragModeStarted) {
       renderer.endDragPaint();
+
+      // Create combined stroke from accumulated centers
+      if (this._dragCenters && this._dragCenters.length > 0) {
+        const options = state.toolOptions;
+        this._createCombinedStroke(state, options);
+      }
+
       // Final render after drag painting
-      if (this._isPainting && this._strokesAddedDuringDrag > 0) {
+      if (this._isPainting && (this._strokesAddedDuringDrag > 0 || (this._dragCenters && this._dragCenters.length > 0))) {
         // Only clear preview if no animations running - otherwise let animations complete
         // and the renderer will clear it when cache is rebuilt
         if (!hasActiveAnimations()) {
@@ -249,6 +259,8 @@ export const PaintTool = {
     this._dragModeStarted = false;
     this._paintingScatterFeature = false;
     this._waterStrokesForDepth = null;
+    this._dragCenters = null;
+    this._dragStrokeIds = null;
   },
 
   onMouseLeave(state, renderer) {
@@ -312,6 +324,75 @@ export const PaintTool = {
   },
 
   // ═══════════════════════════════════════════════════════════════
+  // COMBINED STROKE CREATION
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Create a single combined stroke from accumulated drag centers
+   * This reduces stroke count: one drag = one stroke instead of hundreds
+   */
+  _createCombinedStroke(state, options) {
+    const centers = this._dragCenters;
+    if (!centers || centers.length === 0) return;
+
+    // Use first center as the "main" position, store all centers
+    const firstCenter = centers[0];
+
+    if (options.featureType === 'groundTexture') {
+      const stroke = createStroke('groundTexture', firstCenter.x, firstCenter.y, options.brushRadius, {
+        intensity: options.intensity || 1.0,
+        falloff: options.falloff,
+        textureType: options.groundTextureType || 'grass-1',
+        fadeWidth: options.fadeWidth ?? 12,
+        centers: centers  // Multi-center stroke
+      });
+      state.addStroke(stroke, true);
+    }
+    else if (options.featureType === 'water') {
+      // Create shore stroke if enabled
+      if (options.shoreTextureType && options.shoreTextureType !== 'none' && options.shoreWidth > 0) {
+        const shoreStroke = createStroke('groundTexture', firstCenter.x, firstCenter.y,
+          options.brushRadius + options.shoreWidth, {
+            intensity: 1.0,
+            falloff: options.falloff,
+            textureType: options.shoreTextureType,
+            fadeWidth: options.shoreFadeWidth ?? 12,
+            isShore: true,
+            centers: centers
+          });
+        state.addStroke(shoreStroke, true);
+      }
+
+      // Create water stroke
+      const waterFalloff = (options.waterFalloff ?? 30) / 100;
+      const waterFadeWidth = options.brushRadius * waterFalloff;
+      const waterStroke = createStroke('water', firstCenter.x, firstCenter.y, options.brushRadius, {
+        intensity: 1.0,
+        falloff: options.falloff,
+        textureType: options.waterTextureType || 'water',
+        fadeWidth: waterFadeWidth,
+        shoreWidth: options.shoreWidth || 0,
+        centers: centers
+      });
+      state.addStroke(waterStroke, true);
+
+      // Create depth strokes if enabled
+      if (this._waterDepthValue > 0) {
+        const depthStroke = createStroke('waterDepth', firstCenter.x, firstCenter.y, options.brushRadius, {
+          intensity: this._waterDepthValue * 0.5,
+          depthFalloff: this._waterDepthFalloff,
+          centers: centers
+        });
+        state.addStroke(depthStroke, true);
+        // Clear the individual depth tracking since we created a combined one
+        this._waterStrokesForDepth = [];
+      }
+    }
+    // Forest/brush strokes are NOT combined - they create individual strokes
+    // because tree generation needs separate processing for each position
+  },
+
+  // ═══════════════════════════════════════════════════════════════
   // PAINTING LOGIC
   // ═══════════════════════════════════════════════════════════════
 
@@ -323,6 +404,33 @@ export const PaintTool = {
     const maxY = state.canvasHeight;
     if (x < 0 || x > maxX || y < 0 || y > maxY) {
       return; // Outside bounds
+    }
+
+    // During drag painting for water/ground, accumulate centers instead of creating strokes
+    // Combined stroke will be created on mouseUp (reduces stroke count from 100s to 1)
+    // Forest/brush keep individual strokes since tree generation needs separate processing
+    const canCombine = options.featureType === 'water' || options.featureType === 'groundTexture';
+    if (this._dragStrokeIds && skipRender && canCombine) {
+      // Track this center for combined stroke
+      if (!this._dragCenters) this._dragCenters = [];
+      this._dragCenters.push({ x, y });
+
+      // Still draw preview for visual feedback
+      if (renderer) {
+        const previewStroke = {
+          type: options.featureType === 'water' ? 'water' : 'groundTexture',
+          x, y,
+          radius: options.brushRadius,
+          intensity: options.intensity || 1.0,
+          textureType: options.featureType === 'water' ? (options.waterTextureType || 'water') :
+                       (options.groundTextureType || 'grass-1'),
+          fadeWidth: options.featureType === 'water' ?
+                     options.brushRadius * ((options.waterFalloff ?? 30) / 100) :
+                     (options.fadeWidth ?? 12)
+        };
+        renderer.addToPaintPreview(previewStroke);
+      }
+      return;
     }
 
     // Manual ground texture painting mode
