@@ -385,7 +385,7 @@ export class Renderer {
       this._renderGroundTextureStroke(ctx, s, true);
     }
 
-    // Erase water+shore areas from ground textures
+    // Erase water+shore areas from ground textures with soft edge
     // Reduce by shore fade width so ground extends into shore's fade zone for blending
     if (allWaterStrokes.length > 0) {
       ctx.save();
@@ -394,13 +394,19 @@ export class Renderer {
         const shoreWidth = water.shoreWidth || 0;
         const shoreFade = water.shoreFadeWidth ?? 12;
         // Ground extends into shore's fade zone so they blend
-        const effectiveRadius = water.radius + shoreWidth - shoreFade;
+        const innerRadius = Math.max(water.radius * 0.9, water.radius + shoreWidth - shoreFade * 2);
+        const outerRadius = water.radius + shoreWidth - shoreFade;
         const positions = (water.centers && water.centers.length > 0)
           ? water.centers
           : [{ x: water.x, y: water.y }];
         for (const pos of positions) {
+          // Soft edge using radial gradient
+          const gradient = ctx.createRadialGradient(pos.x, pos.y, innerRadius, pos.x, pos.y, outerRadius);
+          gradient.addColorStop(0, 'rgba(0,0,0,1)');
+          gradient.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = gradient;
           ctx.beginPath();
-          ctx.arc(pos.x, pos.y, Math.max(water.radius, effectiveRadius), 0, Math.PI * 2);
+          ctx.arc(pos.x, pos.y, outerRadius, 0, Math.PI * 2);
           ctx.fill();
         }
       }
