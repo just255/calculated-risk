@@ -1484,19 +1484,27 @@ export class Renderer {
     // Clear and draw gradient
     cacheCtx.clearRect(0, 0, CACHE_SIZE, CACHE_SIZE);
 
-    const gradient = cacheCtx.createRadialGradient(center, center, 0, center, center, radius);
-    const falloffStrength = 0.5 + falloff * 3;
-    const numStops = 8;  // Fewer stops since it's cached
-
-    for (let i = 0; i <= numStops; i++) {
-      const t = i / numStops;
-      const alpha = intensity * Math.exp(-t * t * falloffStrength);
-      gradient.addColorStop(t, `rgba(0, 10, 25, ${alpha})`);
-    }
-
-    cacheCtx.fillStyle = gradient;
     cacheCtx.beginPath();
     cacheCtx.arc(center, center, radius, 0, Math.PI * 2);
+
+    if (falloff < 0.05) {
+      // At 0% falloff: solid fill, no gradient (ensures uniform depth across overlapping strokes)
+      cacheCtx.fillStyle = `rgba(0, 10, 25, ${intensity})`;
+    } else {
+      // With falloff: gradient from center to edge
+      // falloff 0.05 -> strength ~0.15 (gentle), falloff 1.0 -> strength 4 (steep)
+      const gradient = cacheCtx.createRadialGradient(center, center, 0, center, center, radius);
+      const falloffStrength = falloff * 4;
+      const numStops = 8;
+
+      for (let i = 0; i <= numStops; i++) {
+        const t = i / numStops;
+        const alpha = intensity * Math.exp(-t * t * falloffStrength);
+        gradient.addColorStop(t, `rgba(0, 10, 25, ${alpha})`);
+      }
+      cacheCtx.fillStyle = gradient;
+    }
+
     cacheCtx.fill();
 
     // Store cache parameters
