@@ -9,6 +9,8 @@ import { renderCanopyLayer, renderBaseLayer, ensureRasterized } from '../world-b
 import { renderScatterLayer, renderScatterItem, getVisibleScatter, SCATTER_TYPES } from '../world-builder/index.js';
 // NEW: Animation system
 import { updateAnimations, hasActiveAnimations, getActiveAnimationCount, animateStrokes } from '../world-builder/scatter-animation.js';
+// LOD (Level of Detail) system
+import { getPreviewScale, shouldRenderCategory, getTextureScale, getCullMargin, getSpriteScale } from './lod.js';
 
 // Ground texture scale (1 = native 256px, 0.25 = 64px tiles = matches cell size)
 const GROUND_TEXTURE_SCALE = 0.25;
@@ -195,6 +197,15 @@ export class Renderer {
   }
 
   /**
+   * Invalidate all render caches (call when quality settings change)
+   */
+  invalidateAllCaches() {
+    this._groundCacheValid = false;
+    this._waterCacheValid = false;
+    this._canopyCacheValid = false;
+  }
+
+  /**
    * Add a stroke to the paint preview (shown during drag painting)
    * Water/shore strokes animate in during painting for smooth feel
    */
@@ -355,31 +366,8 @@ export class Renderer {
     const fullHeight = this._state.canvasHeight;
     const zoom = this._state.viewport?.zoom || 1;
 
-    // Calculate preview scale based on zoom (LOD)
-    // When zoomed in (>1): full resolution - you need the detail
-    // When zoomed out (<1): reduce resolution proportionally - detail not visible anyway
-
-    let previewScale = 1;
-
-    if (zoom >= 1) {
-      // Zoomed in - use full resolution
-      previewScale = 1;
-    } else {
-      // Zoomed out - scale down with zoom (LOD)
-      // At 50% zoom, use 50% resolution, etc.
-      previewScale = zoom;
-    }
-
-    // Cap total preview size for very large maps when zoomed out
-    const mapArea = fullWidth * fullHeight;
-    const maxPreviewPixels = 2048 * 2048; // 4 megapixel cap
-    const currentPixels = mapArea * previewScale * previewScale;
-    if (currentPixels > maxPreviewPixels) {
-      previewScale = Math.sqrt(maxPreviewPixels / mapArea);
-    }
-
-    // Floor to avoid tiny canvases
-    previewScale = Math.max(0.1, previewScale);
+    // Use LOD system for preview scale calculation
+    const previewScale = getPreviewScale(zoom, fullWidth, fullHeight);
 
     const width = Math.ceil(fullWidth * previewScale);
     const height = Math.ceil(fullHeight * previewScale);
@@ -1313,16 +1301,9 @@ export class Renderer {
       return;
     }
 
-    // Use 1x for preview (fast), up to 4x for final render (crisp)
-    // Dynamically reduce quality when there are many strokes or large radius for performance
+    // Use LOD system for texture quality based on scene complexity
     const strokeCount = this._state?.terrainMap?.strokes?.length || 0;
-    let scale = previewMode ? 1 : 4;
-    if (!previewMode) {
-      // Reduce scale based on stroke count and radius for performance
-      // Large strokes are expensive - scale down aggressively
-      if (strokeCount > 300 || radius > 150) scale = 1;
-      else if (strokeCount > 100 || radius > 80) scale = 2;
-    }
+    const scale = getTextureScale(previewMode, strokeCount, radius);
     const tileSize = 256 * GROUND_TEXTURE_SCALE * scale; // = 256 (native)
     const scaledRadius = radius * scale;
     const scaledFadeWidth = fadeWidth * scale;
@@ -1900,7 +1881,7 @@ export class Renderer {
     const vpTop = -vp.y / vp.zoom;
     const vpRight = vpLeft + this._viewportWidth / vp.zoom;
     const vpBottom = vpTop + this._viewportHeight / vp.zoom;
-    const margin = 100;
+    const margin = getCullMargin('ground');
 
     const visibleFloor = floorItems.filter(item => {
       return item.x > vpLeft - margin && item.x < vpRight + margin &&
@@ -2053,7 +2034,7 @@ export class Renderer {
           const vpTop = -vp.y / vp.zoom;
           const vpRight = vpLeft + this._viewportWidth / vp.zoom;
           const vpBottom = vpTop + this._viewportHeight / vp.zoom;
-          const margin = 150; // Extra margin for large sprites
+          const margin = getCullMargin('canopy');
 
           // Filter to visible items only (viewport culling)
           const visibleItems = canopyItems.filter(item => {
@@ -2063,22 +2044,12 @@ export class Renderer {
                    y > vpTop - margin && y < vpBottom + margin;
           });
 
-          // PERFORMANCE: Zoom-based LOD
-          // When zoomed out, skip particles entirely - they're too small to see
+          // PERFORMANCE: Zoom-based LOD - filter items by category based on zoom level
           const zoom = vp.zoom;
-          let itemsToRender = visibleItems;
-
-          // LOD: When zoomed out, skip small detail items
-          if (zoom < 0.5) {
-            // Very zoomed out: only trees
-            itemsToRender = visibleItems.filter(i => SCATTER_TYPES[i.type]?.category === 'tree');
-          } else if (zoom < 0.75) {
-            // Moderately zoomed out: trees + brush, skip particles
-            itemsToRender = visibleItems.filter(i => {
-              const cat = SCATTER_TYPES[i.type]?.category;
-              return cat === 'tree' || cat === 'brush';
-            });
-          }
+          const itemsToRender = visibleItems.filter(i => {
+            const category = SCATTER_TYPES[i.type]?.category;
+            return shouldRenderCategory(zoom, category);
+          });
 
           // Sort items to render (smaller scale first, then by Y for proper layering)
           itemsToRender.sort((a, b) => {
@@ -2517,10 +2488,9 @@ export class Renderer {
       return;
     }
 
-    // Use 1x for preview (fast), 2x for final render
-    // Preview is temporary during drag - full quality on mouseup
-    let scale = previewMode ? 1 : 2;
-    if (!previewMode && radius > 150) scale = 1;
+    // Use LOD system for texture quality
+    const strokeCount = this._state?.terrainMap?.strokes?.length || 0;
+    const scale = getTextureScale(previewMode, strokeCount, radius);
     const tileSize = 256 * GROUND_TEXTURE_SCALE * scale;
     const scaledRadius = radius * scale;
     const scaledFadeWidth = fadeWidth * scale;

@@ -11,6 +11,7 @@ import { ClearTool } from './tools/clear-tool.js';
 import { Events } from './events.js';
 import * as Presets from './presets.js';
 import { BIOME_PRESETS, SEASON_BIOME_CONFIG, getSeasonBiomeConfig, getConfigSchema, exportConfigString, SCATTER_TYPES, generateForestItems, renderScatterItem, getSpriteKey } from '../world-builder/index.js';
+import { setQualityPreset, getCurrentPreset, saveQualityPreset, loadQualityPreset } from './lod.js';
 
 /**
  * Terrain Editor Application
@@ -244,6 +245,7 @@ class TerrainEditor {
       mapNameHeader: document.getElementById('map-name-header'),
       gridSizeHeader: document.getElementById('grid-size-header'),
       baseLayerHeader: document.getElementById('base-layer-header'),
+      qualityPreset: document.getElementById('quality-preset'),
       // Scatter environment (biome/season - for forest/brush in scatter mode)
       scatterEnvironment: document.getElementById('scatter-environment'),
 
@@ -1752,6 +1754,21 @@ class TerrainEditor {
       el.baseLayerHeader.addEventListener('change', (e) => {
         if (el.baseLayer) el.baseLayer.value = e.target.value;
         this._state.baseLayer = e.target.value;
+      });
+    }
+
+    // Quality preset: change LOD settings
+    if (el.qualityPreset) {
+      // Load saved preset and sync UI
+      loadQualityPreset();
+      el.qualityPreset.value = getCurrentPreset();
+
+      el.qualityPreset.addEventListener('change', (e) => {
+        setQualityPreset(e.target.value);
+        saveQualityPreset();
+        // Invalidate caches and request re-render
+        this._renderer.invalidateAllCaches();
+        this._state.requestRender();
       });
     }
 
