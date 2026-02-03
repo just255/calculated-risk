@@ -355,27 +355,22 @@ export class Renderer {
     const fullHeight = this._state.canvasHeight;
     const zoom = this._state.viewport?.zoom || 1;
 
-    // Calculate preview scale based on zoom and map size
-    // When zoomed out or on large maps, use much lower resolution
+    // Calculate preview scale based on zoom (LOD)
+    // When zoomed out, detail is invisible anyway - use very low resolution
     // Final render on mouseUp is full quality - preview just needs to show shape
+
+    // LOD: scale preview resolution proportionally to zoom
+    // At zoom 1.0 = full res, at zoom 0.1 = 10% res
+    let previewScale = Math.min(1, zoom);
+
+    // Minimum scale floor to avoid tiny canvases
+    previewScale = Math.max(0.05, previewScale);
+
+    // Also cap based on map size (max 512x512 for previews)
     const mapArea = fullWidth * fullHeight;
-    const maxPreviewPixels = 256 * 256; // Cap at 64K pixels for fast previews
-
-    let previewScale = 1;
-    if (zoom < 0.15) {
-      previewScale = 0.1;  // Very zoomed out - minimal detail
-    } else if (zoom < 0.3) {
-      previewScale = 0.2;
-    } else if (zoom < 0.5) {
-      previewScale = 0.35;
-    } else if (zoom < 0.75) {
-      previewScale = 0.5;
-    }
-
-    // Also cap based on map size
-    if (mapArea > maxPreviewPixels) {
-      const sizeScale = Math.sqrt(maxPreviewPixels / mapArea);
-      previewScale = Math.min(previewScale, sizeScale);
+    const maxPreviewPixels = 512 * 512;
+    if (mapArea * previewScale * previewScale > maxPreviewPixels) {
+      previewScale = Math.sqrt(maxPreviewPixels / mapArea);
     }
 
     const width = Math.ceil(fullWidth * previewScale);
