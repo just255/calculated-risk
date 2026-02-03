@@ -1999,7 +1999,9 @@ export class Renderer {
 
     // Redraw ground canvas if cache was rebuilt or paint/hover preview needs showing
     const hasTextureHover = this._textureHoverPreview !== null;
-    const needsGroundRedraw = (groundDataChanged && !this._isDragPainting) || hasPaintPreview || hasTextureHover;
+    const textureHoverCleared = this._textureHoverCleared === true;
+    this._textureHoverCleared = false; // Reset flag after reading
+    const needsGroundRedraw = (groundDataChanged && !this._isDragPainting) || hasPaintPreview || hasTextureHover || textureHoverCleared;
     if (needsGroundRedraw) {
       const groundCtx = this._contexts.ground;
       groundCtx.setTransform(1, 0, 0, 1, 0, 0);
@@ -2518,6 +2520,10 @@ export class Renderer {
    * Clear texture hover preview
    */
   clearTexturePreview() {
+    // Track if we had a preview that needs clearing from the canvas
+    if (this._textureHoverPreview !== null) {
+      this._textureHoverCleared = true;
+    }
     this._textureHoverPreview = null;
     this._requestUIRender();
   }
