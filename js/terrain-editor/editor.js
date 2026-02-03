@@ -622,7 +622,10 @@ class TerrainEditor {
         this._elements.depthRenderModeGroup.querySelectorAll('[data-mode]').forEach(b => {
           b.classList.toggle('active', b.dataset.mode === mode);
         });
-        // Trigger re-render to show the change
+        // Mark terrain dirty to force ground cache rebuild (depth is baked into cache)
+        if (this._state.terrainMap) {
+          this._state.terrainMap.dirty = true;
+        }
         this._state.requestRender();
       });
     }
