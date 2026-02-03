@@ -415,20 +415,42 @@ export const PaintTool = {
       if (!this._dragCenters) this._dragCenters = [];
       this._dragCenters.push({ x, y });
 
-      // Still draw preview for visual feedback
+      // Update preview with a single multi-center stroke (not individual strokes per position)
       if (renderer) {
+        // Use first center as main position, pass all centers for rendering
+        const firstCenter = this._dragCenters[0];
         const previewStroke = {
           type: options.featureType === 'water' ? 'water' : 'groundTexture',
-          x, y,
+          x: firstCenter.x,
+          y: firstCenter.y,
           radius: options.brushRadius,
           intensity: options.intensity || 1.0,
           textureType: options.featureType === 'water' ? (options.waterTextureType || 'water') :
                        (options.groundTextureType || 'grass-1'),
           fadeWidth: options.featureType === 'water' ?
                      options.brushRadius * ((options.waterFalloff ?? 30) / 100) :
-                     (options.fadeWidth ?? 12)
+                     (options.fadeWidth ?? 12),
+          centers: [...this._dragCenters]  // Copy all accumulated centers
         };
-        renderer.addToPaintPreview(previewStroke);
+
+        // For water, also add shore preview if enabled
+        if (options.featureType === 'water' && options.shoreTextureType &&
+            options.shoreTextureType !== 'none' && options.shoreWidth > 0) {
+          const shoreStroke = {
+            type: 'groundTexture',
+            x: firstCenter.x,
+            y: firstCenter.y,
+            radius: options.brushRadius + options.shoreWidth,
+            intensity: 1.0,
+            textureType: options.shoreTextureType,
+            fadeWidth: options.shoreFadeWidth ?? 12,
+            isShore: true,
+            centers: [...this._dragCenters]
+          };
+          renderer.updateCombinedPreview([shoreStroke, previewStroke]);
+        } else {
+          renderer.updateCombinedPreview([previewStroke]);
+        }
       }
       return;
     }

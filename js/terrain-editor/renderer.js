@@ -263,6 +263,18 @@ export class Renderer {
   }
 
   /**
+   * Update the paint preview with combined strokes (replaces all preview strokes)
+   * Used for drag painting where we accumulate centers into a single stroke
+   * @param {object[]} strokes - Array of strokes with centers arrays
+   */
+  updateCombinedPreview(strokes) {
+    // Replace all preview strokes with the new combined strokes
+    this._paintPreviewStrokes = strokes;
+    this._rebuildPaintPreview();
+    this._requestUIRender();
+  }
+
+  /**
    * Get the rendering layer for a stroke (for incremental render optimization)
    */
   _getStrokeLayer(stroke) {
@@ -380,9 +392,15 @@ export class Renderer {
       ctx.globalCompositeOperation = 'destination-out';
       for (const water of allWaterStrokes) {
         const effectiveRadius = water.radius + (water.shoreWidth || 0);
-        ctx.beginPath();
-        ctx.arc(water.x, water.y, effectiveRadius, 0, Math.PI * 2);
-        ctx.fill();
+        // Handle multi-center strokes
+        const positions = (water.centers && water.centers.length > 0)
+          ? water.centers
+          : [{ x: water.x, y: water.y }];
+        for (const pos of positions) {
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y, effectiveRadius, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
       ctx.restore();
     }
