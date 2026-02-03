@@ -1082,14 +1082,29 @@ export class Renderer {
     }
 
     // Render water depth overlay strokes on top of water
-    // Use 'darken' blend mode so overlapping strokes don't accumulate
+    // Two-pass approach: first merge all depth strokes together (normal blend),
+    // then composite the merged result onto water (darken blend)
+    // This prevents individual stroke edges from showing at water boundaries
     const depthStrokes = terrainMap.strokes.filter(s => s.type === 'waterDepth');
     if (depthStrokes.length > 0) {
+      // Create/reuse temp canvas for depth compositing
+      if (!this._depthTempCanvas || this._depthTempCanvas.width !== width || this._depthTempCanvas.height !== height) {
+        this._depthTempCanvas = document.createElement('canvas');
+        this._depthTempCanvas.width = width;
+        this._depthTempCanvas.height = height;
+      }
+      const depthCtx = this._depthTempCanvas.getContext('2d');
+      depthCtx.clearRect(0, 0, width, height);
+
+      // Pass 1: Render all depth strokes to temp canvas (normal blend - strokes merge together)
+      for (const stroke of depthStrokes) {
+        this._renderWaterDepthStroke(depthCtx, stroke, previewMode);
+      }
+
+      // Pass 2: Composite merged depth onto water with darken blend
       cacheCtx.save();
       cacheCtx.globalCompositeOperation = 'darken';
-      for (const stroke of depthStrokes) {
-        this._renderWaterDepthStroke(cacheCtx, stroke, previewMode);
-      }
+      cacheCtx.drawImage(this._depthTempCanvas, 0, 0);
       cacheCtx.restore();
     }
 
