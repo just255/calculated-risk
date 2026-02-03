@@ -348,12 +348,35 @@ export class Renderer {
    * Rebuild paint preview canvas with proper layering
    * Renders all strokes with correct z-order: ground textures, then shores (isShore), then water
    * Applies occlusion culling (skip strokes hidden by others) and viewport culling
+   * Uses zoom-based resolution scaling for performance on large maps
    */
   _rebuildPaintPreview() {
-    const width = this._state.canvasWidth;
-    const height = this._state.canvasHeight;
+    const fullWidth = this._state.canvasWidth;
+    const fullHeight = this._state.canvasHeight;
+    const zoom = this._state.viewport?.zoom || 1;
 
-    // Create preview canvas if needed
+    // Calculate preview scale based on zoom and map size
+    // When zoomed out or on large maps, use lower resolution
+    const mapArea = fullWidth * fullHeight;
+    const maxPreviewPixels = 1024 * 1024; // Cap at 1 megapixel for previews
+
+    let previewScale = 1;
+    if (zoom < 0.25) {
+      previewScale = 0.25;
+    } else if (zoom < 0.5) {
+      previewScale = 0.5;
+    } else if (mapArea > maxPreviewPixels) {
+      // Large map even when zoomed in - scale down
+      previewScale = Math.sqrt(maxPreviewPixels / mapArea);
+    }
+
+    const width = Math.ceil(fullWidth * previewScale);
+    const height = Math.ceil(fullHeight * previewScale);
+
+    // Store scale for compositing
+    this._paintPreviewScale = previewScale;
+
+    // Create preview canvas if needed (at scaled size)
     if (!this._paintPreview || this._paintPreview.width !== width || this._paintPreview.height !== height) {
       this._paintPreview = document.createElement('canvas');
       this._paintPreview.width = width;
@@ -362,7 +385,11 @@ export class Renderer {
 
     const ctx = this._paintPreview.getContext('2d');
     ctx.imageSmoothingEnabled = false;
-    ctx.clearRect(0, 0, width, height);
+
+    // Reset transform and apply scale for reduced resolution
+    // Use setTransform for absolute (not cumulative) scaling
+    ctx.setTransform(previewScale, 0, 0, previewScale, 0, 0);
+    ctx.clearRect(0, 0, fullWidth, fullHeight); // Clear in world coords
 
     const strokes = this._paintPreviewStrokes;
     const len = strokes.length;
@@ -378,10 +405,11 @@ export class Renderer {
     const allWaterStrokes = [...existingWater, ...previewWater];
 
     // Pass 1: Ground textures (non-shore)
+    // Use fullWidth/fullHeight for viewport check since strokes are in world coords
     for (let i = 0; i < len; i++) {
       const s = strokes[i];
       if (s.type !== 'groundTexture' || s.isShore) continue;
-      if (!this._isStrokeInViewportFast(s, width, height)) continue;
+      if (!this._isStrokeInViewportFast(s, fullWidth, fullHeight)) continue;
       this._renderGroundTextureStroke(ctx, s, true);
     }
 
@@ -417,7 +445,7 @@ export class Renderer {
     for (let i = 0; i < len; i++) {
       const s = strokes[i];
       if (s.type !== 'groundTexture' || !s.isShore) continue;
-      if (!this._isStrokeInViewportFast(s, width, height)) continue;
+      if (!this._isStrokeInViewportFast(s, fullWidth, fullHeight)) continue;
       // Inline occlusion: check if any later shore stroke completely covers this one
       let occluded = false;
       for (let j = i + 1; j < len; j++) {
@@ -439,7 +467,7 @@ export class Renderer {
     for (let i = 0; i < len; i++) {
       const s = strokes[i];
       if (s.type !== 'water') continue;
-      if (!this._isStrokeInViewportFast(s, width, height)) continue;
+      if (!this._isStrokeInViewportFast(s, fullWidth, fullHeight)) continue;
       // Inline occlusion: check if any later water stroke of SAME texture completely covers this one
       // (don't cull deep water that's inside regular water - they should layer)
       let occluded = false;
@@ -1051,8 +1079,15 @@ export class Renderer {
     }
 
     // Draw paint preview layer (strokes being painted, not yet in cache)
+    // Scale up if preview was rendered at lower resolution
     if (this._paintPreview && this._paintPreviewStrokes.length > 0) {
-      ctx.drawImage(this._paintPreview, 0, 0);
+      const scale = this._paintPreviewScale || 1;
+      if (scale !== 1) {
+        ctx.drawImage(this._paintPreview, 0, 0,
+          this._state.canvasWidth, this._state.canvasHeight);
+      } else {
+        ctx.drawImage(this._paintPreview, 0, 0);
+      }
     }
 
     // Draw animating strokes (between drag end and cache bake)
@@ -2200,7 +2235,13 @@ export class Renderer {
         groundCtx.drawImage(this._waterCache, 0, 0);
       }
       if (hasPaintPreview) {
-        groundCtx.drawImage(this._paintPreview, 0, 0);
+        const scale = this._paintPreviewScale || 1;
+        if (scale !== 1) {
+          groundCtx.drawImage(this._paintPreview, 0, 0,
+            this._state.canvasWidth, this._state.canvasHeight);
+        } else {
+          groundCtx.drawImage(this._paintPreview, 0, 0);
+        }
       }
       // Render texture hover preview (semi-transparent)
       if (hasTextureHover) {
