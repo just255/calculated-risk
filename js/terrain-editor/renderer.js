@@ -1063,9 +1063,15 @@ export class Renderer {
     }
 
     // Draw shore strokes (on top of regular ground textures, under water)
+    // Render at reduced opacity so overlapping shores blend with grass underneath
     const shoreStrokes = terrainMap.strokes.filter(s => s.type === 'groundTexture' && s.isShore);
-    for (const stroke of shoreStrokes) {
-      this._renderGroundTextureStroke(cacheCtx, stroke, previewMode);
+    if (shoreStrokes.length > 0) {
+      cacheCtx.save();
+      cacheCtx.globalAlpha = 0.7;
+      for (const stroke of shoreStrokes) {
+        this._renderGroundTextureStroke(cacheCtx, stroke, previewMode);
+      }
+      cacheCtx.restore();
     }
 
     // Draw water strokes
