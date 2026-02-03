@@ -368,41 +368,15 @@ export class Renderer {
     const len = strokes.length;
     if (len === 0) return;
 
-    // Single pass: categorize and render in order
-    // Ground textures first, then shores, then water
-    // Uses inline occlusion check to avoid creating filter arrays
+    // Render in layer order: ground textures, then shores, then water
+    // No water masking needed - layers composite correctly (ground under water)
 
-    // Collect all water strokes (existing + being painted) for masking ground textures
-    const terrainMap = this._state.terrainMap;
-    const existingWater = terrainMap.strokes ? terrainMap.strokes.filter(s => s.type === 'water') : [];
-    const previewWater = strokes.filter(s => s.type === 'water');
-    const allWaterStrokes = [...existingWater, ...previewWater];
-
-    // Pass 1: Ground textures (non-shore) - then erase water areas
+    // Pass 1: Ground textures (non-shore)
     for (let i = 0; i < len; i++) {
       const s = strokes[i];
       if (s.type !== 'groundTexture' || s.isShore) continue;
       if (!this._isStrokeInViewportFast(s, width, height)) continue;
       this._renderGroundTextureStroke(ctx, s, true);
-    }
-
-    // Erase water areas from ground textures using destination-out
-    if (allWaterStrokes.length > 0) {
-      ctx.save();
-      ctx.globalCompositeOperation = 'destination-out';
-      for (const water of allWaterStrokes) {
-        const effectiveRadius = water.radius + (water.shoreWidth || 0);
-        // Handle multi-center strokes
-        const positions = (water.centers && water.centers.length > 0)
-          ? water.centers
-          : [{ x: water.x, y: water.y }];
-        for (const pos of positions) {
-          ctx.beginPath();
-          ctx.arc(pos.x, pos.y, effectiveRadius, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-      ctx.restore();
     }
 
     // Pass 2: Shore textures with inline occlusion check
