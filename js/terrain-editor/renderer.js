@@ -1082,9 +1082,7 @@ export class Renderer {
     }
 
     // Render water depth overlay strokes on top of water
-    // Two-pass approach: first merge all depth strokes together (normal blend),
-    // then composite the merged result onto water (darken blend)
-    // This prevents individual stroke edges from showing at water boundaries
+    // Strategy: render strokes as opaque mask, then composite with desired intensity
     const depthStrokes = terrainMap.strokes.filter(s => s.type === 'waterDepth');
     if (depthStrokes.length > 0) {
       // Create/reuse temp canvas for depth compositing
@@ -1096,14 +1094,21 @@ export class Renderer {
       const depthCtx = this._depthTempCanvas.getContext('2d');
       depthCtx.clearRect(0, 0, width, height);
 
-      // Pass 1: Render all depth strokes to temp canvas (normal blend - strokes merge together)
+      // Get intensity from first stroke (all strokes in a session have same intensity)
+      const intensity = depthStrokes[0].intensity || 0.5;
+
+      // Pass 1: Draw all strokes as solid opaque shapes (union of circles)
+      depthCtx.fillStyle = 'rgba(0, 10, 25, 1)';  // Full opacity
       for (const stroke of depthStrokes) {
-        this._renderWaterDepthStroke(depthCtx, stroke, previewMode);
+        depthCtx.beginPath();
+        depthCtx.arc(stroke.x, stroke.y, stroke.radius, 0, Math.PI * 2);
+        depthCtx.fill();
       }
 
-      // Pass 2: Composite merged depth onto water with darken blend
+      // Pass 2: Composite merged shape onto water with darken + reduced alpha
       cacheCtx.save();
       cacheCtx.globalCompositeOperation = 'darken';
+      cacheCtx.globalAlpha = intensity;
       cacheCtx.drawImage(this._depthTempCanvas, 0, 0);
       cacheCtx.restore();
     }
