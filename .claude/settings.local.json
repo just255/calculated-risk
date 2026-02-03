@@ -77,7 +77,8 @@
       "Bash(gzip:*)",
       "Skill(build-plan)",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\just_\\\\Downloads\\\\calculated-risk\\\\calculated-risk\\\\sprites\\\\terrain\\\\trees\" -Filter \"*dead*\")",
-      "Bash(Select-Object Name)"
+      "Bash(Select-Object Name)",
+      "Bash(test:*)"
     ]
   }
 }
