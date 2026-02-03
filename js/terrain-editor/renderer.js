@@ -386,17 +386,21 @@ export class Renderer {
     }
 
     // Erase water+shore areas from ground textures
+    // Reduce by shore fade width so ground extends into shore's fade zone for blending
     if (allWaterStrokes.length > 0) {
       ctx.save();
       ctx.globalCompositeOperation = 'destination-out';
       for (const water of allWaterStrokes) {
-        const effectiveRadius = water.radius + (water.shoreWidth || 0);
+        const shoreWidth = water.shoreWidth || 0;
+        const shoreFade = water.shoreFadeWidth ?? 12;
+        // Ground extends into shore's fade zone so they blend
+        const effectiveRadius = water.radius + shoreWidth - shoreFade;
         const positions = (water.centers && water.centers.length > 0)
           ? water.centers
           : [{ x: water.x, y: water.y }];
         for (const pos of positions) {
           ctx.beginPath();
-          ctx.arc(pos.x, pos.y, effectiveRadius, 0, Math.PI * 2);
+          ctx.arc(pos.x, pos.y, Math.max(water.radius, effectiveRadius), 0, Math.PI * 2);
           ctx.fill();
         }
       }
