@@ -1081,74 +1081,22 @@ export class Renderer {
       this._renderWaterStroke(cacheCtx, stroke, previewMode);
     }
 
-    // Render water depth using multi-pass blur technique
-    // This creates a distance-from-edge effect for the unified water shape
+    // Render water depth - two modes available via toolOptions.depthRenderMode
     const depthStrokes = terrainMap.strokes.filter(s => s.type === 'waterDepth');
     if (depthStrokes.length > 0) {
-      // Get settings from first stroke (all strokes in a session have same values)
+      const depthMode = this._state.toolOptions?.depthRenderMode || 'invert';
       const intensity = depthStrokes[0].intensity || 0.5;
       const depthFade = depthStrokes[0].depthFalloff ?? 0.5;
 
-      // Create/reuse temp canvases
-      if (!this._depthMaskCanvas || this._depthMaskCanvas.width !== width || this._depthMaskCanvas.height !== height) {
-        this._depthMaskCanvas = document.createElement('canvas');
-        this._depthMaskCanvas.width = width;
-        this._depthMaskCanvas.height = height;
+      if (depthMode === 'gradient') {
+        // === GRADIENT MODE: Per-stroke radial gradients ===
+        // Simpler, may show some overlap patterns
+        this._renderDepthGradientMode(cacheCtx, depthStrokes, intensity, depthFade, width, height);
+      } else {
+        // === INVERT MODE: Start dark, erase from edges ===
+        // Distance-field-like, no visible stroke boundaries
+        this._renderDepthInvertMode(cacheCtx, depthStrokes, intensity, depthFade, width, height);
       }
-      if (!this._depthDistCanvas || this._depthDistCanvas.width !== width || this._depthDistCanvas.height !== height) {
-        this._depthDistCanvas = document.createElement('canvas');
-        this._depthDistCanvas.width = width;
-        this._depthDistCanvas.height = height;
-      }
-
-      const maskCtx = this._depthMaskCanvas.getContext('2d');
-      const distCtx = this._depthDistCanvas.getContext('2d');
-
-      // Step 1: Create solid mask of all depth strokes (white on transparent)
-      maskCtx.clearRect(0, 0, width, height);
-      maskCtx.fillStyle = '#fff';
-      for (const stroke of depthStrokes) {
-        maskCtx.beginPath();
-        maskCtx.arc(stroke.x, stroke.y, stroke.radius, 0, Math.PI * 2);
-        maskCtx.fill();
-      }
-
-      // Step 2: Create distance field approximation via iterative blur + constrain
-      // Copy mask to distance canvas
-      distCtx.clearRect(0, 0, width, height);
-      distCtx.drawImage(this._depthMaskCanvas, 0, 0);
-
-      // Parameters based on depthFade:
-      // depthFade 0 = uniform depth (few iterations, large blur)
-      // depthFade 1 = steep gradient (more iterations, smaller blur)
-      const blurRadius = Math.max(3, 20 - depthFade * 15);  // 20px down to 5px
-      const iterations = Math.max(2, Math.round(3 + depthFade * 5));  // 3 to 8 iterations
-
-      for (let i = 0; i < iterations; i++) {
-        // Blur (causes edges to fade inward)
-        distCtx.filter = `blur(${blurRadius}px)`;
-        distCtx.globalCompositeOperation = 'source-over';
-        distCtx.drawImage(this._depthDistCanvas, 0, 0);
-
-        // Constrain back to original mask (prevents blur from expanding outward)
-        distCtx.filter = 'none';
-        distCtx.globalCompositeOperation = 'destination-in';
-        distCtx.drawImage(this._depthMaskCanvas, 0, 0);
-      }
-
-      // Step 3: Convert white gradient to dark depth color
-      // The distCanvas now has white (center) fading to transparent (edges)
-      // We need dark (center) fading to transparent (edges)
-      distCtx.globalCompositeOperation = 'source-in';
-      distCtx.fillStyle = 'rgba(0, 10, 25, 1)';
-      distCtx.fillRect(0, 0, width, height);
-
-      // Step 4: Composite onto water
-      cacheCtx.save();
-      cacheCtx.globalCompositeOperation = 'darken';
-      cacheCtx.globalAlpha = intensity;
-      cacheCtx.drawImage(this._depthDistCanvas, 0, 0);
-      cacheCtx.restore();
     }
 
     this._groundCacheValid = true;
@@ -1585,6 +1533,108 @@ export class Renderer {
 
     // Draw cached gradient scaled to stroke size
     ctx.drawImage(cache, x - radius, y - radius, size, size);
+  }
+
+  /**
+   * GRADIENT MODE: Render depth using per-stroke radial gradients
+   * Fast, uses cached gradient, may show some overlap patterns at water boundary
+   */
+  _renderDepthGradientMode(cacheCtx, depthStrokes, intensity, depthFade, width, height) {
+    // Create/reuse temp canvas for merging strokes
+    if (!this._depthTempCanvas || this._depthTempCanvas.width !== width || this._depthTempCanvas.height !== height) {
+      this._depthTempCanvas = document.createElement('canvas');
+      this._depthTempCanvas.width = width;
+      this._depthTempCanvas.height = height;
+    }
+    const tempCtx = this._depthTempCanvas.getContext('2d');
+    tempCtx.clearRect(0, 0, width, height);
+
+    // Draw all strokes to temp canvas (merge them first)
+    for (const stroke of depthStrokes) {
+      this._renderWaterDepthStroke(tempCtx, stroke, false);
+    }
+
+    // Composite merged result onto water
+    cacheCtx.save();
+    cacheCtx.globalCompositeOperation = 'darken';
+    cacheCtx.drawImage(this._depthTempCanvas, 0, 0);
+    cacheCtx.restore();
+  }
+
+  /**
+   * INVERT MODE: Start with solid dark, erase from edges using blur
+   * Creates distance-field-like effect with no visible stroke boundaries
+   */
+  _renderDepthInvertMode(cacheCtx, depthStrokes, intensity, depthFade, width, height) {
+    // Create/reuse temp canvases
+    if (!this._depthMaskCanvas || this._depthMaskCanvas.width !== width || this._depthMaskCanvas.height !== height) {
+      this._depthMaskCanvas = document.createElement('canvas');
+      this._depthMaskCanvas.width = width;
+      this._depthMaskCanvas.height = height;
+    }
+    if (!this._depthDarkCanvas || this._depthDarkCanvas.width !== width || this._depthDarkCanvas.height !== height) {
+      this._depthDarkCanvas = document.createElement('canvas');
+      this._depthDarkCanvas.width = width;
+      this._depthDarkCanvas.height = height;
+    }
+    if (!this._depthEraseCanvas || this._depthEraseCanvas.width !== width || this._depthEraseCanvas.height !== height) {
+      this._depthEraseCanvas = document.createElement('canvas');
+      this._depthEraseCanvas.width = width;
+      this._depthEraseCanvas.height = height;
+    }
+
+    const maskCtx = this._depthMaskCanvas.getContext('2d');
+    const darkCtx = this._depthDarkCanvas.getContext('2d');
+    const eraseCtx = this._depthEraseCanvas.getContext('2d');
+
+    // Step 1: Create mask of all depth strokes (white = water area)
+    maskCtx.clearRect(0, 0, width, height);
+    maskCtx.fillStyle = '#fff';
+    for (const stroke of depthStrokes) {
+      maskCtx.beginPath();
+      maskCtx.arc(stroke.x, stroke.y, stroke.radius, 0, Math.PI * 2);
+      maskCtx.fill();
+    }
+
+    // Step 2: Start with solid dark canvas (masked to water shape)
+    darkCtx.clearRect(0, 0, width, height);
+    darkCtx.fillStyle = `rgba(0, 10, 25, ${intensity})`;
+    darkCtx.fillRect(0, 0, width, height);
+    darkCtx.globalCompositeOperation = 'destination-in';
+    darkCtx.drawImage(this._depthMaskCanvas, 0, 0);
+    darkCtx.globalCompositeOperation = 'source-over';
+
+    // Step 3: Create eraser gradient (white that fades from edges inward)
+    // depthFade controls how much to erase: 0 = erase nothing, 1 = erase almost everything
+    eraseCtx.clearRect(0, 0, width, height);
+    eraseCtx.drawImage(this._depthMaskCanvas, 0, 0);
+
+    // Invert: we want to KEEP the center, ERASE the edges
+    // So we blur inward, then INVERT the result
+    const blurRadius = Math.max(5, 30 * (1 - depthFade * 0.7));  // Larger blur = softer gradient
+    const iterations = Math.max(2, Math.round(2 + depthFade * 4));
+
+    for (let i = 0; i < iterations; i++) {
+      eraseCtx.filter = `blur(${blurRadius}px)`;
+      eraseCtx.globalCompositeOperation = 'source-over';
+      eraseCtx.drawImage(this._depthEraseCanvas, 0, 0);
+      eraseCtx.filter = 'none';
+      eraseCtx.globalCompositeOperation = 'destination-in';
+      eraseCtx.drawImage(this._depthMaskCanvas, 0, 0);
+    }
+
+    // Now eraseCanvas has: white in center, fading to transparent at edges
+    // We want to KEEP center dark, ERASE edges
+    // So we use this as an alpha mask for the dark canvas
+    darkCtx.globalCompositeOperation = 'destination-in';
+    darkCtx.drawImage(this._depthEraseCanvas, 0, 0);
+    darkCtx.globalCompositeOperation = 'source-over';
+
+    // Step 4: Composite onto water
+    cacheCtx.save();
+    cacheCtx.globalCompositeOperation = 'darken';
+    cacheCtx.drawImage(this._depthDarkCanvas, 0, 0);
+    cacheCtx.restore();
   }
 
   /**

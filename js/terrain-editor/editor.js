@@ -130,6 +130,8 @@ class TerrainEditor {
       waterDepthFalloff: document.getElementById('water-depth-falloff'),
       waterDepthFalloffVal: document.getElementById('water-depth-falloff-val'),
       waterDepthFalloffRow: document.getElementById('water-depth-falloff-row'),
+      depthRenderModeRow: document.getElementById('depth-render-mode-row'),
+      depthRenderModeGroup: document.getElementById('depth-render-mode-group'),
       deepWaterDepthRow: document.getElementById('deep-water-depth-row'),
       // Water type dropdown
       waterTypeDropdown: document.getElementById('water-type-dropdown'),
@@ -606,6 +608,22 @@ class TerrainEditor {
         this._state.setToolOption('waterDepthFalloff', value);
         this._elements.waterDepthFalloffVal.textContent = `${value}%`;
         this._refreshWaterPreview();
+      });
+    }
+
+    // Depth render mode toggle (gradient vs invert)
+    if (this._elements.depthRenderModeGroup) {
+      this._elements.depthRenderModeGroup.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-mode]');
+        if (!btn) return;
+        const mode = btn.dataset.mode;
+        this._state.setToolOption('depthRenderMode', mode);
+        // Update button states
+        this._elements.depthRenderModeGroup.querySelectorAll('[data-mode]').forEach(b => {
+          b.classList.toggle('active', b.dataset.mode === mode);
+        });
+        // Trigger re-render to show the change
+        this._state.requestRender();
       });
     }
 
@@ -3447,12 +3465,15 @@ class TerrainEditor {
   }
 
   /**
-   * Show/hide the depth falloff slider based on depth value
+   * Show/hide the depth-related controls based on depth value
    */
   _updateDepthFalloffVisibility(depthValue) {
+    const showDepthControls = depthValue > 0;
     if (this._elements.waterDepthFalloffRow) {
-      // Show falloff slider only when depth > 0
-      this._elements.waterDepthFalloffRow.style.display = depthValue > 0 ? 'flex' : 'none';
+      this._elements.waterDepthFalloffRow.style.display = showDepthControls ? 'flex' : 'none';
+    }
+    if (this._elements.depthRenderModeRow) {
+      this._elements.depthRenderModeRow.style.display = showDepthControls ? 'flex' : 'none';
     }
   }
 
