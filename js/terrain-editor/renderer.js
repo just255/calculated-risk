@@ -356,18 +356,26 @@ export class Renderer {
     const zoom = this._state.viewport?.zoom || 1;
 
     // Calculate preview scale based on zoom and map size
-    // When zoomed out or on large maps, use lower resolution
+    // When zoomed out or on large maps, use much lower resolution
+    // Final render on mouseUp is full quality - preview just needs to show shape
     const mapArea = fullWidth * fullHeight;
-    const maxPreviewPixels = 1024 * 1024; // Cap at 1 megapixel for previews
+    const maxPreviewPixels = 256 * 256; // Cap at 64K pixels for fast previews
 
     let previewScale = 1;
-    if (zoom < 0.25) {
-      previewScale = 0.25;
+    if (zoom < 0.15) {
+      previewScale = 0.1;  // Very zoomed out - minimal detail
+    } else if (zoom < 0.3) {
+      previewScale = 0.2;
     } else if (zoom < 0.5) {
+      previewScale = 0.35;
+    } else if (zoom < 0.75) {
       previewScale = 0.5;
-    } else if (mapArea > maxPreviewPixels) {
-      // Large map even when zoomed in - scale down
-      previewScale = Math.sqrt(maxPreviewPixels / mapArea);
+    }
+
+    // Also cap based on map size
+    if (mapArea > maxPreviewPixels) {
+      const sizeScale = Math.sqrt(maxPreviewPixels / mapArea);
+      previewScale = Math.min(previewScale, sizeScale);
     }
 
     const width = Math.ceil(fullWidth * previewScale);
