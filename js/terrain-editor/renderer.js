@@ -1062,6 +1062,14 @@ export class Renderer {
       this._renderTreeBasedGroundLayer(cacheCtx, previewMode);
     }
 
+    // Draw water strokes - collect them first for shore masking
+    const waterStrokes = terrainMap.strokes.filter(s => s.type === 'water');
+    waterStrokes.sort((a, b) => {
+      const aDeep = (a.textureType || '').includes('deep') ? 1 : 0;
+      const bDeep = (b.textureType || '').includes('deep') ? 1 : 0;
+      return aDeep - bDeep;  // Regular water first, deep water last
+    });
+
     // Draw shore strokes (on top of regular ground textures, under water)
     // Render at reduced opacity so overlapping shores blend with grass underneath
     const shoreStrokes = terrainMap.strokes.filter(s => s.type === 'groundTexture' && s.isShore);
@@ -1072,16 +1080,29 @@ export class Renderer {
         this._renderGroundTextureStroke(cacheCtx, stroke, previewMode);
       }
       cacheCtx.restore();
+
+      // Erase shore pixels where ANY water stroke exists
+      // This prevents shores from showing through overlapping water
+      if (waterStrokes.length > 0) {
+        cacheCtx.save();
+        cacheCtx.globalCompositeOperation = 'destination-out';
+        for (const water of waterStrokes) {
+          const { x, y, radius, fadeWidth } = water;
+          // Erase the water area (inner part, not the fade edge)
+          const innerRadius = Math.max(0, radius - (fadeWidth || 12));
+          const gradient = cacheCtx.createRadialGradient(x, y, innerRadius * 0.8, x, y, radius);
+          gradient.addColorStop(0, 'rgba(0,0,0,1)');
+          gradient.addColorStop(1, 'rgba(0,0,0,0)');
+          cacheCtx.fillStyle = gradient;
+          cacheCtx.beginPath();
+          cacheCtx.arc(x, y, radius, 0, Math.PI * 2);
+          cacheCtx.fill();
+        }
+        cacheCtx.restore();
+      }
     }
 
-    // Draw water strokes
-    // Sort so deep water always renders on top of regular water
-    const waterStrokes = terrainMap.strokes.filter(s => s.type === 'water');
-    waterStrokes.sort((a, b) => {
-      const aDeep = (a.textureType || '').includes('deep') ? 1 : 0;
-      const bDeep = (b.textureType || '').includes('deep') ? 1 : 0;
-      return aDeep - bDeep;  // Regular water first, deep water last
-    });
+    // Draw water strokes on top
     for (const stroke of waterStrokes) {
       this._renderWaterStroke(cacheCtx, stroke, previewMode);
     }
