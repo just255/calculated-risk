@@ -369,7 +369,13 @@ export class Renderer {
     if (len === 0) return;
 
     // Render in layer order: ground textures, then shores, then water
-    // No water masking needed - layers composite correctly (ground under water)
+    // Ground textures are masked by water (not shore) to prevent showing through
+
+    // Collect water strokes for masking (existing + being painted)
+    const terrainMap = this._state.terrainMap;
+    const existingWater = terrainMap.strokes ? terrainMap.strokes.filter(s => s.type === 'water') : [];
+    const previewWater = strokes.filter(s => s.type === 'water');
+    const allWaterStrokes = [...existingWater, ...previewWater];
 
     // Pass 1: Ground textures (non-shore)
     for (let i = 0; i < len; i++) {
@@ -377,6 +383,25 @@ export class Renderer {
       if (s.type !== 'groundTexture' || s.isShore) continue;
       if (!this._isStrokeInViewportFast(s, width, height)) continue;
       this._renderGroundTextureStroke(ctx, s, true);
+    }
+
+    // Erase water areas (NOT shore) from ground textures
+    if (allWaterStrokes.length > 0) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'destination-out';
+      for (const water of allWaterStrokes) {
+        // Only mask the water radius, not the shore area
+        const waterRadius = water.radius;
+        const positions = (water.centers && water.centers.length > 0)
+          ? water.centers
+          : [{ x: water.x, y: water.y }];
+        for (const pos of positions) {
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y, waterRadius, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
     }
 
     // Pass 2: Shore textures with inline occlusion check
