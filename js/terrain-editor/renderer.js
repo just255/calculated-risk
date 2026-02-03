@@ -1083,7 +1083,8 @@ export class Renderer {
 
       // Erase shore pixels where ANY water stroke exists
       // This prevents shores from showing through overlapping water
-      if (waterStrokes.length > 0) {
+      // Skip during drag painting for performance - renders correctly on mouseup
+      if (waterStrokes.length > 0 && !this._isDragPainting) {
         cacheCtx.save();
         cacheCtx.globalCompositeOperation = 'destination-out';
         for (const water of waterStrokes) {
@@ -1167,13 +1168,14 @@ export class Renderer {
     }
 
     // Use 1x for preview (fast), up to 4x for final render (crisp)
-    // Dynamically reduce quality when there are many strokes for performance
+    // Dynamically reduce quality when there are many strokes or large radius for performance
     const strokeCount = this._state?.terrainMap?.strokes?.length || 0;
     let scale = previewMode ? 1 : 4;
     if (!previewMode) {
       // Reduce scale based on stroke count and radius for performance
-      if (strokeCount > 500 || radius > 400) scale = 1;
-      else if (strokeCount > 200 || radius > 200) scale = 2;
+      // Large strokes are expensive - scale down aggressively
+      if (strokeCount > 300 || radius > 150) scale = 1;
+      else if (strokeCount > 100 || radius > 80) scale = 2;
     }
     const tileSize = 256 * GROUND_TEXTURE_SCALE * scale; // = 256 (native)
     const scaledRadius = radius * scale;
