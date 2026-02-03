@@ -51,13 +51,21 @@ export class Renderer {
     this._tempCanvasSize = 0;
 
     // Cached ground layer (strokes rendered once, reused until changed)
+    // Contains: base grass, ground textures, floor patches
     this._groundCache = null;
     this._groundCacheValid = false;
     this._groundCacheIsPreview = false;  // Whether cache was built at preview quality
-    this._groundCacheStrokeCount = 0;
-    this._groundCacheTreeCount = 0;
+    this._groundCacheStrokeCount = 0;  // Ground texture strokes only
     this._groundCacheFloorPatchCount = 0;
-    this._groundCacheScatterCount = 0;  // NEW: Track scatterItems for cache invalidation
+    this._groundCacheScatterCount = 0;  // Track scatterItems for cache invalidation
+
+    // Cached water layer (separate from ground for performance)
+    // Contains: shores, water strokes, water depth
+    this._waterCache = null;
+    this._waterCacheValid = false;
+    this._waterCacheWaterCount = 0;
+    this._waterCacheShoreCount = 0;
+    this._waterCacheDepthCount = 0;
 
     // Paint preview layer (for showing strokes during drag painting)
     this._paintPreview = null;
@@ -138,9 +146,10 @@ export class Renderer {
   endDragPaint() {
     this._isDragPainting = false;
 
-    // If no animations running, rebuild cache immediately
+    // If no animations running, rebuild caches immediately
     if (this._animatingStrokes.length === 0) {
       this._invalidateGroundCache();
+      this._invalidateWaterCache();
     }
     // Otherwise, cache rebuild happens when animations complete (in _renderAnimatingStrokes)
 
@@ -155,10 +164,10 @@ export class Renderer {
     // Subscribe to state events
     this._state.on(Events.RENDER_REQUESTED, () => this.requestRender());
 
-    // Invalidate ground cache on major changes (not individual strokes during painting)
-    this._state.on(Events.STROKES_CLEARED, () => { this._invalidateGroundCache(); this._invalidateCanopyCache(); });
-    this._state.on(Events.MAP_LOADED, () => { this._invalidateGroundCache(); this._invalidateCanopyCache(); });
-    this._state.on(Events.MAP_CLEARED, () => { this._invalidateGroundCache(); this._invalidateCanopyCache(); });
+    // Invalidate caches on major changes (not individual strokes during painting)
+    this._state.on(Events.STROKES_CLEARED, () => { this._invalidateGroundCache(); this._invalidateWaterCache(); this._invalidateCanopyCache(); });
+    this._state.on(Events.MAP_LOADED, () => { this._invalidateGroundCache(); this._invalidateWaterCache(); this._invalidateCanopyCache(); });
+    this._state.on(Events.MAP_CLEARED, () => { this._invalidateGroundCache(); this._invalidateWaterCache(); this._invalidateCanopyCache(); });
     this._state.on(Events.BASE_LAYER_CHANGED, () => this._invalidateGroundCache());
 
     // Invalidate caches when post-processing settings change (seasonOverrides)
@@ -175,6 +184,10 @@ export class Renderer {
 
   _invalidateGroundCache() {
     this._groundCacheValid = false;
+  }
+
+  _invalidateWaterCache() {
+    this._waterCacheValid = false;
   }
 
   _invalidateCanopyCache() {
@@ -669,11 +682,12 @@ export class Renderer {
 
       this._animatingStrokes = this._animatingStrokes.filter(s => s._animating);
 
-      // If all animations done and not drag painting, rebuild cache at full quality
+      // If all animations done and not drag painting, rebuild caches at full quality
       if (this._animatingStrokes.length === 0 && !this._isDragPainting) {
         // Clear paint preview now that all strokes will be in the cache
         this.clearPaintPreview();
         this._invalidateGroundCache();
+        this._invalidateWaterCache();
       }
     }
   }
@@ -842,6 +856,7 @@ export class Renderer {
 
     // Invalidate caches now that images are loaded
     this._invalidateGroundCache();
+    this._invalidateWaterCache();
     this._invalidateCanopyCache();
     this.requestRender();
   }
@@ -948,33 +963,60 @@ export class Renderer {
     ctx.imageSmoothingEnabled = false;
     const terrainMap = this._state.terrainMap;
 
-    // Check if we need to rebuild the ground cache
-    const strokeCount = terrainMap.strokes?.length || 0;
-    const treeCount = terrainMap.trees?.length || 0;
+    // Count strokes by type for cache invalidation
+    let groundStrokeCount = 0;
+    let waterStrokeCount = 0;
+    let shoreStrokeCount = 0;
+    let depthStrokeCount = 0;
+    for (const s of (terrainMap.strokes || [])) {
+      if (s.type === 'water') waterStrokeCount++;
+      else if (s.type === 'waterDepth') depthStrokeCount++;
+      else if (s.type === 'groundTexture' && s.isShore) shoreStrokeCount++;
+      else if (s.type === 'groundTexture') groundStrokeCount++;
+    }
+
     const floorPatchCount = terrainMap.floorPatches?.length || 0;
     const scatterCount = terrainMap.scatterItems?.length || 0;
 
-    const needsRebuild = !this._groundCacheValid || terrainMap.dirty ||
-        this._groundCacheStrokeCount !== strokeCount ||
-        this._groundCacheTreeCount !== treeCount ||
+    // Check if ground cache needs rebuild (ground textures + floor patches only)
+    const needsGroundRebuild = !this._groundCacheValid || terrainMap.dirty ||
+        this._groundCacheStrokeCount !== groundStrokeCount ||
         this._groundCacheFloorPatchCount !== floorPatchCount ||
         this._groundCacheScatterCount !== scatterCount;
 
-    // Skip ground cache rebuild during drag painting (too expensive even at preview quality)
-    // New strokes are shown via the paint preview canvas instead
+    // Check if water cache needs rebuild (water + shores + depth)
+    const needsWaterRebuild = !this._waterCacheValid ||
+        this._waterCacheWaterCount !== waterStrokeCount ||
+        this._waterCacheShoreCount !== shoreStrokeCount ||
+        this._waterCacheDepthCount !== depthStrokeCount;
+
+    // Skip cache rebuilds during drag painting
     // Full rebuild happens on mouseup via endDragPaint()
-    if (needsRebuild && !this._isDragPainting) {
-      this._rebuildGroundCache();
-      this._groundCacheStrokeCount = strokeCount;
-      this._groundCacheTreeCount = treeCount;
-      this._groundCacheFloorPatchCount = floorPatchCount;
-      this._groundCacheScatterCount = scatterCount;
-      terrainMap.dirty = false;
+    if (!this._isDragPainting) {
+      if (needsGroundRebuild) {
+        this._rebuildGroundCache();
+        this._groundCacheStrokeCount = groundStrokeCount;
+        this._groundCacheFloorPatchCount = floorPatchCount;
+        this._groundCacheScatterCount = scatterCount;
+        terrainMap.dirty = false;
+      }
+
+      if (needsWaterRebuild) {
+        this._rebuildWaterCache();
+        this._waterCacheWaterCount = waterStrokeCount;
+        this._waterCacheShoreCount = shoreStrokeCount;
+        this._waterCacheDepthCount = depthStrokeCount;
+      }
     }
 
     // Draw cached ground layer
     if (this._groundCache) {
       ctx.drawImage(this._groundCache, 0, 0);
+    }
+
+    // Draw cached water layer (on top of ground)
+    if (this._waterCache) {
+      ctx.drawImage(this._waterCache, 0, 0);
     }
 
     // During drag painting, render uncached floor items (not in ground cache yet)
@@ -1062,16 +1104,49 @@ export class Renderer {
       this._renderTreeBasedGroundLayer(cacheCtx, previewMode);
     }
 
-    // Draw water strokes - collect them first for shore masking
+    // Water is now rendered in a separate cache (_rebuildWaterCache)
+    // This allows painting forests without re-rendering expensive water/shore/depth
+
+    this._groundCacheValid = true;
+    this._groundCacheIsPreview = previewMode;
+  }
+
+  /**
+   * Rebuild the cached water layer (shores, water, depth)
+   * Separate from ground cache so painting forests doesn't re-render water
+   * @param {boolean} previewMode - Use lower resolution for faster rendering
+   */
+  _rebuildWaterCache(previewMode = false) {
+    const terrainMap = this._state.terrainMap;
+    const width = this._state.canvasWidth;
+    const height = this._state.canvasHeight;
+
+    // Create or resize water cache canvas
+    if (!this._waterCache || this._waterCache.width !== width || this._waterCache.height !== height) {
+      this._waterCache = document.createElement('canvas');
+      this._waterCache.width = width;
+      this._waterCache.height = height;
+    }
+
+    const cacheCtx = this._waterCache.getContext('2d');
+    cacheCtx.imageSmoothingEnabled = false;
+    cacheCtx.clearRect(0, 0, width, height);
+
+    // Collect water strokes for shore masking
     const waterStrokes = terrainMap.strokes.filter(s => s.type === 'water');
+    if (waterStrokes.length === 0) {
+      this._waterCacheValid = true;
+      return;
+    }
+
     waterStrokes.sort((a, b) => {
       const aDeep = (a.textureType || '').includes('deep') ? 1 : 0;
       const bDeep = (b.textureType || '').includes('deep') ? 1 : 0;
       return aDeep - bDeep;  // Regular water first, deep water last
     });
 
-    // Draw shore strokes (on top of regular ground textures, under water)
-    // Render at reduced opacity so overlapping shores blend with grass underneath
+    // Draw shore strokes (under water)
+    // Render at reduced opacity so overlapping shores blend
     const shoreStrokes = terrainMap.strokes.filter(s => s.type === 'groundTexture' && s.isShore);
     if (shoreStrokes.length > 0) {
       cacheCtx.save();
@@ -1084,7 +1159,7 @@ export class Renderer {
       // Erase shore pixels where ANY water stroke exists
       // This prevents shores from showing through overlapping water
       // Skip during drag painting for performance - renders correctly on mouseup
-      if (waterStrokes.length > 0 && !this._isDragPainting) {
+      if (!this._isDragPainting) {
         cacheCtx.save();
         cacheCtx.globalCompositeOperation = 'destination-out';
         for (const water of waterStrokes) {
@@ -1119,8 +1194,7 @@ export class Renderer {
       }
     }
 
-    this._groundCacheValid = true;
-    this._groundCacheIsPreview = previewMode;
+    this._waterCacheValid = true;
   }
 
   /**
@@ -1617,8 +1691,8 @@ export class Renderer {
       depth
     });
 
-    // Invalidate the ground cache so it gets rebuilt with the new depth
-    this._groundCacheValid = false;
+    // Invalidate the water cache so it gets rebuilt with the new depth
+    this._waterCacheValid = false;
   }
 
   /**
@@ -2005,31 +2079,57 @@ export class Renderer {
     const dpr = this._dpr || 1;
     const terrainMap = this._state.terrainMap;
 
-    // Check if ground or features data changed
-    const strokeCount = terrainMap.strokes?.length || 0;
+    // Count strokes by type for cache invalidation
+    let groundStrokeCount = 0;
+    let waterStrokeCount = 0;
+    let shoreStrokeCount = 0;
+    let depthStrokeCount = 0;
+    for (const s of (terrainMap.strokes || [])) {
+      if (s.type === 'water') waterStrokeCount++;
+      else if (s.type === 'waterDepth') depthStrokeCount++;
+      else if (s.type === 'groundTexture' && s.isShore) shoreStrokeCount++;
+      else if (s.type === 'groundTexture') groundStrokeCount++;
+    }
+
     const treeCount = terrainMap.trees?.length || 0;
     const floorPatchCount = terrainMap.floorPatches?.length || 0;
+    const scatterCount = terrainMap.scatterItems?.length || 0;
 
+    // Check if ground cache needs rebuild (ground textures + floor patches + scatter)
     const groundDataChanged = !this._groundCacheValid ||
-        this._groundCacheStrokeCount !== strokeCount ||
-        this._groundCacheTreeCount !== treeCount ||
-        this._groundCacheFloorPatchCount !== floorPatchCount;
+        this._groundCacheStrokeCount !== groundStrokeCount ||
+        this._groundCacheFloorPatchCount !== floorPatchCount ||
+        this._groundCacheScatterCount !== scatterCount;
+
+    // Check if water cache needs rebuild (water + shores + depth)
+    const waterDataChanged = !this._waterCacheValid ||
+        this._waterCacheWaterCount !== waterStrokeCount ||
+        this._waterCacheShoreCount !== shoreStrokeCount ||
+        this._waterCacheDepthCount !== depthStrokeCount;
 
     const hasPaintPreview = this._paintPreview && this._paintPreviewStrokes.length > 0;
 
-    // Rebuild ground cache if data changed (skip during drag painting)
-    if (groundDataChanged && !this._isDragPainting) {
-      this._rebuildGroundCache();
-      this._groundCacheStrokeCount = strokeCount;
-      this._groundCacheTreeCount = treeCount;
-      this._groundCacheFloorPatchCount = floorPatchCount;
+    // Rebuild caches if data changed (skip during drag painting)
+    if (!this._isDragPainting) {
+      if (groundDataChanged) {
+        this._rebuildGroundCache();
+        this._groundCacheStrokeCount = groundStrokeCount;
+        this._groundCacheFloorPatchCount = floorPatchCount;
+        this._groundCacheScatterCount = scatterCount;
+      }
+      if (waterDataChanged) {
+        this._rebuildWaterCache();
+        this._waterCacheWaterCount = waterStrokeCount;
+        this._waterCacheShoreCount = shoreStrokeCount;
+        this._waterCacheDepthCount = depthStrokeCount;
+      }
     }
 
     // Redraw ground canvas if cache was rebuilt or paint/hover preview needs showing
     const hasTextureHover = this._textureHoverPreview !== null;
     const textureHoverCleared = this._textureHoverCleared === true;
     this._textureHoverCleared = false; // Reset flag after reading
-    const needsGroundRedraw = (groundDataChanged && !this._isDragPainting) || hasPaintPreview || hasTextureHover || textureHoverCleared;
+    const needsGroundRedraw = ((groundDataChanged || waterDataChanged) && !this._isDragPainting) || hasPaintPreview || hasTextureHover || textureHoverCleared;
     if (needsGroundRedraw) {
       const groundCtx = this._contexts.ground;
       groundCtx.setTransform(1, 0, 0, 1, 0, 0);
@@ -2044,6 +2144,10 @@ export class Renderer {
 
       if (this._groundCache) {
         groundCtx.drawImage(this._groundCache, 0, 0);
+      }
+      // Draw water cache on top of ground
+      if (this._waterCache) {
+        groundCtx.drawImage(this._waterCache, 0, 0);
       }
       if (hasPaintPreview) {
         groundCtx.drawImage(this._paintPreview, 0, 0);
