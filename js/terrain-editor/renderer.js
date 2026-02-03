@@ -2160,7 +2160,6 @@ export class Renderer {
     }
 
     // Only redraw features if counts changed (skip during drag painting)
-    const scatterCount = terrainMap.scatterItems?.length || 0;
     const featuresDataChanged = !this._canopyCacheValid ||
         this._canopyCacheTreeCount !== treeCount ||
         this._canopyCacheBrushCount !== (terrainMap.brushes?.length || 0) ||
