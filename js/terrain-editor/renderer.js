@@ -1081,65 +1081,74 @@ export class Renderer {
       this._renderWaterStroke(cacheCtx, stroke, previewMode);
     }
 
-    // Render water depth overlay strokes on top of water
-    // Strategy: render solid shapes, blur for gradient effect, then composite
+    // Render water depth using multi-pass blur technique
+    // This creates a distance-from-edge effect for the unified water shape
     const depthStrokes = terrainMap.strokes.filter(s => s.type === 'waterDepth');
     if (depthStrokes.length > 0) {
-      // Create/reuse temp canvas for depth compositing
-      if (!this._depthTempCanvas || this._depthTempCanvas.width !== width || this._depthTempCanvas.height !== height) {
-        this._depthTempCanvas = document.createElement('canvas');
-        this._depthTempCanvas.width = width;
-        this._depthTempCanvas.height = height;
-      }
-      const depthCtx = this._depthTempCanvas.getContext('2d');
-      depthCtx.clearRect(0, 0, width, height);
-
       // Get settings from first stroke (all strokes in a session have same values)
       const intensity = depthStrokes[0].intensity || 0.5;
-      const falloff = depthStrokes[0].depthFalloff ?? 0.5;
+      const depthFade = depthStrokes[0].depthFalloff ?? 0.5;
 
-      // Calculate blur radius based on falloff and average stroke size
-      // falloff 0 = no blur (sharp edges), falloff 1 = heavy blur (soft gradient)
-      const avgRadius = depthStrokes.reduce((sum, s) => sum + s.radius, 0) / depthStrokes.length;
-      const blurRadius = Math.round(avgRadius * falloff * 0.5);
+      // Create/reuse temp canvases
+      if (!this._depthMaskCanvas || this._depthMaskCanvas.width !== width || this._depthMaskCanvas.height !== height) {
+        this._depthMaskCanvas = document.createElement('canvas');
+        this._depthMaskCanvas.width = width;
+        this._depthMaskCanvas.height = height;
+      }
+      if (!this._depthDistCanvas || this._depthDistCanvas.width !== width || this._depthDistCanvas.height !== height) {
+        this._depthDistCanvas = document.createElement('canvas');
+        this._depthDistCanvas.width = width;
+        this._depthDistCanvas.height = height;
+      }
 
-      // Pass 1: Draw all strokes as solid shapes (smaller than full radius to account for blur expansion)
-      const shrinkFactor = falloff > 0.1 ? (1 - falloff * 0.3) : 1;
-      depthCtx.fillStyle = 'rgba(0, 10, 25, 1)';
+      const maskCtx = this._depthMaskCanvas.getContext('2d');
+      const distCtx = this._depthDistCanvas.getContext('2d');
+
+      // Step 1: Create solid mask of all depth strokes (white on transparent)
+      maskCtx.clearRect(0, 0, width, height);
+      maskCtx.fillStyle = '#fff';
       for (const stroke of depthStrokes) {
-        depthCtx.beginPath();
-        depthCtx.arc(stroke.x, stroke.y, stroke.radius * shrinkFactor, 0, Math.PI * 2);
-        depthCtx.fill();
+        maskCtx.beginPath();
+        maskCtx.arc(stroke.x, stroke.y, stroke.radius, 0, Math.PI * 2);
+        maskCtx.fill();
       }
 
-      // Pass 2: Apply blur if falloff > 0
-      if (blurRadius > 0) {
-        // Create second temp canvas for blur result
-        if (!this._depthBlurCanvas || this._depthBlurCanvas.width !== width || this._depthBlurCanvas.height !== height) {
-          this._depthBlurCanvas = document.createElement('canvas');
-          this._depthBlurCanvas.width = width;
-          this._depthBlurCanvas.height = height;
-        }
-        const blurCtx = this._depthBlurCanvas.getContext('2d');
-        blurCtx.clearRect(0, 0, width, height);
-        blurCtx.filter = `blur(${blurRadius}px)`;
-        blurCtx.drawImage(this._depthTempCanvas, 0, 0);
-        blurCtx.filter = 'none';
+      // Step 2: Create distance field approximation via iterative blur + constrain
+      // Copy mask to distance canvas
+      distCtx.clearRect(0, 0, width, height);
+      distCtx.drawImage(this._depthMaskCanvas, 0, 0);
 
-        // Composite blurred result
-        cacheCtx.save();
-        cacheCtx.globalCompositeOperation = 'darken';
-        cacheCtx.globalAlpha = intensity;
-        cacheCtx.drawImage(this._depthBlurCanvas, 0, 0);
-        cacheCtx.restore();
-      } else {
-        // No blur - direct composite
-        cacheCtx.save();
-        cacheCtx.globalCompositeOperation = 'darken';
-        cacheCtx.globalAlpha = intensity;
-        cacheCtx.drawImage(this._depthTempCanvas, 0, 0);
-        cacheCtx.restore();
+      // Parameters based on depthFade:
+      // depthFade 0 = uniform depth (few iterations, large blur)
+      // depthFade 1 = steep gradient (more iterations, smaller blur)
+      const blurRadius = Math.max(3, 20 - depthFade * 15);  // 20px down to 5px
+      const iterations = Math.max(2, Math.round(3 + depthFade * 5));  // 3 to 8 iterations
+
+      for (let i = 0; i < iterations; i++) {
+        // Blur (causes edges to fade inward)
+        distCtx.filter = `blur(${blurRadius}px)`;
+        distCtx.globalCompositeOperation = 'source-over';
+        distCtx.drawImage(this._depthDistCanvas, 0, 0);
+
+        // Constrain back to original mask (prevents blur from expanding outward)
+        distCtx.filter = 'none';
+        distCtx.globalCompositeOperation = 'destination-in';
+        distCtx.drawImage(this._depthMaskCanvas, 0, 0);
       }
+
+      // Step 3: Convert white gradient to dark depth color
+      // The distCanvas now has white (center) fading to transparent (edges)
+      // We need dark (center) fading to transparent (edges)
+      distCtx.globalCompositeOperation = 'source-in';
+      distCtx.fillStyle = 'rgba(0, 10, 25, 1)';
+      distCtx.fillRect(0, 0, width, height);
+
+      // Step 4: Composite onto water
+      cacheCtx.save();
+      cacheCtx.globalCompositeOperation = 'darken';
+      cacheCtx.globalAlpha = intensity;
+      cacheCtx.drawImage(this._depthDistCanvas, 0, 0);
+      cacheCtx.restore();
     }
 
     this._groundCacheValid = true;
