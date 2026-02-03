@@ -1082,7 +1082,7 @@ export class Renderer {
     }
 
     // Render water depth overlay strokes on top of water
-    // Strategy: render strokes as opaque mask, then composite with desired intensity
+    // Strategy: render solid shapes, blur for gradient effect, then composite
     const depthStrokes = terrainMap.strokes.filter(s => s.type === 'waterDepth');
     if (depthStrokes.length > 0) {
       // Create/reuse temp canvas for depth compositing
@@ -1094,23 +1094,52 @@ export class Renderer {
       const depthCtx = this._depthTempCanvas.getContext('2d');
       depthCtx.clearRect(0, 0, width, height);
 
-      // Get intensity from first stroke (all strokes in a session have same intensity)
+      // Get settings from first stroke (all strokes in a session have same values)
       const intensity = depthStrokes[0].intensity || 0.5;
+      const falloff = depthStrokes[0].depthFalloff ?? 0.5;
 
-      // Pass 1: Draw all strokes as solid opaque shapes (union of circles)
-      depthCtx.fillStyle = 'rgba(0, 10, 25, 1)';  // Full opacity
+      // Calculate blur radius based on falloff and average stroke size
+      // falloff 0 = no blur (sharp edges), falloff 1 = heavy blur (soft gradient)
+      const avgRadius = depthStrokes.reduce((sum, s) => sum + s.radius, 0) / depthStrokes.length;
+      const blurRadius = Math.round(avgRadius * falloff * 0.5);
+
+      // Pass 1: Draw all strokes as solid shapes (smaller than full radius to account for blur expansion)
+      const shrinkFactor = falloff > 0.1 ? (1 - falloff * 0.3) : 1;
+      depthCtx.fillStyle = 'rgba(0, 10, 25, 1)';
       for (const stroke of depthStrokes) {
         depthCtx.beginPath();
-        depthCtx.arc(stroke.x, stroke.y, stroke.radius, 0, Math.PI * 2);
+        depthCtx.arc(stroke.x, stroke.y, stroke.radius * shrinkFactor, 0, Math.PI * 2);
         depthCtx.fill();
       }
 
-      // Pass 2: Composite merged shape onto water with darken + reduced alpha
-      cacheCtx.save();
-      cacheCtx.globalCompositeOperation = 'darken';
-      cacheCtx.globalAlpha = intensity;
-      cacheCtx.drawImage(this._depthTempCanvas, 0, 0);
-      cacheCtx.restore();
+      // Pass 2: Apply blur if falloff > 0
+      if (blurRadius > 0) {
+        // Create second temp canvas for blur result
+        if (!this._depthBlurCanvas || this._depthBlurCanvas.width !== width || this._depthBlurCanvas.height !== height) {
+          this._depthBlurCanvas = document.createElement('canvas');
+          this._depthBlurCanvas.width = width;
+          this._depthBlurCanvas.height = height;
+        }
+        const blurCtx = this._depthBlurCanvas.getContext('2d');
+        blurCtx.clearRect(0, 0, width, height);
+        blurCtx.filter = `blur(${blurRadius}px)`;
+        blurCtx.drawImage(this._depthTempCanvas, 0, 0);
+        blurCtx.filter = 'none';
+
+        // Composite blurred result
+        cacheCtx.save();
+        cacheCtx.globalCompositeOperation = 'darken';
+        cacheCtx.globalAlpha = intensity;
+        cacheCtx.drawImage(this._depthBlurCanvas, 0, 0);
+        cacheCtx.restore();
+      } else {
+        // No blur - direct composite
+        cacheCtx.save();
+        cacheCtx.globalCompositeOperation = 'darken';
+        cacheCtx.globalAlpha = intensity;
+        cacheCtx.drawImage(this._depthTempCanvas, 0, 0);
+        cacheCtx.restore();
+      }
     }
 
     this._groundCacheValid = true;
