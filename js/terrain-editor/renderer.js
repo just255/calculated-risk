@@ -1082,11 +1082,14 @@ export class Renderer {
     }
 
     // Render water depth using per-stroke gradients
-    const depthStrokes = terrainMap.strokes.filter(s => s.type === 'waterDepth');
-    if (depthStrokes.length > 0) {
-      const intensity = depthStrokes[0].intensity || 0.5;
-      const depthFade = depthStrokes[0].depthFalloff ?? 0.5;
-      this._renderDepthGradientMode(cacheCtx, depthStrokes, intensity, depthFade, width, height);
+    // Skip during drag painting for performance - depth renders on mouseup
+    if (!this._isDragPainting) {
+      const depthStrokes = terrainMap.strokes.filter(s => s.type === 'waterDepth');
+      if (depthStrokes.length > 0) {
+        const intensity = depthStrokes[0].intensity || 0.5;
+        const depthFade = depthStrokes[0].depthFalloff ?? 0.5;
+        this._renderDepthGradientMode(cacheCtx, depthStrokes, intensity, depthFade, width, height);
+      }
     }
 
     this._groundCacheValid = true;
@@ -1137,11 +1140,15 @@ export class Renderer {
       return;
     }
 
-    // Use 1x for preview (fast), 4x for final render (crisp)
-    // Preview is temporary during drag - full quality on mouseup
+    // Use 1x for preview (fast), up to 4x for final render (crisp)
+    // Dynamically reduce quality when there are many strokes for performance
+    const strokeCount = this._state?.terrainMap?.strokes?.length || 0;
     let scale = previewMode ? 1 : 4;
-    if (!previewMode && radius > 200) scale = 2;
-    if (!previewMode && radius > 400) scale = 1;
+    if (!previewMode) {
+      // Reduce scale based on stroke count and radius for performance
+      if (strokeCount > 500 || radius > 400) scale = 1;
+      else if (strokeCount > 200 || radius > 200) scale = 2;
+    }
     const tileSize = 256 * GROUND_TEXTURE_SCALE * scale; // = 256 (native)
     const scaledRadius = radius * scale;
     const scaledFadeWidth = fadeWidth * scale;
