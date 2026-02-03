@@ -874,33 +874,6 @@
       text-align: right;
     }
 
-    /* Button group for toggles */
-    .button-group {
-      display: flex;
-      gap: 2px;
-      flex: 1;
-    }
-    .btn-small {
-      flex: 1;
-      padding: 3px 6px;
-      font-size: 9px;
-      border: 1px solid #4a5568;
-      background: #1e293b;
-      color: #94a3b8;
-      border-radius: 3px;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-    .btn-small:hover {
-      background: #2d3748;
-      border-color: #60a5fa;
-    }
-    .btn-small.active {
-      background: #3b82f6;
-      border-color: #3b82f6;
-      color: #fff;
-    }
-
     /* Tuning row with +/- buttons */
     .tune-row {
       display: flex;
@@ -1425,13 +1398,6 @@
               <span class="ratio-label">Depth Fade</span>
               <input type="range" class="ratio-slider" id="water-depth-falloff" min="0" max="100" value="50">
               <span class="ratio-value" id="water-depth-falloff-val">50%</span>
-            </div>
-            <div class="ratio-row" id="depth-render-mode-row">
-              <span class="ratio-label">Mode</span>
-              <div class="button-group" id="depth-render-mode-group">
-                <button class="btn-small" data-mode="gradient">Gradient</button>
-                <button class="btn-small active" data-mode="invert">Invert</button>
-              </div>
             </div>
           </div>
         </div>
