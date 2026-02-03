@@ -1063,7 +1063,6 @@ export class Renderer {
     }
 
     // Draw shore strokes (on top of regular ground textures, under water)
-    // No occlusion culling - O(n²) cost exceeds savings on cached canvas
     const shoreStrokes = terrainMap.strokes.filter(s => s.type === 'groundTexture' && s.isShore);
     for (const stroke of shoreStrokes) {
       this._renderGroundTextureStroke(cacheCtx, stroke, previewMode);
