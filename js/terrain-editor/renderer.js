@@ -994,6 +994,7 @@ export class Renderer {
     // Full rebuild happens on mouseup via endDragPaint()
     if (!this._isDragPainting) {
       if (needsGroundRebuild) {
+        console.log('[Renderer] Rebuilding ground cache - strokes:', groundStrokeCount, 'floor:', floorPatchCount, 'scatter:', scatterCount);
         this._rebuildGroundCache();
         this._groundCacheStrokeCount = groundStrokeCount;
         this._groundCacheFloorPatchCount = floorPatchCount;
@@ -1002,6 +1003,7 @@ export class Renderer {
       }
 
       if (needsWaterRebuild) {
+        console.log('[Renderer] Rebuilding water cache - water:', waterStrokeCount, 'shore:', shoreStrokeCount, 'depth:', depthStrokeCount);
         this._rebuildWaterCache();
         this._waterCacheWaterCount = waterStrokeCount;
         this._waterCacheShoreCount = shoreStrokeCount;
