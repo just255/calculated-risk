@@ -1572,68 +1572,59 @@ export class Renderer {
       this._depthMaskCanvas.width = width;
       this._depthMaskCanvas.height = height;
     }
-    if (!this._depthDarkCanvas || this._depthDarkCanvas.width !== width || this._depthDarkCanvas.height !== height) {
-      this._depthDarkCanvas = document.createElement('canvas');
-      this._depthDarkCanvas.width = width;
-      this._depthDarkCanvas.height = height;
-    }
-    if (!this._depthEraseCanvas || this._depthEraseCanvas.width !== width || this._depthEraseCanvas.height !== height) {
-      this._depthEraseCanvas = document.createElement('canvas');
-      this._depthEraseCanvas.width = width;
-      this._depthEraseCanvas.height = height;
+    if (!this._depthWorkCanvas || this._depthWorkCanvas.width !== width || this._depthWorkCanvas.height !== height) {
+      this._depthWorkCanvas = document.createElement('canvas');
+      this._depthWorkCanvas.width = width;
+      this._depthWorkCanvas.height = height;
     }
 
     const maskCtx = this._depthMaskCanvas.getContext('2d');
-    const darkCtx = this._depthDarkCanvas.getContext('2d');
-    const eraseCtx = this._depthEraseCanvas.getContext('2d');
+    const workCtx = this._depthWorkCanvas.getContext('2d');
 
-    // Step 1: Create mask of all depth strokes (white = water area)
+    // Step 1: Create solid white mask of all depth strokes
     maskCtx.clearRect(0, 0, width, height);
-    maskCtx.fillStyle = '#fff';
+    maskCtx.fillStyle = 'rgba(255, 255, 255, 1)';
     for (const stroke of depthStrokes) {
       maskCtx.beginPath();
       maskCtx.arc(stroke.x, stroke.y, stroke.radius, 0, Math.PI * 2);
       maskCtx.fill();
     }
 
-    // Step 2: Start with solid dark canvas (masked to water shape)
-    darkCtx.clearRect(0, 0, width, height);
-    darkCtx.fillStyle = `rgba(0, 10, 25, ${intensity})`;
-    darkCtx.fillRect(0, 0, width, height);
-    darkCtx.globalCompositeOperation = 'destination-in';
-    darkCtx.drawImage(this._depthMaskCanvas, 0, 0);
-    darkCtx.globalCompositeOperation = 'source-over';
+    // Step 2: Copy mask to work canvas, then iteratively blur + constrain
+    // This creates: white (opaque) in center, fading to transparent at edges
+    workCtx.clearRect(0, 0, width, height);
+    workCtx.drawImage(this._depthMaskCanvas, 0, 0);
 
-    // Step 3: Create eraser gradient (white that fades from edges inward)
-    // depthFade controls how much to erase: 0 = erase nothing, 1 = erase almost everything
-    eraseCtx.clearRect(0, 0, width, height);
-    eraseCtx.drawImage(this._depthMaskCanvas, 0, 0);
-
-    // Invert: we want to KEEP the center, ERASE the edges
-    // So we blur inward, then INVERT the result
-    const blurRadius = Math.max(5, 30 * (1 - depthFade * 0.7));  // Larger blur = softer gradient
-    const iterations = Math.max(2, Math.round(2 + depthFade * 4));
+    // depthFade: 0 = uniform (few iterations), 1 = steep gradient (more iterations)
+    const blurRadius = Math.max(8, 25 - depthFade * 15);
+    const iterations = Math.max(3, Math.round(4 + depthFade * 6));
 
     for (let i = 0; i < iterations; i++) {
-      eraseCtx.filter = `blur(${blurRadius}px)`;
-      eraseCtx.globalCompositeOperation = 'source-over';
-      eraseCtx.drawImage(this._depthEraseCanvas, 0, 0);
-      eraseCtx.filter = 'none';
-      eraseCtx.globalCompositeOperation = 'destination-in';
-      eraseCtx.drawImage(this._depthMaskCanvas, 0, 0);
+      // Blur (shrinks inward)
+      workCtx.filter = `blur(${blurRadius}px)`;
+      workCtx.globalCompositeOperation = 'source-over';
+      workCtx.drawImage(this._depthWorkCanvas, 0, 0);
+
+      // Constrain to original mask (clip to water shape)
+      workCtx.filter = 'none';
+      workCtx.globalCompositeOperation = 'destination-in';
+      workCtx.drawImage(this._depthMaskCanvas, 0, 0);
+      workCtx.globalCompositeOperation = 'source-over';
     }
 
-    // Now eraseCanvas has: white in center, fading to transparent at edges
-    // We want to KEEP center dark, ERASE edges
-    // So we use this as an alpha mask for the dark canvas
-    darkCtx.globalCompositeOperation = 'destination-in';
-    darkCtx.drawImage(this._depthEraseCanvas, 0, 0);
-    darkCtx.globalCompositeOperation = 'source-over';
+    // Step 3: Convert white gradient to dark depth
+    // workCanvas now has: opaque white center → transparent edges
+    // We want: opaque dark center → transparent edges
+    workCtx.globalCompositeOperation = 'source-in';
+    workCtx.fillStyle = 'rgba(0, 10, 25, 1)';
+    workCtx.fillRect(0, 0, width, height);
+    workCtx.globalCompositeOperation = 'source-over';
 
-    // Step 4: Composite onto water
+    // Step 4: Composite onto water with intensity control
     cacheCtx.save();
     cacheCtx.globalCompositeOperation = 'darken';
-    cacheCtx.drawImage(this._depthDarkCanvas, 0, 0);
+    cacheCtx.globalAlpha = intensity;
+    cacheCtx.drawImage(this._depthWorkCanvas, 0, 0);
     cacheCtx.restore();
   }
 
