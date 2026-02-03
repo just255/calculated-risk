@@ -109,14 +109,17 @@ export const PaintTool = {
                      e.y >= 0 && e.y <= state.canvasHeight;
 
     // Update brush preview with outer ring for shore/floor extend
+    // Only show preview when within map bounds
     if (inBounds) {
       const color = this._getPreviewColor(options);
       const previewOptions = this._getPreviewOptions(options);
       renderer.setBrushPreview(e.x, e.y, options.brushRadius, color, previewOptions);
     } else {
-      renderer.setBrushPreview(e.x, e.y, options.brushRadius, 'rgba(255, 50, 50, 0.3)', {
-        shape: options.brushShape || 'circle'
-      });
+      // Clear all previews when outside map bounds
+      renderer.clearBrushPreview();
+      renderer.clearTexturePreview();
+      renderer.clearScatterPreview();
+      return; // Don't process anything else when out of bounds
     }
 
     // Scatter preview on canvas (shows what would spawn at cursor position)
