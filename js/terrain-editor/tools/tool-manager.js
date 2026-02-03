@@ -238,6 +238,7 @@ export class ToolManager {
     if (!this._activeTool) return;
 
     this._renderer.clearBrushPreview();
+    this._renderer.clearTexturePreview();
     this._activeTool.onMouseLeave?.(this._state, this._renderer);
   }
 
