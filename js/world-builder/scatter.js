@@ -603,9 +603,6 @@ export function spawnChildren(terrainMap, parent, options = {}) {
   const parentAge = parent.age || 'old';
   const ageMod = AGE_MODIFIERS[parentAge] || AGE_MODIFIERS.old;
 
-  // Dry run mode
-  const dryRun = options.dryRun ?? false;
-
   // Season + biome context
   const season = options.season || 'summer';
   const biome = options.biome || 'temperate';
