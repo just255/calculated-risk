@@ -10,6 +10,8 @@ import { createTerrainMap, generateTreesForStroke, removeTreesForStroke, removeT
 import { generateScatter, generateForestItems, removeScatterByStroke, removeScatterInRadius, getScatterByCategory, SCATTER_TYPES, rebuildSpatialHash } from '../world-builder/index.js';
 // NEW: Animation system
 import { animateNewItems } from '../world-builder/scatter-animation.js';
+// LOD system for item limits
+import { getLODSettings } from './lod.js';
 
 /**
  * Default editor configuration
@@ -279,7 +281,9 @@ export class EditorState extends EventEmitter {
             brushEnabled: this._toolOptions.brushEnabled ?? true,
             strokeId: stroke.id,
             // Water collision
-            allowInWater: stroke.allowTreesInWater ?? false
+            allowInWater: stroke.allowTreesInWater ?? false,
+            // Item limits from LOD
+            maxItems: getLODSettings().maxItems
           }
         );
         newItems.push(...items);
@@ -333,7 +337,9 @@ export class EditorState extends EventEmitter {
             childSpawnOverrides: this._toolOptions.childSpawnOverrides ?? {},
             strokeId: stroke.id,
             // Water collision
-            allowInWater: stroke.allowBrushInWater ?? false
+            allowInWater: stroke.allowBrushInWater ?? false,
+            // Item limits from LOD
+            maxItems: getLODSettings().maxItems
           }
         );
         newItems.push(...items);

@@ -217,6 +217,33 @@ export function generateScatter(terrainMap, source, type, options = {}) {
   // Ensure scatterItems array exists
   if (!terrainMap.scatterItems) terrainMap.scatterItems = [];
 
+  // ═══════════════════════════════════════════════════════════════
+  // ITEM LIMIT CHECK - Prevent runaway generation
+  // ═══════════════════════════════════════════════════════════════
+  const maxItems = options.maxItems;
+  if (maxItems) {
+    const category = config.category;
+    const categoryLimit = maxItems[category] ?? Infinity;
+    const totalLimit = maxItems.total ?? Infinity;
+
+    // Count current items
+    const currentTotal = terrainMap.scatterItems.length;
+    const currentCategory = terrainMap.scatterItems.filter(item => {
+      const itemConfig = SCATTER_TYPES[item.type];
+      return itemConfig?.category === category;
+    }).length;
+
+    // Skip generation if at limit
+    if (currentTotal >= totalLimit) {
+      console.warn(`[Scatter] Total item limit reached (${currentTotal}/${totalLimit}), skipping ${type}`);
+      return [];
+    }
+    if (currentCategory >= categoryLimit) {
+      console.warn(`[Scatter] ${category} limit reached (${currentCategory}/${categoryLimit}), skipping ${type}`);
+      return [];
+    }
+  }
+
   // Extract source properties
   const x = source.x;
   const y = source.y;
@@ -494,6 +521,14 @@ export function generateScatter(terrainMap, source, type, options = {}) {
       }
     }
 
+    // Check limit before adding (in case we hit it mid-loop)
+    if (maxItems && !dryRun) {
+      const totalLimit = maxItems.total ?? Infinity;
+      if (terrainMap.scatterItems.length >= totalLimit) {
+        break;
+      }
+    }
+
     // Add to registry and spatial hash (skip in dry run mode)
     if (!dryRun) {
       terrainMap.scatterItems.push(item);
@@ -511,7 +546,8 @@ export function generateScatter(terrainMap, source, type, options = {}) {
         childSpawnOverrides: options.childSpawnOverrides || {},
         brushRadius: radius,  // Pass brush size for density scaling
         images: options.images,  // Pass images for actual sprite dimension lookup
-        dryRun
+        dryRun,
+        maxItems  // Pass limits to child spawning
       });
       addedItems.push(...children);
     }
@@ -544,6 +580,10 @@ export function spawnChildren(terrainMap, parent, options = {}) {
 
   const parentConfig = SCATTER_TYPES[parent.type];
   if (!parentConfig) return [];
+
+  // Item limit check
+  const maxItems = options.maxItems;
+  const dryRun = options.dryRun ?? false;
 
   // Calculate parent's visual radius from actual loaded sprite dimensions
   // If images provided, use real dimensions; otherwise fall back to config
@@ -796,6 +836,28 @@ export function spawnChildren(terrainMap, parent, options = {}) {
         _parentAge: parentAge,
         _season: season
       };
+
+      // Check item limits before adding
+      if (!dryRun && maxItems) {
+        const category = childConfig.category;
+        const categoryLimit = maxItems[category] ?? Infinity;
+        const totalLimit = maxItems.total ?? Infinity;
+        const currentTotal = terrainMap.scatterItems.length;
+
+        if (currentTotal >= totalLimit) {
+          return allChildren; // Hit total limit, stop spawning entirely
+        }
+
+        // Count current category items
+        const currentCategory = terrainMap.scatterItems.filter(item => {
+          const cfg = SCATTER_TYPES[item.type];
+          return cfg?.category === category;
+        }).length;
+
+        if (currentCategory >= categoryLimit) {
+          continue; // Skip this category, try next
+        }
+      }
 
       if (!dryRun) {
         terrainMap.scatterItems.push(child);
@@ -1155,7 +1217,9 @@ export function generateForestItems(terrainMap, stroke, options = {}) {
     floorEnabled = true,
     particlesEnabled = true,
     // Water collision
-    allowInWater = false
+    allowInWater = false,
+    // Item limits (from LOD system)
+    maxItems = null
   } = options;
 
   const { x, y, radius, seed = 42 } = stroke;
@@ -1208,7 +1272,8 @@ export function generateForestItems(terrainMap, stroke, options = {}) {
           childSpawnOverrides: effectiveChildOverrides,
           images,
           strokeId,
-          allowInWater
+          allowInWater,
+          maxItems
         }
       );
       allItems.push(...items);
@@ -1233,6 +1298,7 @@ export function generateForestItems(terrainMap, stroke, options = {}) {
         {
           density: treeDensity,
           ratioFraction,
+          maxItems,
           scale: treeScale,
           treeSpacing,
           selectedAges,
@@ -1305,7 +1371,8 @@ export function generateForestItems(terrainMap, stroke, options = {}) {
           childSpawnOverrides: effectiveChildOverrides,
           images,
           strokeId,
-          allowInWater
+          allowInWater,
+          maxItems
         }
       );
       allItems.push(...brushItems);

@@ -12,8 +12,8 @@ export const LOD_PRESETS = {
     description: 'Best performance, reduced detail',
 
     // Preview canvas
-    previewMaxPixels: 256 * 256,      // 64K pixels
-    previewMinScale: 0.1,
+    previewMaxPixels: 128 * 128,      // 16K pixels (very low for large maps)
+    previewMinScale: 0.05,
 
     // Scatter culling thresholds (zoom levels)
     scatterTreesOnlyZoom: 0.6,        // Below this: only trees
@@ -30,6 +30,15 @@ export const LOD_PRESETS = {
     // Viewport margins
     cullMarginGround: 50,
     cullMarginCanopy: 100,
+
+    // Max scatter items per category (performance caps)
+    maxItems: {
+      tree: 5000,
+      brush: 3000,
+      floor: 5000,
+      particle: 2000,
+      total: 15000
+    },
   },
 
   medium: {
@@ -50,6 +59,14 @@ export const LOD_PRESETS = {
 
     cullMarginGround: 100,
     cullMarginCanopy: 150,
+
+    maxItems: {
+      tree: 10000,
+      brush: 8000,
+      floor: 15000,
+      particle: 10000,
+      total: 40000
+    },
   },
 
   high: {
@@ -70,6 +87,14 @@ export const LOD_PRESETS = {
 
     cullMarginGround: 100,
     cullMarginCanopy: 150,
+
+    maxItems: {
+      tree: 20000,
+      brush: 15000,
+      floor: 30000,
+      particle: 20000,
+      total: 80000
+    },
   },
 
   ultra: {
@@ -90,6 +115,14 @@ export const LOD_PRESETS = {
 
     cullMarginGround: 150,
     cullMarginCanopy: 200,
+
+    maxItems: {
+      tree: 50000,
+      brush: 40000,
+      floor: 80000,
+      particle: 50000,
+      total: 200000
+    },
   }
 };
 
@@ -248,6 +281,27 @@ export function getSpriteScale() {
 export function getCullMargin(layer) {
   const settings = currentSettings;
   return layer === 'ground' ? settings.cullMarginGround : settings.cullMarginCanopy;
+}
+
+/**
+ * Get max item limits for scatter generation
+ * @param {string} category - 'tree', 'brush', 'floor', 'particle', or 'total'
+ * @returns {number} Maximum items allowed for this category
+ */
+export function getMaxItems(category) {
+  const maxItems = currentSettings.maxItems;
+  if (!maxItems) return Infinity;
+  return maxItems[category] ?? Infinity;
+}
+
+/**
+ * Check if a category has reached its item limit
+ * @param {number} currentCount - Current item count for this category
+ * @param {string} category - 'tree', 'brush', 'floor', 'particle'
+ * @returns {boolean} Whether more items can be added
+ */
+export function canAddMoreItems(currentCount, category) {
+  return currentCount < getMaxItems(category);
 }
 
 // ═══════════════════════════════════════════════════════════════
