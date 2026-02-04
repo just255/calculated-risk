@@ -170,6 +170,47 @@ export function getPresetList() {
   }));
 }
 
+/**
+ * Update a single LOD setting
+ * @param {string} key - Setting key (e.g., 'previewMaxPixels' or 'maxItems.tree')
+ * @param {any} value - New value
+ */
+export function setLODSetting(key, value) {
+  if (key.startsWith('maxItems.')) {
+    const subKey = key.split('.')[1];
+    if (!currentSettings.maxItems) currentSettings.maxItems = {};
+    currentSettings.maxItems[subKey] = value;
+  } else {
+    currentSettings[key] = value;
+  }
+  currentPreset = 'custom';
+}
+
+/**
+ * Apply a complete settings object (for bulk updates)
+ * @param {object} settings - Settings object
+ */
+export function applyLODSettings(settings) {
+  currentSettings = { ...settings };
+  if (settings.maxItems) {
+    currentSettings.maxItems = { ...settings.maxItems };
+  }
+  currentPreset = 'custom';
+}
+
+/**
+ * Reset to current preset (discards custom changes)
+ */
+export function resetToPreset() {
+  const preset = currentPreset === 'custom' ? 'high' : currentPreset;
+  currentSettings = { ...LOD_PRESETS[preset] };
+  if (LOD_PRESETS[preset].maxItems) {
+    currentSettings.maxItems = { ...LOD_PRESETS[preset].maxItems };
+  }
+  currentPreset = preset;
+  return preset;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // LOD Functions - Used by renderer and other systems
 // ═══════════════════════════════════════════════════════════════
@@ -309,6 +350,7 @@ export function canAddMoreItems(currentCount, category) {
 // ═══════════════════════════════════════════════════════════════
 
 const STORAGE_KEY = 'terrainEditor.qualityPreset';
+const STORAGE_KEY_CUSTOM = 'terrainEditor.customLODSettings';
 
 /**
  * Save current quality preset to localStorage
@@ -316,6 +358,10 @@ const STORAGE_KEY = 'terrainEditor.qualityPreset';
 export function saveQualityPreset() {
   try {
     localStorage.setItem(STORAGE_KEY, currentPreset);
+    // If custom settings, also save the full settings object
+    if (currentPreset === 'custom') {
+      localStorage.setItem(STORAGE_KEY_CUSTOM, JSON.stringify(currentSettings));
+    }
   } catch (e) {
     console.warn('[LOD] Failed to save preset:', e);
   }
@@ -328,7 +374,20 @@ export function saveQualityPreset() {
 export function loadQualityPreset() {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved && LOD_PRESETS[saved]) {
+    if (saved === 'custom') {
+      // Load custom settings
+      const customSettings = localStorage.getItem(STORAGE_KEY_CUSTOM);
+      if (customSettings) {
+        const parsed = JSON.parse(customSettings);
+        currentSettings = { ...parsed };
+        if (parsed.maxItems) {
+          currentSettings.maxItems = { ...parsed.maxItems };
+        }
+        currentPreset = 'custom';
+        console.log('[LOD] Loaded custom settings');
+        return true;
+      }
+    } else if (saved && LOD_PRESETS[saved]) {
       setQualityPreset(saved);
       return true;
     }

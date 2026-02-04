@@ -1013,6 +1013,170 @@
       scrollbar-width: thin;
       scrollbar-color: #0f3460 #1a1a2e;
     }
+
+    /* LOD Settings Modal */
+    .lod-modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      z-index: 1000;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .lod-modal-overlay.open {
+      display: flex;
+    }
+
+    .lod-modal {
+      background: #16213e;
+      border: 1px solid #0f3460;
+      border-radius: 8px;
+      width: 500px;
+      max-height: 80vh;
+      overflow-y: auto;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    }
+
+    .lod-modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      border-bottom: 1px solid #0f3460;
+      position: sticky;
+      top: 0;
+      background: #16213e;
+      z-index: 1;
+    }
+
+    .lod-modal-header h2 {
+      font-size: 14px;
+      font-weight: 500;
+      color: #e94560;
+    }
+
+    .lod-modal-close {
+      background: none;
+      border: none;
+      color: #888;
+      font-size: 20px;
+      cursor: pointer;
+      padding: 0 4px;
+    }
+
+    .lod-modal-close:hover {
+      color: #e94560;
+    }
+
+    .lod-modal-body {
+      padding: 16px;
+    }
+
+    .lod-section {
+      margin-bottom: 20px;
+    }
+
+    .lod-section-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #4ade80;
+      margin-bottom: 10px;
+      padding-bottom: 4px;
+      border-bottom: 1px solid #0f3460;
+    }
+
+    .lod-row {
+      display: flex;
+      align-items: center;
+      margin-bottom: 8px;
+      gap: 8px;
+    }
+
+    .lod-label {
+      flex: 1;
+      font-size: 12px;
+      color: #ccc;
+      cursor: help;
+    }
+
+    .lod-label[title] {
+      border-bottom: 1px dotted #666;
+    }
+
+    .lod-input {
+      width: 80px;
+      background: #0f3460;
+      border: 1px solid #1a4a7e;
+      color: #eee;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      text-align: right;
+    }
+
+    .lod-input:focus {
+      outline: none;
+      border-color: #4ade80;
+    }
+
+    .lod-input.wide {
+      width: 100px;
+    }
+
+    .lod-modal-footer {
+      display: flex;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-top: 1px solid #0f3460;
+      background: #16213e;
+      position: sticky;
+      bottom: 0;
+    }
+
+    .lod-btn {
+      background: #0f3460;
+      border: 1px solid #1a4a7e;
+      color: #eee;
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .lod-btn:hover {
+      background: #1a4a7e;
+    }
+
+    .lod-btn-primary {
+      background: #4ade80;
+      border-color: #4ade80;
+      color: #000;
+    }
+
+    .lod-btn-primary:hover {
+      background: #22c55e;
+      border-color: #22c55e;
+    }
+
+    .lod-gear-btn {
+      background: none;
+      border: none;
+      color: #888;
+      font-size: 16px;
+      cursor: pointer;
+      padding: 4px;
+      margin-left: -4px;
+    }
+
+    .lod-gear-btn:hover {
+      color: #4ade80;
+    }
   </style>
 </head>
 <body>
@@ -1050,6 +1214,7 @@
           <option value="high" selected>High</option>
           <option value="ultra">Ultra</option>
         </select>
+        <button class="lod-gear-btn" id="lod-settings-btn" title="Advanced Graphics Settings">⚙</button>
         <div class="header-divider"></div>
         <label class="header-btn" style="display: flex; align-items: center; gap: 4px; padding: 4px 8px;">
           <input type="checkbox" id="show-grid-header" checked> Grid
@@ -2089,6 +2254,106 @@
 
   <!-- Hidden file input for loading -->
   <input type="file" id="file-input" accept=".json" style="display: none;">
+
+  <!-- LOD Settings Modal -->
+  <div class="lod-modal-overlay" id="lod-modal">
+    <div class="lod-modal">
+      <div class="lod-modal-header">
+        <h2>Graphics Settings</h2>
+        <button class="lod-modal-close" id="lod-modal-close">&times;</button>
+      </div>
+      <div class="lod-modal-body">
+        <!-- Preview Settings -->
+        <div class="lod-section">
+          <div class="lod-section-title">Preview Quality</div>
+          <div class="lod-row">
+            <label class="lod-label" title="Maximum pixels for preview canvas (e.g., 65536 = 256x256). Lower = faster painting on large maps.">Max Preview Pixels</label>
+            <input type="number" class="lod-input wide" id="lod-previewMaxPixels" min="4096" max="16777216" step="4096">
+          </div>
+          <div class="lod-row">
+            <label class="lod-label" title="Minimum scale for preview (0.05-1.0). Prevents preview from becoming too pixelated.">Min Preview Scale</label>
+            <input type="number" class="lod-input" id="lod-previewMinScale" min="0.01" max="1" step="0.01">
+          </div>
+        </div>
+
+        <!-- Texture Settings -->
+        <div class="lod-section">
+          <div class="lod-section-title">Texture Quality</div>
+          <div class="lod-row">
+            <label class="lod-label" title="Texture resolution multiplier for final render (1-4). Higher = sharper ground textures.">Texture Scale</label>
+            <input type="number" class="lod-input" id="lod-textureScale" min="1" max="4" step="1">
+          </div>
+          <div class="lod-row">
+            <label class="lod-label" title="Texture resolution for preview mode (1-2). Lower = faster painting.">Preview Texture Scale</label>
+            <input type="number" class="lod-input" id="lod-textureScalePreview" min="1" max="2" step="1">
+          </div>
+          <div class="lod-row">
+            <label class="lod-label" title="Sprite resolution multiplier (0.5-1.0). Lower = faster rendering, slightly blurrier sprites.">Sprite Scale</label>
+            <input type="number" class="lod-input" id="lod-spriteScale" min="0.25" max="1" step="0.25">
+          </div>
+        </div>
+
+        <!-- Zoom LOD Thresholds -->
+        <div class="lod-section">
+          <div class="lod-section-title">Zoom-Based Detail Culling</div>
+          <div class="lod-row">
+            <label class="lod-label" title="Below this zoom level, only trees render (no brush/particles). Higher = more aggressive culling.">Trees Only Below Zoom</label>
+            <input type="number" class="lod-input" id="lod-scatterTreesOnlyZoom" min="0.1" max="1" step="0.05">
+          </div>
+          <div class="lod-row">
+            <label class="lod-label" title="Below this zoom level, brush stops rendering. Set higher to hide brush earlier when zooming out.">No Brush Below Zoom</label>
+            <input type="number" class="lod-input" id="lod-scatterNoBrushZoom" min="0.1" max="1" step="0.05">
+          </div>
+          <div class="lod-row">
+            <label class="lod-label" title="Below this zoom level, particles stop rendering. Particles are tiny, so they can be hidden earlier.">No Particles Below Zoom</label>
+            <input type="number" class="lod-input" id="lod-scatterNoParticlesZoom" min="0.1" max="1" step="0.05">
+          </div>
+        </div>
+
+        <!-- Viewport Culling -->
+        <div class="lod-section">
+          <div class="lod-section-title">Viewport Culling Margins</div>
+          <div class="lod-row">
+            <label class="lod-label" title="Extra pixels outside viewport to render for ground layer. Higher = smoother panning, more rendering.">Ground Margin (px)</label>
+            <input type="number" class="lod-input" id="lod-cullMarginGround" min="0" max="500" step="25">
+          </div>
+          <div class="lod-row">
+            <label class="lod-label" title="Extra pixels outside viewport for canopy layer. Trees are larger, so need bigger margin.">Canopy Margin (px)</label>
+            <input type="number" class="lod-input" id="lod-cullMarginCanopy" min="0" max="500" step="25">
+          </div>
+        </div>
+
+        <!-- Item Limits -->
+        <div class="lod-section">
+          <div class="lod-section-title">Max Scatter Items (Performance Caps)</div>
+          <div class="lod-row">
+            <label class="lod-label" title="Maximum tree items allowed. Generation stops when limit is reached.">Max Trees</label>
+            <input type="number" class="lod-input wide" id="lod-maxItems-tree" min="100" max="100000" step="1000">
+          </div>
+          <div class="lod-row">
+            <label class="lod-label" title="Maximum brush items (ferns, bushes).">Max Brush</label>
+            <input type="number" class="lod-input wide" id="lod-maxItems-brush" min="100" max="100000" step="1000">
+          </div>
+          <div class="lod-row">
+            <label class="lod-label" title="Maximum floor items (leaf litter, ground cover).">Max Floor</label>
+            <input type="number" class="lod-input wide" id="lod-maxItems-floor" min="100" max="100000" step="1000">
+          </div>
+          <div class="lod-row">
+            <label class="lod-label" title="Maximum particle items (tiny leaves, needles, twigs).">Max Particles</label>
+            <input type="number" class="lod-input wide" id="lod-maxItems-particle" min="100" max="100000" step="1000">
+          </div>
+          <div class="lod-row">
+            <label class="lod-label" title="Hard cap on total items across all categories. Prevents browser freeze.">Max Total Items</label>
+            <input type="number" class="lod-input wide" id="lod-maxItems-total" min="1000" max="500000" step="5000">
+          </div>
+        </div>
+      </div>
+      <div class="lod-modal-footer">
+        <button class="lod-btn" id="lod-reset">Reset to Preset</button>
+        <button class="lod-btn lod-btn-primary" id="lod-apply">Apply & Save</button>
+      </div>
+    </div>
+  </div>
 
   <script type="module" src="/js/terrain-editor/editor.js"></script>
 </body>

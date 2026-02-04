@@ -11,7 +11,7 @@ import { ClearTool } from './tools/clear-tool.js';
 import { Events } from './events.js';
 import * as Presets from './presets.js';
 import { BIOME_PRESETS, SEASON_BIOME_CONFIG, getSeasonBiomeConfig, getConfigSchema, exportConfigString, SCATTER_TYPES, generateForestItems, renderScatterItem, getSpriteKey } from '../world-builder/index.js';
-import { setQualityPreset, getCurrentPreset, saveQualityPreset, loadQualityPreset } from './lod.js';
+import { setQualityPreset, getCurrentPreset, saveQualityPreset, loadQualityPreset, getLODSettings, applyLODSettings, resetToPreset, LOD_PRESETS } from './lod.js';
 
 /**
  * Terrain Editor Application
@@ -246,6 +246,12 @@ class TerrainEditor {
       gridSizeHeader: document.getElementById('grid-size-header'),
       baseLayerHeader: document.getElementById('base-layer-header'),
       qualityPreset: document.getElementById('quality-preset'),
+      // LOD settings modal
+      lodSettingsBtn: document.getElementById('lod-settings-btn'),
+      lodModal: document.getElementById('lod-modal'),
+      lodModalClose: document.getElementById('lod-modal-close'),
+      lodApply: document.getElementById('lod-apply'),
+      lodReset: document.getElementById('lod-reset'),
       // Scatter environment (biome/season - for forest/brush in scatter mode)
       scatterEnvironment: document.getElementById('scatter-environment'),
 
@@ -1761,7 +1767,10 @@ class TerrainEditor {
     if (el.qualityPreset) {
       // Load saved preset and sync UI
       loadQualityPreset();
-      el.qualityPreset.value = getCurrentPreset();
+      const currentPreset = getCurrentPreset();
+      if (currentPreset !== 'custom') {
+        el.qualityPreset.value = currentPreset;
+      }
 
       el.qualityPreset.addEventListener('change', (e) => {
         setQualityPreset(e.target.value);
@@ -1772,6 +1781,154 @@ class TerrainEditor {
       });
     }
 
+    // LOD settings modal
+    this._setupLODModal();
+
+  }
+
+  /**
+   * Setup LOD settings modal
+   */
+  _setupLODModal() {
+    const el = this._elements;
+
+    // Open modal
+    if (el.lodSettingsBtn) {
+      el.lodSettingsBtn.addEventListener('click', () => {
+        this._populateLODModal();
+        el.lodModal.classList.add('open');
+      });
+    }
+
+    // Close modal
+    if (el.lodModalClose) {
+      el.lodModalClose.addEventListener('click', () => {
+        el.lodModal.classList.remove('open');
+      });
+    }
+
+    // Close on overlay click
+    if (el.lodModal) {
+      el.lodModal.addEventListener('click', (e) => {
+        if (e.target === el.lodModal) {
+          el.lodModal.classList.remove('open');
+        }
+      });
+    }
+
+    // Reset button
+    if (el.lodReset) {
+      el.lodReset.addEventListener('click', () => {
+        const preset = resetToPreset();
+        if (el.qualityPreset) {
+          el.qualityPreset.value = preset;
+        }
+        this._populateLODModal();
+        saveQualityPreset();
+        this._renderer.invalidateAllCaches();
+        this._state.requestRender();
+      });
+    }
+
+    // Apply button
+    if (el.lodApply) {
+      el.lodApply.addEventListener('click', () => {
+        this._applyLODModal();
+        el.lodModal.classList.remove('open');
+      });
+    }
+  }
+
+  /**
+   * Populate LOD modal with current settings
+   */
+  _populateLODModal() {
+    const settings = getLODSettings();
+
+    // Helper to set input value
+    const setInput = (id, value) => {
+      const input = document.getElementById(id);
+      if (input) input.value = value;
+    };
+
+    // Preview settings
+    setInput('lod-previewMaxPixels', settings.previewMaxPixels);
+    setInput('lod-previewMinScale', settings.previewMinScale);
+
+    // Texture settings
+    setInput('lod-textureScale', settings.textureScale);
+    setInput('lod-textureScalePreview', settings.textureScalePreview);
+    setInput('lod-spriteScale', settings.spriteScale);
+
+    // Zoom LOD thresholds
+    setInput('lod-scatterTreesOnlyZoom', settings.scatterTreesOnlyZoom);
+    setInput('lod-scatterNoBrushZoom', settings.scatterNoBrushZoom);
+    setInput('lod-scatterNoParticlesZoom', settings.scatterNoParticlesZoom);
+
+    // Viewport margins
+    setInput('lod-cullMarginGround', settings.cullMarginGround);
+    setInput('lod-cullMarginCanopy', settings.cullMarginCanopy);
+
+    // Max items
+    if (settings.maxItems) {
+      setInput('lod-maxItems-tree', settings.maxItems.tree);
+      setInput('lod-maxItems-brush', settings.maxItems.brush);
+      setInput('lod-maxItems-floor', settings.maxItems.floor);
+      setInput('lod-maxItems-particle', settings.maxItems.particle);
+      setInput('lod-maxItems-total', settings.maxItems.total);
+    }
+  }
+
+  /**
+   * Apply LOD modal settings
+   */
+  _applyLODModal() {
+    // Helper to get input value
+    const getInput = (id, parser = parseFloat) => {
+      const input = document.getElementById(id);
+      return input ? parser(input.value) : null;
+    };
+
+    const settings = {
+      name: 'Custom',
+      description: 'User-defined settings',
+
+      previewMaxPixels: getInput('lod-previewMaxPixels', parseInt),
+      previewMinScale: getInput('lod-previewMinScale'),
+
+      textureScale: getInput('lod-textureScale', parseInt),
+      textureScalePreview: getInput('lod-textureScalePreview', parseInt),
+      spriteScale: getInput('lod-spriteScale'),
+
+      scatterTreesOnlyZoom: getInput('lod-scatterTreesOnlyZoom'),
+      scatterNoBrushZoom: getInput('lod-scatterNoBrushZoom'),
+      scatterNoParticlesZoom: getInput('lod-scatterNoParticlesZoom'),
+
+      cullMarginGround: getInput('lod-cullMarginGround', parseInt),
+      cullMarginCanopy: getInput('lod-cullMarginCanopy', parseInt),
+
+      maxItems: {
+        tree: getInput('lod-maxItems-tree', parseInt),
+        brush: getInput('lod-maxItems-brush', parseInt),
+        floor: getInput('lod-maxItems-floor', parseInt),
+        particle: getInput('lod-maxItems-particle', parseInt),
+        total: getInput('lod-maxItems-total', parseInt)
+      }
+    };
+
+    applyLODSettings(settings);
+    saveQualityPreset();
+
+    // Update preset dropdown to show custom (or closest preset if matches)
+    if (this._elements.qualityPreset) {
+      this._elements.qualityPreset.value = 'high'; // Will not match 'custom', just visual indicator
+    }
+
+    // Invalidate caches and re-render
+    this._renderer.invalidateAllCaches();
+    this._state.requestRender();
+
+    console.log('[LOD] Applied custom settings:', settings);
   }
 
   /**
