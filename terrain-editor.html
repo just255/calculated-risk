@@ -1129,6 +1129,20 @@
       width: 100px;
     }
 
+    .lod-zoom-hint {
+      font-size: 10px;
+      color: #888;
+      margin-left: 8px;
+      min-width: 60px;
+    }
+
+    .lod-section-help {
+      font-size: 11px;
+      color: #888;
+      margin-bottom: 8px;
+      font-style: italic;
+    }
+
     .lod-modal-footer {
       display: flex;
       justify-content: space-between;
@@ -1178,6 +1192,15 @@
       color: #4ade80;
     }
   </style>
+
+  <!-- Import map for PixiJS (GPU-accelerated rendering) -->
+  <script type="importmap">
+    {
+      "imports": {
+        "pixi.js": "https://cdn.jsdelivr.net/npm/pixi.js@8.2.6/dist/pixi.min.mjs"
+      }
+    }
+  </script>
 </head>
 <body>
   <div class="editor-container">
@@ -2293,20 +2316,29 @@
           </div>
         </div>
 
-        <!-- Zoom LOD Thresholds -->
+        <!-- Minimum Pixel Size LOD -->
         <div class="lod-section">
-          <div class="lod-section-title">Zoom-Based Detail Culling</div>
+          <div class="lod-section-title">Minimum Pixel Size (LOD Culling)</div>
+          <div class="lod-section-help">Items smaller than this screen size are hidden. Higher = more aggressive culling.</div>
           <div class="lod-row">
-            <label class="lod-label" title="Below this zoom level, only trees render (no brush/particles). Higher = more aggressive culling.">Trees Only Below Zoom</label>
-            <input type="number" class="lod-input" id="lod-scatterTreesOnlyZoom" min="0.1" max="1" step="0.05">
+            <label class="lod-label" title="Trees hide when rendered smaller than this pixel size. Trees are large, so low values work well.">Trees (px)</label>
+            <input type="number" class="lod-input" id="lod-minPixels-tree" min="1" max="64" step="1">
+            <span class="lod-zoom-hint" id="lod-minPixels-tree-hint"></span>
           </div>
           <div class="lod-row">
-            <label class="lod-label" title="Below this zoom level, brush stops rendering. Set higher to hide brush earlier when zooming out.">No Brush Below Zoom</label>
-            <input type="number" class="lod-input" id="lod-scatterNoBrushZoom" min="0.1" max="1" step="0.05">
+            <label class="lod-label" title="Brush items hide when rendered smaller than this pixel size.">Brush (px)</label>
+            <input type="number" class="lod-input" id="lod-minPixels-brush" min="1" max="64" step="1">
+            <span class="lod-zoom-hint" id="lod-minPixels-brush-hint"></span>
           </div>
           <div class="lod-row">
-            <label class="lod-label" title="Below this zoom level, particles stop rendering. Particles are tiny, so they can be hidden earlier.">No Particles Below Zoom</label>
-            <input type="number" class="lod-input" id="lod-scatterNoParticlesZoom" min="0.1" max="1" step="0.05">
+            <label class="lod-label" title="Floor items hide when rendered smaller than this pixel size.">Floor (px)</label>
+            <input type="number" class="lod-input" id="lod-minPixels-floor" min="1" max="64" step="1">
+            <span class="lod-zoom-hint" id="lod-minPixels-floor-hint"></span>
+          </div>
+          <div class="lod-row">
+            <label class="lod-label" title="Particles hide when rendered smaller than this pixel size. Particles are tiny, so they hide first.">Particles (px)</label>
+            <input type="number" class="lod-input" id="lod-minPixels-particle" min="1" max="64" step="1">
+            <span class="lod-zoom-hint" id="lod-minPixels-particle-hint"></span>
           </div>
         </div>
 

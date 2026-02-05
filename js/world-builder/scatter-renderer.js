@@ -107,17 +107,18 @@ export function renderScatterItem(ctx, item, images, options = {}) {
     return;
   }
 
-  // Calculate size (use animated scale if available)
+  // Calculate size (use animated scale if available, unless skipAnimation)
   // Apply previewScale to reduce GPU bandwidth during previews
   const baseSize = img.width || 256;
-  const effectiveScale = item._renderScale ?? item.scale;
+  const skipAnim = options.skipAnimation;
+  const effectiveScale = skipAnim ? item.scale : (item._renderScale ?? item.scale);
   const previewScale = options.previewScale ?? 1.0;
   const size = baseSize * effectiveScale * previewScale;
 
-  // Get render position (use animated position if available)
-  const rx = item._renderX ?? item.x;
-  const ry = item._renderY ?? item.y;
-  const rrot = item._renderRotation ?? item.rotation;
+  // Get render position (use animated position if available, unless skipAnimation)
+  const rx = skipAnim ? item.x : (item._renderX ?? item.x);
+  const ry = skipAnim ? item.y : (item._renderY ?? item.y);
+  const rrot = skipAnim ? item.rotation : (item._renderRotation ?? item.rotation);
 
   ctx.save();
 
@@ -127,8 +128,8 @@ export function renderScatterItem(ctx, item, images, options = {}) {
     ctx.rotate(rrot * Math.PI / 180);
   }
 
-  // Alpha (use animated alpha if available)
-  ctx.globalAlpha = Math.min(1, item._renderAlpha ?? (item.alpha ?? 1.0));
+  // Alpha (use animated alpha if available, unless skipAnimation)
+  ctx.globalAlpha = Math.min(1, skipAnim ? (item.alpha ?? 1.0) : (item._renderAlpha ?? (item.alpha ?? 1.0)));
 
   // Color adjustments (hue, brightness, saturation) + animation brightness
   // CSS filters are GPU-expensive; skip during live rendering (options.skipFilters)

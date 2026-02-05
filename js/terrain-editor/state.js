@@ -136,6 +136,7 @@ const DEFAULT_VIEW_SETTINGS = {
   showBoundary: true,
   showParticleDebug: false,
   useScatterRendering: false,  // Toggle between legacy and new scatter system rendering
+  usePixiDisplay: false,       // Use PixiJS for GPU-accelerated display (vs Canvas 2D)
   showScatterPreview: false,   // Show scatter preview on canvas at cursor position
   showGroundPreview: true,     // Show ground texture preview on canvas
   showWaterPreview: true       // Show water texture preview on canvas
@@ -242,6 +243,7 @@ export class EditorState extends EventEmitter {
 
     const useScatter = this._toolOptions.useScatterSystem ?? false;
     const skipAnimation = options.skipAnimation ?? false;  // Skip for loading, PCG, etc.
+    const dragPainting = options.dragPainting ?? false;    // Reduce density during drag
     let newItems = [];
 
     // ═══════════════════════════════════════════════════════════════
@@ -254,39 +256,52 @@ export class EditorState extends EventEmitter {
           ? stroke.treeTypes
           : [stroke.treeType || 'oak'];
 
-        const items = generateForestItems(this._terrainMap,
-          { ...stroke, seed: stroke.seed ?? Math.floor(Math.random() * 1000000) },
-          {
-            treeTypes,
-            treeRatios: stroke.treeRatios || {},
-            deadTypes: this._toolOptions.deadTypes || [],
-            deadRatio: this._toolOptions.deadRatio ?? 0,
-            treeDensity: stroke.density ?? this._toolOptions.treeDensity ?? 1.0,
-            treeScale: stroke.treeScale ?? this._toolOptions.treeScale ?? 0.35,
-            treeSpacing: this._toolOptions.treeSpacing ?? 1.0,
-            selectedAges: stroke.selectedAges ?? this._toolOptions.selectedAges ?? ['young', 'transitional', 'old'],
-            ageRatios: stroke.ageRatios ?? this._toolOptions.ageRatios ?? null,
-            brushTypes: this._toolOptions.brushTypes || ['bush-small'],
-            brushRatios: this._toolOptions.brushRatios || {},
-            brushDensity: this._toolOptions.brushDensity ?? 1.0,
-            brushScale: this._toolOptions.brushScale ?? 0.25,
-            season: this._toolOptions.season ?? 'summer',
-            biome: this._toolOptions.biome ?? 'temperate',
-            seasonOverrides: this._toolOptions.seasonOverrides ?? {},
-            childSpawnOverrides: this._toolOptions.childSpawnOverrides ?? {},
-            // Category toggles
-            treesEnabled: this._toolOptions.treesEnabled ?? true,
-            floorEnabled: this._toolOptions.floorEnabled ?? true,
-            particlesEnabled: this._toolOptions.particlesEnabled ?? true,
-            brushEnabled: this._toolOptions.brushEnabled ?? true,
-            strokeId: stroke.id,
-            // Water collision
-            allowInWater: stroke.allowTreesInWater ?? false,
-            // Item limits from LOD
-            maxItems: getLODSettings().maxItems
-          }
-        );
-        newItems.push(...items);
+        // Common generation options
+        const genOptions = {
+          treeTypes,
+          treeRatios: stroke.treeRatios || {},
+          deadTypes: this._toolOptions.deadTypes || [],
+          deadRatio: this._toolOptions.deadRatio ?? 0,
+          treeDensity: stroke.density ?? this._toolOptions.treeDensity ?? 1.0,
+          treeScale: stroke.treeScale ?? this._toolOptions.treeScale ?? 0.35,
+          treeSpacing: this._toolOptions.treeSpacing ?? 1.0,
+          selectedAges: stroke.selectedAges ?? this._toolOptions.selectedAges ?? ['young', 'transitional', 'old'],
+          ageRatios: stroke.ageRatios ?? this._toolOptions.ageRatios ?? null,
+          brushTypes: this._toolOptions.brushTypes || ['bush-small'],
+          brushRatios: this._toolOptions.brushRatios || {},
+          brushDensity: this._toolOptions.brushDensity ?? 1.0,
+          brushScale: this._toolOptions.brushScale ?? 0.25,
+          season: this._toolOptions.season ?? 'summer',
+          biome: this._toolOptions.biome ?? 'temperate',
+          seasonOverrides: this._toolOptions.seasonOverrides ?? {},
+          childSpawnOverrides: this._toolOptions.childSpawnOverrides ?? {},
+          // Category toggles - reduce particles/floor during drag painting for performance
+          treesEnabled: this._toolOptions.treesEnabled ?? true,
+          floorEnabled: dragPainting ? false : (this._toolOptions.floorEnabled ?? true),
+          particlesEnabled: dragPainting ? false : (this._toolOptions.particlesEnabled ?? true),
+          brushEnabled: this._toolOptions.brushEnabled ?? true,
+          strokeId: stroke.id,
+          // Water collision
+          allowInWater: stroke.allowTreesInWater ?? false,
+          // Item limits from LOD
+          maxItems: getLODSettings().maxItems
+        };
+
+        // Handle multi-center strokes (single stroke per drag operation)
+        const centers = stroke.centers || [{ x: stroke.x, y: stroke.y }];
+        const baseSeed = stroke.seed ?? Math.floor(Math.random() * 1000000);
+
+        for (let i = 0; i < centers.length; i++) {
+          const center = centers[i];
+          // Use different seed per center for variation
+          const centerSeed = baseSeed + i * 7919; // Prime offset for distribution
+
+          const items = generateForestItems(this._terrainMap,
+            { x: center.x, y: center.y, radius: stroke.radius, seed: centerSeed },
+            genOptions
+          );
+          newItems.push(...items);
+        }
       } else {
         // LEGACY SYSTEM: Trees + particles (floor uses ground texture, not discrete sprites)
         generateTreesForStroke(this._terrainMap, stroke);
@@ -315,34 +330,47 @@ export class EditorState extends EventEmitter {
           ? stroke.brushTypes
           : [stroke.brushType || 'bush-small'];
 
-        const items = generateForestItems(this._terrainMap,
-          { ...stroke, seed: stroke.seed ?? Math.floor(Math.random() * 1000000) },
-          {
-            // Disable trees - brush is the parent
-            treesEnabled: false,
-            treeTypes: [],
-            // Brush settings
-            brushTypes,
-            brushRatios: stroke.brushRatios || this._toolOptions.brushRatios || {},
-            brushDensity: stroke.density ?? this._toolOptions.brushDensity ?? 1.0,
-            brushScale: stroke.brushScale ?? this._toolOptions.brushScale ?? 0.25,
-            brushEnabled: true,
-            // Floor/particle children
-            floorEnabled: stroke.floorEnabled ?? this._toolOptions.floorEnabled ?? true,
-            particlesEnabled: stroke.particlesEnabled ?? this._toolOptions.particlesEnabled ?? true,
-            // Season/biome
-            season: this._toolOptions.season ?? 'summer',
-            biome: this._toolOptions.biome ?? 'temperate',
-            seasonOverrides: this._toolOptions.seasonOverrides ?? {},
-            childSpawnOverrides: this._toolOptions.childSpawnOverrides ?? {},
-            strokeId: stroke.id,
-            // Water collision
-            allowInWater: stroke.allowBrushInWater ?? false,
-            // Item limits from LOD
-            maxItems: getLODSettings().maxItems
-          }
-        );
-        newItems.push(...items);
+        // Common generation options
+        const genOptions = {
+          // Disable trees - brush is the parent
+          treesEnabled: false,
+          treeTypes: [],
+          // Brush settings
+          brushTypes,
+          brushRatios: stroke.brushRatios || this._toolOptions.brushRatios || {},
+          brushDensity: stroke.density ?? this._toolOptions.brushDensity ?? 1.0,
+          brushScale: stroke.brushScale ?? this._toolOptions.brushScale ?? 0.25,
+          brushEnabled: true,
+          // Floor/particle children - reduce during drag painting for performance
+          floorEnabled: dragPainting ? false : (stroke.floorEnabled ?? this._toolOptions.floorEnabled ?? true),
+          particlesEnabled: dragPainting ? false : (stroke.particlesEnabled ?? this._toolOptions.particlesEnabled ?? true),
+          // Season/biome
+          season: this._toolOptions.season ?? 'summer',
+          biome: this._toolOptions.biome ?? 'temperate',
+          seasonOverrides: this._toolOptions.seasonOverrides ?? {},
+          childSpawnOverrides: this._toolOptions.childSpawnOverrides ?? {},
+          strokeId: stroke.id,
+          // Water collision
+          allowInWater: stroke.allowBrushInWater ?? false,
+          // Item limits from LOD
+          maxItems: getLODSettings().maxItems
+        };
+
+        // Handle multi-center strokes (single stroke per drag operation)
+        const centers = stroke.centers || [{ x: stroke.x, y: stroke.y }];
+        const baseSeed = stroke.seed ?? Math.floor(Math.random() * 1000000);
+
+        for (let i = 0; i < centers.length; i++) {
+          const center = centers[i];
+          // Use different seed per center for variation
+          const centerSeed = baseSeed + i * 7919; // Prime offset for distribution
+
+          const items = generateForestItems(this._terrainMap,
+            { x: center.x, y: center.y, radius: stroke.radius, seed: centerSeed },
+            genOptions
+          );
+          newItems.push(...items);
+        }
       } else {
         // LEGACY SYSTEM
         generateBrushForStroke(this._terrainMap, stroke);

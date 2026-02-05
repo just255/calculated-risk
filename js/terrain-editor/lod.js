@@ -4,7 +4,16 @@
 // ═══════════════════════════════════════════════════════════════
 
 /**
+ * Default sprite size in pixels (most sprites are 256x256)
+ */
+export const BASE_SPRITE_SIZE = 256;
+
+/**
  * Quality presets for different performance/quality tradeoffs
+ *
+ * minPixels: Minimum rendered pixel size before an item is culled.
+ * Formula: renderedSize = BASE_SPRITE_SIZE * itemScale * zoom
+ * Item is visible when: renderedSize >= minPixels[category]
  */
 export const LOD_PRESETS = {
   low: {
@@ -15,10 +24,13 @@ export const LOD_PRESETS = {
     previewMaxPixels: 128 * 128,      // 16K pixels (very low for large maps)
     previewMinScale: 0.05,
 
-    // Scatter culling thresholds (zoom levels)
-    scatterTreesOnlyZoom: 0.6,        // Below this: only trees
-    scatterNoBrushZoom: 0.8,          // Below this: no brush
-    scatterNoParticlesZoom: 1.0,      // Below this: no particles
+    // Minimum rendered pixel size per category (higher = more aggressive culling)
+    minPixels: {
+      tree: 16,       // Trees stay visible longest
+      brush: 20,      // Medium items
+      floor: 16,      // Ground detail
+      particle: 12,   // Tiny accents, hide first
+    },
 
     // Texture quality
     textureScale: 1,                   // Always 1x
@@ -31,14 +43,8 @@ export const LOD_PRESETS = {
     cullMarginGround: 50,
     cullMarginCanopy: 100,
 
-    // Max scatter items per category (performance caps)
-    maxItems: {
-      tree: 5000,
-      brush: 3000,
-      floor: 5000,
-      particle: 2000,
-      total: 15000
-    },
+    // No item caps - rely on LOD culling for performance
+    maxItems: null,
   },
 
   medium: {
@@ -48,9 +54,12 @@ export const LOD_PRESETS = {
     previewMaxPixels: 512 * 512,      // 256K pixels
     previewMinScale: 0.1,
 
-    scatterTreesOnlyZoom: 0.4,
-    scatterNoBrushZoom: 0.6,
-    scatterNoParticlesZoom: 0.75,
+    minPixels: {
+      tree: 12,
+      brush: 14,
+      floor: 12,
+      particle: 8,
+    },
 
     textureScale: 2,
     textureScalePreview: 1,
@@ -60,13 +69,8 @@ export const LOD_PRESETS = {
     cullMarginGround: 100,
     cullMarginCanopy: 150,
 
-    maxItems: {
-      tree: 10000,
-      brush: 8000,
-      floor: 15000,
-      particle: 10000,
-      total: 40000
-    },
+    // No item caps - rely on LOD culling for performance
+    maxItems: null,
   },
 
   high: {
@@ -76,9 +80,12 @@ export const LOD_PRESETS = {
     previewMaxPixels: 1024 * 1024,    // 1M pixels
     previewMinScale: 0.15,
 
-    scatterTreesOnlyZoom: 0.3,
-    scatterNoBrushZoom: 0.5,
-    scatterNoParticlesZoom: 0.65,
+    minPixels: {
+      tree: 8,
+      brush: 10,
+      floor: 8,
+      particle: 5,
+    },
 
     textureScale: 2,
     textureScalePreview: 1,
@@ -88,13 +95,8 @@ export const LOD_PRESETS = {
     cullMarginGround: 100,
     cullMarginCanopy: 150,
 
-    maxItems: {
-      tree: 20000,
-      brush: 15000,
-      floor: 30000,
-      particle: 20000,
-      total: 80000
-    },
+    // No item caps - rely on LOD culling for performance
+    maxItems: null,
   },
 
   ultra: {
@@ -104,9 +106,12 @@ export const LOD_PRESETS = {
     previewMaxPixels: 2048 * 2048,    // 4M pixels
     previewMinScale: 0.2,
 
-    scatterTreesOnlyZoom: 0.2,
-    scatterNoBrushZoom: 0.35,
-    scatterNoParticlesZoom: 0.5,
+    minPixels: {
+      tree: 4,
+      brush: 6,
+      floor: 4,
+      particle: 3,
+    },
 
     textureScale: 4,
     textureScalePreview: 2,
@@ -116,19 +121,17 @@ export const LOD_PRESETS = {
     cullMarginGround: 150,
     cullMarginCanopy: 200,
 
-    maxItems: {
-      tree: 50000,
-      brush: 40000,
-      floor: 80000,
-      particle: 50000,
-      total: 200000
-    },
+    // No item caps - rely on LOD culling for performance
+    maxItems: null,
   }
 };
 
 // Current quality level
 let currentPreset = 'high';
-let currentSettings = { ...LOD_PRESETS.high };
+let currentSettings = {
+  ...LOD_PRESETS.high,
+  minPixels: { ...LOD_PRESETS.high.minPixels }
+};
 
 /**
  * Set quality preset
@@ -141,6 +144,10 @@ export function setQualityPreset(preset) {
   }
   currentPreset = preset;
   currentSettings = { ...LOD_PRESETS[preset] };
+  // Deep copy minPixels
+  if (LOD_PRESETS[preset].minPixels) {
+    currentSettings.minPixels = { ...LOD_PRESETS[preset].minPixels };
+  }
   console.log(`[LOD] Quality set to: ${currentSettings.name}`);
   return true;
 }
@@ -180,6 +187,10 @@ export function setLODSetting(key, value) {
     const subKey = key.split('.')[1];
     if (!currentSettings.maxItems) currentSettings.maxItems = {};
     currentSettings.maxItems[subKey] = value;
+  } else if (key.startsWith('minPixels.')) {
+    const subKey = key.split('.')[1];
+    if (!currentSettings.minPixels) currentSettings.minPixels = {};
+    currentSettings.minPixels[subKey] = value;
   } else {
     currentSettings[key] = value;
   }
@@ -195,6 +206,9 @@ export function applyLODSettings(settings) {
   if (settings.maxItems) {
     currentSettings.maxItems = { ...settings.maxItems };
   }
+  if (settings.minPixels) {
+    currentSettings.minPixels = { ...settings.minPixels };
+  }
   currentPreset = 'custom';
 }
 
@@ -206,6 +220,9 @@ export function resetToPreset() {
   currentSettings = { ...LOD_PRESETS[preset] };
   if (LOD_PRESETS[preset].maxItems) {
     currentSettings.maxItems = { ...LOD_PRESETS[preset].maxItems };
+  }
+  if (LOD_PRESETS[preset].minPixels) {
+    currentSettings.minPixels = { ...LOD_PRESETS[preset].minPixels };
   }
   currentPreset = preset;
   return preset;
@@ -241,25 +258,76 @@ export function getPreviewScale(zoom, mapWidth, mapHeight) {
 }
 
 /**
- * Check if a scatter category should render at current zoom
+ * Typical/average scales for each category (used for category-level checks)
+ * These represent common item scales for quick culling decisions
+ */
+const TYPICAL_SCALES = {
+  tree: 0.4,      // Trees tend to be larger
+  brush: 0.25,    // Brush is medium
+  floor: 0.15,    // Floor items are smaller
+  particle: 0.08, // Particles are tiny
+};
+
+/**
+ * Check if a specific scatter item should render at current zoom
+ * Uses pixel-size based culling: item renders if its screen size >= minPixels
+ *
+ * @param {object} item - Scatter item with scale property
+ * @param {number} zoom - Current viewport zoom level
+ * @param {string} category - Category: 'tree', 'brush', 'floor', 'particle'
+ * @returns {boolean} Whether to render this item
+ */
+export function shouldRenderItem(item, zoom, category) {
+  const settings = currentSettings;
+  const minPixels = settings.minPixels?.[category];
+
+  // No threshold set = always render
+  if (!minPixels) return true;
+
+  // Calculate rendered pixel size: spriteSize * itemScale * zoom
+  const renderedSize = BASE_SPRITE_SIZE * (item.scale || TYPICAL_SCALES[category]) * zoom;
+
+  return renderedSize >= minPixels;
+}
+
+/**
+ * Check if a scatter category should render at current zoom (quick check)
+ * Uses typical/average scale for the category - for fast category-level culling
+ *
  * @param {number} zoom - Current viewport zoom level
  * @param {string} category - Category: 'tree', 'brush', 'floor', 'particle'
  * @returns {boolean} Whether to render this category
  */
 export function shouldRenderCategory(zoom, category) {
   const settings = currentSettings;
+  const minPixels = settings.minPixels?.[category];
 
-  switch (category) {
-    case 'tree':
-    case 'floor':
-      return true; // Always render trees and floor
-    case 'brush':
-      return zoom >= settings.scatterTreesOnlyZoom;
-    case 'particle':
-      return zoom >= settings.scatterNoParticlesZoom;
-    default:
-      return true;
-  }
+  // No threshold set = always render
+  if (!minPixels) return true;
+
+  // Use typical scale for quick category-level check
+  const typicalScale = TYPICAL_SCALES[category] || 0.2;
+  const renderedSize = BASE_SPRITE_SIZE * typicalScale * zoom;
+
+  return renderedSize >= minPixels;
+}
+
+/**
+ * Get the minimum zoom at which a category becomes visible
+ * Useful for UI display
+ *
+ * @param {string} category - Category: 'tree', 'brush', 'floor', 'particle'
+ * @returns {number} Minimum zoom level (0-1) for visibility
+ */
+export function getCategoryMinZoom(category) {
+  const settings = currentSettings;
+  const minPixels = settings.minPixels?.[category];
+  if (!minPixels) return 0;
+
+  const typicalScale = TYPICAL_SCALES[category] || 0.2;
+  // Solve: BASE_SPRITE_SIZE * typicalScale * zoom = minPixels
+  // zoom = minPixels / (BASE_SPRITE_SIZE * typicalScale)
+  return minPixels / (BASE_SPRITE_SIZE * typicalScale);
 }
 
 /**
@@ -268,15 +336,12 @@ export function shouldRenderCategory(zoom, category) {
  * @returns {string[]} Array of category names to render
  */
 export function getVisibleCategories(zoom) {
-  const settings = currentSettings;
-  const categories = ['tree', 'floor']; // Always render
+  const categories = [];
 
-  if (zoom >= settings.scatterTreesOnlyZoom) {
-    categories.push('brush');
-  }
-  if (zoom >= settings.scatterNoParticlesZoom) {
-    categories.push('particle');
-  }
+  if (shouldRenderCategory(zoom, 'tree')) categories.push('tree');
+  if (shouldRenderCategory(zoom, 'floor')) categories.push('floor');
+  if (shouldRenderCategory(zoom, 'brush')) categories.push('brush');
+  if (shouldRenderCategory(zoom, 'particle')) categories.push('particle');
 
   return categories;
 }
@@ -382,6 +447,9 @@ export function loadQualityPreset() {
         currentSettings = { ...parsed };
         if (parsed.maxItems) {
           currentSettings.maxItems = { ...parsed.maxItems };
+        }
+        if (parsed.minPixels) {
+          currentSettings.minPixels = { ...parsed.minPixels };
         }
         currentPreset = 'custom';
         console.log('[LOD] Loaded custom settings');

@@ -11,7 +11,7 @@ import { ClearTool } from './tools/clear-tool.js';
 import { Events } from './events.js';
 import * as Presets from './presets.js';
 import { BIOME_PRESETS, SEASON_BIOME_CONFIG, getSeasonBiomeConfig, getConfigSchema, exportConfigString, SCATTER_TYPES, generateForestItems, renderScatterItem, getSpriteKey } from '../world-builder/index.js';
-import { setQualityPreset, getCurrentPreset, saveQualityPreset, loadQualityPreset, getLODSettings, applyLODSettings, resetToPreset, LOD_PRESETS } from './lod.js';
+import { setQualityPreset, getCurrentPreset, saveQualityPreset, loadQualityPreset, getLODSettings, applyLODSettings, resetToPreset, LOD_PRESETS, getCategoryMinZoom, BASE_SPRITE_SIZE } from './lod.js';
 
 /**
  * Terrain Editor Application
@@ -261,6 +261,10 @@ class TerrainEditor {
       // Generation system toggle
       systemLegacy: document.getElementById('system-legacy'),
       systemScatter: document.getElementById('system-scatter'),
+
+      // Display mode toggle
+      displayCanvas2D: document.getElementById('display-canvas2d'),
+      displayPixi: document.getElementById('display-pixi'),
       legacySystemSettings: document.getElementById('legacy-system-settings'),
       scatterSystemSettings: document.getElementById('scatter-system-settings'),
       legacyPresetsSection: document.getElementById('legacy-presets-section'),
@@ -1837,6 +1841,15 @@ class TerrainEditor {
         el.lodModal.classList.remove('open');
       });
     }
+
+    // Update hints when minPixels inputs change
+    const categories = ['tree', 'brush', 'floor', 'particle'];
+    for (const cat of categories) {
+      const input = document.getElementById(`lod-minPixels-${cat}`);
+      if (input) {
+        input.addEventListener('input', () => this._updateMinPixelsHints());
+      }
+    }
   }
 
   /**
@@ -1860,10 +1873,14 @@ class TerrainEditor {
     setInput('lod-textureScalePreview', settings.textureScalePreview);
     setInput('lod-spriteScale', settings.spriteScale);
 
-    // Zoom LOD thresholds
-    setInput('lod-scatterTreesOnlyZoom', settings.scatterTreesOnlyZoom);
-    setInput('lod-scatterNoBrushZoom', settings.scatterNoBrushZoom);
-    setInput('lod-scatterNoParticlesZoom', settings.scatterNoParticlesZoom);
+    // Minimum pixel size LOD thresholds
+    if (settings.minPixels) {
+      setInput('lod-minPixels-tree', settings.minPixels.tree);
+      setInput('lod-minPixels-brush', settings.minPixels.brush);
+      setInput('lod-minPixels-floor', settings.minPixels.floor);
+      setInput('lod-minPixels-particle', settings.minPixels.particle);
+      this._updateMinPixelsHints();
+    }
 
     // Viewport margins
     setInput('lod-cullMarginGround', settings.cullMarginGround);
@@ -1900,9 +1917,12 @@ class TerrainEditor {
       textureScalePreview: getInput('lod-textureScalePreview', parseInt),
       spriteScale: getInput('lod-spriteScale'),
 
-      scatterTreesOnlyZoom: getInput('lod-scatterTreesOnlyZoom'),
-      scatterNoBrushZoom: getInput('lod-scatterNoBrushZoom'),
-      scatterNoParticlesZoom: getInput('lod-scatterNoParticlesZoom'),
+      minPixels: {
+        tree: getInput('lod-minPixels-tree', parseInt),
+        brush: getInput('lod-minPixels-brush', parseInt),
+        floor: getInput('lod-minPixels-floor', parseInt),
+        particle: getInput('lod-minPixels-particle', parseInt),
+      },
 
       cullMarginGround: getInput('lod-cullMarginGround', parseInt),
       cullMarginCanopy: getInput('lod-cullMarginCanopy', parseInt),
@@ -1929,6 +1949,29 @@ class TerrainEditor {
     this._state.requestRender();
 
     console.log('[LOD] Applied custom settings:', settings);
+  }
+
+  /**
+   * Update the zoom hints next to minPixels inputs
+   * Shows the approximate zoom level where items become visible
+   */
+  _updateMinPixelsHints() {
+    const categories = ['tree', 'brush', 'floor', 'particle'];
+    const typicalScales = { tree: 0.4, brush: 0.25, floor: 0.15, particle: 0.08 };
+
+    for (const cat of categories) {
+      const input = document.getElementById(`lod-minPixels-${cat}`);
+      const hint = document.getElementById(`lod-minPixels-${cat}-hint`);
+      if (!input || !hint) continue;
+
+      const minPixels = parseInt(input.value) || 8;
+      const typicalScale = typicalScales[cat];
+      // Calculate zoom where typical item becomes visible
+      // renderedSize = BASE_SPRITE_SIZE * scale * zoom = minPixels
+      // zoom = minPixels / (BASE_SPRITE_SIZE * scale)
+      const minZoom = minPixels / (BASE_SPRITE_SIZE * typicalScale);
+      hint.textContent = `≈ ${Math.round(minZoom * 100)}% zoom`;
+    }
   }
 
   /**

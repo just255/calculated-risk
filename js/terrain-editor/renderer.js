@@ -10,7 +10,7 @@ import { renderScatterLayer, renderScatterItem, getVisibleScatter, SCATTER_TYPES
 // NEW: Animation system
 import { updateAnimations, hasActiveAnimations, getActiveAnimationCount, animateStrokes } from '../world-builder/scatter-animation.js';
 // LOD (Level of Detail) system
-import { getPreviewScale, shouldRenderCategory, getTextureScale, getCullMargin, getSpriteScale } from './lod.js';
+import { getPreviewScale, shouldRenderCategory, shouldRenderItem, getTextureScale, getCullMargin, getSpriteScale } from './lod.js';
 
 // Ground texture scale (1 = native 256px, 0.25 = 64px tiles = matches cell size)
 const GROUND_TEXTURE_SCALE = 0.25;
@@ -83,6 +83,13 @@ export class Renderer {
     this._canopyCacheBrushCount = 0;
     this._canopyCacheParticleCount = 0;
     this._canopyCacheScatterCount = 0;  // NEW: Track scatterItems for cache invalidation
+
+
+    // Deferred cache rebuild - prevents 28s freeze on mouseUp
+    // When true, render all items directly and schedule cache build in background
+    this._canopyCacheDeferred = false;
+    this._deferredRebuildScheduled = false;
+    this._deferredRebuildTimeoutId = null;
 
     // Track current rendering mode to invalidate caches when it changes
     this._useScatterRendering = false;
@@ -168,8 +175,12 @@ export class Renderer {
 
     // Invalidate caches on major changes (not individual strokes during painting)
     this._state.on(Events.STROKES_CLEARED, () => { this._invalidateGroundCache(); this._invalidateWaterCache(); this._invalidateCanopyCache(); });
-    this._state.on(Events.MAP_LOADED, () => { this._invalidateGroundCache(); this._invalidateWaterCache(); this._invalidateCanopyCache(); });
-    this._state.on(Events.MAP_CLEARED, () => { this._invalidateGroundCache(); this._invalidateWaterCache(); this._invalidateCanopyCache(); });
+    this._state.on(Events.MAP_LOADED, () => {
+      this._invalidateGroundCache(); this._invalidateWaterCache(); this._invalidateCanopyCache();
+    });
+    this._state.on(Events.MAP_CLEARED, () => {
+      this._invalidateGroundCache(); this._invalidateWaterCache(); this._invalidateCanopyCache();
+    });
     this._state.on(Events.BASE_LAYER_CHANGED, () => this._invalidateGroundCache());
 
     // Invalidate caches when post-processing settings change (seasonOverrides)
@@ -203,6 +214,51 @@ export class Renderer {
     this._groundCacheValid = false;
     this._waterCacheValid = false;
     this._canopyCacheValid = false;
+  }
+
+  /**
+   * Render grid to a context
+   */
+  _renderGridToContext(ctx, width, height) {
+    const cellSize = this._state.cellSize;
+    const opacity = this._state.viewSettings.gridOpacity ?? 0.35;
+
+    ctx.strokeStyle = `rgba(255, 255, 255, ${opacity})`;
+    ctx.lineWidth = 1;
+
+    // Vertical lines
+    for (let x = 0; x <= width; x += cellSize) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+      ctx.stroke();
+    }
+
+    // Horizontal lines
+    for (let y = 0; y <= height; y += cellSize) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+      ctx.stroke();
+    }
+  }
+
+  /**
+   * Render brush preview to a context
+   */
+  _renderBrushPreviewToContext(ctx) {
+    const brush = this._state.brush;
+    if (!brush || brush.x === null || brush.y === null) return;
+
+    const radius = brush.radius || 50;
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.arc(brush.x, brush.y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 
   /**
@@ -315,6 +371,8 @@ export class Renderer {
       const ctx = this._paintPreview.getContext('2d');
       ctx.clearRect(0, 0, this._paintPreview.width, this._paintPreview.height);
     }
+    // Also clear scatter preview
+    this._scatterPreview = null;
   }
 
   /**
@@ -392,7 +450,9 @@ export class Renderer {
 
     const strokes = this._paintPreviewStrokes;
     const len = strokes.length;
-    if (len === 0) return;
+    if (len === 0) {
+      return;
+    }
 
     // Render in layer order: ground textures, then shores, then water
     // Ground textures are masked by water+shore to prevent showing through
@@ -492,6 +552,7 @@ export class Renderer {
     for (const s of waterStrokes) {
       this._renderWaterStroke(ctx, s, true);
     }
+
   }
 
   /**
@@ -985,6 +1046,7 @@ export class Renderer {
       console.log(`[Renderer] Rendering mode changed to: ${useScatter ? 'scatter' : 'legacy'}`);
     }
 
+    // Canvas 2D display mode
     // Clear all canvases and apply viewport transform (with DPR scaling)
     Object.entries(this._contexts).forEach(([layer, ctx]) => {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1147,8 +1209,12 @@ export class Renderer {
     }
 
     // Draw forest floor (ground texture radiating from each tree)
-    if (viewSettings.useScatterRendering) {
-      // SCATTER SYSTEM: Discrete floor sprites
+    // Skip floor rendering if there are too many items - render directly with viewport culling instead
+    const floorItemCount = terrainMap.scatterItems?.filter(i => SCATTER_TYPES[i.type]?.layer === 'ground').length || 0;
+    const MAX_FLOOR_ITEMS_FOR_CACHE = 10000; // Above this, render directly with culling
+
+    if (viewSettings.useScatterRendering && floorItemCount <= MAX_FLOOR_ITEMS_FOR_CACHE) {
+      // SCATTER SYSTEM: Discrete floor sprites (small maps only)
       const viewport = { x: 0, y: 0, width, height };
       const images = {
         tree: this._images.trees,
@@ -1159,6 +1225,11 @@ export class Renderer {
       // Get post-processing settings from state (applied at render time)
       const postProcessing = this._state.toolOptions?.seasonOverrides || {};
       renderScatterLayer(cacheCtx, terrainMap, 'ground', viewport, images, { postProcessing });
+      this._floorNotInCache = false; // Floor is in cache
+    } else if (viewSettings.useScatterRendering) {
+      // Too many floor items - skip caching, will render directly with viewport culling
+      console.log(`[Renderer] Skipping floor cache (${floorItemCount} items > ${MAX_FLOOR_ITEMS_FOR_CACHE}), using direct render`);
+      this._floorNotInCache = true; // Signal to render floor items directly
     } else {
       // LEGACY SYSTEM: Forest-floor ground texture radiating from each tree
       this._renderTreeBasedGroundLayer(cacheCtx, previewMode);
@@ -1855,20 +1926,28 @@ export class Renderer {
   /**
    * Render uncached floor items during drag painting
    * Floor patches are on the 'ground' layer and need to appear on the ground canvas
+   * When deferred, renders ALL floor items directly
    */
   _renderUncachedFloorItems(ctx) {
     const terrainMap = this._state.terrainMap;
     const scatterCount = terrainMap.scatterItems?.length || 0;
 
-    // Only render items added after the last cache build
-    if (!terrainMap.scatterItems || scatterCount <= this._groundCacheScatterCount) {
+    // Render all floor items directly when:
+    // 1. Canopy cache is deferred (painting in progress)
+    // 2. Floor items were skipped from ground cache (too many items)
+    const renderAllDirectly = this._canopyCacheDeferred || this._floorNotInCache;
+
+    // Only render items added after the last cache build (unless rendering all directly)
+    if (!terrainMap.scatterItems || (!renderAllDirectly && scatterCount <= this._groundCacheScatterCount)) {
       return;
     }
 
-    const uncachedItems = terrainMap.scatterItems.slice(this._groundCacheScatterCount);
+    const itemsToRender = renderAllDirectly
+      ? terrainMap.scatterItems
+      : terrainMap.scatterItems.slice(this._groundCacheScatterCount);
 
     // Filter to floor items only (ground layer)
-    const floorItems = uncachedItems.filter(item => {
+    const floorItems = itemsToRender.filter(item => {
       const config = SCATTER_TYPES[item.type];
       return config && config.layer === 'ground';
     });
@@ -1883,9 +1962,18 @@ export class Renderer {
     const vpBottom = vpTop + this._viewportHeight / vp.zoom;
     const margin = getCullMargin('ground');
 
+    // LOD filter - quick category-level check first
+    if (!shouldRenderCategory(vp.zoom, 'floor')) {
+      return;
+    }
+
+    // Filter to visible items with per-item pixel-size culling
     const visibleFloor = floorItems.filter(item => {
-      return item.x > vpLeft - margin && item.x < vpRight + margin &&
-             item.y > vpTop - margin && item.y < vpBottom + margin;
+      if (item.x <= vpLeft - margin || item.x >= vpRight + margin ||
+          item.y <= vpTop - margin || item.y >= vpBottom + margin) {
+        return false;
+      }
+      return shouldRenderItem(item, vp.zoom, 'floor');
     });
 
     if (visibleFloor.length === 0) return;
@@ -1995,12 +2083,16 @@ export class Renderer {
         this._canopyCacheParticleCount !== particleCount ||
         this._canopyCacheScatterCount !== scatterCount;
 
-    if (needsRebuild && !this._isDragPainting && !animating) {
+    if (needsRebuild && !this._isDragPainting && !animating && !this._canopyCacheDeferred) {
+      console.log('[Renderer] Rebuilding canopy cache synchronously');
       this._rebuildCanopyCache();
+    } else if (needsRebuild && this._canopyCacheDeferred) {
+      console.log('[Renderer] Skipping rebuild - deferred mode active');
     }
 
     // Draw cached canopy layer (rendered at 1x DPR / map size)
-    if (this._canopyCache) {
+    // Skip drawing cache when deferred - we'll render all items directly instead
+    if (this._canopyCache && !this._canopyCacheDeferred) {
       const width = this._state.canvasWidth;
       const height = this._state.canvasHeight;
       ctx.drawImage(this._canopyCache, 0, 0, width, height);
@@ -2009,10 +2101,24 @@ export class Renderer {
     // Render items that aren't in the cache yet (added since last cache rebuild)
     // This includes both currently animating items AND items that finished animating
     // but cache hasn't been rebuilt yet
+    // When deferred, skip direct rendering in Canvas 2D - chunked rebuild will update cache
+    // (Direct rendering 300K+ items every frame locks up Canvas 2D)
+    const renderAllDirectly = this._canopyCacheDeferred;
+    if (renderAllDirectly) {
+      // In deferred mode for Canvas 2D, skip direct rendering
+      // The chunked cache rebuild will progressively update the view
+      // Draw existing cache (even if stale) and wait for rebuild
+      if (this._canopyCache) {
+        const width = this._state.canvasWidth;
+        const height = this._state.canvasHeight;
+        ctx.drawImage(this._canopyCache, 0, 0, width, height);
+      }
+      return; // Skip the rest of direct rendering
+    }
     if (terrainMap.scatterItems && scatterCount > this._canopyCacheScatterCount) {
-      // Items with index >= cachedCount are not in the cache
-      const uncachedItems = terrainMap.scatterItems.slice(this._canopyCacheScatterCount);
-      if (uncachedItems.length > 0) {
+      // Render only items not yet in cache
+      const itemsToRender = terrainMap.scatterItems.slice(this._canopyCacheScatterCount);
+      if (itemsToRender.length > 0) {
         // Prepare images for scatter renderer
         const images = {
           tree: this._images.trees,
@@ -2022,7 +2128,7 @@ export class Renderer {
         };
 
         // Filter to canopy/particle layer items only (floor is handled by _renderUncachedFloorItems)
-        const canopyItems = uncachedItems.filter(item => {
+        const canopyItems = itemsToRender.filter(item => {
           const config = SCATTER_TYPES[item.type];
           return config && (config.layer === 'canopy' || config.layer === 'particle');
         });
@@ -2044,11 +2150,11 @@ export class Renderer {
                    y > vpTop - margin && y < vpBottom + margin;
           });
 
-          // PERFORMANCE: Zoom-based LOD - filter items by category based on zoom level
+          // PERFORMANCE: Per-item pixel-size LOD culling
           const zoom = vp.zoom;
           const itemsToRender = visibleItems.filter(i => {
             const category = SCATTER_TYPES[i.type]?.category;
-            return shouldRenderCategory(zoom, category);
+            return shouldRenderItem(i, zoom, category);
           });
 
           // Sort items to render (smaller scale first, then by Y for proper layering)
@@ -2096,6 +2202,149 @@ export class Renderer {
     const scatterCount = terrainMap.scatterItems?.length || 0;
     const mode = viewSettings.useScatterRendering ? 'scatter' : 'legacy';
     console.log(`[Renderer] Canopy cache rebuilt [${mode}] (${this._canopyCacheTreeCount} trees, ${this._canopyCacheBrushCount} brush, ${this._canopyCacheParticleCount} particles, ${scatterCount} scatter, dpr=${canopyDpr})`);
+
+    // Clear deferred state since we just rebuilt
+    this._canopyCacheDeferred = false;
+    this._deferredRebuildScheduled = false;
+  }
+
+  /**
+   * Defer canopy cache rebuild to prevent UI freeze
+   * Instead of rebuilding synchronously, render items directly and
+   * schedule the cache build to happen after a short delay.
+   * This prevents the 28-second freeze on mouseUp with large forests.
+   */
+  deferCanopyRebuild(mouseUpStart = null) {
+    if (this._deferredRebuildScheduled) return; // Already scheduled
+
+    this._canopyCacheDeferred = true;
+    this._deferredRebuildScheduled = true;
+    this._mouseUpStartTime = mouseUpStart; // Track for total time logging
+    console.log(`[Renderer] deferCanopyRebuild called, mouseUpStart=${mouseUpStart?.toFixed(0)}, now=${performance.now().toFixed(0)}`);
+
+    // Note: We use rAF now, not setTimeout. The deferred flag check in doChunkedRebuild handles cancellation.
+
+    // Schedule chunked rebuild to keep UI responsive
+    // Instead of building entire cache at once (10+ seconds), build in chunks
+    // Use small chunks to keep each frame under 16ms for 60fps
+    const CHUNK_SIZE = 200;  // Small chunks for smooth UI
+    const CHUNK_DELAY = 0;   // Use requestAnimationFrame timing
+
+    const doChunkedRebuild = () => {
+      const now = performance.now();
+      const schedulingDelay = this._rebuildScheduledAt ? now - this._rebuildScheduledAt : 0;
+      console.log(`[Renderer] doChunkedRebuild fired, schedulingDelay=${schedulingDelay.toFixed(0)}ms, now=${now.toFixed(0)}`);
+      if (!this._canopyCacheDeferred) return; // Cancelled
+
+      const terrainMap = this._state.terrainMap;
+      const scatterItems = terrainMap?.scatterItems || [];
+      const totalItems = scatterItems.length;
+
+      if (totalItems === 0) {
+        this._canopyCacheDeferred = false;
+        this._deferredRebuildScheduled = false;
+        return;
+      }
+
+      console.log(`[Renderer] Starting chunked cache rebuild (${totalItems} items, ${Math.ceil(totalItems/CHUNK_SIZE)} chunks)...`);
+      const startTime = performance.now();
+
+      // Create cache canvas
+      const width = this._state.canvasWidth;
+      const height = this._state.canvasHeight;
+      const cache = document.createElement('canvas');
+      cache.width = width;
+      cache.height = height;
+      const ctx = cache.getContext('2d');
+      ctx.imageSmoothingEnabled = false;
+
+      // Prepare images
+      const images = {
+        tree: this._images.trees,
+        brush: this._images.brush,
+        floor: this._images.floor,
+        particle: this._images.brush
+      };
+
+      // Filter to canopy/particle layer items (trees, brush, particles - not floor)
+      const canopyItems = scatterItems.filter(item => {
+        const config = SCATTER_TYPES[item.type];
+        return config && (config.layer === 'canopy' || config.layer === 'particle');
+      });
+
+      // Sort for proper layering (smaller scale first, then by Y)
+      canopyItems.sort((a, b) => (a.scale - b.scale) || (a.y - b.y));
+
+      let currentIndex = 0;
+      let chunksProcessed = 0;
+
+      const processChunk = () => {
+        if (!this._canopyCacheDeferred) {
+          console.log('[Renderer] Chunked rebuild cancelled');
+          return;
+        }
+
+        const chunkEnd = Math.min(currentIndex + CHUNK_SIZE, canopyItems.length);
+
+        // Render this chunk - skip filters for speed (apply post-processing later if needed)
+        for (let i = currentIndex; i < chunkEnd; i++) {
+          renderScatterItem(ctx, canopyItems[i], images, { skipFilters: true });
+        }
+
+        currentIndex = chunkEnd;
+        chunksProcessed++;
+
+        if (currentIndex < canopyItems.length) {
+          // More chunks to process - yield to browser via rAF for smooth 60fps
+          requestAnimationFrame(processChunk);
+        } else {
+          // Done - finalize cache
+          this._canopyCache = cache;
+          this._canopyCacheValid = true;
+          this._canopyCacheScatterCount = scatterItems.length;
+
+          this._canopyCacheDeferred = false;
+          this._deferredRebuildScheduled = false;
+
+          const elapsed = performance.now() - startTime;
+          console.log(`[Renderer] Chunked cache rebuild complete: ${chunksProcessed} chunks, ${canopyItems.length} items, ${elapsed.toFixed(0)}ms`);
+
+          // Log total time from mouseUp if available
+          if (this._mouseUpStartTime) {
+            const now = performance.now();
+            const totalFromMouseUp = now - this._mouseUpStartTime;
+            const schedulingDelay = this._rebuildScheduledAt ? (now - elapsed - this._rebuildScheduledAt) : 0;
+            console.log(`[Renderer] TOTAL: ${totalFromMouseUp.toFixed(0)}ms from mouseUp (rebuild=${elapsed.toFixed(0)}ms, schedulingDelay=${schedulingDelay.toFixed(0)}ms)`);
+            this._mouseUpStartTime = null;
+            this._rebuildScheduledAt = null;
+          }
+
+          // Invalidate ground cache so it rebuilds with new floor items on next render
+          this._groundCacheValid = false;
+
+          this._state.requestRender();
+        }
+      };
+
+      // Start processing
+      processChunk();
+    };
+
+    console.log('[Renderer] Canopy cache rebuild deferred (chunked)');
+
+    // Use setTimeout(0) which runs after current call stack and any pending rAF callbacks
+    // This ensures child regeneration completes before we start the rebuild
+    this._rebuildScheduledAt = performance.now();
+    setTimeout(doChunkedRebuild, 0);
+  }
+
+  /**
+   * Cancel any pending deferred rebuild
+   */
+  cancelDeferredRebuild() {
+    // Setting _canopyCacheDeferred to false will cause doChunkedRebuild to exit early
+    this._canopyCacheDeferred = false;
+    this._deferredRebuildScheduled = false;
   }
 
   /**

@@ -599,6 +599,37 @@ export function spawnChildren(terrainMap, parent, options = {}) {
   const canopyRadius = (spriteWidth / 2) * canopyFill * parent.scale;
   const baseSeed = options.seed ?? Date.now();
 
+  // ─────────────────────────────────────────────────────────────────────
+  // PERFORMANCE: Pre-cache tree canopies for occlusion checks
+  // This avoids querying the spatial hash and filtering for trees per-child
+  // We cache {x, y, canopyScaled, id} for all nearby trees ONCE
+  // ─────────────────────────────────────────────────────────────────────
+  let cachedTreeCanopies = null;
+  const getCachedTreeCanopies = () => {
+    if (cachedTreeCanopies !== null) return cachedTreeCanopies;
+
+    // Build cache on first access
+    const spatialHash = getSpatialHash(terrainMap);
+    const searchRadius = 150;
+    const nearbyItems = spatialHash.query(parent.x, parent.y, searchRadius + canopyRadius);
+
+    cachedTreeCanopies = [];
+    for (const item of nearbyItems) {
+      if (item.id === parent.id) continue;
+      const itemConfig = SCATTER_TYPES[item.type];
+      if (!itemConfig || itemConfig.category !== 'tree') continue;
+
+      const treeCanopyRadius = itemConfig.canopyRadius || 30;
+      cachedTreeCanopies.push({
+        x: item.x,
+        y: item.y,
+        canopyScaled: treeCanopyRadius * item.scale,
+        id: item.id
+      });
+    }
+    return cachedTreeCanopies;
+  };
+
   // Get age and season modifiers
   const parentAge = parent.age || 'old';
   const ageMod = AGE_MODIFIERS[parentAge] || AGE_MODIFIERS.old;
@@ -688,7 +719,19 @@ export function spawnChildren(terrainMap, parent, options = {}) {
     const brushRadius = options.brushRadius ?? 50;
     const brushMultiplier = Math.min(1, brushRadius / 50);
 
-    const finalDensity = Math.round(density * scaleMultiplier * brushMultiplier);
+    let finalDensity = Math.round(density * scaleMultiplier * brushMultiplier);
+
+    // Cap items per spawn to prevent performance issues
+    // Particles and floor can spawn many items - limit per-tree generation
+    const maxPerSpawn = childConfig.category === 'particle' ? 15 :
+                        childConfig.category === 'floor' ? 20 :
+                        childConfig.category === 'brush' ? 8 : 50;
+    finalDensity = Math.min(finalDensity, maxPerSpawn);
+
+    // PERFORMANCE: Skip occlusion checks when at max density
+    // Occlusion check is to avoid wasted draw calls, but if we're already
+    // at max capacity, checking won't reduce item count
+    const skipOcclusion = finalDensity >= maxPerSpawn;
 
     // Get child spawn start from parent config (0 = trunk, 0.9 = canopy edge, 1.0+ = outside)
     // Dead trees default to 0 (visible through bare branches), live trees to 0.9 (at drip line)
@@ -766,36 +809,25 @@ export function spawnChildren(terrainMap, parent, options = {}) {
       // CANOPY OCCLUSION CHECK (floor/particles only)
       // Skip children that would be fully hidden under a NEIGHBORING tree's canopy.
       // Children under their own parent are fine (that's intended).
-      // Universal rule: distance > (tree.canopyRadius * tree.scale) - (child.canopyRadius * child.scale)
-      // Floor/particles have canopyRadius of 0, so they're hidden if distance < tree's canopy.
+      // PERFORMANCE: Skip when at max density (no savings from culling)
+      // PERFORMANCE: Use pre-cached tree canopies instead of querying per-child
       // ─────────────────────────────────────────────────────────────
-      if (!dryRun && (childConfig.category === 'floor' || childConfig.category === 'particle')) {
+      if (!dryRun && !skipOcclusion && (childConfig.category === 'floor' || childConfig.category === 'particle')) {
         // Child's effective radius (floor/particles are essentially point-sized for occlusion)
         const childCanopyRadius = childConfig.canopyRadius || 0;
         const childCanopyScaled = childCanopyRadius * finalScale;
 
-        // Check if fully under any OTHER tree's canopy
-        const spatialHash = getSpatialHash(terrainMap);
-        const searchRadius = 150; // Search nearby trees
-        const nearbyItems = spatialHash.query(cx, cy, searchRadius);
+        // Check if fully under any OTHER tree's canopy using cached data
+        const treeCanopies = getCachedTreeCanopies();
 
-        const occluded = nearbyItems.some(item => {
-          // Only check trees (not the parent)
-          if (item.id === parent.id) return false;
-          const itemConfig = SCATTER_TYPES[item.type];
-          if (!itemConfig || itemConfig.category !== 'tree') return false;
-
-          // Check if child is fully under this tree's canopy
-          const treeCanopyRadius = itemConfig.canopyRadius || 30;
-          const treeCanopyScaled = treeCanopyRadius * item.scale;
-
-          const dx = cx - item.x;
-          const dy = cy - item.y;
+        const occluded = treeCanopies.some(tree => {
+          const dx = cx - tree.x;
+          const dy = cy - tree.y;
           const d = Math.sqrt(dx * dx + dy * dy);
 
           // Fully hidden if distance < tree's canopy - child's canopy
           // (child's canopy is ~0 for floor/particles, so essentially d < tree's canopy)
-          const minVisibleDist = treeCanopyScaled - childCanopyScaled;
+          const minVisibleDist = tree.canopyScaled - childCanopyScaled;
           return d < minVisibleDist;
         });
 
@@ -913,6 +945,38 @@ export function removeScatterByParent(terrainMap, parentId) {
 
   terrainMap.scatterItems = terrainMap.scatterItems.filter(item => item.parentId !== parentId);
   return before - terrainMap.scatterItems.length;
+}
+
+/**
+ * Regenerate children (particles/floor) for existing parent items in a stroke
+ * Used after drag painting to add back particles/floor that were skipped
+ * @param {object} terrainMap - TerrainMap
+ * @param {string} strokeId - Stroke ID to regenerate children for
+ * @param {object} options - Options for child spawning (season, biome, etc.)
+ * @returns {object[]} Array of newly created child items
+ */
+export function regenerateChildrenForStroke(terrainMap, strokeId, options = {}) {
+  if (!terrainMap.scatterItems) return [];
+
+  // Find all parent items (trees/brush) for this stroke that can spawn children
+  const parents = terrainMap.scatterItems.filter(item => {
+    if (item.strokeId !== strokeId) return false;
+    const config = SCATTER_TYPES[item.type];
+    return config && (config.category === 'tree' || config.category === 'brush');
+  });
+
+  if (parents.length === 0) return [];
+
+  const allChildren = [];
+  for (const parent of parents) {
+    const children = spawnChildren(terrainMap, parent, {
+      ...options,
+      seed: (options.seed ?? Date.now()) + parent.id.charCodeAt(0) * 1000
+    });
+    allChildren.push(...children);
+  }
+
+  return allChildren;
 }
 
 /**

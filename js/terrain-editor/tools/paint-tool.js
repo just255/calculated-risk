@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { createStroke, FEATURE_DEFS, BRUSH_TYPES } from '../../world-builder/strokes.js';
-import { generateForestItems, SCATTER_TYPES } from '../../world-builder/scatter.js';
+import { generateForestItems, SCATTER_TYPES, regenerateChildrenForStroke } from '../../world-builder/scatter.js';
 import { hasActiveAnimations } from '../../world-builder/scatter-animation.js';
 import { Events } from '../events.js';
 
@@ -90,9 +90,20 @@ export const PaintTool = {
 
       // Track stroke IDs created during this drag for merging on mouseUp
       this._dragStrokeIds = [];
+      // Track accumulated centers for combined stroke
+      this._dragCenters = [];
 
-      // For water, use preview mode even for first stroke to ensure proper shore/water layering
-      if (options.featureType === 'water') {
+      // Track scatter stroke IDs for regenerating children on mouseUp
+      this._scatterStrokeIds = [];
+      // Clear drag preview state for incremental generation
+      this._dragPreviewGeneratedCount = 0;
+      this._dragPreviewItems = [];
+
+      // For combinable features (water, groundTexture, forest, brush), use preview mode
+      // even for first stroke to ensure single-stroke approach works correctly
+      const canCombine = options.featureType === 'water' || options.featureType === 'groundTexture' ||
+                         options.featureType === 'forest' || options.featureType === 'brush';
+      if (canCombine) {
         renderer.beginDragPaint();
         this._dragModeStarted = true;
         this._paint(e.x, e.y, state, true, renderer);
@@ -199,6 +210,10 @@ export const PaintTool = {
   },
 
   onMouseUp(e, state, renderer) {
+    // Track timing for performance metrics
+    const mouseUpStart = performance.now();
+    const centerCount = this._dragCenters?.length || 0;
+
     // End drag paint mode only if it was started (i.e., user actually dragged)
     if (this._dragModeStarted) {
       renderer.endDragPaint();
@@ -206,7 +221,10 @@ export const PaintTool = {
       // Create combined stroke from accumulated centers
       if (this._dragCenters && this._dragCenters.length > 0) {
         const options = state.toolOptions;
+        const strokeStart = performance.now();
         this._createCombinedStroke(state, options);
+        const strokeTime = performance.now() - strokeStart;
+        console.log(`[PaintTool] Stroke created: ${centerCount} centers, ${strokeTime.toFixed(0)}ms`);
       }
 
       // Final render after drag painting
@@ -225,6 +243,49 @@ export const PaintTool = {
     if (this._paintingScatterFeature && this._state) {
       this._state.setToolOption('previewSeed', Math.floor(Math.random() * 1000000));
       this._state.emit(Events.PAINTING_FINISHED, { featureType: state.toolOptions.featureType });
+    }
+
+    // Regenerate particles/floor for scatter strokes created during drag
+    // During drag painting, particles/floor were disabled for performance
+    // Now we regenerate them at full density
+    if (this._scatterStrokeIds && this._scatterStrokeIds.length > 0) {
+      const terrainMap = state.terrainMap;
+      const toolOptions = state.toolOptions;
+      const strokeIds = [...this._scatterStrokeIds];
+      this._scatterStrokeIds = [];
+
+      // Defer canopy cache rebuild FIRST - pass mouseUp start time for total timing
+      console.log('[PaintTool] Deferring canopy rebuild, renderer:', !!this._renderer);
+      if (this._renderer && this._renderer.deferCanopyRebuild) {
+        this._renderer.deferCanopyRebuild(mouseUpStart);
+      }
+
+      // Track regeneration timing
+      const regenStart = performance.now();
+      let totalGenerated = 0;
+
+      // Process all strokes synchronously (single-stroke approach means only 1 stroke)
+      for (const strokeId of strokeIds) {
+        const newChildren = regenerateChildrenForStroke(terrainMap, strokeId, {
+          season: toolOptions.season ?? 'summer',
+          biome: toolOptions.biome ?? 'temperate',
+          seasonOverrides: toolOptions.seasonOverrides ?? {},
+          childSpawnOverrides: toolOptions.childSpawnOverrides ?? {}
+        });
+
+        if (newChildren.length > 0 && terrainMap.scatterItems) {
+          // Use concat instead of push(...) to avoid stack overflow with large arrays
+          terrainMap.scatterItems = terrainMap.scatterItems.concat(newChildren);
+          totalGenerated += newChildren.length;
+        }
+      }
+
+      const regenTime = performance.now() - regenStart;
+      const totalTime = performance.now() - mouseUpStart;
+      console.log(`[PaintTool] Child regeneration: ${totalGenerated} items, ${regenTime.toFixed(0)}ms`);
+      console.log(`[PaintTool] Total mouseUp time: ${totalTime.toFixed(0)}ms (${centerCount} centers)`);
+
+      state.requestRender();
     }
 
     // Batch-create depth strokes for all water strokes painted (like forest scatter)
@@ -261,6 +322,10 @@ export const PaintTool = {
     this._waterStrokesForDepth = null;
     this._dragCenters = null;
     this._dragStrokeIds = null;
+    this._scatterStrokeIds = null;
+    // Clear drag preview state
+    this._dragPreviewGeneratedCount = 0;
+    this._dragPreviewItems = null;
   },
 
   onMouseLeave(state, renderer) {
@@ -281,6 +346,54 @@ export const PaintTool = {
     if (this._paintingScatterFeature && this._state) {
       this._state.setToolOption('previewSeed', Math.floor(Math.random() * 1000000));
       this._state.emit(Events.PAINTING_FINISHED, { featureType: state.toolOptions.featureType });
+    }
+
+    // Regenerate particles/floor for scatter strokes created during drag (same as mouseUp)
+    // Use chunked processing to avoid UI freeze
+    if (this._scatterStrokeIds && this._scatterStrokeIds.length > 0) {
+      const terrainMap = state.terrainMap;
+      const toolOptions = state.toolOptions;
+      const strokeIds = [...this._scatterStrokeIds];
+      this._scatterStrokeIds = [];
+
+      // Defer canopy cache rebuild
+      if (this._renderer && this._renderer.deferCanopyRebuild) {
+        this._renderer.deferCanopyRebuild();
+      }
+
+      // Process strokes in chunks (same as mouseUp)
+      let currentIndex = 0;
+      let totalGenerated = 0;
+
+      const processChunk = () => {
+        if (currentIndex < strokeIds.length) {
+          const strokeId = strokeIds[currentIndex];
+          const newChildren = regenerateChildrenForStroke(terrainMap, strokeId, {
+            season: toolOptions.season ?? 'summer',
+            biome: toolOptions.biome ?? 'temperate',
+            seasonOverrides: toolOptions.seasonOverrides ?? {},
+            childSpawnOverrides: toolOptions.childSpawnOverrides ?? {}
+          });
+
+          if (newChildren.length > 0 && terrainMap.scatterItems) {
+            // Use concat instead of push(...) to avoid stack overflow with large arrays
+            terrainMap.scatterItems = terrainMap.scatterItems.concat(newChildren);
+            totalGenerated += newChildren.length;
+          }
+
+          currentIndex++;
+          state.requestRender();
+
+          if (currentIndex < strokeIds.length) {
+            requestAnimationFrame(processChunk);
+          } else {
+            console.log(`[PaintTool] Chunked regeneration complete: ${strokeIds.length} strokes, ${totalGenerated} items`);
+          }
+        }
+      };
+
+      console.log(`[PaintTool] Starting chunked regeneration (${strokeIds.length} strokes)...`);
+      requestAnimationFrame(processChunk);
     }
 
     // Batch-create depth strokes for water (same as mouseUp)
@@ -315,6 +428,7 @@ export const PaintTool = {
     this._dragModeStarted = false;
     this._paintingScatterFeature = false;
     this._waterStrokesForDepth = null;
+    this._scatterStrokeIds = null;
     renderer.clearScatterPreview();
   },
 
@@ -388,8 +502,57 @@ export const PaintTool = {
         this._waterStrokesForDepth = [];
       }
     }
-    // Forest/brush strokes are NOT combined - they create individual strokes
-    // because tree generation needs separate processing for each position
+    else if (options.featureType === 'forest') {
+      // Create a single forest stroke with all centers
+      const stroke = createStroke('forest', firstCenter.x, firstCenter.y, options.brushRadius, {
+        intensity: options.intensity || 1.0,
+        falloff: options.falloff,
+        centers: centers,
+        // Tree-specific properties
+        seed: options.previewSeed ?? Math.floor(Math.random() * 1000000),
+        treeTypes: (options.treeTypes || [options.treeType || 'oak']).filter(t => t !== 'dead'),
+        treeRatios: { ...(options.treeRatios || {}) },
+        treeType: (options.treeTypes || ['oak'])[0] || 'oak',
+        density: options.treeDensity,
+        treeScale: options.treeScale || 0.35,
+        selectedAges: options.selectedAges || ['young', 'transitional', 'old'],
+        ageRatios: options.ageRatios || { young: 0.333, transitional: 0.333, old: 0.334 },
+        allowTreesInWater: options.treesInWater || false,
+        floorRadiusPercent: options.floorRadiusPercent ?? 30,
+        floorFade: options.floorFade ?? 100,
+        floorIntensity: options.floorIntensity ?? 70
+      });
+      // Use dragPainting: true to defer particle/floor generation
+      state.addStroke(stroke, true, { dragPainting: true });
+      // Track for regeneration on mouseUp
+      if (this._scatterStrokeIds) {
+        this._scatterStrokeIds.push(stroke.id);
+      }
+    }
+    else if (options.featureType === 'brush') {
+      // Create a single brush stroke with all centers
+      const stroke = createStroke('brush', firstCenter.x, firstCenter.y, options.brushRadius, {
+        intensity: options.intensity || 1.0,
+        falloff: options.falloff,
+        centers: centers,
+        // Brush-specific properties
+        seed: options.previewSeed ?? Math.floor(Math.random() * 1000000),
+        brushTypes: options.brushTypes || [options.brushType || 'bush-small'],
+        brushRatios: { ...(options.brushRatios || {}) },
+        brushType: (options.brushTypes || ['bush-small'])[0] || 'bush-small',
+        density: options.brushDensity ?? 1.0,
+        brushScale: options.brushScale ?? 0.25,
+        allowBrushInWater: options.brushInWater || false,
+        floorEnabled: options.floorEnabled ?? true,
+        particlesEnabled: options.particlesEnabled ?? true
+      });
+      // Use dragPainting: true to defer particle/floor generation
+      state.addStroke(stroke, true, { dragPainting: true });
+      // Track for regeneration on mouseUp
+      if (this._scatterStrokeIds) {
+        this._scatterStrokeIds.push(stroke.id);
+      }
+    }
   },
 
   // ═══════════════════════════════════════════════════════════════
@@ -406,10 +569,11 @@ export const PaintTool = {
       return; // Outside bounds
     }
 
-    // During drag painting for water/ground, accumulate centers instead of creating strokes
+    // During drag painting, accumulate centers instead of creating individual strokes
     // Combined stroke will be created on mouseUp (reduces stroke count from 100s to 1)
-    // Forest/brush keep individual strokes since tree generation needs separate processing
-    const canCombine = options.featureType === 'water' || options.featureType === 'groundTexture';
+    // This now applies to ALL feature types including forest/brush
+    const canCombine = options.featureType === 'water' || options.featureType === 'groundTexture' ||
+                       options.featureType === 'forest' || options.featureType === 'brush';
     if (this._dragStrokeIds && skipRender && canCombine) {
       // Track this center for combined stroke
       if (!this._dragCenters) this._dragCenters = [];
@@ -417,39 +581,45 @@ export const PaintTool = {
 
       // Update preview with a single multi-center stroke (not individual strokes per position)
       if (renderer) {
-        // Use first center as main position, pass all centers for rendering
         const firstCenter = this._dragCenters[0];
-        const previewStroke = {
-          type: options.featureType === 'water' ? 'water' : 'groundTexture',
-          x: firstCenter.x,
-          y: firstCenter.y,
-          radius: options.brushRadius,
-          intensity: options.intensity || 1.0,
-          textureType: options.featureType === 'water' ? (options.waterTextureType || 'water') :
-                       (options.groundTextureType || 'grass-1'),
-          fadeWidth: options.featureType === 'water' ?
-                     options.brushRadius * ((options.waterFalloff ?? 30) / 100) :
-                     (options.fadeWidth ?? 12),
-          centers: [...this._dragCenters]  // Copy all accumulated centers
-        };
 
-        // For water, also add shore preview if enabled
-        if (options.featureType === 'water' && options.shoreTextureType &&
-            options.shoreTextureType !== 'none' && options.shoreWidth > 0) {
-          const shoreStroke = {
-            type: 'groundTexture',
+        // Forest/brush use scatter preview (trees/brush only - no particles/floor for performance)
+        if (options.featureType === 'forest' || options.featureType === 'brush') {
+          this._updateScatterDragPreview(this._dragCenters, options, state, renderer);
+        } else {
+          // Water/groundTexture use texture preview
+          const previewStroke = {
+            type: options.featureType === 'water' ? 'water' : 'groundTexture',
             x: firstCenter.x,
             y: firstCenter.y,
-            radius: options.brushRadius + options.shoreWidth,
-            intensity: 1.0,
-            textureType: options.shoreTextureType,
-            fadeWidth: options.shoreFadeWidth ?? 12,
-            isShore: true,
-            centers: [...this._dragCenters]
+            radius: options.brushRadius,
+            intensity: options.intensity || 1.0,
+            textureType: options.featureType === 'water' ? (options.waterTextureType || 'water') :
+                         (options.groundTextureType || 'grass-1'),
+            fadeWidth: options.featureType === 'water' ?
+                       options.brushRadius * ((options.waterFalloff ?? 30) / 100) :
+                       (options.fadeWidth ?? 12),
+            centers: [...this._dragCenters]  // Copy all accumulated centers
           };
-          renderer.updateCombinedPreview([shoreStroke, previewStroke]);
-        } else {
-          renderer.updateCombinedPreview([previewStroke]);
+
+          // For water, also add shore preview if enabled
+          if (options.featureType === 'water' && options.shoreTextureType &&
+              options.shoreTextureType !== 'none' && options.shoreWidth > 0) {
+            const shoreStroke = {
+              type: 'groundTexture',
+              x: firstCenter.x,
+              y: firstCenter.y,
+              radius: options.brushRadius + options.shoreWidth,
+              intensity: 1.0,
+              textureType: options.shoreTextureType,
+              fadeWidth: options.shoreFadeWidth ?? 12,
+              isShore: true,
+              centers: [...this._dragCenters]
+            };
+            renderer.updateCombinedPreview([shoreStroke, previewStroke]);
+          } else {
+            renderer.updateCombinedPreview([previewStroke]);
+          }
         }
       }
       return;
@@ -639,10 +809,17 @@ export const PaintTool = {
       }
     }
 
-    state.addStroke(stroke, skipRender);
+    // Pass dragPainting flag for forest/brush to reduce particle/floor density during drag
+    const isScatterFeature = options.featureType === 'forest' || options.featureType === 'brush';
+    state.addStroke(stroke, skipRender, { dragPainting: skipRender && isScatterFeature });
+
+    // Track scatter stroke ID for regenerating children on mouseUp
+    if (isScatterFeature && skipRender && this._scatterStrokeIds) {
+      this._scatterStrokeIds.push(stroke.id);
+    }
 
     // Regenerate seed for next stroke (gives variation during drag painting)
-    if (options.featureType === 'forest' || options.featureType === 'brush') {
+    if (isScatterFeature) {
       state.setToolOption('previewSeed', Math.floor(Math.random() * 1000000));
     }
 
@@ -775,6 +952,85 @@ export const PaintTool = {
       }));
       renderer.setScatterPreview(positioned);
     }
+  },
+
+  /**
+   * Generate and update scatter preview for all drag centers during drag painting.
+   * Only generates trees/brush (no particles/floor) for performance.
+   * Uses incremental generation - only generates items for new centers.
+   */
+  _updateScatterDragPreview(centers, options, state, renderer) {
+    if (!centers || centers.length === 0) {
+      renderer.clearScatterPreview();
+      return;
+    }
+
+    // Track how many centers we've already generated (initialized in mouseDown)
+    if (this._dragPreviewGeneratedCount === undefined) {
+      this._dragPreviewGeneratedCount = 0;
+      this._dragPreviewItems = [];
+    }
+
+    // Only generate for new centers
+    const newCenters = centers.slice(this._dragPreviewGeneratedCount);
+    if (newCenters.length === 0) {
+      // No new centers, just show existing items
+      renderer.setScatterPreview(this._dragPreviewItems);
+      return;
+    }
+
+    const radius = options.brushRadius;
+    const baseSeed = options.previewSeed ?? 42;
+
+    // Generate items for each new center
+    for (let i = 0; i < newCenters.length; i++) {
+      const center = newCenters[i];
+      const centerIndex = this._dragPreviewGeneratedCount + i;
+      const centerSeed = baseSeed + centerIndex * 7919;
+
+      // Use mock terrain for preview (no collision with existing items)
+      const mockTerrain = { scatterItems: [], strokes: [] };
+
+      const items = generateForestItems(mockTerrain,
+        { x: center.x, y: center.y, radius, seed: centerSeed },
+        {
+          treeTypes: options.treeTypes || ['oak'],
+          treeRatios: options.treeRatios || {},
+          deadTypes: options.deadTypes || [],
+          deadRatio: options.deadRatio ?? 0,
+          treeDensity: options.treeDensity ?? 1.0,
+          treeScale: options.treeScale ?? 0.35,
+          treeSpacing: options.treeSpacing ?? 1.0,
+          selectedAges: options.selectedAges ?? ['young', 'transitional', 'old'],
+          ageRatios: options.ageRatios ?? null,
+          brushTypes: options.brushTypes || ['bush-small'],
+          brushRatios: options.brushRatios || {},
+          brushDensity: options.brushDensity ?? 1.0,
+          brushScale: options.brushScale ?? 0.25,
+          season: options.season ?? 'summer',
+          biome: options.biome ?? 'temperate',
+          seasonOverrides: options.seasonOverrides ?? {},
+          childSpawnOverrides: options.childSpawnOverrides ?? {},
+          // Only trees/brush for performance - no particles/floor during drag
+          treesEnabled: options.featureType === 'brush' ? false : (options.treesEnabled ?? true),
+          floorEnabled: false,
+          particlesEnabled: false,
+          brushEnabled: options.brushEnabled ?? true,
+          images: {
+            tree: renderer._images.trees,
+            brush: renderer._images.brush,
+            floor: renderer._images.floor,
+            particle: renderer._images.brush
+          }
+        }
+      );
+
+      // Use concat instead of push(...) to avoid stack overflow with large arrays
+      this._dragPreviewItems = this._dragPreviewItems.concat(items);
+    }
+
+    this._dragPreviewGeneratedCount = centers.length;
+    renderer.setScatterPreview(this._dragPreviewItems);
   },
 
   _getPreviewColor(options) {
