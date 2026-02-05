@@ -2123,19 +2123,16 @@ export class Renderer {
     // Render items that aren't in the cache yet (added since last cache rebuild)
     // This includes both currently animating items AND items that finished animating
     // but cache hasn't been rebuilt yet
-    // When deferred, skip direct rendering in Canvas 2D - chunked rebuild will update cache
-    // (Direct rendering 300K+ items every frame locks up Canvas 2D)
-    const renderAllDirectly = this._canopyCacheDeferred;
-    if (renderAllDirectly) {
-      // In deferred mode for Canvas 2D, skip direct rendering
-      // The chunked cache rebuild will progressively update the view
-      // Draw existing cache (even if stale) and wait for rebuild
+    // When deferred, we still need to render new items on top of the stale cache
+    // so the user sees their new stroke immediately
+    if (this._canopyCacheDeferred) {
+      // In deferred mode: draw existing cache (even if stale), then render new items below
       if (this._canopyCache) {
         const width = this._state.canvasWidth;
         const height = this._state.canvasHeight;
         ctx.drawImage(this._canopyCache, 0, 0, width, height);
       }
-      return; // Skip the rest of direct rendering
+      // Continue to render new items directly (don't return early!)
     }
     if (terrainMap.scatterItems && scatterCount > this._canopyCacheScatterCount) {
       // Render only items not yet in cache
