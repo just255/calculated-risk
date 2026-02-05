@@ -2133,6 +2133,7 @@ export class Renderer {
         ctx.drawImage(this._canopyCache, 0, 0, width, height);
       }
       // Continue to render new items directly (don't return early!)
+      console.log(`[Renderer] Deferred mode - scatterCount=${scatterCount}, cacheCount=${this._canopyCacheScatterCount}, newItems=${scatterCount - this._canopyCacheScatterCount}`);
     }
     if (terrainMap.scatterItems && scatterCount > this._canopyCacheScatterCount) {
       // Render only items not yet in cache
@@ -2175,6 +2176,8 @@ export class Renderer {
             const category = SCATTER_TYPES[i.type]?.category;
             return shouldRenderItem(i, zoom, category);
           });
+
+          console.log(`[Renderer] Direct render: ${itemsToRender.length} items (canopy=${canopyItems.length}, visible=${visibleItems.length}, afterLOD=${itemsToRender.length})`);
 
           // Sort items to render (smaller scale first, then by Y for proper layering)
           itemsToRender.sort((a, b) => {
