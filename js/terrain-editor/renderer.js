@@ -107,6 +107,11 @@ export class Renderer {
     this._canvasPool = [];
     this._maxPoolSize = 20;
 
+    // FPS tracking
+    this._fpsFrames = 0;
+    this._fpsLastTime = performance.now();
+    this._fpsElement = null;
+
     this._init();
   }
 
@@ -995,6 +1000,9 @@ export class Renderer {
   // ═══════════════════════════════════════════════════════════════
 
   _startRenderLoop() {
+    // Get FPS counter element
+    this._fpsElement = document.getElementById('fps-counter');
+
     const loop = () => {
       // Update animations (returns true if any are still active)
       const animating = hasActiveAnimations();
@@ -1013,6 +1021,20 @@ export class Renderer {
         this._renderUIOnly();
         this._needsUIRender = false;
       }
+
+      // FPS tracking
+      this._fpsFrames++;
+      const now = performance.now();
+      const elapsed = now - this._fpsLastTime;
+      if (elapsed >= 1000) {
+        const fps = Math.round((this._fpsFrames * 1000) / elapsed);
+        if (this._fpsElement) {
+          this._fpsElement.textContent = `${fps} fps`;
+        }
+        this._fpsFrames = 0;
+        this._fpsLastTime = now;
+      }
+
       this._frameRequest = requestAnimationFrame(loop);
     };
     loop();
