@@ -1744,11 +1744,12 @@ export class Renderer {
   }
 
   /**
-   * Get or create a cached water preview gradient.
-   * Uses a simple color gradient instead of texture for fast preview rendering.
+   * Get or create a cached water preview with actual texture.
+   * Renders the textured water circle once, then reuses for all centers.
    */
   _getWaterPreviewCache(radius, fadeWidth, waterType) {
-    const CACHE_SIZE = 128;  // Fixed size, scaled when drawn
+    // Use a fixed cache size for consistent performance (scaled when drawn)
+    const CACHE_SIZE = 256;
 
     // Check if we can reuse existing cache (same params)
     if (this._waterPreviewCache &&
@@ -1763,40 +1764,42 @@ export class Renderer {
     cache.width = CACHE_SIZE;
     cache.height = CACHE_SIZE;
     const cctx = cache.getContext('2d');
+    cctx.imageSmoothingEnabled = false;
 
-    // Water colors by type
-    const waterColors = {
-      'water': '#2a6a9a',
-      'water-pond': '#3a5a6a',
-      'water-river': '#2a4a6a',
-      'water-ocean': '#1a3a5a',
-      'water-marsh': '#3a5a4a'
-    };
-    const color = waterColors[waterType] || waterColors['water'];
+    const textureImg = this._images.ground[waterType];
+    if (!textureImg) {
+      // Fallback to solid color if texture not loaded
+      const center = CACHE_SIZE / 2;
+      const gradient = cctx.createRadialGradient(center, center, 0, center, center, center);
+      gradient.addColorStop(0, '#2a6a9a');
+      gradient.addColorStop(0.8, '#2a6a9a');
+      gradient.addColorStop(1, 'rgba(42,106,154,0)');
+      cctx.fillStyle = gradient;
+      cctx.fillRect(0, 0, CACHE_SIZE, CACHE_SIZE);
+    } else {
+      // Tile the texture
+      const tileSize = 64; // Smaller tiles for preview
+      for (let ty = 0; ty < CACHE_SIZE; ty += tileSize) {
+        for (let tx = 0; tx < CACHE_SIZE; tx += tileSize) {
+          cctx.drawImage(textureImg, tx, ty, tileSize, tileSize);
+        }
+      }
 
-    // Create radial gradient with fade
-    const center = CACHE_SIZE / 2;
-    const scaledRadius = center;
-    const fadeRatio = fadeWidth / radius;
-    const innerRadius = Math.max(0, scaledRadius * (1 - fadeRatio));
+      // Apply circular alpha mask with soft edges
+      cctx.globalCompositeOperation = 'destination-in';
+      const center = CACHE_SIZE / 2;
+      const fadeRatio = fadeWidth / radius;
+      const innerRadius = Math.max(0, center * (1 - fadeRatio));
 
-    const gradient = cctx.createRadialGradient(
-      center, center, innerRadius,
-      center, center, scaledRadius
-    );
-    gradient.addColorStop(0, color);
-    gradient.addColorStop(1, 'rgba(0,0,0,0)');
-
-    // Fill with solid color in center, gradient at edge
-    cctx.fillStyle = color;
-    cctx.beginPath();
-    cctx.arc(center, center, innerRadius, 0, Math.PI * 2);
-    cctx.fill();
-
-    cctx.fillStyle = gradient;
-    cctx.beginPath();
-    cctx.arc(center, center, scaledRadius, 0, Math.PI * 2);
-    cctx.fill();
+      const gradient = cctx.createRadialGradient(
+        center, center, innerRadius,
+        center, center, center
+      );
+      gradient.addColorStop(0, 'rgba(0,0,0,1)');
+      gradient.addColorStop(1, 'rgba(0,0,0,0)');
+      cctx.fillStyle = gradient;
+      cctx.fillRect(0, 0, CACHE_SIZE, CACHE_SIZE);
+    }
 
     // Store cache and params
     this._waterPreviewCache = cache;
