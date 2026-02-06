@@ -2247,10 +2247,16 @@ export class Renderer {
         const elapsed = performance.now() - startTime;
         console.log(`[Renderer] Cache rebuild complete: ${elapsed.toFixed(0)}ms`);
 
-        // Hide overlay and render
-        this._hideLoadingOverlay();
+        // Trigger render, then hide overlay after draw completes
         this._deferredRebuildScheduled = false;
         this._state.requestRender();
+
+        // Wait for the render to actually paint before hiding overlay
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            this._hideLoadingOverlay();
+          });
+        });
       });
     });
   }
