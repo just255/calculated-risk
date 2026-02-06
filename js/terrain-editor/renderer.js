@@ -377,14 +377,52 @@ export class Renderer {
           ctx.clip();
 
           // Use cached water preview stamp for each new center
-          // Note: Depth gradient is NOT applied here to avoid stacking at every center.
-          // The cursor preview shows depth, and final painted water gets proper depth after cache rebuild.
           const cache = this._getWaterPreviewCache(waterStroke.radius, waterStroke.fadeWidth ?? 12, waterStroke.textureType || 'water');
           const size = waterStroke.radius * 2;
           ctx.globalAlpha = waterStroke.intensity || 1;
 
           for (const center of newCenters) {
             ctx.drawImage(cache, center.x - waterStroke.radius, center.y - waterStroke.radius, size, size);
+          }
+
+          // Apply single depth gradient over entire preview area (not per-center to avoid stacking)
+          const waterDepth = waterStroke.waterDepth ?? 0;
+          if (waterDepth > 0 && waterStroke.centers && waterStroke.centers.length > 0) {
+            const allCenters = waterStroke.centers;
+            const radius = waterStroke.radius;
+
+            // Calculate bounding box of all centers
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (const c of allCenters) {
+              minX = Math.min(minX, c.x - radius);
+              minY = Math.min(minY, c.y - radius);
+              maxX = Math.max(maxX, c.x + radius);
+              maxY = Math.max(maxY, c.y + radius);
+            }
+
+            // Center and size of the bounding area
+            const centerX = (minX + maxX) / 2;
+            const centerY = (minY + maxY) / 2;
+            const areaRadius = Math.max(maxX - minX, maxY - minY) / 2;
+
+            const falloff = waterStroke.waterDepthFalloff ?? 0.5;
+            const maxAlpha = waterDepth * 0.5;
+            const depthRadius = areaRadius * (1.0 - falloff * 0.5);
+
+            // Draw single depth gradient over entire area
+            ctx.globalAlpha = 1;
+            const gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, depthRadius);
+            const numStops = 8;
+            const falloffStrength = falloff * 4;
+            for (let i = 0; i <= numStops; i++) {
+              const t = i / numStops;
+              const alpha = maxAlpha * Math.exp(-t * t * falloffStrength);
+              gradient.addColorStop(t, `rgba(0, 10, 25, ${alpha})`);
+            }
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, depthRadius, 0, Math.PI * 2);
+            ctx.fill();
           }
 
           ctx.restore();
