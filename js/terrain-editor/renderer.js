@@ -2376,9 +2376,10 @@ export class Renderer {
     const postProcessing = this._state.toolOptions?.seasonOverrides || {};
 
     // Render layers in order: particle (under trees) → canopy (trees, brush)
-    // skipFilters: true is critical - CSS filters are extremely slow when applied per-item
-    renderScatterLayer(ctx, terrainMap, 'particle', viewport, images, { postProcessing, skipFilters: true });
-    renderScatterLayer(ctx, terrainMap, 'canopy', viewport, images, { postProcessing, skipFilters: true });
+    // skipFilters: true - CSS filters are extremely slow when applied per-item
+    // skipAnimation: true - use final alpha/scale values, not mid-animation values (prevents transparent trees in cache)
+    renderScatterLayer(ctx, terrainMap, 'particle', viewport, images, { postProcessing, skipFilters: true, skipAnimation: true });
+    renderScatterLayer(ctx, terrainMap, 'canopy', viewport, images, { postProcessing, skipFilters: true, skipAnimation: true });
 
     return cache;
   }
