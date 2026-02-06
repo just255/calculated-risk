@@ -317,6 +317,15 @@ export function generateScatter(terrainMap, source, type, options = {}) {
     const ix = x + Math.cos(angle) * dist;
     const iy = y + Math.sin(angle) * dist;
 
+    // Bounds check - skip items outside map boundaries
+    if (terrainMap.gridWidth && terrainMap.gridHeight && terrainMap.cellSize) {
+      const mapWidth = terrainMap.gridWidth * terrainMap.cellSize;
+      const mapHeight = terrainMap.gridHeight * terrainMap.cellSize;
+      if (ix < 0 || ix > mapWidth || iy < 0 || iy > mapHeight) {
+        continue; // Skip off-canvas items
+      }
+    }
+
     // Check water collision (for trees and brush)
     if (config.category === 'tree' || config.category === 'brush') {
       const allowInWater = options.allowInWater ?? false;
@@ -795,6 +804,17 @@ export function spawnChildren(terrainMap, parent, options = {}) {
         cy = parent.y + Math.sin(angle) * dist;
       }
 
+      // ─────────────────────────────────────────────────────────────
+      // BOUNDS CHECK: Skip items outside map boundaries
+      // ─────────────────────────────────────────────────────────────
+      if (terrainMap.gridWidth && terrainMap.gridHeight && terrainMap.cellSize) {
+        const mapWidth = terrainMap.gridWidth * terrainMap.cellSize;
+        const mapHeight = terrainMap.gridHeight * terrainMap.cellSize;
+        if (cx < 0 || cx > mapWidth || cy < 0 || cy > mapHeight) {
+          continue; // Skip off-canvas items
+        }
+      }
+
       // Calculate child scale - use override if provided, else spawn rule default
       const scaleVariance = childConfig.scaleVariance ?? 0.3;
       const scaleRand = 1 + (seededRandom(childSeed + 3) - 0.5) * 2 * scaleVariance;
@@ -1163,6 +1183,36 @@ export function getVisibleScatter(terrainMap, viewport, options = {}) {
 
     return true;
   });
+}
+
+/**
+ * Remove scatter items that are outside the map boundaries
+ * Call this after loading a map or resizing to clean up stray items
+ *
+ * @param {object} terrainMap - TerrainMap with scatterItems
+ * @returns {number} Number of items removed
+ */
+export function pruneOffCanvasItems(terrainMap) {
+  if (!terrainMap.scatterItems || !terrainMap.gridWidth || !terrainMap.gridHeight) {
+    return 0;
+  }
+
+  const mapWidth = terrainMap.gridWidth * terrainMap.cellSize;
+  const mapHeight = terrainMap.gridHeight * terrainMap.cellSize;
+  const originalCount = terrainMap.scatterItems.length;
+
+  terrainMap.scatterItems = terrainMap.scatterItems.filter(item => {
+    return item.x >= 0 && item.x <= mapWidth && item.y >= 0 && item.y <= mapHeight;
+  });
+
+  const removedCount = originalCount - terrainMap.scatterItems.length;
+  if (removedCount > 0) {
+    console.log(`[Scatter] Pruned ${removedCount} off-canvas items`);
+    // Clear spatial hash so it rebuilds without the removed items
+    delete terrainMap._spatialHash;
+  }
+
+  return removedCount;
 }
 
 // ═══════════════════════════════════════════════════════════════

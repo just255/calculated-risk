@@ -535,7 +535,8 @@ export {
   getVisibleScatter,
   getSpriteKey,
   getScatterConfig,
-  rebuildSpatialHash
+  rebuildSpatialHash,
+  pruneOffCanvasItems
 } from './scatter.js';
 
 // Scatter renderer
