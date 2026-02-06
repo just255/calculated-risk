@@ -76,10 +76,11 @@ export const PaintTool = {
       this._renderer = renderer;  // Store for preview rendering
       this._dragModeStarted = false;  // Track if we've started drag mode
       this._state = state;  // Store for event emission
-      // Clear hover preview when painting starts
-      renderer.clearTexturePreview();
-
+      // Clear hover preview when painting starts (except water - we keep showing gradient)
       const options = state.toolOptions;
+      if (options.featureType !== 'water') {
+        renderer.clearTexturePreview();
+      }
       // Track if painting a scatter feature (for preview refresh on mouse up)
       this._paintingScatterFeature = options.featureType === 'forest' || options.featureType === 'brush';
 
@@ -147,12 +148,15 @@ export const PaintTool = {
     }
 
     // Texture preview for water/ground (shows what texture would be painted)
+    // Water preview is shown even during drag painting so user can see the gradient
     const isTextureFeature = options.featureType === 'water' || options.featureType === 'groundTexture';
     const showWaterPreview = state.viewSettings.showWaterPreview;
     const showGroundPreview = state.viewSettings.showGroundPreview;
+    const isWater = options.featureType === 'water';
 
-    if (inBounds && !this._isPainting && isTextureFeature) {
-      if (options.featureType === 'water' && showWaterPreview) {
+    // Show water preview during drag, but not ground texture (too slow)
+    if (inBounds && isTextureFeature && (!this._isPainting || isWater)) {
+      if (isWater && showWaterPreview) {
         // Falloff: 0% = hard edge (fadeWidth=0), 100% = very soft (fadeWidth=radius)
         const waterFalloff = (options.waterFalloff ?? 30) / 100;
         const waterFadeWidth = options.brushRadius * waterFalloff;
@@ -165,21 +169,21 @@ export const PaintTool = {
           waterOpacity: 1.0,
           waterDepth: (options.waterDepth ?? 0) / 100,
           waterDepthFalloff: (options.waterDepthFalloff ?? 50) / 100,
-          // Shore options
-          shoreType: options.shoreTextureType,
-          shoreWidth: options.shoreWidth || 0,
+          // Shore options (skip during drag for performance)
+          shoreType: this._isPainting ? null : options.shoreTextureType,
+          shoreWidth: this._isPainting ? 0 : (options.shoreWidth || 0),
           shoreFadeWidth: options.shoreFadeWidth ?? 12
         });
-      } else if (options.featureType === 'groundTexture' && showGroundPreview) {
+      } else if (options.featureType === 'groundTexture' && showGroundPreview && !this._isPainting) {
         renderer.setTexturePreview(e.x, e.y, options.brushRadius, options.groundTextureType || 'grass-1', {
           fadeWidth: options.fadeWidth ?? 12,
           intensity: options.intensity || 1.0,
           isWater: false
         });
-      } else {
+      } else if (!isWater) {
         renderer.clearTexturePreview();
       }
-    } else {
+    } else if (!isWater) {
       renderer.clearTexturePreview();
     }
 
