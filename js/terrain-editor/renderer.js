@@ -2775,7 +2775,7 @@ export class Renderer {
         shoreType: null,
         shoreWidth: 0,
         shoreFadeWidth: preview.fadeWidth,
-        alpha: 0.9
+        alpha: 1.0
       });
 
       // Erase water areas from temp canvas
@@ -2805,7 +2805,7 @@ export class Renderer {
         shoreType: preview.isWater ? preview.shoreType : null,
         shoreWidth: preview.isWater ? preview.shoreWidth : 0,
         shoreFadeWidth: preview.shoreFadeWidth ?? preview.fadeWidth,
-        alpha: 0.9
+        alpha: 1.0
       });
     }
   }
