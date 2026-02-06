@@ -3023,15 +3023,17 @@ export class Renderer {
       ctx.setLineDash([]);
     }
 
-    // Main brush fill
-    ctx.fillStyle = color || 'rgba(100, 200, 100, 0.3)';
-    ctx.beginPath();
-    if (isSquare) {
-      ctx.rect(x - radius, y - radius, radius * 2, radius * 2);
-    } else {
-      ctx.arc(x, y, radius, 0, Math.PI * 2);
+    // Main brush fill - skip if texture hover preview is active (it already shows the content)
+    if (!this._textureHoverPreview) {
+      ctx.fillStyle = color || 'rgba(100, 200, 100, 0.3)';
+      ctx.beginPath();
+      if (isSquare) {
+        ctx.rect(x - radius, y - radius, radius * 2, radius * 2);
+      } else {
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+      }
+      ctx.fill();
     }
-    ctx.fill();
 
     // Main brush outline
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
