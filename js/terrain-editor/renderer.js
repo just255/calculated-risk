@@ -2110,52 +2110,25 @@ export class Renderer {
 
   /**
    * Render depth preview stroke (overlay on top of water)
-   * Draws a single gradient covering the entire painted area
+   * Stamps gradient at each center, same as water texture
    */
   _renderDepthPreviewStroke(ctx, stroke) {
     const { depth, falloff = 0.5, radius, centers } = stroke;
     if (!depth || depth <= 0 || !centers || centers.length === 0) return;
 
-    // Calculate bounding box of all centers (including brush radius)
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const c of centers) {
-      minX = Math.min(minX, c.x - radius);
-      minY = Math.min(minY, c.y - radius);
-      maxX = Math.max(maxX, c.x + radius);
-      maxY = Math.max(maxY, c.y + radius);
-    }
-
-    // Center of the painted area
-    const centerX = (minX + maxX) / 2;
-    const centerY = (minY + maxY) / 2;
-
-    // Radius to cover the entire painted area
-    const areaWidth = maxX - minX;
-    const areaHeight = maxY - minY;
-    const areaRadius = Math.sqrt(areaWidth * areaWidth + areaHeight * areaHeight) / 2;
-
-    // Apply falloff to determine gradient radius
+    // Get cached depth gradient
     const maxAlpha = depth * 0.5;
-    const depthRadius = areaRadius * (1.0 - falloff * 0.5);
+    const depthGradient = this._getDepthGradientCache(maxAlpha, falloff);
 
-    // Draw single gradient over entire area
-    ctx.save();
+    // Calculate depth radius (same formula as _renderDepthOverlay)
+    const depthRadius = radius * (1.0 - falloff * 0.5);
+    const depthSize = depthRadius * 2;
+
+    // Stamp at each center
     ctx.globalAlpha = 1;
-
-    const gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, depthRadius);
-    const numStops = 8;
-    const falloffStrength = falloff * 4;
-    for (let i = 0; i <= numStops; i++) {
-      const t = i / numStops;
-      const alpha = maxAlpha * Math.exp(-t * t * falloffStrength);
-      gradient.addColorStop(t, `rgba(0, 10, 25, ${alpha})`);
+    for (const center of centers) {
+      ctx.drawImage(depthGradient, center.x - depthRadius, center.y - depthRadius, depthSize, depthSize);
     }
-
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.arc(centerX, centerY, depthRadius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
   }
 
   /**
