@@ -385,6 +385,23 @@ export class Renderer {
             ctx.drawImage(cache, center.x - waterStroke.radius, center.y - waterStroke.radius, size, size);
           }
 
+          // Apply depth overlay if waterDepth > 0
+          const waterDepth = waterStroke.waterDepth ?? 0;
+          if (waterDepth > 0) {
+            const falloff = waterStroke.waterDepthFalloff ?? 0.5;
+            // Calculate effective depth intensity (same as _renderDepthOverlay)
+            const maxAlpha = waterDepth * 0.5;
+            const depthGradient = this._getDepthGradientCache(maxAlpha, falloff);
+            // Calculate depth radius (same formula as _renderDepthOverlay)
+            const depthRadius = waterStroke.radius * (1.0 - falloff * 0.5);
+            const depthSize = depthRadius * 2;
+
+            ctx.globalAlpha = 1;  // Depth gradient has alpha baked in
+            for (const center of newCenters) {
+              ctx.drawImage(depthGradient, center.x - depthRadius, center.y - depthRadius, depthSize, depthSize);
+            }
+          }
+
           ctx.restore();
 
           // Update tracking

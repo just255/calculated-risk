@@ -603,7 +603,10 @@ export const PaintTool = {
             fadeWidth: options.featureType === 'water' ?
                        options.brushRadius * ((options.waterFalloff ?? 30) / 100) :
                        (options.fadeWidth ?? 12),
-            centers: [...this._dragCenters]  // Copy all accumulated centers
+            centers: [...this._dragCenters],  // Copy all accumulated centers
+            // Water depth parameters for preview gradient
+            waterDepth: options.featureType === 'water' ? (options.waterDepth ?? 0) / 100 : 0,
+            waterDepthFalloff: options.featureType === 'water' ? (options.waterDepthFalloff ?? 50) / 100 : 0.5
           };
 
           // For water, also add shore preview if enabled
