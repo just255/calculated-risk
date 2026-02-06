@@ -357,14 +357,24 @@ export class Renderer {
         const prevCount = this._previewWaterCenterCount || 0;
         const newCount = waterStroke.centers.length;
 
-        if (newCount > prevCount) {
+        if (newCount > prevCount && prevCount > 0) {
           // Incremental: only render NEW centers on top of existing preview
+          // Only do incremental if we already have some centers (prevCount > 0)
           const newCenters = waterStroke.centers.slice(prevCount);
           const ctx = this._paintPreview.getContext('2d');
           const previewScale = this._paintPreviewScale || 1;
 
+          // Clip to map bounds to prevent artifacts outside canvas
+          const mapWidth = this._state.canvasWidth;
+          const mapHeight = this._state.canvasHeight;
+
           ctx.save();
           ctx.setTransform(previewScale, 0, 0, previewScale, 0, 0);
+
+          // Clip to map boundaries
+          ctx.beginPath();
+          ctx.rect(0, 0, mapWidth, mapHeight);
+          ctx.clip();
 
           // Use cached water preview stamp for each new center
           const cache = this._getWaterPreviewCache(waterStroke.radius, waterStroke.fadeWidth ?? 12, waterStroke.textureType || 'water');
