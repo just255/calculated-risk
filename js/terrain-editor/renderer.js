@@ -385,10 +385,19 @@ export class Renderer {
             ctx.drawImage(cache, center.x - waterStroke.radius, center.y - waterStroke.radius, size, size);
           }
 
-          // Render depth overlay stroke if present (separate stroke, rendered on top)
+          // Render depth overlay for NEW centers only (same as water)
           const depthStroke = strokes.find(s => s.type === 'waterDepth');
-          if (depthStroke && depthStroke.centers && depthStroke.centers.length > 0) {
-            this._renderDepthPreviewStroke(ctx, depthStroke);
+          if (depthStroke && depthStroke.depth > 0) {
+            const depthFalloff = depthStroke.falloff ?? 0.5;
+            const maxAlpha = depthStroke.depth * 0.5;
+            const depthGradient = this._getDepthGradientCache(maxAlpha, depthFalloff);
+            const depthRadius = waterStroke.radius * (1.0 - depthFalloff * 0.5);
+            const depthSize = depthRadius * 2;
+
+            ctx.globalAlpha = 1;
+            for (const center of newCenters) {
+              ctx.drawImage(depthGradient, center.x - depthRadius, center.y - depthRadius, depthSize, depthSize);
+            }
           }
 
           ctx.restore();
