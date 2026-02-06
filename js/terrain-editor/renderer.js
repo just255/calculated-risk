@@ -2236,19 +2236,22 @@ export class Renderer {
     // Show loading overlay
     this._showLoadingOverlay('Rendering forest...');
 
-    // Use rAF to let the overlay render before blocking
+    // Use double rAF to ensure overlay actually paints before blocking
     requestAnimationFrame(() => {
-      // Rebuild synchronously
-      this._rebuildCanopyCache();
-      this._groundCacheValid = false; // Also rebuild ground for floor items
+      requestAnimationFrame(() => {
+        // Rebuild synchronously
+        console.log(`[Renderer] Starting cache rebuild...`);
+        this._rebuildCanopyCache();
+        this._groundCacheValid = false; // Also rebuild ground for floor items
 
-      const elapsed = performance.now() - startTime;
-      console.log(`[Renderer] Cache rebuild complete: ${elapsed.toFixed(0)}ms`);
+        const elapsed = performance.now() - startTime;
+        console.log(`[Renderer] Cache rebuild complete: ${elapsed.toFixed(0)}ms`);
 
-      // Hide overlay and render
-      this._hideLoadingOverlay();
-      this._deferredRebuildScheduled = false;
-      this._state.requestRender();
+        // Hide overlay and render
+        this._hideLoadingOverlay();
+        this._deferredRebuildScheduled = false;
+        this._state.requestRender();
+      });
     });
   }
 
@@ -2351,6 +2354,17 @@ export class Renderer {
       floor: this._images.floor,     // floor patches
       particle: this._images.brush   // particles use brush sprites for now
     };
+
+    // Debug: count items by layer
+    const scatterItems = terrainMap.scatterItems || [];
+    const layerCounts = {};
+    for (const item of scatterItems) {
+      const config = SCATTER_TYPES[item.type];
+      const layer = config?.layer || 'unknown';
+      layerCounts[layer] = (layerCounts[layer] || 0) + 1;
+    }
+    console.log(`[Renderer] Building scatter cache: ${scatterItems.length} total items, by layer:`, layerCounts);
+    console.log(`[Renderer] Tree images available: ${Object.keys(this._images.trees || {}).length}`);
 
     // Get post-processing settings from state (applied at render time, not generation)
     const postProcessing = this._state.toolOptions?.seasonOverrides || {};
