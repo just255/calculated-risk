@@ -2239,6 +2239,10 @@ export class Renderer {
     // Use double rAF to ensure overlay actually paints before blocking
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
+        // Clear paint preview BEFORE rebuilding cache
+        // (preview was kept during painting, now we're baking to cache)
+        this.clearPaintPreview();
+
         // Rebuild caches synchronously
         console.log(`[Renderer] Starting cache rebuild...`);
         this._rebuildCanopyCache();
