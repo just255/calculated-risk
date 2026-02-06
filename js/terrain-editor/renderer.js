@@ -2148,10 +2148,31 @@ export class Renderer {
         const width = this._state.canvasWidth;
         const height = this._state.canvasHeight;
         ctx.drawImage(this._canopyCache, 0, 0, width, height);
+        // Throttle this log as it fires every frame
+        if (!this._staleCacheLogThrottle) {
+          console.log(`[Renderer] Drew stale cache (deferred): cacheSize=${this._canopyCache.width}x${this._canopyCache.height}, cacheScatterCount=${this._canopyCacheScatterCount}, currentCount=${scatterCount}`);
+          this._staleCacheLogThrottle = true;
+          setTimeout(() => { this._staleCacheLogThrottle = false; }, 500);
+        }
+      } else {
+        if (!this._noCacheLogThrottle) {
+          console.log(`[Renderer] Deferred mode but NO CACHE exists! currentCount=${scatterCount}`);
+          this._noCacheLogThrottle = true;
+          setTimeout(() => { this._noCacheLogThrottle = false; }, 500);
+        }
       }
       // Continue to render new items directly (don't return early!)
     }
-    if (terrainMap.scatterItems && scatterCount > this._canopyCacheScatterCount) {
+    // Direct render: items not yet in cache (new items added during painting)
+    // This runs during painting AND during deferred mode to show new items immediately
+    const shouldDirectRender = terrainMap.scatterItems && scatterCount > this._canopyCacheScatterCount;
+    if (this._canopyCacheDeferred && !this._directRenderLogThrottle) {
+      console.log(`[Renderer] Direct render check: shouldRender=${shouldDirectRender}, scatterCount=${scatterCount}, cacheCount=${this._canopyCacheScatterCount}`);
+      this._directRenderLogThrottle = true;
+      setTimeout(() => { this._directRenderLogThrottle = false; }, 500); // Throttle logging
+    }
+
+    if (shouldDirectRender) {
       // Render only items not yet in cache
       const newItems = terrainMap.scatterItems.slice(this._canopyCacheScatterCount);
       if (newItems.length > 0) {
@@ -2162,6 +2183,16 @@ export class Renderer {
           floor: this._images.floor,
           particle: this._images.brush
         };
+
+        // Diagnostic: check image availability
+        if (this._canopyCacheDeferred && !this._directRenderLogImages) {
+          const treeCount = Object.keys(this._images.trees || {}).length;
+          const brushCount = Object.keys(this._images.brush || {}).length;
+          const floorCount = Object.keys(this._images.floor || {}).length;
+          console.log(`[Renderer] Direct render images: trees=${treeCount}, brush=${brushCount}, floor=${floorCount}`);
+          this._directRenderLogImages = true;
+          setTimeout(() => { this._directRenderLogImages = false; }, 2000);
+        }
 
         // Filter to canopy/particle layer items only (floor is handled by _renderUncachedFloorItems)
         const canopyItems = newItems.filter(item => {
@@ -2193,14 +2224,23 @@ export class Renderer {
             return shouldRenderItem(i, zoom, category);
           });
 
+          // Diagnostic logging during deferred mode
+          if (this._canopyCacheDeferred && !this._directRenderLogThrottle2) {
+            console.log(`[Renderer] Direct render pipeline: newItems=${newItems.length}, canopyItems=${canopyItems.length}, visible=${visibleItems.length}, afterLOD=${itemsToRender.length}, hasCache=${!!this._canopyCache}`);
+            this._directRenderLogThrottle2 = true;
+            setTimeout(() => { this._directRenderLogThrottle2 = false; }, 500);
+          }
+
           // Cap direct rendering AFTER culling to avoid lag with huge visible areas
           // Only apply cap if we have a cache to fall back to, otherwise render what we can
           const MAX_DIRECT_RENDER = 5000;
           if (itemsToRender.length > MAX_DIRECT_RENDER && this._canopyCache) {
             // Too many visible items - skip to avoid UI freeze, cache will fill in
+            console.log(`[Renderer] Direct render CAPPED: ${itemsToRender.length} > ${MAX_DIRECT_RENDER} with cache - skipping`);
             itemsToRender = [];
           } else if (itemsToRender.length > MAX_DIRECT_RENDER) {
             // No cache, render partial to show something (sorted by Y for front-to-back)
+            console.log(`[Renderer] Direct render PARTIAL: ${itemsToRender.length} > ${MAX_DIRECT_RENDER} without cache - rendering first ${MAX_DIRECT_RENDER}`);
             itemsToRender.sort((a, b) => a.y - b.y);
             itemsToRender = itemsToRender.slice(0, MAX_DIRECT_RENDER);
           }
@@ -2218,7 +2258,24 @@ export class Renderer {
             for (const item of itemsToRender) {
               renderScatterItem(ctx, item, images, { skipFilters: true });
             }
+
+            // Log successful render (throttled)
+            if (this._canopyCacheDeferred && !this._directRenderLogThrottle3) {
+              // Count items by category for debugging
+              const catCounts = {};
+              for (const item of itemsToRender) {
+                const cat = SCATTER_TYPES[item.type]?.category || 'unknown';
+                catCounts[cat] = (catCounts[cat] || 0) + 1;
+              }
+              console.log(`[Renderer] Direct rendered ${itemsToRender.length} canopy items:`, catCounts);
+              this._directRenderLogThrottle3 = true;
+              setTimeout(() => { this._directRenderLogThrottle3 = false; }, 500);
+            }
           }
+        } else if (this._canopyCacheDeferred && !this._directRenderLogThrottle4) {
+          console.log(`[Renderer] No canopy items in newItems (all floor?): newItems=${newItems.length}`);
+          this._directRenderLogThrottle4 = true;
+          setTimeout(() => { this._directRenderLogThrottle4 = false; }, 500);
         }
       }
     }
