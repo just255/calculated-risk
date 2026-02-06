@@ -37,13 +37,18 @@ export function renderScatterLayer(ctx, terrainMap, layer, viewport, images, opt
   // Get visible items for this layer
   const visible = getVisibleScatter(terrainMap, viewport, { layer });
 
-  if (visible.length === 0) return;
+  if (visible.length === 0) {
+    console.log(`[ScatterRenderer] Layer '${layer}': 0 visible items`);
+    return;
+  }
 
   // Sort canopy layer (smaller scale first, then by Y)
   let sorted = visible;
   if (layer === 'canopy') {
     sorted = [...visible].sort((a, b) => (a.scale - b.scale) || (a.y - b.y));
   }
+
+  console.log(`[ScatterRenderer] Layer '${layer}': rendering ${sorted.length} items (skipFilters: ${!!options.skipFilters})`);
 
   // Render each item
   for (const item of sorted) {

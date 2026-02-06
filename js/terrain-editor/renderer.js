@@ -2355,23 +2355,30 @@ export class Renderer {
       particle: this._images.brush   // particles use brush sprites for now
     };
 
-    // Debug: count items by layer
+    // Debug: count items by layer and category
     const scatterItems = terrainMap.scatterItems || [];
     const layerCounts = {};
+    const categoryCounts = {};
     for (const item of scatterItems) {
       const config = SCATTER_TYPES[item.type];
       const layer = config?.layer || 'unknown';
+      const category = config?.category || 'unknown';
       layerCounts[layer] = (layerCounts[layer] || 0) + 1;
+      categoryCounts[category] = (categoryCounts[category] || 0) + 1;
     }
-    console.log(`[Renderer] Building scatter cache: ${scatterItems.length} total items, by layer:`, layerCounts);
-    console.log(`[Renderer] Tree images available: ${Object.keys(this._images.trees || {}).length}`);
+    console.log(`[Renderer] Building scatter cache: ${scatterItems.length} total items`);
+    console.log(`[Renderer]   Cache canvas: ${width}x${height}, viewport: 0,0 → ${viewport.width}x${viewport.height}`);
+    console.log(`[Renderer]   By layer:`, layerCounts);
+    console.log(`[Renderer]   By category:`, categoryCounts);
+    console.log(`[Renderer]   Tree images available: ${Object.keys(this._images.trees || {}).length}`);
 
     // Get post-processing settings from state (applied at render time, not generation)
     const postProcessing = this._state.toolOptions?.seasonOverrides || {};
 
     // Render layers in order: particle (under trees) → canopy (trees, brush)
-    renderScatterLayer(ctx, terrainMap, 'particle', viewport, images, { postProcessing });
-    renderScatterLayer(ctx, terrainMap, 'canopy', viewport, images, { postProcessing });
+    // skipFilters: true is critical - CSS filters are extremely slow when applied per-item
+    renderScatterLayer(ctx, terrainMap, 'particle', viewport, images, { postProcessing, skipFilters: true });
+    renderScatterLayer(ctx, terrainMap, 'canopy', viewport, images, { postProcessing, skipFilters: true });
 
     return cache;
   }
