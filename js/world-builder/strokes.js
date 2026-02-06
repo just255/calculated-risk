@@ -470,12 +470,18 @@ export function generateTreesForStroke(terrainMap, stroke, options = {}) {
     if (!allowTreesInWater) {
       const inWater = terrainMap.strokes.some(s => {
         if (s.type !== 'water') return false;
-        const dx = s.x - tx;
-        const dy = s.y - ty;
-        const dist = Math.sqrt(dx * dx + dy * dy);
         // Include shore area in the check
         const effectiveRadius = s.radius + (s.shoreWidth || 0);
-        return dist < effectiveRadius;
+        // Water strokes can have multiple centers (from drag painting)
+        const positions = (s.centers && s.centers.length > 0)
+          ? s.centers
+          : [{ x: s.x, y: s.y }];
+        return positions.some(pos => {
+          const dx = pos.x - tx;
+          const dy = pos.y - ty;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          return dist < effectiveRadius;
+        });
       });
       if (inWater) continue;
     }
@@ -663,11 +669,17 @@ export function generateBrushForStroke(terrainMap, stroke, options = {}) {
     if (!allowBrushInWater) {
       const inWater = terrainMap.strokes.some(s => {
         if (s.type !== 'water') return false;
-        const dx = s.x - bx;
-        const dy = s.y - by;
-        const dist = Math.sqrt(dx * dx + dy * dy);
         const effectiveRadius = s.radius + (s.shoreWidth || 0);
-        return dist < effectiveRadius;
+        // Water strokes can have multiple centers (from drag painting)
+        const positions = (s.centers && s.centers.length > 0)
+          ? s.centers
+          : [{ x: s.x, y: s.y }];
+        return positions.some(pos => {
+          const dx = pos.x - bx;
+          const dy = pos.y - by;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          return dist < effectiveRadius;
+        });
       });
       if (inWater) continue;
     }

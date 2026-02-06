@@ -332,11 +332,17 @@ export function generateScatter(terrainMap, source, type, options = {}) {
       if (!allowInWater && terrainMap.strokes) {
         const inWater = terrainMap.strokes.some(s => {
           if (s.type !== 'water') return false;
-          const dx = s.x - ix;
-          const dy = s.y - iy;
-          const d = Math.sqrt(dx * dx + dy * dy);
           const effectiveRadius = s.radius + (s.shoreWidth || 0);
-          return d < effectiveRadius;
+          // Water strokes can have multiple centers (from drag painting)
+          const positions = (s.centers && s.centers.length > 0)
+            ? s.centers
+            : [{ x: s.x, y: s.y }];
+          return positions.some(pos => {
+            const dx = pos.x - ix;
+            const dy = pos.y - iy;
+            const d = Math.sqrt(dx * dx + dy * dy);
+            return d < effectiveRadius;
+          });
         });
         if (inWater) continue;
       }
