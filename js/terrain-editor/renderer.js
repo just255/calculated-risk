@@ -155,6 +155,7 @@ export class Renderer {
    */
   beginDragPaint() {
     this._isDragPainting = true;
+    this._previewWaterCenterCount = 0; // Reset for incremental water preview
   }
 
   /**
@@ -343,7 +344,50 @@ export class Renderer {
    * @param {object[]} strokes - Array of strokes with centers arrays
    */
   updateCombinedPreview(strokes) {
-    // Replace all preview strokes with the new combined strokes
+    // Try incremental update for water strokes during drag painting
+    if (this._isDragPainting && this._paintPreview && strokes.length > 0) {
+      const waterStroke = strokes.find(s => s.type === 'water');
+      if (waterStroke && waterStroke.centers && waterStroke.centers.length > 0) {
+        const prevCount = this._previewWaterCenterCount || 0;
+        const newCount = waterStroke.centers.length;
+
+        if (newCount > prevCount) {
+          // Incremental: only render NEW centers on top of existing preview
+          const newCenters = waterStroke.centers.slice(prevCount);
+          const ctx = this._paintPreview.getContext('2d');
+          const previewScale = this._paintPreviewScale || 1;
+
+          ctx.save();
+          ctx.setTransform(previewScale, 0, 0, previewScale, 0, 0);
+
+          // Use cached water preview stamp for each new center
+          const cache = this._getWaterPreviewCache(waterStroke.radius, waterStroke.fadeWidth ?? 12, waterStroke.textureType || 'water');
+          const size = waterStroke.radius * 2;
+          ctx.globalAlpha = waterStroke.intensity || 1;
+
+          for (const center of newCenters) {
+            ctx.drawImage(cache, center.x - waterStroke.radius, center.y - waterStroke.radius, size, size);
+          }
+
+          ctx.restore();
+
+          // Update tracking
+          this._previewWaterCenterCount = newCount;
+          this._paintPreviewStrokes = strokes;
+          this._requestUIRender();
+          return;
+        }
+      }
+    }
+
+    // Full rebuild fallback (first stroke, non-water, or preview not ready)
+    this._previewWaterCenterCount = 0;
+    // Count water centers for next incremental update
+    const waterStroke = strokes.find(s => s.type === 'water');
+    if (waterStroke && waterStroke.centers) {
+      this._previewWaterCenterCount = waterStroke.centers.length;
+    }
+
     this._paintPreviewStrokes = strokes;
     this._rebuildPaintPreview();
     this._requestUIRender();
@@ -375,6 +419,7 @@ export class Renderer {
    */
   clearPaintPreview() {
     this._paintPreviewStrokes = [];
+    this._previewWaterCenterCount = 0; // Reset incremental counter
     if (this._paintPreview) {
       const ctx = this._paintPreview.getContext('2d');
       ctx.clearRect(0, 0, this._paintPreview.width, this._paintPreview.height);
