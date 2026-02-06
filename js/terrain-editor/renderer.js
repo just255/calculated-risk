@@ -2231,24 +2231,7 @@ export class Renderer {
             setTimeout(() => { this._directRenderLogThrottle2 = false; }, 500);
           }
 
-          // Cap direct rendering AFTER culling to avoid lag with huge visible areas
-          // Only skip if stale cache has items to show; otherwise render partial set
-          const MAX_DIRECT_RENDER = 5000;
-          if (itemsToRender.length > MAX_DIRECT_RENDER) {
-            // Check if stale cache has meaningful content to fall back on
-            const staleCacheHasContent = this._canopyCache && this._canopyCacheScatterCount > 0;
-
-            if (staleCacheHasContent) {
-              // Stale cache has items - skip direct render, let cache show while rebuild happens
-              console.log(`[Renderer] Direct render CAPPED: ${itemsToRender.length} > ${MAX_DIRECT_RENDER}, stale cache has ${this._canopyCacheScatterCount} items - skipping`);
-              itemsToRender = [];
-            } else {
-              // No useful cache - render partial set so user sees SOMETHING
-              console.log(`[Renderer] Direct render PARTIAL: ${itemsToRender.length} > ${MAX_DIRECT_RENDER}, no stale cache - rendering first ${MAX_DIRECT_RENDER}`);
-              itemsToRender.sort((a, b) => a.y - b.y);
-              itemsToRender = itemsToRender.slice(0, MAX_DIRECT_RENDER);
-            }
-          }
+          // No cap on direct rendering - show all items while cache rebuilds
 
           if (itemsToRender.length > 0) {
             // Sort items to render (smaller scale first, then by Y for proper layering)
