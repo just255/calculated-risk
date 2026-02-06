@@ -385,44 +385,10 @@ export class Renderer {
             ctx.drawImage(cache, center.x - waterStroke.radius, center.y - waterStroke.radius, size, size);
           }
 
-          // Apply single depth gradient over entire preview area (not per-center to avoid stacking)
-          const waterDepth = waterStroke.waterDepth ?? 0;
-          if (waterDepth > 0 && waterStroke.centers && waterStroke.centers.length > 0) {
-            const allCenters = waterStroke.centers;
-            const radius = waterStroke.radius;
-
-            // Calculate bounding box of all centers
-            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-            for (const c of allCenters) {
-              minX = Math.min(minX, c.x - radius);
-              minY = Math.min(minY, c.y - radius);
-              maxX = Math.max(maxX, c.x + radius);
-              maxY = Math.max(maxY, c.y + radius);
-            }
-
-            // Center and size of the bounding area
-            const centerX = (minX + maxX) / 2;
-            const centerY = (minY + maxY) / 2;
-            const areaRadius = Math.max(maxX - minX, maxY - minY) / 2;
-
-            const falloff = waterStroke.waterDepthFalloff ?? 0.5;
-            const maxAlpha = waterDepth * 0.5;
-            const depthRadius = areaRadius * (1.0 - falloff * 0.5);
-
-            // Draw single depth gradient over entire area
-            ctx.globalAlpha = 1;
-            const gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, depthRadius);
-            const numStops = 8;
-            const falloffStrength = falloff * 4;
-            for (let i = 0; i <= numStops; i++) {
-              const t = i / numStops;
-              const alpha = maxAlpha * Math.exp(-t * t * falloffStrength);
-              gradient.addColorStop(t, `rgba(0, 10, 25, ${alpha})`);
-            }
-            ctx.fillStyle = gradient;
-            ctx.beginPath();
-            ctx.arc(centerX, centerY, depthRadius, 0, Math.PI * 2);
-            ctx.fill();
+          // Render depth overlay stroke if present (separate stroke, rendered on top)
+          const depthStroke = strokes.find(s => s.type === 'waterDepth');
+          if (depthStroke && depthStroke.centers && depthStroke.centers.length > 0) {
+            this._renderDepthPreviewStroke(ctx, depthStroke);
           }
 
           ctx.restore();
@@ -663,6 +629,13 @@ export class Renderer {
     });
     for (const s of waterStrokes) {
       this._renderWaterStroke(ctx, s, true);
+    }
+
+    // Pass 4: Water depth overlay strokes (rendered on top of water)
+    for (let i = 0; i < len; i++) {
+      const s = strokes[i];
+      if (s.type !== 'waterDepth') continue;
+      this._renderDepthPreviewStroke(ctx, s);
     }
 
   }
@@ -2133,6 +2106,29 @@ export class Renderer {
     ctx.beginPath();
     ctx.arc(x, y, depthRadius, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  /**
+   * Render depth preview stroke (overlay on top of water)
+   * Uses cached depth gradient stamp at each center
+   */
+  _renderDepthPreviewStroke(ctx, stroke) {
+    const { depth, falloff = 0.5, radius, centers } = stroke;
+    if (!depth || depth <= 0 || !centers || centers.length === 0) return;
+
+    // Get cached depth gradient
+    const maxAlpha = depth * 0.5;
+    const depthGradient = this._getDepthGradientCache(maxAlpha, falloff);
+
+    // Calculate depth radius (same formula as _renderDepthOverlay)
+    const depthRadius = radius * (1.0 - falloff * 0.5);
+    const depthSize = depthRadius * 2;
+
+    // Stamp at each center
+    ctx.globalAlpha = 1;  // Alpha is baked into gradient
+    for (const center of centers) {
+      ctx.drawImage(depthGradient, center.x - depthRadius, center.y - depthRadius, depthSize, depthSize);
+    }
   }
 
   /**

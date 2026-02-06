@@ -609,10 +609,13 @@ export const PaintTool = {
             waterDepthFalloff: options.featureType === 'water' ? (options.waterDepthFalloff ?? 50) / 100 : 0.5
           };
 
-          // For water, also add shore preview if enabled
+          // Build stroke array: [shore (optional), water, depth (optional)]
+          const strokes = [];
+
+          // Shore stroke (rendered first, behind water)
           if (options.featureType === 'water' && options.shoreTextureType &&
               options.shoreTextureType !== 'none' && options.shoreWidth > 0) {
-            const shoreStroke = {
+            strokes.push({
               type: 'groundTexture',
               x: firstCenter.x,
               y: firstCenter.y,
@@ -622,11 +625,27 @@ export const PaintTool = {
               fadeWidth: options.shoreFadeWidth ?? 12,
               isShore: true,
               centers: [...this._dragCenters]
-            };
-            renderer.updateCombinedPreview([shoreStroke, previewStroke]);
-          } else {
-            renderer.updateCombinedPreview([previewStroke]);
+            });
           }
+
+          // Water stroke
+          strokes.push(previewStroke);
+
+          // Depth overlay stroke (rendered on top of water)
+          const waterDepth = (options.waterDepth ?? 0) / 100;
+          if (options.featureType === 'water' && waterDepth > 0) {
+            strokes.push({
+              type: 'waterDepth',
+              x: firstCenter.x,
+              y: firstCenter.y,
+              radius: options.brushRadius,
+              depth: waterDepth,
+              falloff: (options.waterDepthFalloff ?? 50) / 100,
+              centers: [...this._dragCenters]
+            });
+          }
+
+          renderer.updateCombinedPreview(strokes);
         }
       }
       return;
