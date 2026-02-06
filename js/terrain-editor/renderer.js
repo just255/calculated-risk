@@ -2232,17 +2232,22 @@ export class Renderer {
           }
 
           // Cap direct rendering AFTER culling to avoid lag with huge visible areas
-          // Only apply cap if we have a cache to fall back to, otherwise render what we can
+          // Only skip if stale cache has items to show; otherwise render partial set
           const MAX_DIRECT_RENDER = 5000;
-          if (itemsToRender.length > MAX_DIRECT_RENDER && this._canopyCache) {
-            // Too many visible items - skip to avoid UI freeze, cache will fill in
-            console.log(`[Renderer] Direct render CAPPED: ${itemsToRender.length} > ${MAX_DIRECT_RENDER} with cache - skipping`);
-            itemsToRender = [];
-          } else if (itemsToRender.length > MAX_DIRECT_RENDER) {
-            // No cache, render partial to show something (sorted by Y for front-to-back)
-            console.log(`[Renderer] Direct render PARTIAL: ${itemsToRender.length} > ${MAX_DIRECT_RENDER} without cache - rendering first ${MAX_DIRECT_RENDER}`);
-            itemsToRender.sort((a, b) => a.y - b.y);
-            itemsToRender = itemsToRender.slice(0, MAX_DIRECT_RENDER);
+          if (itemsToRender.length > MAX_DIRECT_RENDER) {
+            // Check if stale cache has meaningful content to fall back on
+            const staleCacheHasContent = this._canopyCache && this._canopyCacheScatterCount > 0;
+
+            if (staleCacheHasContent) {
+              // Stale cache has items - skip direct render, let cache show while rebuild happens
+              console.log(`[Renderer] Direct render CAPPED: ${itemsToRender.length} > ${MAX_DIRECT_RENDER}, stale cache has ${this._canopyCacheScatterCount} items - skipping`);
+              itemsToRender = [];
+            } else {
+              // No useful cache - render partial set so user sees SOMETHING
+              console.log(`[Renderer] Direct render PARTIAL: ${itemsToRender.length} > ${MAX_DIRECT_RENDER}, no stale cache - rendering first ${MAX_DIRECT_RENDER}`);
+              itemsToRender.sort((a, b) => a.y - b.y);
+              itemsToRender = itemsToRender.slice(0, MAX_DIRECT_RENDER);
+            }
           }
 
           if (itemsToRender.length > 0) {
