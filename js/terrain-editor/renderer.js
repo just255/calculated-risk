@@ -509,23 +509,26 @@ export class Renderer {
     }
 
     // Pass 2: Shore textures with inline occlusion check
-    for (let i = 0; i < len; i++) {
-      const s = strokes[i];
-      if (s.type !== 'groundTexture' || !s.isShore) continue;
-      if (!this._isStrokeInViewportFast(s, fullWidth, fullHeight)) continue;
-      // Inline occlusion: check if any later shore stroke completely covers this one
-      let occluded = false;
-      for (let j = i + 1; j < len; j++) {
-        const other = strokes[j];
-        if (other.type !== 'groundTexture' || !other.isShore) continue;
-        const dx = s.x - other.x;
-        const dy = s.y - other.y;
-        if (Math.sqrt(dx * dx + dy * dy) + s.radius <= other.radius) {
-          occluded = true;
-          break;
+    // Skip during drag painting for performance - shore renders on final cache build
+    if (!this._isDragPainting) {
+      for (let i = 0; i < len; i++) {
+        const s = strokes[i];
+        if (s.type !== 'groundTexture' || !s.isShore) continue;
+        if (!this._isStrokeInViewportFast(s, fullWidth, fullHeight)) continue;
+        // Inline occlusion: check if any later shore stroke completely covers this one
+        let occluded = false;
+        for (let j = i + 1; j < len; j++) {
+          const other = strokes[j];
+          if (other.type !== 'groundTexture' || !other.isShore) continue;
+          const dx = s.x - other.x;
+          const dy = s.y - other.y;
+          if (Math.sqrt(dx * dx + dy * dy) + s.radius <= other.radius) {
+            occluded = true;
+            break;
+          }
         }
+        if (!occluded) this._renderGroundTextureStroke(ctx, s, true);
       }
-      if (!occluded) this._renderGroundTextureStroke(ctx, s, true);
     }
 
     // Pass 3: Water strokes with inline occlusion check
