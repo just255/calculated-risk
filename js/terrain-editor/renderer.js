@@ -156,6 +156,12 @@ export class Renderer {
   beginDragPaint() {
     this._isDragPainting = true;
     this._previewWaterCenterCount = 0; // Reset for incremental water preview
+    // Clear old preview so new stroke starts fresh
+    if (this._paintPreview) {
+      const ctx = this._paintPreview.getContext('2d');
+      ctx.clearRect(0, 0, this._paintPreview.width, this._paintPreview.height);
+    }
+    this._paintPreviewStrokes = [];
   }
 
   /**
