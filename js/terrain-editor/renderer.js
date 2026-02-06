@@ -1718,7 +1718,21 @@ export class Renderer {
     const type = textureType || 'water';
     const fade = fadeWidth ?? 12;
 
-    // Multi-center stroke: render at each center position
+    // Fast preview mode: use cached gradient stamp instead of per-center texture rendering
+    // This is MUCH faster for multi-center strokes (48 centers = 48 gradient creations normally)
+    if (previewMode && centers && centers.length > 1) {
+      const cache = this._getWaterPreviewCache(radius, fade, type);
+      const size = radius * 2;
+      ctx.save();
+      ctx.globalAlpha = intensity;
+      for (const center of centers) {
+        ctx.drawImage(cache, center.x - radius, center.y - radius, size, size);
+      }
+      ctx.restore();
+      return;
+    }
+
+    // Full quality: render textured stroke at each center
     if (centers && centers.length > 0) {
       for (const center of centers) {
         this._renderTextureStroke(ctx, type, center.x, center.y, radius, intensity, fade, previewMode);
@@ -1727,6 +1741,70 @@ export class Renderer {
       // Single center (legacy)
       this._renderTextureStroke(ctx, type, stroke.x, stroke.y, radius, intensity, fade, previewMode);
     }
+  }
+
+  /**
+   * Get or create a cached water preview gradient.
+   * Uses a simple color gradient instead of texture for fast preview rendering.
+   */
+  _getWaterPreviewCache(radius, fadeWidth, waterType) {
+    const CACHE_SIZE = 128;  // Fixed size, scaled when drawn
+
+    // Check if we can reuse existing cache (same params)
+    if (this._waterPreviewCache &&
+        this._waterPreviewCacheRadius === radius &&
+        this._waterPreviewCacheFade === fadeWidth &&
+        this._waterPreviewCacheType === waterType) {
+      return this._waterPreviewCache;
+    }
+
+    // Create new cache canvas
+    const cache = document.createElement('canvas');
+    cache.width = CACHE_SIZE;
+    cache.height = CACHE_SIZE;
+    const cctx = cache.getContext('2d');
+
+    // Water colors by type
+    const waterColors = {
+      'water': '#2a6a9a',
+      'water-pond': '#3a5a6a',
+      'water-river': '#2a4a6a',
+      'water-ocean': '#1a3a5a',
+      'water-marsh': '#3a5a4a'
+    };
+    const color = waterColors[waterType] || waterColors['water'];
+
+    // Create radial gradient with fade
+    const center = CACHE_SIZE / 2;
+    const scaledRadius = center;
+    const fadeRatio = fadeWidth / radius;
+    const innerRadius = Math.max(0, scaledRadius * (1 - fadeRatio));
+
+    const gradient = cctx.createRadialGradient(
+      center, center, innerRadius,
+      center, center, scaledRadius
+    );
+    gradient.addColorStop(0, color);
+    gradient.addColorStop(1, 'rgba(0,0,0,0)');
+
+    // Fill with solid color in center, gradient at edge
+    cctx.fillStyle = color;
+    cctx.beginPath();
+    cctx.arc(center, center, innerRadius, 0, Math.PI * 2);
+    cctx.fill();
+
+    cctx.fillStyle = gradient;
+    cctx.beginPath();
+    cctx.arc(center, center, scaledRadius, 0, Math.PI * 2);
+    cctx.fill();
+
+    // Store cache and params
+    this._waterPreviewCache = cache;
+    this._waterPreviewCacheRadius = radius;
+    this._waterPreviewCacheFade = fadeWidth;
+    this._waterPreviewCacheType = waterType;
+
+    return cache;
   }
 
   /**
