@@ -1996,13 +1996,24 @@ export class Renderer {
     }
 
     // Filter to visible items with per-item pixel-size culling
-    const visibleFloor = floorItems.filter(item => {
+    let visibleFloor = floorItems.filter(item => {
       if (item.x <= vpLeft - margin || item.x >= vpRight + margin ||
           item.y <= vpTop - margin || item.y >= vpBottom + margin) {
         return false;
       }
       return shouldRenderItem(item, vp.zoom, 'floor');
     });
+
+    // Cap direct rendering to avoid lag with huge visible areas
+    // Only skip if ground cache exists to fall back to
+    const MAX_FLOOR_DIRECT = 10000;
+    if (visibleFloor.length > MAX_FLOOR_DIRECT && this._groundCache && !this._floorNotInCache) {
+      // Too many visible floor items and cache exists - skip to avoid UI freeze
+      return;
+    } else if (visibleFloor.length > MAX_FLOOR_DIRECT) {
+      // No fallback cache, render a subset to show something
+      visibleFloor = visibleFloor.slice(0, MAX_FLOOR_DIRECT);
+    }
 
     if (visibleFloor.length === 0) return;
 
@@ -2142,8 +2153,8 @@ export class Renderer {
     }
     if (terrainMap.scatterItems && scatterCount > this._canopyCacheScatterCount) {
       // Render only items not yet in cache
-      const itemsToRender = terrainMap.scatterItems.slice(this._canopyCacheScatterCount);
-      if (itemsToRender.length > 0) {
+      const newItems = terrainMap.scatterItems.slice(this._canopyCacheScatterCount);
+      if (newItems.length > 0) {
         // Prepare images for scatter renderer
         const images = {
           tree: this._images.trees,
@@ -2153,7 +2164,7 @@ export class Renderer {
         };
 
         // Filter to canopy/particle layer items only (floor is handled by _renderUncachedFloorItems)
-        const canopyItems = itemsToRender.filter(item => {
+        const canopyItems = newItems.filter(item => {
           const config = SCATTER_TYPES[item.type];
           return config && (config.layer === 'canopy' || config.layer === 'particle');
         });
@@ -2177,23 +2188,36 @@ export class Renderer {
 
           // PERFORMANCE: Per-item pixel-size LOD culling
           const zoom = vp.zoom;
-          const itemsToRender = visibleItems.filter(i => {
+          let itemsToRender = visibleItems.filter(i => {
             const category = SCATTER_TYPES[i.type]?.category;
             return shouldRenderItem(i, zoom, category);
           });
 
+          // Cap direct rendering AFTER culling to avoid lag with huge visible areas
+          // Only apply cap if we have a cache to fall back to, otherwise render what we can
+          const MAX_DIRECT_RENDER = 5000;
+          if (itemsToRender.length > MAX_DIRECT_RENDER && this._canopyCache) {
+            // Too many visible items - skip to avoid UI freeze, cache will fill in
+            itemsToRender = [];
+          } else if (itemsToRender.length > MAX_DIRECT_RENDER) {
+            // No cache, render partial to show something (sorted by Y for front-to-back)
+            itemsToRender.sort((a, b) => a.y - b.y);
+            itemsToRender = itemsToRender.slice(0, MAX_DIRECT_RENDER);
+          }
 
-          // Sort items to render (smaller scale first, then by Y for proper layering)
-          itemsToRender.sort((a, b) => {
-            const scaleA = a._renderScale ?? a.scale;
-            const scaleB = b._renderScale ?? b.scale;
-            return (scaleA - scaleB) || (a.y - b.y);
-          });
+          if (itemsToRender.length > 0) {
+            // Sort items to render (smaller scale first, then by Y for proper layering)
+            itemsToRender.sort((a, b) => {
+              const scaleA = a._renderScale ?? a.scale;
+              const scaleB = b._renderScale ?? b.scale;
+              return (scaleA - scaleB) || (a.y - b.y);
+            });
 
-          // Render each item
-          // Skip CSS filters for live rendering - filters applied during cache rebuild
-          for (const item of itemsToRender) {
-            renderScatterItem(ctx, item, images, { skipFilters: true });
+            // Render each item
+            // Skip CSS filters for live rendering - filters applied during cache rebuild
+            for (const item of itemsToRender) {
+              renderScatterItem(ctx, item, images, { skipFilters: true });
+            }
           }
         }
       }
@@ -2253,7 +2277,7 @@ export class Renderer {
     // Schedule chunked rebuild to keep UI responsive
     // Instead of building entire cache at once (10+ seconds), build in chunks
     // Use small chunks to keep each frame under 16ms for 60fps
-    const CHUNK_SIZE = 200;  // Small chunks for smooth UI
+    const CHUNK_SIZE = 2000;  // Larger chunks for faster completion (target ~5 sec max)
     const CHUNK_DELAY = 0;   // Use requestAnimationFrame timing
 
     const doChunkedRebuild = () => {
