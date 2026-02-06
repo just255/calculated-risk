@@ -2998,18 +2998,21 @@ export class Renderer {
     const isSquare = shape === 'square';
 
     // Draw outer ring first (shore/floor extend) if specified
+    // Skip fill when texture hover preview is active (it already shows the content)
     if (outerRadius && outerRadius > radius) {
-      // Outer fill
-      ctx.fillStyle = outerColor || 'rgba(139, 90, 43, 0.2)';
-      ctx.beginPath();
-      if (isSquare) {
-        ctx.rect(x - outerRadius, y - outerRadius, outerRadius * 2, outerRadius * 2);
-      } else {
-        ctx.arc(x, y, outerRadius, 0, Math.PI * 2);
+      // Outer fill - skip if texture preview active
+      if (!this._textureHoverPreview) {
+        ctx.fillStyle = outerColor || 'rgba(139, 90, 43, 0.2)';
+        ctx.beginPath();
+        if (isSquare) {
+          ctx.rect(x - outerRadius, y - outerRadius, outerRadius * 2, outerRadius * 2);
+        } else {
+          ctx.arc(x, y, outerRadius, 0, Math.PI * 2);
+        }
+        ctx.fill();
       }
-      ctx.fill();
 
-      // Outer outline (dashed)
+      // Outer outline (dashed) - always show for visual reference
       ctx.strokeStyle = 'rgba(180, 140, 80, 0.6)';
       ctx.lineWidth = 1.5 / zoom;
       ctx.setLineDash([6 / zoom, 4 / zoom]);
