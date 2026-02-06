@@ -97,6 +97,9 @@ export class Renderer {
     // Drag painting mode - defer cache rebuilds until drag ends
     this._isDragPainting = false;
 
+    // Floor items not in ground cache (too many items, render directly)
+    this._floorNotInCache = false;
+
     // Scatter preview (shown on UI layer when hovering with preview enabled)
     this._scatterPreview = null;
 
@@ -1156,8 +1159,11 @@ export class Renderer {
       ctx.drawImage(this._waterCache, 0, 0);
     }
 
-    // During drag painting or deferred rebuild, render uncached floor items (not in ground cache yet)
-    if ((this._isDragPainting || this._canopyCacheDeferred) && this._state.viewSettings.useScatterRendering) {
+    // Render floor items directly when:
+    // 1. During drag painting (new items not in cache yet)
+    // 2. During deferred rebuild (cache being rebuilt)
+    // 3. When floor items exceed cache limit (_floorNotInCache = true)
+    if ((this._isDragPainting || this._canopyCacheDeferred || this._floorNotInCache) && this._state.viewSettings.useScatterRendering) {
       this._renderUncachedFloorItems(ctx);
     }
 
