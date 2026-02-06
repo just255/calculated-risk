@@ -73,6 +73,9 @@ export class Renderer {
     this._paintPreview = null;
     this._paintPreviewStrokes = [];
 
+    // Depth preview layer (rendered on top of paint preview)
+    this._depthPreview = null;
+
     // Animating strokes (between drag end and cache bake)
     this._animatingStrokes = [];
 
@@ -160,6 +163,10 @@ export class Renderer {
     if (this._paintPreview) {
       const ctx = this._paintPreview.getContext('2d');
       ctx.clearRect(0, 0, this._paintPreview.width, this._paintPreview.height);
+    }
+    if (this._depthPreview) {
+      const ctx = this._depthPreview.getContext('2d');
+      ctx.clearRect(0, 0, this._depthPreview.width, this._depthPreview.height);
     }
     this._paintPreviewStrokes = [];
   }
@@ -385,22 +392,39 @@ export class Renderer {
             ctx.drawImage(cache, center.x - waterStroke.radius, center.y - waterStroke.radius, size, size);
           }
 
-          // Render depth overlay for NEW centers only (same as water)
+          ctx.restore();
+
+          // Render depth to separate canvas (so it layers on top of water)
           const depthStroke = strokes.find(s => s.type === 'waterDepth');
           if (depthStroke && depthStroke.depth > 0) {
+            // Create/resize depth preview canvas to match paint preview
+            if (!this._depthPreview ||
+                this._depthPreview.width !== this._paintPreview.width ||
+                this._depthPreview.height !== this._paintPreview.height) {
+              this._depthPreview = document.createElement('canvas');
+              this._depthPreview.width = this._paintPreview.width;
+              this._depthPreview.height = this._paintPreview.height;
+            }
+
+            const depthCtx = this._depthPreview.getContext('2d');
+            depthCtx.save();
+            depthCtx.setTransform(previewScale, 0, 0, previewScale, 0, 0);
+            depthCtx.beginPath();
+            depthCtx.rect(0, 0, mapWidth, mapHeight);
+            depthCtx.clip();
+
             const depthFalloff = depthStroke.falloff ?? 0.5;
             const maxAlpha = depthStroke.depth * 0.5;
             const depthGradient = this._getDepthGradientCache(maxAlpha, depthFalloff);
             const depthRadius = waterStroke.radius * (1.0 - depthFalloff * 0.5);
             const depthSize = depthRadius * 2;
 
-            ctx.globalAlpha = 1;
+            depthCtx.globalAlpha = 1;
             for (const center of newCenters) {
-              ctx.drawImage(depthGradient, center.x - depthRadius, center.y - depthRadius, depthSize, depthSize);
+              depthCtx.drawImage(depthGradient, center.x - depthRadius, center.y - depthRadius, depthSize, depthSize);
             }
+            depthCtx.restore();
           }
-
-          ctx.restore();
 
           // Update tracking
           this._previewWaterCenterCount = newCount;
@@ -640,11 +664,24 @@ export class Renderer {
       this._renderWaterStroke(ctx, s, true);
     }
 
-    // Pass 4: Water depth overlay strokes (rendered on top of water)
-    for (let i = 0; i < len; i++) {
-      const s = strokes[i];
-      if (s.type !== 'waterDepth') continue;
-      this._renderDepthPreviewStroke(ctx, s);
+    // Pass 4: Water depth overlay strokes (to separate canvas, layered on top)
+    const depthStrokes = strokes.filter(s => s.type === 'waterDepth');
+    if (depthStrokes.length > 0) {
+      // Create/resize depth preview canvas to match paint preview
+      if (!this._depthPreview ||
+          this._depthPreview.width !== this._paintPreview.width ||
+          this._depthPreview.height !== this._paintPreview.height) {
+        this._depthPreview = document.createElement('canvas');
+        this._depthPreview.width = this._paintPreview.width;
+        this._depthPreview.height = this._paintPreview.height;
+      }
+      const depthCtx = this._depthPreview.getContext('2d');
+      depthCtx.clearRect(0, 0, this._depthPreview.width, this._depthPreview.height);
+      depthCtx.setTransform(previewScale, 0, 0, previewScale, 0, 0);
+
+      for (const s of depthStrokes) {
+        this._renderDepthPreviewStroke(depthCtx, s);
+      }
     }
 
   }
@@ -1261,6 +1298,17 @@ export class Renderer {
           this._state.canvasWidth, this._state.canvasHeight);
       } else {
         ctx.drawImage(this._paintPreview, 0, 0);
+      }
+    }
+
+    // Draw depth preview layer (on top of paint preview)
+    if (this._depthPreview && this._paintPreviewStrokes.length > 0) {
+      const scale = this._paintPreviewScale || 1;
+      if (scale !== 1) {
+        ctx.drawImage(this._depthPreview, 0, 0,
+          this._state.canvasWidth, this._state.canvasHeight);
+      } else {
+        ctx.drawImage(this._depthPreview, 0, 0);
       }
     }
 
@@ -2672,6 +2720,16 @@ export class Renderer {
             this._state.canvasWidth, this._state.canvasHeight);
         } else {
           groundCtx.drawImage(this._paintPreview, 0, 0);
+        }
+      }
+      // Draw depth preview layer (on top of paint preview)
+      if (this._depthPreview && hasPaintPreview) {
+        const scale = this._paintPreviewScale || 1;
+        if (scale !== 1) {
+          groundCtx.drawImage(this._depthPreview, 0, 0,
+            this._state.canvasWidth, this._state.canvasHeight);
+        } else {
+          groundCtx.drawImage(this._depthPreview, 0, 0);
         }
       }
       // Render texture hover preview (semi-transparent)
