@@ -2239,24 +2239,25 @@ export class Renderer {
     // Use double rAF to ensure overlay actually paints before blocking
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        // Rebuild synchronously
+        // Rebuild caches synchronously
         console.log(`[Renderer] Starting cache rebuild...`);
         this._rebuildCanopyCache();
         this._groundCacheValid = false; // Also rebuild ground for floor items
 
-        const elapsed = performance.now() - startTime;
-        console.log(`[Renderer] Cache rebuild complete: ${elapsed.toFixed(0)}ms`);
+        const cacheTime = performance.now() - startTime;
+        console.log(`[Renderer] Cache rebuild complete: ${cacheTime.toFixed(0)}ms`);
 
-        // Trigger render, then hide overlay after draw completes
+        // Render synchronously (instead of requestRender which is async)
+        console.log(`[Renderer] Starting synchronous render...`);
+        this._render();
+        this._needsRender = false;
+
+        const totalTime = performance.now() - startTime;
+        console.log(`[Renderer] Total rebuild + render: ${totalTime.toFixed(0)}ms`);
+
+        // Now hide overlay - everything is done
+        this._hideLoadingOverlay();
         this._deferredRebuildScheduled = false;
-        this._state.requestRender();
-
-        // Wait for the render to actually paint before hiding overlay
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            this._hideLoadingOverlay();
-          });
-        });
       });
     });
   }
