@@ -416,12 +416,14 @@ export class Renderer {
             const depthFalloff = depthStroke.falloff ?? 0.5;
             const maxAlpha = depthStroke.depth * 0.5;
             const depthGradient = this._getDepthGradientCache(maxAlpha, depthFalloff);
-            const depthRadius = waterStroke.radius * (1.0 - depthFalloff * 0.5);
-            const depthSize = depthRadius * 2;
+            // Use full radius (matches final render)
+            const depthSize = waterStroke.radius * 2;
 
+            // Use 'darken' composite to match final render
+            depthCtx.globalCompositeOperation = 'darken';
             depthCtx.globalAlpha = 1;
             for (const center of newCenters) {
-              depthCtx.drawImage(depthGradient, center.x - depthRadius, center.y - depthRadius, depthSize, depthSize);
+              depthCtx.drawImage(depthGradient, center.x - waterStroke.radius, center.y - waterStroke.radius, depthSize, depthSize);
             }
             depthCtx.restore();
           }
@@ -2168,24 +2170,27 @@ export class Renderer {
   /**
    * Render depth preview stroke (overlay on top of water)
    * Stamps gradient at each center, same as water texture
+   * Uses 'darken' composite mode to match final render
    */
   _renderDepthPreviewStroke(ctx, stroke) {
     const { depth, falloff = 0.5, radius, centers } = stroke;
     if (!depth || depth <= 0 || !centers || centers.length === 0) return;
 
-    // Get cached depth gradient
+    // Get cached depth gradient (intensity matches final: depth * 0.5)
     const maxAlpha = depth * 0.5;
     const depthGradient = this._getDepthGradientCache(maxAlpha, falloff);
 
-    // Calculate depth radius (same formula as _renderDepthOverlay)
-    const depthRadius = radius * (1.0 - falloff * 0.5);
-    const depthSize = depthRadius * 2;
+    // Use full radius for depth (matches final render behavior)
+    const depthSize = radius * 2;
 
-    // Stamp at each center
+    // Use 'darken' composite to match final render (picks darkest pixel, not stacking)
+    ctx.save();
+    ctx.globalCompositeOperation = 'darken';
     ctx.globalAlpha = 1;
     for (const center of centers) {
-      ctx.drawImage(depthGradient, center.x - depthRadius, center.y - depthRadius, depthSize, depthSize);
+      ctx.drawImage(depthGradient, center.x - radius, center.y - radius, depthSize, depthSize);
     }
+    ctx.restore();
   }
 
   /**
