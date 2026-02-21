@@ -107,6 +107,22 @@
       background: #1a4a7e;
     }
 
+    .pcg-generate-btn {
+      width: 100%;
+      padding: 8px;
+      background: #059669;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .pcg-generate-btn:hover {
+      background: #047857;
+    }
+
     /* Toolbar */
     .toolbar {
       background: #16213e;
@@ -1226,7 +1242,7 @@
           <option value="grass-1" selected>Grass 1</option>
           <option value="grass-2">Grass 2</option>
           <option value="grass-3">Grass 3</option>
-          <option value="dirt-1">Dirt 1</option>
+          <option value="dirt-3">Dirt 1</option>
           <option value="dirt-2">Dirt 2</option>
           <option value="forest-floor">Forest Floor</option>
           <option value="sand">Sand</option>
@@ -1254,8 +1270,12 @@
       <div class="toolbar-label">Feature</div>
       <button class="tool-btn feature-tool active" data-tool="forest" data-feature="forest" title="Forest (F)">🌲</button>
       <button class="tool-btn feature-tool" data-tool="brush" data-feature="brush" title="Brush (B)">🌿</button>
+      <button class="tool-btn feature-tool" data-tool="boulder" data-feature="boulder" title="Boulder (R)">🪨</button>
       <button class="tool-btn feature-tool" data-tool="water" data-feature="water" title="Water (W)">💧</button>
       <button class="tool-btn feature-tool" data-tool="ground" data-feature="groundTexture" title="Ground (G)">🟫</button>
+      <div class="toolbar-divider"></div>
+      <div class="toolbar-label">Generate</div>
+      <button class="tool-btn" data-tool="pcg" title="PCG Generate (Y)">🌍</button>
       <div class="toolbar-divider"></div>
       <div class="toolbar-label">Utility</div>
       <button class="tool-btn" data-tool="clear" title="Clear (C)">🧹</button>
@@ -1263,6 +1283,16 @@
       <button class="tool-btn" data-tool="transform" title="Transform (T)">↔️</button>
       <div class="toolbar-divider"></div>
       <button class="tool-btn" data-tool="pan" title="Pan (Space+Drag)">✋</button>
+      <div class="toolbar-divider"></div>
+      <div class="toolbar-label">Test</div>
+      <select id="test-unit-select" title="Select unit for test mode" style="width:52px; font-size:10px; background:#0f3460; color:#ccc; border:1px solid #1a1a4e; border-radius:3px; padding:2px;">
+        <option value="infantry">Inf</option>
+        <option value="jeep">Jeep</option>
+        <option value="sherman">Sherman</option>
+        <option value="tiger">Tiger</option>
+        <option value="abrams" selected>Abrams</option>
+      </select>
+      <button class="tool-btn" id="test-mode-btn" title="Test Play (T)">▶</button>
     </aside>
 
     <!-- Canvas Area -->
@@ -1461,8 +1491,8 @@
                   <span class="dropdown-item-label">Grass 4</span>
                 </div>
                 <div class="dropdown-group-label">Dirt</div>
-                <div class="dropdown-item" data-ground="dirt-1">
-                  <input type="radio" name="ground-type" id="ground-type-dirt-1">
+                <div class="dropdown-item" data-ground="dirt-3">
+                  <input type="radio" name="ground-type" id="ground-type-dirt-3">
                   <span class="dropdown-item-label">Dirt 1</span>
                 </div>
                 <div class="dropdown-item" data-ground="dirt-2">
@@ -1498,7 +1528,7 @@
               <option value="grass-2">Grass 2</option>
               <option value="grass-3">Grass 3</option>
               <option value="grass-4">Grass 4</option>
-              <option value="dirt-1">Dirt 1</option>
+              <option value="dirt-3">Dirt 1</option>
               <option value="dirt-2">Dirt 2</option>
               <option value="dirt-3">Dirt 3</option>
               <option value="dirt-4">Dirt 4</option>
@@ -1624,7 +1654,7 @@
                   <input type="radio" name="shore-type" id="shore-type-sand">
                   <span class="dropdown-item-label">Sand</span>
                 </div>
-                <div class="dropdown-item" data-shore="dirt-1">
+                <div class="dropdown-item" data-shore="dirt-3">
                   <input type="radio" name="shore-type" id="shore-type-dirt">
                   <span class="dropdown-item-label">Dirt</span>
                 </div>
@@ -1635,7 +1665,7 @@
               <option value="none">None</option>
               <option value="mud" selected>Mud</option>
               <option value="sand">Sand</option>
-              <option value="dirt-1">Dirt</option>
+              <option value="dirt-3">Dirt</option>
             </select>
             <div class="ratio-row">
               <span class="ratio-label">Width</span>
@@ -2089,6 +2119,154 @@
 
       </div>
 
+      <!-- Boulder Tool Settings (shown when boulder tool is selected) -->
+      <div class="panel-section" id="boulder-settings" style="display: none;">
+        <div class="panel-title">Boulder Output</div>
+
+        <!-- BOULDER Category -->
+        <div class="category-card" id="cat-boulder-standalone">
+          <div class="category-header" data-category="boulder-standalone">
+            <span class="category-icon">🪨</span>
+            <span class="category-name">Boulders</span>
+          </div>
+          <div class="category-body" id="cat-boulder-standalone-body">
+            <!-- Boulder Type Selector -->
+            <div class="dropdown-select" id="boulder-types-dropdown">
+              <div class="dropdown-trigger">
+                <span class="dropdown-label">Types</span>
+                <span class="dropdown-value" id="boulder-types-value">All</span>
+                <span class="dropdown-arrow">▼</span>
+              </div>
+              <div class="dropdown-menu" id="boulder-types-menu">
+                <div class="dropdown-item" data-boulder="boulder-erratic">
+                  <input type="checkbox" id="boulder-erratic" checked>
+                  <span class="dropdown-item-label checked">Erratic</span>
+                </div>
+                <div class="dropdown-item" data-boulder="boulder-field">
+                  <input type="checkbox" id="boulder-field" checked>
+                  <span class="dropdown-item-label checked">Field</span>
+                </div>
+                <div class="dropdown-item" data-boulder="boulder-outcrop">
+                  <input type="checkbox" id="boulder-outcrop" checked>
+                  <span class="dropdown-item-label checked">Outcrop</span>
+                </div>
+              </div>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Density</span>
+              <input type="range" class="ratio-slider" id="boulder-standalone-density" min="0.1" max="2.0" step="0.1" value="0.8">
+              <span class="ratio-value" id="boulder-standalone-density-val">0.8×</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Scale</span>
+              <input type="range" class="ratio-slider" id="boulder-standalone-scale" min="10" max="80" value="30">
+              <span class="ratio-value" id="boulder-standalone-scale-val">30%</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Size Variation</span>
+              <input type="range" class="ratio-slider" id="boulder-standalone-scale-variance" min="0" max="60" value="30">
+              <span class="ratio-value" id="boulder-standalone-scale-variance-val">30%</span>
+            </div>
+            <div class="ratio-row">
+              <label class="checkbox-row" title="Allow boulders to spawn in water areas">
+                <input type="checkbox" id="boulder-in-water">
+                <span class="ratio-label">Spawn in Water</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- FLOOR Category -->
+        <div class="category-card" id="cat-boulder-floor">
+          <div class="category-header" data-category="boulder-floor">
+            <span class="category-icon">🪨</span>
+            <span class="category-name">Floor</span>
+            <label class="category-toggle" title="Enable/disable floor debris">
+              <input type="checkbox" id="toggle-boulder-floor" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="category-body" id="cat-boulder-floor-body">
+            <div class="dropdown-select" id="boulder-floor-types-dropdown">
+              <div class="dropdown-trigger">
+                <span class="dropdown-label">Types</span>
+                <span class="dropdown-value" id="boulder-floor-types-value">Rock</span>
+                <span class="dropdown-arrow">▼</span>
+              </div>
+              <div class="dropdown-menu" id="boulder-floor-types-menu">
+                <div class="dropdown-item" data-boulder-floor="floor-rock">
+                  <input type="checkbox" id="boulder-floor-rock" checked>
+                  <span class="dropdown-item-label checked">Rock</span>
+                </div>
+                <div class="dropdown-item" data-boulder-floor="floor-debris">
+                  <input type="checkbox" id="boulder-floor-debris">
+                  <span class="dropdown-item-label">Debris</span>
+                </div>
+                <div class="dropdown-item" data-boulder-floor="floor-leaf">
+                  <input type="checkbox" id="boulder-floor-leaf">
+                  <span class="dropdown-item-label">Leaf</span>
+                </div>
+                <div class="dropdown-item" data-boulder-floor="floor-needle">
+                  <input type="checkbox" id="boulder-floor-needle">
+                  <span class="dropdown-item-label">Needle</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- PARTICLE Category -->
+        <div class="category-card" id="cat-boulder-particles">
+          <div class="category-header" data-category="boulder-particles">
+            <span class="category-icon">✨</span>
+            <span class="category-name">Particles</span>
+            <label class="category-toggle" title="Enable/disable rock particles">
+              <input type="checkbox" id="toggle-boulder-particles" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="category-body" id="cat-boulder-particles-body">
+            <div class="dropdown-select" id="boulder-particle-types-dropdown">
+              <div class="dropdown-trigger">
+                <span class="dropdown-label">Types</span>
+                <span class="dropdown-value" id="boulder-particle-types-value">Rock</span>
+                <span class="dropdown-arrow">▼</span>
+              </div>
+              <div class="dropdown-menu" id="boulder-particle-types-menu">
+                <div class="dropdown-item" data-boulder-particle="particle-rock">
+                  <input type="checkbox" id="boulder-particle-rock" checked>
+                  <span class="dropdown-item-label checked">Rock</span>
+                </div>
+                <div class="dropdown-item" data-boulder-particle="particle-leaf">
+                  <input type="checkbox" id="boulder-particle-leaf">
+                  <span class="dropdown-item-label">Leaf</span>
+                </div>
+                <div class="dropdown-item" data-boulder-particle="particle-needle">
+                  <input type="checkbox" id="boulder-particle-needle">
+                  <span class="dropdown-item-label">Needle</span>
+                </div>
+              </div>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Density</span>
+              <input type="range" class="ratio-slider" id="boulder-particle-density" min="0.1" max="3.0" step="0.1" value="1.0">
+              <span class="ratio-value" id="boulder-particle-density-val">1.0×</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Scale</span>
+              <input type="range" class="ratio-slider" id="boulder-particle-scale" min="5" max="60" value="25">
+              <span class="ratio-value" id="boulder-particle-scale-val">25%</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Size Variation</span>
+              <input type="range" class="ratio-slider" id="boulder-particle-scale-variance" min="0" max="60" value="35">
+              <span class="ratio-value" id="boulder-particle-scale-variance-val">35%</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
       <!-- Legacy Particle Settings (hidden in scatter mode) -->
       <div class="panel-section" id="legacy-particle-settings">
         <div class="panel-title">Particles (Legacy)</div>
@@ -2234,6 +2412,420 @@
           <div id="tune-modified-list" style="font-size: 10px; color: #fbbf24; margin-top: 4px; display: none;">
             Modified: <span id="tune-modified-fields"></span>
           </div>
+        </div>
+      </div>
+
+      <!-- PCG Settings Panel -->
+      <div id="pcg-settings" style="display: none;">
+        <!-- Map Preview (sticky) -->
+        <div class="panel-section" style="position: sticky; top: 0; z-index: 10; background: #16213e; padding-bottom: 8px;">
+          <div class="panel-title" style="display: flex; justify-content: space-between; align-items: center;">
+            Map Preview
+            <label style="font-size: 10px; color: #94a3b8; font-weight: normal; cursor: pointer; margin-left: 8px;"><input type="checkbox" id="pcg-preview-debug" checked style="vertical-align: middle; margin-right: 2px;">Debug</label>
+            <span id="pcg-preview-label" style="font-size: 10px; color: #64748b; font-weight: normal;">No map generated</span>
+          </div>
+          <div style="background: #0d1117; border: 1px solid #334155; border-radius: 4px; overflow: hidden;">
+            <canvas id="pcg-preview-canvas" width="248" height="166" style="width: 100%; display: block;"></canvas>
+          </div>
+        </div>
+
+        <!-- Seed / Biome / Season -->
+        <div class="category-card">
+          <div class="category-header" data-category="pcg-gen">
+            <span class="category-icon">🎲</span>
+            <span class="category-name">Generation</span>
+          </div>
+          <div class="category-body" id="cat-pcg-gen-body">
+            <div class="ratio-row">
+              <span class="ratio-label">Seed</span>
+              <input type="number" class="prop-input" id="pcg-seed" placeholder="Random" style="flex: 1; min-width: 0; width: 0; padding: 3px 6px; font-size: 11px;">
+              <button class="header-btn" id="pcg-random-seed" style="padding: 3px 6px; flex-shrink: 0; font-size: 11px; line-height: 1;">🎲</button>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Biome</span>
+              <select class="prop-select" id="pcg-biome" style="flex: 1; width: auto; padding: 3px; font-size: 11px;">
+                <option value="conifer">Conifer</option>
+                <option value="temperate">Temperate</option>
+                <option value="oak-forest">Oak Forest</option>
+                <option value="birch-grove">Birch Grove</option>
+                <option value="wetland">Wetland</option>
+                <option value="dead-forest">Dead Forest</option>
+              </select>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label">Season</span>
+              <select class="prop-select" id="pcg-season" style="flex: 1; width: auto; padding: 3px; font-size: 11px;">
+                <option value="summer">Summer</option>
+                <option value="spring">Spring</option>
+                <option value="fall">Fall</option>
+                <option value="winter">Winter</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Forest Clusters -->
+        <div class="category-card">
+          <div class="category-header collapsed" data-category="pcg-forest">
+            <span class="category-icon">🌲</span>
+            <span class="category-name">Forest</span>
+            <div class="category-slider-wrap">
+              <input type="range" class="category-slider" id="pcg-forest-count" min="0" max="20" value="12" title="Number of forest clusters. More forests = more heavy cover and flanking routes">
+              <span class="category-value" id="pcg-forest-count-val">12</span>
+            </div>
+          </div>
+          <div class="category-body collapsed" id="cat-pcg-forest-body">
+            <div class="ratio-row">
+              <span class="ratio-label" title="Smallest forest cluster size. Smaller clusters create scattered cover patches">Min Radius</span>
+              <input type="range" class="ratio-slider" id="pcg-forest-min-radius" min="30" max="150" value="70" data-coupled-max="pcg-forest-max-radius">
+              <span class="ratio-value" id="pcg-forest-min-radius-val">70</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Largest forest cluster size. Larger clusters create dense defensive positions">Max Radius</span>
+              <input type="range" class="ratio-slider" id="pcg-forest-max-radius" min="50" max="300" value="160" data-coupled-min="pcg-forest-min-radius">
+              <span class="ratio-value" id="pcg-forest-max-radius-val">160</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Minimum distance between forest centers. Lower = denser coverage, higher = more open ground between">Spacing</span>
+              <input type="range" class="ratio-slider" id="pcg-forest-spacing" min="60" max="400" value="110">
+              <span class="ratio-value" id="pcg-forest-spacing-val">110</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="How far forests stay from map edges. Higher values keep edges clear for flanking">Edge Margin</span>
+              <input type="range" class="ratio-slider" id="pcg-forest-margin" min="0" max="150" value="40">
+              <span class="ratio-value" id="pcg-forest-margin-val">40</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Tendency to place forests on map flanks vs center. Higher = more flank cover, clearer center lanes">Flank Bias</span>
+              <input type="range" class="ratio-slider" id="pcg-flank-bias" min="0" max="100" value="60">
+              <span class="ratio-value" id="pcg-flank-bias-val">60%</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="How aggressively forests avoid the map center. Higher = clearer central approach routes">Center Avoid</span>
+              <input type="range" class="ratio-slider" id="pcg-center-avoid" min="0" max="100" value="30">
+              <span class="ratio-value" id="pcg-center-avoid-val">30%</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Particle scatter density under forest canopy. Needles, leaves, twigs scattered on the ground. 0% = none, 100% = normal, 200% = heavy litter">Particles</span>
+              <input type="range" class="ratio-slider" id="pcg-forest-particles" min="0" max="200" value="100">
+              <span class="ratio-value" id="pcg-forest-particles-val">100%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Water Bodies -->
+        <div class="category-card">
+          <div class="category-header collapsed" data-category="pcg-water">
+            <span class="category-icon">💧</span>
+            <span class="category-name">Water</span>
+            <div class="category-slider-wrap">
+              <input type="range" class="category-slider" id="pcg-water-count" min="0" max="5" value="2" title="Number of water bodies (ponds/lakes). Water creates terrain obstacles — shallow areas are passable, deeper sections force detours">
+              <span class="category-value" id="pcg-water-count-val">2</span>
+            </div>
+          </div>
+          <div class="category-body collapsed" id="cat-pcg-water-body">
+            <div class="ratio-row">
+              <span class="ratio-label" title="Smallest water body size">Min Radius</span>
+              <input type="range" class="ratio-slider" id="pcg-water-min-radius" min="20" max="200" value="60" data-coupled-max="pcg-water-max-radius">
+              <span class="ratio-value" id="pcg-water-min-radius-val">60</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Largest water body size. Bigger bodies create wider obstacles and shore zones">Max Radius</span>
+              <input type="range" class="ratio-slider" id="pcg-water-max-radius" min="40" max="300" value="140" data-coupled-min="pcg-water-min-radius">
+              <span class="ratio-value" id="pcg-water-max-radius-val">140</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Tendency to place water on map flanks. 0% = random placement, 100% = always on flanks. Flank water anchors defensive positions">Flank Anchor</span>
+              <input type="range" class="ratio-slider" id="pcg-water-flank" min="0" max="100" value="80">
+              <span class="ratio-value" id="pcg-water-flank-val">80%</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="How organic the water shape is. 0% = round, 100% = jagged with lobes and inlets">Irregularity</span>
+              <input type="range" class="ratio-slider" id="pcg-water-irregularity" min="0" max="100" value="60">
+              <span class="ratio-value" id="pcg-water-irregularity-val">60%</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Maximum depth at the water body center. <34% = all shallow, 34-66% = medium center, >66% = deep center. Deeper water slows units more and risks combat effectiveness loss">Max Depth</span>
+              <input type="range" class="ratio-slider" id="pcg-water-depth" min="0" max="100" value="50">
+              <span class="ratio-value" id="pcg-water-depth-val">50%</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="How quickly depth fades from center to edges. Lower = steep dropoff, higher = gradual shallowing">Depth Falloff</span>
+              <input type="range" class="ratio-slider" id="pcg-water-depth-falloff" min="0" max="100" value="50">
+              <span class="ratio-value" id="pcg-water-depth-falloff-val">50%</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Edge fade width of the water texture. Lower = hard water edge, higher = soft blended edge">Falloff</span>
+              <input type="range" class="ratio-slider" id="pcg-water-falloff" min="0" max="100" value="30">
+              <span class="ratio-value" id="pcg-water-falloff-val">30%</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Shore texture around water edges. Defaults to biome type. Affects visual feel of the water boundary">Shore Type</span>
+              <select class="prop-select" id="pcg-water-shore-type" style="flex: 1; width: auto; padding: 3px; font-size: 11px;">
+                <option value="">Biome Default</option>
+                <option value="mud">Mud</option>
+                <option value="sand">Sand</option>
+                <option value="dirt-3">Dirt</option>
+              </select>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Minimum shore texture width. Shore varies naturally along the water edge between min and max">Min Shore</span>
+              <input type="range" class="ratio-slider" id="pcg-water-shore-min" min="0" max="64" value="10" data-coupled-max="pcg-water-shore-max">
+              <span class="ratio-value" id="pcg-water-shore-min-val">10</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Maximum shore texture width. Wider shores create muddier, swampier-looking banks">Max Shore</span>
+              <input type="range" class="ratio-slider" id="pcg-water-shore-max" min="0" max="80" value="30" data-coupled-min="pcg-water-shore-min">
+              <span class="ratio-value" id="pcg-water-shore-max-val">30</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Density of vegetation (trees + brush) around water edges. 0% = none, 100% = dense ring of vegetation around all water">Veg Density</span>
+              <input type="range" class="ratio-slider" id="pcg-water-veg-density" min="0" max="100" value="50">
+              <span class="ratio-value" id="pcg-water-veg-density-val">50%</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Ratio of trees vs brush in water vegetation. 0% = all brush, 100% = all trees">Tree Ratio</span>
+              <input type="range" class="ratio-slider" id="pcg-water-veg-tree-ratio" min="0" max="100" value="30">
+              <span class="ratio-value" id="pcg-water-veg-tree-ratio-val">30%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- River -->
+        <div class="category-card">
+          <div class="category-header collapsed" data-category="pcg-river">
+            <span class="category-icon">🏞️</span>
+            <span class="category-name">River</span>
+            <label class="category-toggle" title="Toggle river generation. Rivers cross the full map connecting opposite edges, creating a major terrain divide with bridge crossings">
+              <input type="checkbox" id="pcg-river-enabled">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="category-body collapsed" id="cat-pcg-river-body">
+            <div class="ratio-row">
+              <span class="ratio-label" title="River half-width (brush radius). Wider rivers are harder to cross and create bigger obstacles">Width</span>
+              <input type="range" class="ratio-slider" id="pcg-river-width" min="20" max="80" value="50">
+              <span class="ratio-value" id="pcg-river-width-val">50</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="How curvy the river path is. 0% = straight, 100% = tight S-curve meanders. More curves create cover at bends">Windiness</span>
+              <input type="range" class="ratio-slider" id="pcg-river-windiness" min="0" max="100" value="50">
+              <span class="ratio-value" id="pcg-river-windiness-val">50%</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Maximum depth of the river. Combined with width slider to determine depth class: small width/depth = shallow, large = full depth. Bridge crossing placed where path meets river">Max Depth</span>
+              <input type="range" class="ratio-slider" id="pcg-river-depth" min="0" max="100" value="60">
+              <span class="ratio-value" id="pcg-river-depth-val">60%</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="How quickly depth fades from center to edges of the river">Depth Falloff</span>
+              <input type="range" class="ratio-slider" id="pcg-river-depth-falloff" min="0" max="100" value="50">
+              <span class="ratio-value" id="pcg-river-depth-falloff-val">50%</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Edge fade width of the river water texture">Falloff</span>
+              <input type="range" class="ratio-slider" id="pcg-river-falloff" min="0" max="100" value="30">
+              <span class="ratio-value" id="pcg-river-falloff-val">30%</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Shore texture along river banks. Defaults to biome type">Shore Type</span>
+              <select class="prop-select" id="pcg-river-shore-type" style="flex: 1; width: auto; padding: 3px; font-size: 11px;">
+                <option value="">Biome Default</option>
+                <option value="mud">Mud</option>
+                <option value="sand">Sand</option>
+                <option value="dirt-3">Dirt</option>
+              </select>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Minimum shore width along river banks">Min Shore</span>
+              <input type="range" class="ratio-slider" id="pcg-river-shore-min" min="0" max="64" value="12" data-coupled-max="pcg-river-shore-max">
+              <span class="ratio-value" id="pcg-river-shore-min-val">12</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Maximum shore width along river banks">Max Shore</span>
+              <input type="range" class="ratio-slider" id="pcg-river-shore-max" min="0" max="80" value="28" data-coupled-min="pcg-river-shore-min">
+              <span class="ratio-value" id="pcg-river-shore-max-val">28</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Brush -->
+        <div class="category-card">
+          <div class="category-header collapsed" data-category="pcg-brush">
+            <span class="category-icon">🌿</span>
+            <span class="category-name">Brush</span>
+            <div class="category-slider-wrap">
+              <input type="range" class="category-slider" id="pcg-brush-count" min="0" max="30" value="16" title="Number of brush clusters. Light cover — concealment for advancing troops without blocking fire">
+              <span class="category-value" id="pcg-brush-count-val">16</span>
+            </div>
+          </div>
+          <div class="category-body collapsed" id="cat-pcg-brush-body">
+            <div class="ratio-row">
+              <span class="ratio-label" title="Smallest brush cluster size">Min Radius</span>
+              <input type="range" class="ratio-slider" id="pcg-brush-min-radius" min="15" max="80" value="35" data-coupled-max="pcg-brush-max-radius">
+              <span class="ratio-value" id="pcg-brush-min-radius-val">35</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Largest brush cluster size">Max Radius</span>
+              <input type="range" class="ratio-slider" id="pcg-brush-max-radius" min="30" max="120" value="70" data-coupled-min="pcg-brush-min-radius">
+              <span class="ratio-value" id="pcg-brush-max-radius-val">70</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Particle scatter density around brush. Leaves, debris scattered on the ground near bushes. 0% = none, 100% = normal, 200% = heavy">Particles</span>
+              <input type="range" class="ratio-slider" id="pcg-brush-particles" min="0" max="200" value="100">
+              <span class="ratio-value" id="pcg-brush-particles-val">100%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Ground Texture -->
+        <div class="category-card">
+          <div class="category-header collapsed" data-category="pcg-ground">
+            <span class="category-icon">🟫</span>
+            <span class="category-name">Ground</span>
+            <div class="category-slider-wrap">
+              <input type="range" class="category-slider" id="pcg-ground-amount" min="0" max="30" value="30" title="Total number of ground texture patches. More = busier ground with more visible dirt, mud, and grass variation">
+              <span class="category-value" id="pcg-ground-amount-val">30</span>
+            </div>
+          </div>
+          <div class="category-body collapsed" id="cat-pcg-ground-body">
+            <div class="ratio-row">
+              <span class="ratio-label" title="Opacity of ground texture patches. Higher = more visible variation in open areas, lower = subtle hints">Intensity</span>
+              <input type="range" class="ratio-slider" id="pcg-ground-open-intensity" min="0" max="100" value="50">
+              <span class="ratio-value" id="pcg-ground-open-intensity-val">50%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Paths -->
+        <div class="category-card">
+          <div class="category-header collapsed" data-category="pcg-paths">
+            <span class="category-icon">🛤️</span>
+            <span class="category-name">Paths</span>
+            <div class="category-slider-wrap">
+              <label class="category-toggle" title="Enable worn paths between spawn zones">
+                <input type="checkbox" id="pcg-path-enabled" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+          <div class="category-body collapsed" id="cat-pcg-paths-body">
+            <div class="ratio-row">
+              <span class="ratio-label" title="Base width of the path. Controls overall track width including both dirt ruts">Width</span>
+              <input type="range" class="ratio-slider" id="pcg-path-width" min="15" max="80" value="30">
+              <span class="ratio-value" id="pcg-path-width-val">30</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Visibility of dirt wheel ruts. Higher = deeper worn tracks, lower = faint impressions">Dirt</span>
+              <input type="range" class="ratio-slider" id="pcg-path-dirt" min="0" max="100" value="70">
+              <span class="ratio-value" id="pcg-path-dirt-val">70%</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Visibility of grass spine between wheel ruts. Higher = lush center strip, lower = bare path">Grass</span>
+              <input type="range" class="ratio-slider" id="pcg-path-grass" min="0" max="100" value="75">
+              <span class="ratio-value" id="pcg-path-grass-val">75%</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="How much the path meanders. 0 = straight line, 100 = very winding trail">Windiness</span>
+              <input type="range" class="ratio-slider" id="pcg-path-windiness" min="0" max="100" value="30">
+              <span class="ratio-value" id="pcg-path-windiness-val">30%</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Radius of tree/brush clearing along path. 0 = no clearing, trees grow over path. Higher = wider cleared corridor through forests">Clear Width</span>
+              <input type="range" class="ratio-slider" id="pcg-path-clear" min="0" max="80" value="50">
+              <span class="ratio-value" id="pcg-path-clear-val">50</span>
+            </div>
+            <!-- Bridge sub-section -->
+            <div class="ratio-row" style="border-top: 1px solid #334155; margin-top: 6px; padding-top: 6px;">
+              <span class="ratio-label" style="font-weight: 600;" title="Generate bridge over river crossings">Bridge</span>
+              <label class="category-toggle" title="Enable bridge at river crossing">
+                <input type="checkbox" id="pcg-bridge-enabled" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Bridge construction style">Style</span>
+              <select class="prop-select" id="pcg-bridge-style" style="flex: 1; width: auto; padding: 3px; font-size: 11px;">
+                <option value="wood">Wood</option>
+                <option value="stone">Stone</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Rocky Ground -->
+        <div class="category-card">
+          <div class="category-header collapsed" data-category="pcg-rocky">
+            <span class="category-icon">🪨</span>
+            <span class="category-name">Rocky</span>
+            <div class="category-slider-wrap">
+              <input type="range" class="category-slider" id="pcg-rocky-count" min="0" max="12" value="0" title="Number of exposed bedrock patches in open areas. Adds visual variety to flat terrain">
+              <span class="category-value" id="pcg-rocky-count-val">0</span>
+            </div>
+          </div>
+          <div class="category-body collapsed" id="cat-pcg-rocky-body">
+            <div class="ratio-row">
+              <span class="ratio-label" title="Opacity of rocky texture patches. Higher = more prominent exposed rock, lower = subtle ground variation">Intensity</span>
+              <input type="range" class="ratio-slider" id="pcg-rocky-intensity" min="0" max="100" value="50">
+              <span class="ratio-value" id="pcg-rocky-intensity-val">50%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Boulders -->
+        <div class="category-card">
+          <div class="category-header collapsed" data-category="pcg-boulders">
+            <span class="category-icon">⛰️</span>
+            <span class="category-name">Boulders</span>
+            <div class="category-slider-wrap">
+              <input type="range" class="category-slider" id="pcg-boulder-count" min="0" max="10" value="0" title="Number of boulder clusters providing rock cover. Functions like brush for gameplay concealment">
+              <span class="category-value" id="pcg-boulder-count-val">0</span>
+            </div>
+          </div>
+          <div class="category-body collapsed" id="cat-pcg-boulders-body">
+            <div class="ratio-row">
+              <span class="ratio-label" title="Smallest boulder cluster radius in pixels">Min Radius</span>
+              <input type="range" class="ratio-slider" id="pcg-boulder-min-radius" min="10" max="40" value="20" data-coupled-max="pcg-boulder-max-radius">
+              <span class="ratio-value" id="pcg-boulder-min-radius-val">20</span>
+            </div>
+            <div class="ratio-row">
+              <span class="ratio-label" title="Largest boulder cluster radius in pixels">Max Radius</span>
+              <input type="range" class="ratio-slider" id="pcg-boulder-max-radius" min="20" max="80" value="50" data-coupled-min="pcg-boulder-min-radius">
+              <span class="ratio-value" id="pcg-boulder-max-radius-val">50</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tactical -->
+        <div class="category-card">
+          <div class="category-header collapsed" data-category="pcg-tactical">
+            <span class="category-icon">⚔️</span>
+            <span class="category-name">Tactical</span>
+            <div class="category-slider-wrap">
+              <input type="range" class="category-slider" id="pcg-chokepoints" min="0" max="4" value="2" title="Number of gap-narrowing features. Forest extensions that squeeze approach lanes into kill zones">
+              <span class="category-value" id="pcg-chokepoints-val">2</span>
+            </div>
+          </div>
+          <div class="category-body collapsed" id="cat-pcg-tactical-body">
+            <div class="ratio-row">
+              <span class="ratio-label" title="Target width of chokepoint gaps. Narrower = more dangerous funnels, wider = easier passage">Choke Width</span>
+              <input type="range" class="ratio-slider" id="pcg-choke-width" min="30" max="150" value="80">
+              <span class="ratio-value" id="pcg-choke-width-val">80</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Generate Button + Live Toggle -->
+        <div class="panel-section">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <button id="pcg-generate" class="pcg-generate-btn" style="flex: 1;">Generate Map</button>
+            <label class="category-toggle" title="Live mode: auto-regenerate on slider change" style="margin: 0;">
+              <input type="checkbox" id="pcg-live-mode">
+              <span class="toggle-slider"></span>
+            </label>
+            <span class="ratio-label" style="font-size: 10px; min-width: auto;">Live</span>
+          </div>
+          <div id="pcg-status" class="ratio-value" style="text-align: center; margin-top: 4px; float: none;"></div>
         </div>
       </div>
 

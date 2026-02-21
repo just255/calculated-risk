@@ -1,17 +1,28 @@
 // ═══════════════════════════════════════════════════════════════
 // PATHFINDING - A* algorithm with terrain costs
+// Supports both legacy 2D string grids and PCG terrainMap cells
 // ═══════════════════════════════════════════════════════════════
 
-// Terrain movement costs (lower = faster/preferred)
+import { ensureRasterized } from './world-builder/rasterize.js';
+
+// Terrain movement costs for legacy grids (lower = faster/preferred)
 export const TERRAIN_COSTS = {
   open: 1.0,
   grass: 1.0,
-  trench: 1.2,      // Slightly slower but good cover
-  pillbox: 1.5,     // Slower to navigate around
-  brush: 1.3,       // Some concealment
-  forest: 1.8,      // Slow but good cover
-  water: 3.0,       // Very slow
-  high: Infinity    // Impassable (rocks/cliffs)
+  trench: 1.2,
+  pillbox: 1.5,
+  brush: 1.3,
+  forest: 1.8,
+  water: 3.0,
+  high: Infinity
+};
+
+// A* costs for water by depth — higher than speed penalties to strongly
+// discourage routing through water when a dry path exists
+export const WATER_PATH_COST = {
+  shallow: 3.0,   // Wade-able, small detour preferred
+  medium:  8.0,   // Significant penalty, will route around
+  deep:   25.0    // Almost always avoid (infantry); Infinity for vehicles
 };
 
 // Cover/defensive value (higher = better cover)
@@ -25,6 +36,10 @@ export const COVER_VALUES = {
   water: 0,
   high: 0
 };
+
+// Cells with cost >= this threshold block line-of-sight for path smoothing.
+// Prevents smoothed paths from cutting through water that A* deliberately avoided.
+const SMOOTH_BLOCK_COST = 5.0;
 
 // ═══════════════════════════════════════════════════════════════
 // BINARY HEAP - Efficient priority queue for A*
@@ -83,7 +98,6 @@ class MinHeap {
     return this.heap.length === 0;
   }
 
-  // Update priority of existing node (for when we find a better path)
   updatePriority(row, col, newF, newG, newParent) {
     for (let i = 0; i < this.heap.length; i++) {
       if (this.heap[i].row === row && this.heap[i].col === col) {
@@ -104,60 +118,60 @@ class MinHeap {
 // A* PATHFINDING
 // ═══════════════════════════════════════════════════════════════
 
-// Heuristic: Manhattan distance (admissible for grid)
 function heuristic(row1, col1, row2, col2) {
   return Math.abs(row1 - row2) + Math.abs(col1 - col2);
 }
 
-// Get terrain type at grid position
+// Legacy helpers for string-grid terrain
 function getTerrainAt(terrain, row, col, gridHeight, gridWidth) {
-  if (row < 0 || row >= gridHeight || col < 0 || col >= gridWidth) {
-    return 'high'; // Out of bounds = impassable
-  }
+  if (row < 0 || row >= gridHeight || col < 0 || col >= gridWidth) return 'high';
   return terrain[row]?.[col] || 'open';
 }
 
-// Get movement cost for terrain
 function getMovementCost(terrainType) {
   return TERRAIN_COSTS[terrainType] ?? 1.0;
 }
 
-// 4-directional neighbors (no diagonal for cleaner paths)
 const NEIGHBORS_4 = [
-  { dr: -1, dc: 0 },  // Up
-  { dr: 1, dc: 0 },   // Down
-  { dr: 0, dc: -1 },  // Left
-  { dr: 0, dc: 1 }    // Right
+  { dr: -1, dc: 0 },
+  { dr: 1, dc: 0 },
+  { dr: 0, dc: -1 },
+  { dr: 0, dc: 1 }
 ];
 
-// 8-directional neighbors (includes diagonal)
 const NEIGHBORS_8 = [
-  { dr: -1, dc: 0, cost: 1.0 },   // Up
-  { dr: 1, dc: 0, cost: 1.0 },    // Down
-  { dr: 0, dc: -1, cost: 1.0 },   // Left
-  { dr: 0, dc: 1, cost: 1.0 },    // Right
-  { dr: -1, dc: -1, cost: 1.414 }, // Up-Left
-  { dr: -1, dc: 1, cost: 1.414 },  // Up-Right
-  { dr: 1, dc: -1, cost: 1.414 },  // Down-Left
-  { dr: 1, dc: 1, cost: 1.414 }    // Down-Right
+  { dr: -1, dc: 0, cost: 1.0 },
+  { dr: 1, dc: 0, cost: 1.0 },
+  { dr: 0, dc: -1, cost: 1.0 },
+  { dr: 0, dc: 1, cost: 1.0 },
+  { dr: -1, dc: -1, cost: 1.414 },
+  { dr: -1, dc: 1, cost: 1.414 },
+  { dr: 1, dc: -1, cost: 1.414 },
+  { dr: 1, dc: 1, cost: 1.414 }
 ];
 
 /**
- * Find optimal path using A* algorithm
- * @param {Object} params - Pathfinding parameters
- * @param {number[][]} params.terrain - 2D terrain grid
- * @param {number} params.startRow - Starting row
- * @param {number} params.startCol - Starting column
- * @param {number} params.endRow - Target row
- * @param {number} params.endCol - Target column
- * @param {number} params.gridHeight - Grid height
- * @param {number} params.gridWidth - Grid width
- * @param {boolean} params.allowDiagonal - Allow diagonal movement (default: true)
- * @param {number} params.maxIterations - Max iterations to prevent infinite loops (default: 1000)
- * @returns {Array<{row: number, col: number}>|null} - Path as array of cells, or null if no path
+ * Find optimal path using A* algorithm.
+ *
+ * Accepts either a legacy `terrain` 2D string grid or a `costFn(row, col) => number`
+ * callback. If costFn is provided it takes priority over the terrain grid.
+ *
+ * @param {Object} params
+ * @param {string[][]|null} params.terrain - Legacy 2D terrain grid (optional if costFn provided)
+ * @param {Function|null} params.costFn - (row, col) => cost. Infinity = impassable. Overrides terrain.
+ * @param {number} params.startRow
+ * @param {number} params.startCol
+ * @param {number} params.endRow
+ * @param {number} params.endCol
+ * @param {number} params.gridHeight
+ * @param {number} params.gridWidth
+ * @param {boolean} [params.allowDiagonal=true]
+ * @param {number} [params.maxIterations=1000]
+ * @returns {Array<{row, col}>|null}
  */
 export function findPath({
   terrain,
+  costFn,
   startRow,
   startCol,
   endRow,
@@ -167,16 +181,19 @@ export function findPath({
   allowDiagonal = true,
   maxIterations = 1000
 }) {
-  // Quick checks
-  const startTerrain = getTerrainAt(terrain, startRow, startCol, gridHeight, gridWidth);
-  const endTerrain = getTerrainAt(terrain, endRow, endCol, gridHeight, gridWidth);
+  // Build cost function — costFn takes priority, otherwise use legacy terrain lookup
+  const getCost = costFn || ((row, col) => {
+    const t = getTerrainAt(terrain, row, col, gridHeight, gridWidth);
+    return getMovementCost(t);
+  });
 
-  if (getMovementCost(startTerrain) === Infinity || getMovementCost(endTerrain) === Infinity) {
-    return null; // Start or end is impassable
+  // Quick checks
+  if (getCost(startRow, startCol) === Infinity || getCost(endRow, endCol) === Infinity) {
+    return null;
   }
 
   if (startRow === endRow && startCol === endCol) {
-    return [{ row: startRow, col: startCol }]; // Already there
+    return [{ row: startRow, col: startCol }];
   }
 
   const neighbors = allowDiagonal ? NEIGHBORS_8 : NEIGHBORS_4;
@@ -187,13 +204,7 @@ export function findPath({
   const startKey = `${startRow},${startCol}`;
   const h = heuristic(startRow, startCol, endRow, endCol);
 
-  openSet.push({
-    row: startRow,
-    col: startCol,
-    g: 0,
-    f: h,
-    parent: null
-  });
+  openSet.push({ row: startRow, col: startCol, g: 0, f: h, parent: null });
   gScores.set(startKey, 0);
 
   let iterations = 0;
@@ -203,75 +214,192 @@ export function findPath({
     const current = openSet.pop();
     const currentKey = `${current.row},${current.col}`;
 
-    // Found the goal
     if (current.row === endRow && current.col === endCol) {
       return reconstructPath(current);
     }
 
     closedSet.add(currentKey);
 
-    // Explore neighbors
     for (const { dr, dc, cost = 1.0 } of neighbors) {
       const newRow = current.row + dr;
       const newCol = current.col + dc;
       const neighborKey = `${newRow},${newCol}`;
 
-      // Skip if already evaluated
       if (closedSet.has(neighborKey)) continue;
 
-      // Check bounds and terrain
-      const terrainType = getTerrainAt(terrain, newRow, newCol, gridHeight, gridWidth);
-      const terrainCost = getMovementCost(terrainType);
+      const terrainCost = getCost(newRow, newCol);
+      if (terrainCost === Infinity) continue;
 
-      if (terrainCost === Infinity) continue; // Impassable
-
-      // For diagonal movement, check that we can actually move diagonally
-      // (both adjacent cells must be passable to prevent corner cutting)
+      // Prevent diagonal corner cutting through impassable cells
       if (allowDiagonal && dr !== 0 && dc !== 0) {
-        const adj1 = getTerrainAt(terrain, current.row + dr, current.col, gridHeight, gridWidth);
-        const adj2 = getTerrainAt(terrain, current.row, current.col + dc, gridHeight, gridWidth);
-        if (getMovementCost(adj1) === Infinity || getMovementCost(adj2) === Infinity) {
-          continue; // Can't cut corner
+        if (getCost(current.row + dr, current.col) === Infinity ||
+            getCost(current.row, current.col + dc) === Infinity) {
+          continue;
         }
       }
 
-      // Calculate new g score (cost to reach this neighbor)
       const moveCost = cost * terrainCost;
       const newG = current.g + moveCost;
       const existingG = gScores.get(neighborKey);
 
-      // Skip if we've found a better path to this node
       if (existingG !== undefined && newG >= existingG) continue;
 
-      // This is a better path
       gScores.set(neighborKey, newG);
-      const h = heuristic(newRow, newCol, endRow, endCol);
+      const nh = heuristic(newRow, newCol, endRow, endCol);
 
       openSet.push({
         row: newRow,
         col: newCol,
         g: newG,
-        f: newG + h,
+        f: newG + nh,
         parent: current
       });
     }
   }
 
-  // No path found
   return null;
 }
 
-// Reconstruct path from goal node back to start
 function reconstructPath(goalNode) {
   const path = [];
   let current = goalNode;
-
   while (current !== null) {
     path.unshift({ row: current.row, col: current.col });
     current = current.parent;
   }
-
   return path;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// WORLD-LEVEL PATHFINDING — Battle-aware wrapper
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Build a cost function from a battle object's terrain.
+ * Supports both terrainMap (PCG) and legacy 2D grids.
+ *
+ * @param {Object} b - Battle object
+ * @param {string} category - Unit category: 'infantry' | 'light_vehicle' | 'medium_tank' | 'heavy_tank'
+ * @returns {{ costFn: Function, gridWidth: number, gridHeight: number, cellSize: number }}
+ */
+export function buildCostFn(b, category = 'infantry') {
+  const hasTM = !!b.terrainMap;
+  const cellSize = hasTM ? b.terrainMap.cellSize : (b.cellSize || 64);
+  const gridW = hasTM ? b.terrainMap.gridWidth : b.gridWidth;
+  const gridH = hasTM ? b.terrainMap.gridHeight : b.gridHeight;
+
+  if (hasTM) ensureRasterized(b.terrainMap);
+
+  const costFn = hasTM
+    ? (row, col) => {
+        if (row < 0 || row >= gridH || col < 0 || col >= gridW) return Infinity;
+        const cell = b.terrainMap.grid[row]?.[col];
+        if (!cell || cell.isBlocked) return Infinity;
+
+        // Water depth — use fixed path costs, check vehicle passability
+        if (cell.water >= 0.1) {
+          const depth = cell.water < 0.3 ? 'shallow'
+                      : cell.water < 0.7 ? 'medium'
+                      : 'deep';
+          if (depth === 'deep' && category !== 'infantry') return Infinity;
+          if (depth === 'medium' && category !== 'infantry' && category !== 'light_vehicle') {
+            return WATER_PATH_COST.deep; // Heavy vehicles really avoid medium water too
+          }
+          return WATER_PATH_COST[depth];
+        }
+
+        // Inverse speedMod — slower terrain = higher cost
+        return cell.speedMod > 0 ? 1.0 / cell.speedMod : Infinity;
+      }
+    : (row, col) => {
+        if (row < 0 || row >= gridH || col < 0 || col >= gridW) return Infinity;
+        const t = b.terrain[row]?.[col] || 'open';
+        if (t === 'water') {
+          if (category !== 'infantry') return WATER_PATH_COST.deep;
+          return WATER_PATH_COST.medium;
+        }
+        return TERRAIN_COSTS[t] ?? 1.0;
+      };
+
+  return { costFn, gridWidth: gridW, gridHeight: gridH, cellSize };
+}
+
+/**
+ * Find a path between two world positions using the battle's terrain.
+ *
+ * @param {Object} b - Battle object (has .terrainMap or .terrain/.cellSize/.gridWidth/.gridHeight)
+ * @param {number} startX - Start world X
+ * @param {number} startY - Start world Y
+ * @param {number} goalX  - Goal world X
+ * @param {number} goalY  - Goal world Y
+ * @param {Object} [opts]
+ * @param {string} [opts.category='infantry'] - Unit category for passability
+ * @param {boolean} [opts.allowDiagonal=true]
+ * @param {number} [opts.maxIterations=2000]
+ * @param {boolean} [opts.smooth=true] - Run path smoothing
+ * @returns {Array<{x, y}>|null} - World-coordinate waypoints, or null if no path
+ */
+export function findPathWorld(b, startX, startY, goalX, goalY, opts = {}) {
+  const category = opts.category || 'infantry';
+  const { costFn, gridWidth: gridW, gridHeight: gridH, cellSize } = buildCostFn(b, category);
+
+  // Convert world → grid, clamp to bounds
+  let start = worldToGrid(startX, startY, cellSize);
+  let goal  = worldToGrid(goalX, goalY, cellSize);
+
+  start.row = Math.max(0, Math.min(gridH - 1, start.row));
+  start.col = Math.max(0, Math.min(gridW - 1, start.col));
+  goal.row  = Math.max(0, Math.min(gridH - 1, goal.row));
+  goal.col  = Math.max(0, Math.min(gridW - 1, goal.col));
+
+  // If start or goal is impassable, nudge to nearest passable cell
+  if (costFn(start.row, start.col) === Infinity) {
+    start = nudgeToPassable(start.row, start.col, costFn, gridH, gridW);
+    if (!start) return null;
+  }
+  if (costFn(goal.row, goal.col) === Infinity) {
+    goal = nudgeToPassable(goal.row, goal.col, costFn, gridH, gridW);
+    if (!goal) return null;
+  }
+
+  const gridPath = findPath({
+    costFn,
+    startRow: start.row,
+    startCol: start.col,
+    endRow: goal.row,
+    endCol: goal.col,
+    gridHeight: gridH,
+    gridWidth: gridW,
+    allowDiagonal: opts.allowDiagonal ?? true,
+    maxIterations: opts.maxIterations ?? 2000
+  });
+
+  if (!gridPath) return null;
+
+  // Smooth (skip unnecessary waypoints where line-of-sight is clear)
+  const final = (opts.smooth !== false)
+    ? smoothPath(gridPath, null, gridH, gridW, costFn)
+    : gridPath;
+
+  return pathToWorld(final, cellSize);
+}
+
+/**
+ * Search neighboring cells for the nearest passable one (expanding ring, max 3 cells out).
+ */
+function nudgeToPassable(row, col, costFn, gridH, gridW) {
+  for (let r = 1; r <= 3; r++) {
+    for (let dr = -r; dr <= r; dr++) {
+      for (let dc = -r; dc <= r; dc++) {
+        if (Math.abs(dr) !== r && Math.abs(dc) !== r) continue;
+        const nr = row + dr;
+        const nc = col + dc;
+        if (nr < 0 || nr >= gridH || nc < 0 || nc >= gridW) continue;
+        if (costFn(nr, nc) < Infinity) return { row: nr, col: nc };
+      }
+    }
+  }
+  return null;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -279,15 +407,7 @@ function reconstructPath(goalNode) {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * Find the nearest defensive position
- * @param {Object} params
- * @param {number[][]} params.terrain - Terrain grid
- * @param {number} params.fromRow - Starting row
- * @param {number} params.fromCol - Starting column
- * @param {number} params.gridHeight - Grid height
- * @param {number} params.gridWidth - Grid width
- * @param {number} params.maxDistance - Maximum search distance (default: 10)
- * @returns {{row: number, col: number, coverValue: number, path: Array}|null}
+ * Find the nearest defensive position (legacy grid version).
  */
 export function findNearestCover({
   terrain,
@@ -301,11 +421,9 @@ export function findNearestCover({
   let bestValue = -1;
   let bestDistance = Infinity;
 
-  // Search in expanding squares
   for (let dist = 1; dist <= maxDistance; dist++) {
     for (let dr = -dist; dr <= dist; dr++) {
       for (let dc = -dist; dc <= dist; dc++) {
-        // Only check cells at this distance
         if (Math.abs(dr) !== dist && Math.abs(dc) !== dist) continue;
 
         const row = fromRow + dr;
@@ -316,10 +434,8 @@ export function findNearestCover({
         const terrainType = terrain[row]?.[col] || 'open';
         const coverValue = COVER_VALUES[terrainType] || 0;
 
-        // Only consider cells with cover
         if (coverValue <= 0) continue;
 
-        // Check if reachable
         const path = findPath({
           terrain,
           startRow: fromRow,
@@ -328,14 +444,13 @@ export function findNearestCover({
           endCol: col,
           gridHeight,
           gridWidth,
-          maxIterations: 200 // Limit for performance
+          maxIterations: 200
         });
 
         if (!path) continue;
 
         const pathLength = path.length;
 
-        // Prefer: higher cover value, then shorter distance
         if (coverValue > bestValue || (coverValue === bestValue && pathLength < bestDistance)) {
           bestCover = { row, col, coverValue, terrainType, path };
           bestValue = coverValue;
@@ -344,7 +459,6 @@ export function findNearestCover({
       }
     }
 
-    // If we found good cover at this distance, don't search further
     if (bestCover && bestValue >= 3) break;
   }
 
@@ -356,10 +470,7 @@ export function findNearestCover({
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * Convert grid path to world coordinates
- * @param {Array<{row, col}>} path - Grid path
- * @param {number} cellSize - Cell size in pixels
- * @returns {Array<{x, y}>} - World coordinates path
+ * Convert grid path to world coordinates (cell centers).
  */
 export function pathToWorld(path, cellSize) {
   return path.map(p => ({
@@ -369,11 +480,7 @@ export function pathToWorld(path, cellSize) {
 }
 
 /**
- * Convert world position to grid position
- * @param {number} x - World X
- * @param {number} y - World Y
- * @param {number} cellSize - Cell size
- * @returns {{row, col}} - Grid position
+ * Convert world position to grid position.
  */
 export function worldToGrid(x, y, cellSize) {
   return {
@@ -383,26 +490,23 @@ export function worldToGrid(x, y, cellSize) {
 }
 
 /**
- * Smooth a path by removing unnecessary waypoints
- * Uses line-of-sight checks to skip intermediate points
- * @param {Array<{row, col}>} path - Original path
- * @param {number[][]} terrain - Terrain grid
- * @param {number} gridHeight
- * @param {number} gridWidth
- * @returns {Array<{row, col}>} - Smoothed path
+ * Smooth a path by removing unnecessary waypoints.
+ * Uses line-of-sight checks to skip intermediate points.
+ *
+ * Accepts either a legacy `terrain` 2D grid or a `costFn`.
+ * If costFn is provided it takes priority.
  */
-export function smoothPath(path, terrain, gridHeight, gridWidth) {
+export function smoothPath(path, terrain, gridHeight, gridWidth, costFn) {
   if (path.length <= 2) return path;
 
   const smoothed = [path[0]];
   let current = 0;
 
   while (current < path.length - 1) {
-    // Try to skip ahead as far as possible
     let furthest = current + 1;
 
     for (let i = path.length - 1; i > current + 1; i--) {
-      if (hasLineOfSight(path[current], path[i], terrain, gridHeight, gridWidth)) {
+      if (hasLineOfSight(path[current], path[i], terrain, gridHeight, gridWidth, costFn)) {
         furthest = i;
         break;
       }
@@ -415,9 +519,12 @@ export function smoothPath(path, terrain, gridHeight, gridWidth) {
   return smoothed;
 }
 
-// Check if there's a clear line of sight between two grid positions
-function hasLineOfSight(from, to, terrain, gridHeight, gridWidth) {
-  // Bresenham's line algorithm
+/**
+ * Check if there's a clear line of sight between two grid positions.
+ * Blocks on impassable cells (Infinity) and high-cost cells (>= SMOOTH_BLOCK_COST)
+ * to prevent smoothed paths from cutting through water.
+ */
+function hasLineOfSight(from, to, terrain, gridHeight, gridWidth, costFn) {
   let x0 = from.col;
   let y0 = from.row;
   const x1 = to.col;
@@ -430,23 +537,22 @@ function hasLineOfSight(from, to, terrain, gridHeight, gridWidth) {
   let err = dx - dy;
 
   while (true) {
-    // Check if current cell is passable
-    const terrainType = getTerrainAt(terrain, y0, x0, gridHeight, gridWidth);
-    if (getMovementCost(terrainType) === Infinity) {
-      return false;
+    // Use costFn if available, else legacy terrain lookup
+    let blocked;
+    if (costFn) {
+      const c = costFn(y0, x0);
+      blocked = c === Infinity || c >= SMOOTH_BLOCK_COST;
+    } else {
+      const terrainType = getTerrainAt(terrain, y0, x0, gridHeight, gridWidth);
+      blocked = getMovementCost(terrainType) === Infinity;
     }
 
+    if (blocked) return false;
     if (x0 === x1 && y0 === y1) break;
 
     const e2 = 2 * err;
-    if (e2 > -dy) {
-      err -= dy;
-      x0 += sx;
-    }
-    if (e2 < dx) {
-      err += dx;
-      y0 += sy;
-    }
+    if (e2 > -dy) { err -= dy; x0 += sx; }
+    if (e2 < dx)  { err += dx; y0 += sy; }
   }
 
   return true;

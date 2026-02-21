@@ -344,6 +344,16 @@ export function createStroke(type, x, y, radius, options = {}) {
     if (options.parentStrokeId !== undefined) stroke.parentStrokeId = options.parentStrokeId;
   }
 
+  // Pass through scatter-system properties (treeTypes, brushTypes, ageRatios, etc.)
+  const baseKeys = new Set(['intensity', 'falloff', 'seed', 'centers', 'treeType',
+    'minAge', 'maxAge', 'textureType', 'fadeWidth', 'isShore',
+    'shoreWidth', 'waterDepth', 'waterDepthFalloff', 'depthFalloff', 'parentStrokeId']);
+  for (const key of Object.keys(options)) {
+    if (!baseKeys.has(key) && !(key in stroke)) {
+      stroke[key] = options[key];
+    }
+  }
+
   return stroke;
 }
 

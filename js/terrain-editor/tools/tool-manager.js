@@ -30,6 +30,9 @@ export class ToolManager {
     this._onKeyUp = this._onKeyUp.bind(this);
     this._onContextMenu = this._onContextMenu.bind(this);
 
+    // Key interceptor (for test mode etc.)
+    this._keyInterceptor = null;
+
     // Subscribe to tool changes
     this._state.on(Events.TOOL_CHANGED, ({ tool }) => {
       this._switchTool(tool);
@@ -111,9 +114,12 @@ export class ToolManager {
     // Exiting pan mode when switching to another tool
     this._isPanMode = false;
 
-    // Feature tools (forest, brush, water, ground) map to the 'paint' tool
-    const featureTools = ['forest', 'brush', 'water', 'ground'];
+    // Feature tools (forest, brush, water, ground, boulder) map to the 'paint' tool
+    const featureTools = ['forest', 'brush', 'water', 'ground', 'boulder'];
     const actualToolName = featureTools.includes(toolName) ? 'paint' : toolName;
+
+    // PCG tool maps directly to itself (not paint)
+    // Already handled by the logic above since 'pcg' is not in featureTools
 
     const newTool = this._tools.get(actualToolName);
     if (!newTool) {
@@ -253,7 +259,14 @@ export class ToolManager {
     this._state.zoom(delta, screenX, screenY);
   }
 
+  setKeyInterceptor(fn) {
+    this._keyInterceptor = fn;
+  }
+
   _onKeyDown(e) {
+    // Allow external handler to intercept (e.g. test mode)
+    if (this._keyInterceptor && this._keyInterceptor(e)) return;
+
     // Space key for pan mode
     if (e.code === 'Space' && !this._spaceHeld) {
       e.preventDefault();
@@ -268,18 +281,20 @@ export class ToolManager {
     const shortcuts = {
       'f': { tool: 'forest', feature: 'forest' },    // Forest (F)
       'b': { tool: 'brush', feature: 'brush' },      // Brush (B)
+      'r': { tool: 'boulder', feature: 'boulder' },  // Boulder (R)
       'w': { tool: 'water', feature: 'water' },      // Water (W)
       'g': { tool: 'ground', feature: 'groundTexture' }, // Ground (G)
       'c': { tool: 'clear' },                        // Clear (C)
       'v': { tool: 'select' },                       // Select (V)
       't': { tool: 'transform' },                    // Transform (T)
-      'p': { tool: 'pan' }                           // Pan (P)
+      'p': { tool: 'pan' },                          // Pan (P)
+      'y': { tool: 'pcg' }                            // PCG Generate (Y)
     };
 
     const shortcut = shortcuts[e.key.toLowerCase()];
     if (shortcut) {
       // Feature tools map to 'paint' internally
-      const featureTools = ['forest', 'brush', 'water', 'ground'];
+      const featureTools = ['forest', 'brush', 'water', 'ground', 'boulder'];
       const actualTool = featureTools.includes(shortcut.tool) ? 'paint' : shortcut.tool;
 
       // Check if the actual tool exists

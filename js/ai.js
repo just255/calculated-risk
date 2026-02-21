@@ -1,352 +1,426 @@
 // ═══════════════════════════════════════════════════════════════
-// AI - Unit AI behavior, state machines, and order execution
+// AI — Rewritten from scratch
+// Architecture: Command → Type/Stats → Personality → Morale → Action
+// Modifiers: Veterancy (consistency), Awareness, Cohesion
+// Shared brain for allies AND enemies.
 // ═══════════════════════════════════════════════════════════════
 
-import { UNITS, UNIT_PROJECTILES, ORDER_EFFECTS, UnitStance, STANCE_PARAMS, getStanceModifier, getEnemyStance, getFormationPositions } from './constants.js';
-import { findPath, findNearestCover, pathToWorld, worldToGrid, smoothPath } from './pathfinding.js';
-
-// AI States for units
-export const AIState = {
-  IDLE: 'idle',                    // No orders, brief pause
-  ADVANCING: 'advancing',          // NEW: Moving toward front line
-  MOVING: 'moving',                // Moving to specific waypoint
-  ENGAGING: 'engaging',            // NEW: In combat, stance drives behavior
-  ATTACKING: 'attacking',          // Actively pursuing enemy
-  DEFENDING: 'defending',          // Hold position, attack in range
-  FOLLOWING: 'following',          // Follow hero
-  RETREATING: 'retreating',        // Fall back when low HP
-  REPOSITIONING: 'repositioning',  // NEW: Finding better position
-  COVERING: 'covering'             // Provide cover fire
-};
-
-// Order types for command system
-export const OrderType = {
-  MOVE_TO: 'move_to',         // Move to position
-  HOLD_POSITION: 'hold',      // Stay at current position
-  DEFEND_AREA: 'defend',      // Defend radius around position
-  FOLLOW_HERO: 'follow',      // Follow player hero
-  ATTACK_TARGET: 'attack',    // Attack specific target
-  PATROL: 'patrol',           // Move between waypoints
-  COVER_FIRE: 'cover'         // Suppressive fire in direction
-};
-
-// Tactical commands available to player (for UI and input handling)
-export const TacticalCommand = {
-  FOLLOW: { key: '1', label: 'Follow', icon: '👥', state: 'following' },
-  HOLD: { key: '2', label: 'Hold', icon: '🛡️', state: 'defending' },
-  ATTACK: { key: '3', label: 'Attack', icon: '⚔️', state: 'attacking' },
-  MOVE: { key: '4', label: 'Move', icon: '🎯', state: 'moving', needsTarget: true },
-  RETREAT: { key: '5', label: 'Retreat', icon: '↩️', state: 'retreating' }
-};
+import { UNITS, UNIT_PROJECTILES, Formation, FORMATION_OFFSETS } from './constants.js';
+import { updateStability, shouldFire } from './fire-decision.js';
+import {
+  isTerrainBlocked, getTerrainSpeedMod, getTerrainAt, isInCover,
+  TERRAIN_COVER_SCORE, getWaterDepth, isTerrainPassable,
+  getWaterSpeedMod, distanceBetween, findNearbyCoverPos
+} from './terrain-utils.js';
+import {
+  traceLineOfSight, hasLineOfSight, getConcealment, canDetect,
+  buildSpottedList
+} from './vision.js';
+import {
+  MovementMode, buildMovementContext, resolveMovementMode,
+  computeThreatSpeed
+} from './movement-modes.js';
 
 // ═══════════════════════════════════════════════════════════════
-// AI BEHAVIOR PRESETS - Customizable unit behaviors
+// LAYER 1: COMMANDS
+// 6 core commands. Player issues for allies, AI Sergeant for enemies.
+// Commands are LITERAL — personality affects HOW, not WHAT.
 // ═══════════════════════════════════════════════════════════════
 
-export const AIBehavior = {
-  // Aggressive: pursues enemies, advances on targets
-  AGGRESSIVE: {
-    retreatThreshold: 0.15,    // Retreat at 15% HP
-    engageRange: 1.2,          // Engage enemies at 120% of weapon range
-    advanceWhenBlocked: true,  // Move closer when can't shoot
-    prioritizeWeak: false,     // Target nearest, not weakest
-    holdFireWhenMoving: false  // Shoot while moving
-  },
+export const Command = {
+  FOLLOW:     'follow',      // Stay behind leader, engage targets of opportunity
+  ADVANCE:    'advance',     // Push toward enemies aggressively
+  HOLD:       'hold',        // Stay where you are, defend position
+  FALL_BACK:  'fall_back',   // Pull back toward safety
+  COVER_ME:   'cover_me',    // Suppress enemies in leader's direction
+  FOCUS_FIRE: 'focus_fire'   // Everyone targets the same enemy
+};
 
-  // Defensive: holds position, prioritizes survival
-  DEFENSIVE: {
-    retreatThreshold: 0.35,    // Retreat at 35% HP
-    engageRange: 0.9,          // Only engage at 90% of range
-    advanceWhenBlocked: false, // Stay in position
-    prioritizeWeak: true,      // Finish off weak enemies
-    holdFireWhenMoving: false
+// Command registry — extensible. Add new commands here.
+export const COMMAND_REGISTRY = {
+  [Command.FOLLOW]: {
+    label: 'Follow Me',
+    allowsMovement: true,
+    requiresLeader: true
   },
-
-  // Support: follows hero closely, provides covering fire
-  SUPPORT: {
-    retreatThreshold: 0.25,
-    engageRange: 1.0,
-    advanceWhenBlocked: false,
-    prioritizeWeak: false,
-    holdFireWhenMoving: true,  // Focus on movement over shooting
-    followDistance: 80         // Stay close to hero
+  [Command.ADVANCE]: {
+    label: 'Advance',
+    allowsMovement: true,
+    requiresLeader: false
   },
-
-  // Sniper: long range, stays back, prioritizes high-value targets
-  SNIPER: {
-    retreatThreshold: 0.40,    // Very cautious
-    engageRange: 1.5,          // Engage from max range
-    advanceWhenBlocked: false, // Never advance
-    prioritizeWeak: false,
-    preferDistance: 250,       // Preferred distance from enemies
-    holdFireWhenMoving: true
+  [Command.HOLD]: {
+    label: 'Hold',
+    allowsMovement: false,
+    requiresLeader: false
   },
-
-  // Flanker: mobile, tries to attack from sides
-  FLANKER: {
-    retreatThreshold: 0.20,
-    engageRange: 1.0,
-    advanceWhenBlocked: true,
-    prioritizeWeak: true,
-    preferFlank: true,         // Tries to flank enemies
-    holdFireWhenMoving: false
+  [Command.FALL_BACK]: {
+    label: 'Fall Back',
+    allowsMovement: true,
+    requiresLeader: false
+  },
+  [Command.COVER_ME]: {
+    label: 'Cover Me',
+    allowsMovement: false,
+    requiresLeader: true
+  },
+  [Command.FOCUS_FIRE]: {
+    label: 'Focus Fire',
+    allowsMovement: false,
+    requiresLeader: false
   }
 };
 
 // ═══════════════════════════════════════════════════════════════
-// ENEMY AI TYPES - Different enemy behaviors
+// LAYER 2: UNIT TYPES
+// 4 ground categories. Stats drive behavior, not hardcoded logic.
 // ═══════════════════════════════════════════════════════════════
 
-export const EnemyAIType = {
-  // Basic: balanced behavior, moderate memory
-  BASIC: {
-    speed: 1.0,
-    aggression: 0.5,      // Moderate aggro decay (7.5 dmg/sec)
-    attackRange: 60,
-    retreatHP: 0          // Never retreats
-  },
+export const UnitCategory = {
+  INFANTRY:      'infantry',
+  LIGHT_VEHICLE: 'light_vehicle',
+  MEDIUM_TANK:   'medium_tank',
+  HEAVY_TANK:    'heavy_tank'
+};
 
-  // Rusher: fast, impulsive, short memory
-  RUSHER: {
-    speed: 1.4,
-    aggression: 1.0,      // Fast aggro decay (15 dmg/sec) - impulsive
-    attackRange: 40,      // Gets very close
-    retreatHP: 0
-  },
+// Armor tier per category — used for damage multiplier calculation
+// Same-tier = 1.0x, each tier difference = ±0.25x
+const ARMOR_TIER = {
+  [UnitCategory.INFANTRY]:      0,
+  [UnitCategory.LIGHT_VEHICLE]: 1,
+  [UnitCategory.MEDIUM_TANK]:   2,
+  [UnitCategory.HEAVY_TANK]:    3
+};
 
-  // Hunter: methodical, longer memory
-  HUNTER: {
-    speed: 1.0,
-    aggression: 0.6,      // Moderate-fast decay
-    attackRange: 80,
-    retreatHP: 0.1
-  },
+/**
+ * Get the armor tier for a unit (0=infantry, 1=light, 2=medium, 3=heavy).
+ */
+export function getArmorTier(unit) {
+  return ARMOR_TIER[inferCategory(unit)] ?? 0;
+}
 
-  // Cautious: paranoid, long memory, holds grudges
-  CAUTIOUS: {
-    speed: 0.8,
-    aggression: 0.3,      // Slow aggro decay (8 dmg/sec) - paranoid
-    attackRange: 120,
-    retreatHP: 0.4,
-    preferDistance: 100
-  },
+/**
+ * Compute damage multiplier: attacker tier vs defender tier.
+ * Same tier = 1.0x. Each tier up = -0.25x, each tier down = +0.25x.
+ * Clamped to [0.15, 2.0] to prevent zero damage or extreme overkill.
+ */
+export function getTierDamageMultiplier(attackerTier, defenderTier) {
+  return Math.max(0.15, Math.min(2.0, 1.0 + (attackerTier - defenderTier) * 0.25));
+}
 
-  // Flanker: tries to approach from sides
-  FLANKER: {
-    speed: 1.2,
-    aggression: 0.7,
-    attackRange: 60,
-    retreatHP: 0.2,
-    flankAngle: Math.PI / 3  // 60 degree offset
+// Core skills per category — what actions are available
+export const CATEGORY_SKILLS = {
+  [UnitCategory.INFANTRY]: {
+    canUseCover: true,
+    canSprint: true,
+    canGoProne: true,
+    canTransport: false,
+    hasRecon: false
+  },
+  [UnitCategory.LIGHT_VEHICLE]: {
+    canUseCover: false,
+    canSprint: false,       // Uses speed stat instead
+    canGoProne: false,
+    canTransport: true,
+    hasRecon: true
+  },
+  [UnitCategory.MEDIUM_TANK]: {
+    canUseCover: false,      // IS cover — uses hull down
+    canSprint: false,
+    canGoProne: false,
+    canTransport: false,
+    hasRecon: false,
+    canHullDown: true
+  },
+  [UnitCategory.HEAVY_TANK]: {
+    canUseCover: false,
+    canSprint: false,
+    canGoProne: false,
+    canTransport: false,
+    hasRecon: false,
+    canHullDown: true,
+    isIntimidating: true     // Enemies prioritize as threat
   }
 };
 
 // ═══════════════════════════════════════════════════════════════
-// THREAT & AGGRO SYSTEM
+// LAYER 3: PERSONALITY
+// 6 axes, each 0-1. Rolled at creation, mutable.
 // ═══════════════════════════════════════════════════════════════
 
-// Weapon categories for counter-based threat calculation
-const WEAPON_CATEGORY = {
-  // Small arms - low threat to armor
-  SMALL_ARMS: { antiArmor: 0.2, antiInfantry: 1.0 },
-  // Anti-armor weapons - high threat to armor
-  ANTI_ARMOR: { antiArmor: 1.5, antiInfantry: 0.8 },
-  // Artillery - threat to everything
-  ARTILLERY: { antiArmor: 1.2, antiInfantry: 1.5 },
-  // Laser/precision - balanced
-  PRECISION: { antiArmor: 0.8, antiInfantry: 1.2 }
+export const PersonalityAxis = {
+  AGGRESSION:   'aggression',    // 0=cautious, 1=eager
+  PATIENCE:     'patience',      // 0=fires ASAP, 1=waits for perfect shot
+  COURAGE:      'courage',       // 0=flinches, 1=stands ground
+  DISCIPLINE:   'discipline',    // 0=freelances, 1=follows orders
+  INITIATIVE:   'initiative',    // 0=only does what told, 1=acts on opportunities
+  ADAPTABILITY: 'adaptability'   // 0=tunnel vision, 1=quick reactions
 };
 
-// Map projectile types to weapon categories
-const PROJECTILE_TO_CATEGORY = {
-  bullet: 'SMALL_ARMS',
-  rifle: 'SMALL_ARMS',
-  missile: 'ANTI_ARMOR',
-  shell: 'ANTI_ARMOR',
-  cannon: 'ANTI_ARMOR',
-  artillery: 'ARTILLERY',
-  laser: 'PRECISION'
-};
+/**
+ * Generate a random personality for a new unit.
+ * Can optionally weight axes toward certain values by category.
+ * @param {string} category - UnitCategory value (optional, for weighting)
+ * @returns {object} Personality with 6 axes, each 0-1
+ */
+export function generatePersonality(category = null) {
+  const p = {
+    aggression:   Math.random(),
+    patience:     Math.random(),
+    courage:      Math.random(),
+    discipline:   Math.random(),
+    initiative:   Math.random(),
+    adaptability: Math.random()
+  };
 
-// Enemy armor classes
-const ENEMY_ARMOR_CLASS = {
-  infantry: 'SOFT',      // grunt
-  jeep: 'SOFT',          // scout
-  sherman: 'ARMORED',    // heavy
-  tiger: 'ARMORED'       // elite
-};
+  // Optional category weighting — nudge toward typical values
+  // Infantry tends more disciplined, tanks more patient, etc.
+  if (category === UnitCategory.INFANTRY) {
+    p.discipline = clamp01(p.discipline * 0.8 + 0.2);  // Nudge higher
+    p.adaptability = clamp01(p.adaptability * 0.8 + 0.2);
+  } else if (category === UnitCategory.LIGHT_VEHICLE) {
+    p.aggression = clamp01(p.aggression * 0.8 + 0.2);
+    p.initiative = clamp01(p.initiative * 0.8 + 0.2);
+  } else if (category === UnitCategory.MEDIUM_TANK) {
+    p.patience = clamp01(p.patience * 0.7 + 0.3);
+    p.discipline = clamp01(p.discipline * 0.7 + 0.3);
+  } else if (category === UnitCategory.HEAVY_TANK) {
+    p.patience = clamp01(p.patience * 0.6 + 0.4);
+    p.courage = clamp01(p.courage * 0.6 + 0.4);
+  }
 
-// How armor class affects incoming threat perception
-const ARMOR_THREAT_MODIFIER = {
-  SOFT: { SMALL_ARMS: 1.0, ANTI_ARMOR: 1.0, ARTILLERY: 1.2, PRECISION: 1.0 },
-  ARMORED: { SMALL_ARMS: 0.2, ANTI_ARMOR: 1.5, ARTILLERY: 1.0, PRECISION: 0.6 }
-};
-
-// Hero's weapon category based on MOS
-const HERO_MOS_WEAPON = {
-  infantry: 'SMALL_ARMS',
-  cavalry: 'ANTI_ARMOR',
-  naval: 'ANTI_ARMOR',
-  aviation: 'ANTI_ARMOR',
-  artillery: 'ARTILLERY'
-};
-
-// Vision cone settings
-const VISION_CONE_ANGLE = Math.PI * 2 / 3;  // 120 degrees
-const VISION_RANGE = 250;  // pixels
-
-// Get hero's weapon category from MOS
-function getHeroWeaponCategory(hero) {
-  return HERO_MOS_WEAPON[hero.mos] || 'SMALL_ARMS';
+  return p;
 }
 
-// Calculate distance between two entities
-function distanceBetween(a, b) {
-  const dx = a.x - b.x;
-  const dy = a.y - b.y;
-  return Math.sqrt(dx * dx + dy * dy);
-}
+// ═══════════════════════════════════════════════════════════════
+// LAYER 4: MORALE
+// Dynamic 0-1 meter. Morale = trigger, Courage = response direction.
+// Same event affects different personalities differently.
+// ═══════════════════════════════════════════════════════════════
 
-// Check if target is within enemy's vision cone
-function isInVisionCone(enemy, target) {
-  const dx = target.x - enemy.x;
-  const dy = target.y - enemy.y;
-  const dist = Math.sqrt(dx * dx + dy * dy);
+export const MoraleEvent = {
+  TOOK_DAMAGE:      'took_damage',
+  ALLY_DIED:        'ally_died',
+  LANDED_KILL:      'landed_kill',
+  UNDER_FIRE:       'under_fire',
+  OUTNUMBERED:      'outnumbered',
+  NEAR_ALLIES:      'near_allies',
+  ISOLATED:         'isolated',
+  WINNING:          'winning',
+  LOSING:           'losing',
+  LEADER_DIED:      'leader_died'
+};
 
-  if (dist > VISION_RANGE) return false;
+/**
+ * Calculate morale change from a battle event, filtered through personality.
+ * High courage + aggression: bad events can INCREASE morale (rage).
+ * Low courage: bad events decrease morale (fear).
+ *
+ * @param {object} personality - Unit's 6-axis personality
+ * @param {string} event - MoraleEvent type
+ * @param {number} intensity - 0-1 how severe the event is
+ * @returns {number} Morale delta (positive = boost, negative = drop)
+ */
+export function getMoraleChange(personality, event, intensity = 0.5) {
+  const { courage, aggression, discipline } = personality;
 
-  const angleToTarget = Math.atan2(dy, dx);
-  const enemyAngle = enemy.angle || 0;
-  let angleDiff = angleToTarget - enemyAngle;
+  // Base impact of the event (negative = bad, positive = good)
+  let baseImpact;
+  switch (event) {
+    case MoraleEvent.TOOK_DAMAGE:   baseImpact = -0.15; break;
+    case MoraleEvent.ALLY_DIED:     baseImpact = -0.20; break;
+    case MoraleEvent.UNDER_FIRE:    baseImpact = -0.05; break;
+    case MoraleEvent.OUTNUMBERED:   baseImpact = -0.10; break;
+    case MoraleEvent.ISOLATED:      baseImpact = -0.10; break;
+    case MoraleEvent.LOSING:        baseImpact = -0.10; break;
+    case MoraleEvent.LEADER_DIED:   baseImpact = -0.30; break;
+    case MoraleEvent.LANDED_KILL:   baseImpact = +0.15; break;
+    case MoraleEvent.NEAR_ALLIES:   baseImpact = +0.05; break;
+    case MoraleEvent.WINNING:       baseImpact = +0.10; break;
+    default: baseImpact = 0;
+  }
 
-  // Normalize to -PI to PI
-  while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-  while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+  baseImpact *= intensity;
 
-  return Math.abs(angleDiff) <= VISION_CONE_ANGLE / 2;
-}
+  // Courage filters the response DIRECTION
+  // High courage: negative events are less negative (or even positive with high aggression)
+  // Low courage: negative events hit harder
+  if (baseImpact < 0) {
+    // Bad event
+    const courageFilter = 1.0 - courage; // 0 courage = full impact, 1 courage = no impact
+    let delta = baseImpact * courageFilter;
 
-// Calculate threat score for a potential target
-function calculateThreat(enemy, target, recentDamage = 0) {
-  // Get enemy's armor class
-  const enemyArmor = ENEMY_ARMOR_CLASS[enemy.unitId] || 'SOFT';
+    // High courage + high aggression: bad events can fuel rage (positive morale)
+    if (courage > 0.7 && aggression > 0.6) {
+      delta = -baseImpact * 0.3 * aggression; // Flip to positive, scaled by aggression
+    }
 
-  // Get target's weapon category
-  let targetWeapon;
-  if (target.isHero) {
-    targetWeapon = getHeroWeaponCategory(target);
+    // Discipline dampens all swings (steady under pressure)
+    delta *= (1.0 - discipline * 0.3);
+
+    return delta;
   } else {
-    // Look up projectile type from UNIT_PROJECTILES if not set directly
-    const projType = target.projectileType || UNIT_PROJECTILES[target.unitId] || 'bullet';
-    targetWeapon = PROJECTILE_TO_CATEGORY[projType] || 'SMALL_ARMS';
-  }
+    // Good event — courage doesn't gate positive events much
+    let delta = baseImpact;
 
-  // Base threat from counter potential (can this target hurt me?)
-  const counterMod = ARMOR_THREAT_MODIFIER[enemyArmor]?.[targetWeapon] || 1.0;
-  const baseThreat = counterMod * 2;
-
-  // Damage-based awareness (proportional to damage taken)
-  const damageThreat = recentDamage > 0
-    ? (recentDamage / enemy.maxHp) * 5 * counterMod
-    : 0;
-
-  // Proximity bonus (closer = more threatening)
-  const dist = distanceBetween(enemy, target);
-  const proximityThreat = Math.max(0, (300 - dist) / 150);
-
-  // Desperation: low HP enemies are more reactive
-  const hpRatio = enemy.hp / enemy.maxHp;
-  const desperation = hpRatio < 0.3 ? 1.5 : (hpRatio < 0.6 ? 1.2 : 1.0);
-
-  // Low HP targets are more attractive (finish them off)
-  const targetVulnerability = target.hp && target.maxHp
-    ? (1 - target.hp / target.maxHp) * 0.5
-    : 0;
-
-  return (baseThreat + damageThreat + proximityThreat + targetVulnerability) * desperation;
-}
-
-// Get aggro decay rate based on enemy personality (aggression stat)
-function getAggroDecayRate(enemy) {
-  const aiType = enemy.aiType || EnemyAIType.BASIC;
-  const aggression = aiType.aggression || 0.5;
-
-  // More aggressive = faster decay (impulsive, moves on quickly)
-  // Less aggressive = slower decay (paranoid, holds grudge)
-  // Range: 5-15 damage per second decay
-  return 5 + aggression * 10;
-}
-
-// Decay damage memory over time
-function decayDamageMemory(enemy, dtSec) {
-  if (!enemy.recentDamageFrom) return;
-  const decayRate = getAggroDecayRate(enemy);
-
-  for (const id in enemy.recentDamageFrom) {
-    enemy.recentDamageFrom[id] -= decayRate * dtSec;
-    if (enemy.recentDamageFrom[id] <= 0) {
-      delete enemy.recentDamageFrom[id];
+    // Aggressive units get bigger morale boost from kills
+    if (event === MoraleEvent.LANDED_KILL) {
+      delta *= (1.0 + aggression * 0.5);
     }
+
+    return delta;
   }
 }
 
-// Record damage dealt to an enemy (for aggro tracking)
-export function recordDamage(enemy, sourceId, amount) {
-  if (!enemy.recentDamageFrom) enemy.recentDamageFrom = {};
-  enemy.recentDamageFrom[sourceId] = (enemy.recentDamageFrom[sourceId] || 0) + amount;
+/**
+ * Update a unit's morale based on an event.
+ * @param {object} unit - Unit with .morale and .personality
+ * @param {string} event - MoraleEvent type
+ * @param {number} intensity - 0-1 severity
+ */
+export function applyMoraleEvent(unit, event, intensity = 0.5) {
+  if (!unit.personality) return;
+  if (unit.morale === undefined) unit.morale = 0.8; // Default: fairly confident
+
+  const prevMorale = unit.morale;
+  const delta = getMoraleChange(unit.personality, event, intensity);
+  unit.morale = clamp01(unit.morale + delta);
+
+  // Log morale event to battle debug log if available
+  if (unit._battle?._debugLog && Math.abs(delta) > 0.001) {
+    const logTeam = unit.team === 'enemy' ? 'red' : 'blue';
+    unit._battle._debugLog.push({
+      t: Date.now(), who: unit.id, team: logTeam, type: 'morale_event',
+      x: Math.round(unit.x || 0), y: Math.round(unit.y || 0),
+      action: `${event}`, detail: `delta:${delta > 0 ? '+' : ''}${delta.toFixed(3)} mrl:${prevMorale.toFixed(2)}→${unit.morale.toFixed(2)} int:${intensity.toFixed(1)}`
+    });
+  }
 }
 
-// Select best target using threat-based system
-export function selectTarget(enemy, hero, allies) {
-  const candidates = [];
+// ═══════════════════════════════════════════════════════════════
+// MODIFIER 1: VETERANCY
+// Consistency modifier. Rookies are unpredictable, veterans are reliable.
+// ═══════════════════════════════════════════════════════════════
 
-  // Evaluate all player units (allies)
+/**
+ * Apply veterancy-scaled randomness to a value.
+ * Rookie (veterancy 0): value +/- maxSwing (full randomness)
+ * Veteran (veterancy 1): value is returned nearly unchanged
+ *
+ * @param {number} value - Base value
+ * @param {number} veterancy - 0-1 veterancy level
+ * @param {number} maxSwing - Maximum random deviation at veterancy 0
+ * @returns {number} Value with veterancy-scaled noise
+ */
+export function veterancyApply(value, veterancy = 0, maxSwing = 0.2) {
+  const noise = (Math.random() - 0.5) * 2 * maxSwing; // -maxSwing to +maxSwing
+  const scaledNoise = noise * (1.0 - veterancy);        // Reduced by veterancy
+  return value + scaledNoise;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MODIFIER 2: AWARENESS
+// Intelligence layer — gates how smart the unit behaves.
+// Computed from base config + personality + conditions.
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Calculate awareness level for a unit.
+ * Combines base value (config), personality (adaptability), veterancy,
+ * cohesion, and situational penalties (suppression, smoke, shock).
+ * Result cached on unit._awareness for use by other systems.
+ *
+ * @param {object} unit - Combat unit
+ * @param {object} cohesion - From getCohesion() { nearbyCount, hasLeader }
+ * @returns {number} 0-1 awareness level (1 = fully aware)
+ */
+export function getAwareness(unit, cohesion) {
+  const p = unit.personality || {};
+
+  // Base awareness from config (slider value) or default
+  let awareness = unit.awareness ?? 0.5;
+
+  // Personality: adaptability = inherent perceptiveness
+  awareness += (p.adaptability || 0) * 0.2;
+
+  // Experience: veteran units are more aware
+  awareness += (unit.veterancy || 0) * 0.15;
+
+  // Cohesion: allies nearby share info (+0.05 per ally, max +0.15)
+  if (cohesion) {
+    awareness += Math.min(0.15, (cohesion.nearbyCount || 0) * 0.05);
+    // Leader presence gives extra awareness bonus
+    if (cohesion.hasLeader) awareness += 0.05;
+  }
+
+  // Suppression: under fire = tunnel vision
+  if (unit.suppressed) {
+    awareness -= 0.4;
+  }
+
+  // Smoke: can't see
+  if (unit.inSmoke) {
+    awareness -= 0.5;
+  }
+
+  // Shock: recent damage causes brief awareness drop (decays over 2s)
+  if (unit._shockTimer > 0) {
+    awareness -= 0.2 * Math.min(1, unit._shockTimer / 2);
+  }
+
+  awareness = clamp01(awareness);
+  unit._awareness = awareness;
+  return awareness;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MODIFIER 3: COHESION
+// Nearby friendlies boost morale and coordination.
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Calculate cohesion bonus for a unit based on nearby allies.
+ * @param {object} unit - The unit to check
+ * @param {Array} allies - All friendly units
+ * @param {number} radius - Cohesion radius (pixels)
+ * @returns {object} { nearbyCount, hasLeader, cohesionBonus }
+ */
+export function getCohesion(unit, allies, radius = 150) {
+  let nearbyCount = 0;
+  let hasLeader = false;
+
   for (const ally of allies) {
-    if (ally.dead) continue;
-    const threat = calculateThreat(enemy, ally, enemy.recentDamageFrom?.[ally.id] || 0);
-    candidates.push({ target: ally, threat, isHero: false });
-  }
-
-  // Evaluate hero (only if conditions are met)
-  const heroVisible = isInVisionCone(enemy, hero);
-  const heroDamagedUs = (enemy.recentDamageFrom?.hero || 0) > 0;
-  const noOtherTargets = candidates.length === 0;
-
-  if (heroVisible || heroDamagedUs || noOtherTargets) {
-    const heroTarget = { ...hero, isHero: true };
-    const heroThreat = calculateThreat(enemy, heroTarget, enemy.recentDamageFrom?.hero || 0);
-    candidates.push({ target: hero, threat: heroThreat, isHero: true });
-  }
-
-  if (candidates.length === 0) return null;
-
-  // Sort by threat (descending), then by target HP (ascending) for tiebreaker
-  candidates.sort((a, b) => {
-    if (Math.abs(a.threat - b.threat) < 0.1) {
-      // Threat nearly equal - target lowest HP
-      const aHpRatio = a.target.hp / a.target.maxHp;
-      const bHpRatio = b.target.hp / b.target.maxHp;
-      return aHpRatio - bHpRatio;
+    if (ally === unit || ally.dead || ally.id === unit.id) continue;
+    const dx = unit.x - ally.x;
+    const dy = unit.y - ally.y;
+    if (dx * dx + dy * dy < radius * radius) {
+      nearbyCount++;
+      if (ally.isLeader || ally.isHero) hasLeader = true;
     }
-    return b.threat - a.threat;
-  });
+  }
 
-  return candidates[0].target;
+  // Cohesion bonus: more nearby = better, with diminishing returns
+  const countBonus = Math.min(0.3, nearbyCount * 0.05);
+  const leaderBonus = hasLeader ? 0.15 : 0;
+
+  return {
+    nearbyCount,
+    hasLeader,
+    cohesionBonus: countBonus + leaderBonus, // 0 to ~0.45
+    isolated: nearbyCount === 0
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════
-// ENTITY COLLISION SYSTEM
+// ENTITY COLLISION SYSTEM (kept from old AI)
 // ═══════════════════════════════════════════════════════════════
 
-// Entity sizes (radius) matching visual icon sizes
 export const ENTITY_RADIUS = {
-  hero: 20,      // 40x40 icon
-  ally: 20,      // 40x40 icon
-  enemy: 15,     // 30x30 icon
-  projectile: 4  // 8x8 icon
+  hero: 20,
+  ally: 20,
+  enemy: 15,
+  projectile: 4
 };
 
-// Check if two entities are colliding (circles)
 export function entitiesCollide(a, b, radiusA, radiusB) {
   const dx = a.x - b.x;
   const dy = a.y - b.y;
@@ -355,1802 +429,2571 @@ export function entitiesCollide(a, b, radiusA, radiusB) {
   return distSq < minDist * minDist;
 }
 
-// Check if a position would collide with any entity in a list
 export function wouldCollide(x, y, radius, entities, excludeId = null) {
   for (const e of entities) {
     if (e.dead) continue;
     if (excludeId && e.id === excludeId) continue;
-
     const otherRadius = e.radius || ENTITY_RADIUS.enemy;
     const dx = x - e.x;
     const dy = y - e.y;
     const distSq = dx * dx + dy * dy;
     const minDist = radius + otherRadius;
-
-    if (distSq < minDist * minDist) {
-      return e; // Return the entity we'd collide with
-    }
+    if (distSq < minDist * minDist) return e;
   }
   return null;
 }
 
-// Get separation vector to push apart overlapping entities
 export function getSeparationVector(entity, others, entityRadius) {
   let sepX = 0, sepY = 0;
-
   for (const other of others) {
     if (other.dead || other === entity || other.id === entity.id) continue;
-
     const otherRadius = other.radius || ENTITY_RADIUS.enemy;
     const dx = entity.x - other.x;
     const dy = entity.y - other.y;
     const distSq = dx * dx + dy * dy;
     const minDist = entityRadius + otherRadius;
-
     if (distSq < minDist * minDist && distSq > 0) {
       const dist = Math.sqrt(distSq);
       const overlap = minDist - dist;
-      // Push away from the other entity
       sepX += (dx / dist) * overlap * 0.5;
       sepY += (dy / dist) * overlap * 0.5;
     }
   }
-
   return { x: sepX, y: sepY };
 }
 
-// ═══════════════════════════════════════════════════════════════
-// TERRAIN HELPERS
-// ═══════════════════════════════════════════════════════════════
-
-export function isTerrainBlocked(b, x, y) {
-  const col = Math.floor(x / b.cellSize);
-  const row = Math.floor(y / b.cellSize);
-
-  if (row < 0 || row >= b.gridHeight || col < 0 || col >= b.gridWidth) {
-    return true;
-  }
-
-  const terrain = b.terrain[row]?.[col];
-  return terrain === 'high'; // Rocks are impassable
-}
-
-export function getTerrainSpeedMod(b, x, y) {
-  const col = Math.floor(x / b.cellSize);
-  const row = Math.floor(y / b.cellSize);
-
-  if (row < 0 || row >= b.gridHeight || col < 0 || col >= b.gridWidth) {
-    return 1.0;
-  }
-
-  const terrain = b.terrain[row]?.[col];
-  switch (terrain) {
-    case 'water': return 0.5;
-    case 'brush': return 0.9;
-    case 'forest': return 0.7;
-    default: return 1.0;
-  }
-}
-
-export function getTerrainAt(b, x, y) {
-  const col = Math.floor(x / b.cellSize);
-  const row = Math.floor(y / b.cellSize);
-
-  if (row < 0 || row >= b.gridHeight || col < 0 || col >= b.gridWidth) {
-    return 'open';
-  }
-
-  return b.terrain[row]?.[col] || 'open';
-}
-
-// Check if unit is in cover (trench or pillbox)
-export function isInCover(b, x, y) {
-  const terrain = getTerrainAt(b, x, y);
-  return terrain === 'trench' || terrain === 'pillbox';
-}
-
-// ═══════════════════════════════════════════════════════════════
-// SMART POSITIONING - AI finds optimal deployment positions
-// ═══════════════════════════════════════════════════════════════
-
-// Terrain cover/defense values
-const TERRAIN_COVER_SCORE = {
-  pillbox: 50,    // Best cover
-  trench: 40,     // Great cover
-  forest: 25,     // Good concealment
-  brush: 15,      // Light cover
-  high: -1000,    // Impassable (rocks)
-  water: -500,    // Avoid water
-  grass: 5,       // Slight preference
-  open: 0         // Neutral
-};
-
-/**
- * Find optimal positions for units when no specific positions are set.
- * Evaluates terrain, spacing, support range, and firing lines.
- *
- * @param {Object} b - Battle state
- * @param {Object} hero - Hero object with x, y position
- * @param {Array} existingUnits - Units already positioned (to avoid clustering)
- * @param {number} numPositions - How many positions to find
- * @returns {Array} Array of {x, y, score} positions sorted by score (best first)
- */
-export function findSmartPositions(b, hero, existingUnits, numPositions) {
-  const positions = [];
-  const cellSize = b.cellSize;
-
-  // Define search area - fan out from hero toward enemy side
-  // Enemy spawns at top, player at bottom, so search area is around/ahead of hero
-  const searchRadiusMin = 60;   // Min distance from hero
-  const searchRadiusMax = 200;  // Max distance from hero
-  const minSpacing = 50;        // Min distance between units
-
-  // Get hero grid position
-  const heroCol = Math.floor(hero.x / cellSize);
-  const heroRow = Math.floor(hero.y / cellSize);
-
-  // Calculate enemy direction (assumed to be toward top of map)
-  const enemyDir = -Math.PI / 2; // Facing up
-
-  // Evaluate cells in search area
-  for (let row = 0; row < b.gridHeight; row++) {
-    for (let col = 0; col < b.gridWidth; col++) {
-      const x = (col + 0.5) * cellSize;
-      const y = (row + 0.5) * cellSize;
-
-      // Calculate distance from hero
-      const dx = x - hero.x;
-      const dy = y - hero.y;
-      const distFromHero = Math.sqrt(dx * dx + dy * dy);
-
-      // Skip if outside search radius
-      if (distFromHero < searchRadiusMin || distFromHero > searchRadiusMax) {
-        continue;
-      }
-
-      // Skip blocked terrain
-      const terrain = getTerrainAt(b, x, y);
-      if (terrain === 'high' || terrain === 'water') {
-        continue;
-      }
-
-      // Calculate position score
-      let score = 0;
-
-      // 1. Terrain cover value
-      score += TERRAIN_COVER_SCORE[terrain] || 0;
-
-      // 2. Prefer positions in front of hero (toward enemy)
-      const angleToPos = Math.atan2(dy, dx);
-      const angleDiff = Math.abs(normalizeAngle(angleToPos - enemyDir));
-      const forwardBonus = Math.cos(angleDiff) * 20; // Up to +20 for forward positions
-      score += forwardBonus;
-
-      // 3. Optimal support distance (not too close, not too far)
-      const optimalDist = 120;
-      const distPenalty = Math.abs(distFromHero - optimalDist) * 0.1;
-      score -= distPenalty;
-
-      // 4. Check spacing from existing units
-      let tooClose = false;
-      for (const unit of existingUnits) {
-        const ux = unit.x !== undefined ? unit.x : unit.targetX;
-        const uy = unit.y !== undefined ? unit.y : unit.targetY;
-        if (ux === undefined || uy === undefined) continue;
-
-        const udx = x - ux;
-        const udy = y - uy;
-        const unitDist = Math.sqrt(udx * udx + udy * udy);
-        if (unitDist < minSpacing) {
-          tooClose = true;
-          break;
-        }
-        // Small penalty for being close to other units
-        if (unitDist < minSpacing * 2) {
-          score -= (minSpacing * 2 - unitDist) * 0.2;
-        }
-      }
-      if (tooClose) continue;
-
-      // 5. Firing line bonus - prefer positions with clear view forward
-      const lookAheadX = x + Math.cos(enemyDir) * 100;
-      const lookAheadY = y + Math.sin(enemyDir) * 100;
-      if (!isTerrainBlocked(b, lookAheadX, lookAheadY)) {
-        score += 10; // Clear firing lane
-      }
-
-      // 6. Flank coverage - spread units to cover sides
-      const flankAngle = Math.atan2(dy, dx);
-      const spreadBonus = Math.abs(Math.sin(flankAngle)) * 10;
-      score += spreadBonus;
-
-      positions.push({ x, y, score, terrain });
+export function calcSeparation(entity, others, separationRadius = 40) {
+  let sepX = 0, sepY = 0;
+  for (const other of others) {
+    if (other === entity || other.dead || other.id === entity.id) continue;
+    const dx = entity.x - other.x;
+    const dy = entity.y - other.y;
+    const distSq = dx * dx + dy * dy;
+    if (distSq < separationRadius * separationRadius && distSq > 0) {
+      const dist = Math.sqrt(distSq);
+      const force = (separationRadius - dist) / separationRadius;
+      sepX += (dx / dist) * force;
+      sepY += (dy / dist) * force;
     }
   }
-
-  // Sort by score (highest first)
-  positions.sort((a, b) => b.score - a.score);
-
-  // Return top N positions, ensuring spacing
-  const selected = [];
-  for (const pos of positions) {
-    if (selected.length >= numPositions) break;
-
-    // Check spacing from already selected positions
-    let valid = true;
-    for (const sel of selected) {
-      const dx = pos.x - sel.x;
-      const dy = pos.y - sel.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < minSpacing) {
-        valid = false;
-        break;
-      }
-    }
-
-    if (valid) {
-      selected.push(pos);
-    }
-  }
-
-  return selected;
+  return { x: sepX, y: sepY };
 }
 
 /**
- * Find a single smart position for a unit.
- * Wrapper around findSmartPositions for single unit.
+ * Water avoidance steering. Samples cells in the movement direction and
+ * pushes the unit perpendicular to avoid entering water. Strength is
+ * proportional to the water cost (deep > medium > shallow).
  */
-export function findSmartPosition(b, hero, existingUnits) {
-  const positions = findSmartPositions(b, hero, existingUnits, 1);
-  return positions.length > 0 ? positions[0] : null;
-}
+function calcWaterAvoidance(b, unit, dirX, dirY, category) {
+  const cellSize = b.terrainMap?.cellSize || b.cellSize || 64;
+  // Check a cell-width ahead
+  const lookDist = cellSize * 0.8;
+  const aheadX = unit.x + dirX * lookDist;
+  const aheadY = unit.y + dirY * lookDist;
 
-/**
- * Assign smart positions to units that don't have explicit positions set.
- * Uses terrain evaluation to find optimal deployment positions.
- *
- * @param {Object} b - Battle state with units, hero, and terrain
- */
-export function assignSmartPositions(b) {
-  if (!b || !b.units || b.units.length === 0) return;
+  const depth = getWaterDepth(b, aheadX, aheadY);
+  if (!depth) return { x: 0, y: 0 };
 
-  // Separate units that need positions from those that already have them
-  const unitsNeedingPositions = [];
-  const unitsWithPositions = [];
+  // How strongly to avoid: shallow=small, medium=moderate, deep=strong
+  const strength = depth === 'shallow' ? 0.2 : depth === 'medium' ? 0.6 : 1.0;
 
-  for (const unit of b.units) {
-    // Check if unit has a manually set position (from battle plan)
-    const hasExplicitPos = unit.primaryPos !== null && unit.primaryPos !== undefined;
+  // Vehicles avoid water more aggressively
+  const catMult = category === 'infantry' ? 1.0 : 1.5;
 
-    if (hasExplicitPos) {
-      unitsWithPositions.push(unit);
-    } else {
-      unitsNeedingPositions.push(unit);
-    }
-  }
+  // Perpendicular directions (left and right of movement)
+  const perpLX = -dirY, perpLY = dirX;
+  const perpRX = dirY,  perpRY = -dirX;
 
-  // If no units need positions, done
-  if (unitsNeedingPositions.length === 0) return;
+  // Sample both sides — pick the drier side
+  const leftDepth  = getWaterDepth(b, unit.x + perpLX * lookDist, unit.y + perpLY * lookDist);
+  const rightDepth = getWaterDepth(b, unit.x + perpRX * lookDist, unit.y + perpRY * lookDist);
 
-  console.log(`[AI] Finding smart positions for ${unitsNeedingPositions.length} units`);
+  const leftScore  = leftDepth  ? (leftDepth === 'deep' ? 3 : leftDepth === 'medium' ? 2 : 1) : 0;
+  const rightScore = rightDepth ? (rightDepth === 'deep' ? 3 : rightDepth === 'medium' ? 2 : 1) : 0;
 
-  // Build list of already-positioned units for spacing checks
-  const existingPositions = unitsWithPositions.map(u => ({
-    x: u.currentDestination?.x || u.primaryPos?.x || u.x,
-    y: u.currentDestination?.y || u.primaryPos?.y || u.y
-  })).filter(p => p.x !== undefined && p.y !== undefined);
-
-  // Find optimal positions using smart positioning AI
-  const smartPositions = findSmartPositions(
-    b,
-    b.hero,
-    existingPositions,
-    unitsNeedingPositions.length
-  );
-
-  // Assign positions to units
-  for (let i = 0; i < unitsNeedingPositions.length; i++) {
-    const unit = unitsNeedingPositions[i];
-
-    if (i < smartPositions.length) {
-      const pos = smartPositions[i];
-      unit.currentDestination = { x: pos.x, y: pos.y };
-      unit.aiState = AIState.MOVING;
-      unit.reachedDestination = false;
-
-      // Store as primary position for fall back reference
-      unit.primaryPos = { x: pos.x, y: pos.y };
-
-      console.log(`[AI] Unit ${unit.id} assigned to (${Math.round(pos.x)}, ${Math.round(pos.y)}) - terrain: ${pos.terrain}, score: ${Math.round(pos.score)}`);
-
-      // Add this position to existing list for next iteration spacing
-      existingPositions.push({ x: pos.x, y: pos.y });
-    } else {
-      // Fallback if not enough smart positions found - spread around hero
-      const fallbackRadius = 100 + (i * 30);
-      const fallbackAngle = (Math.PI * 0.5) + (i / unitsNeedingPositions.length) * Math.PI;
-      const fallbackPos = {
-        x: b.hero.x + Math.cos(fallbackAngle) * fallbackRadius,
-        y: b.hero.y + Math.sin(fallbackAngle) * fallbackRadius
-      };
-      unit.currentDestination = fallbackPos;
-      unit.primaryPos = fallbackPos;
-      unit.aiState = AIState.MOVING;
-      unit.reachedDestination = false;
-
-      console.log(`[AI] Unit ${unit.id} using fallback position`);
-    }
+  // Steer toward the drier side
+  const force = strength * catMult;
+  if (leftScore <= rightScore) {
+    return { x: perpLX * force, y: perpLY * force };
+  } else {
+    return { x: perpRX * force, y: perpRY * force };
   }
 }
 
-// Helper: Normalize angle to -PI to PI
-function normalizeAngle(angle) {
+// Terrain helpers extracted to terrain-utils.js
+// Vision system extracted to vision.js
+// Movement modes extracted to movement-modes.js
+
+
+// ═══════════════════════════════════════════════════════════════
+// UTILITY FUNCTIONS (kept from old AI)
+// ═══════════════════════════════════════════════════════════════
+
+export function normalizeAngle(angle) {
   while (angle > Math.PI) angle -= Math.PI * 2;
   while (angle < -Math.PI) angle += Math.PI * 2;
   return angle;
 }
 
-// ═══════════════════════════════════════════════════════════════
-// FRONT LINE & THREAT EVALUATION - For proactive AI behavior
-// ═══════════════════════════════════════════════════════════════
-
-/**
- * Calculate the dynamic front line Y position based on battle state.
- * Front line is where units should advance to before engaging.
- *
- * @param {Object} b - Battle state
- * @returns {number} Y coordinate of the front line
- */
-export function calculateFrontLine(b) {
-  // Default: middle of map
-  let frontLineY = b.mapHeight * 0.5;
-
-  // Adjust based on enemy positions (stay ahead of enemies)
-  const liveEnemies = b.enemies?.filter(e => !e.dead) || [];
-  if (liveEnemies.length > 0) {
-    const avgEnemyY = liveEnemies.reduce((sum, e) => sum + e.y, 0) / liveEnemies.length;
-    // Position front line slightly ahead of average enemy position
-    frontLineY = Math.max(frontLineY, avgEnemyY + 80);
-  }
-
-  // Clamp to player territory (don't push too far forward)
-  frontLineY = Math.min(frontLineY, b.mapHeight * 0.75);
-
-  // Don't retreat past spawn area
-  frontLineY = Math.max(frontLineY, b.mapHeight * 0.3);
-
-  return frontLineY;
+function clamp01(v) {
+  return Math.max(0, Math.min(1, v));
 }
 
-/**
- * Evaluate threat level for a unit based on nearby enemies, HP, and cover.
- * Used by AUTONOMOUS stance to decide push/hold/retreat.
- *
- * @param {Object} unit - The unit to evaluate
- * @param {Object} b - Battle state
- * @param {Array} enemies - List of enemies
- * @returns {number} Threat level from 0.0 (safe) to 1.0 (critical)
- */
-export function evaluateThreat(unit, b, enemies) {
-  const liveEnemies = enemies.filter(e => !e.dead);
-  if (liveEnemies.length === 0) return 0;
-
-  // Count nearby enemies
-  let nearbyCount = 0;
-  for (const e of liveEnemies) {
-    const dx = e.x - unit.x;
-    const dy = e.y - unit.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist < 200) nearbyCount++;
-  }
-
-  // HP ratio (lower HP = higher threat)
-  const hpRatio = unit.hp / unit.maxHp;
-
-  // Cover check
-  const inCover = isInCover(b, unit.x, unit.y);
-
-  // Calculate threat
-  let threat = 0;
-  threat += nearbyCount * 0.15;      // Each nearby enemy adds 15%
-  threat += (1 - hpRatio) * 0.4;     // Low HP adds up to 40%
-  if (!inCover) threat += 0.15;      // Not in cover adds 15%
-
-  return Math.min(1.0, threat);
-}
-
-/**
- * Check if unit should reposition to a better location.
- *
- * @param {Object} unit - The unit to evaluate
- * @param {Object} b - Battle state
- * @returns {Object|null} Better position {x, y} or null if current is fine
- */
-export function shouldReposition(unit, b) {
-  // Don't reposition if:
-  // - Currently moving already
-  // - Low HP (focus on survival)
-  // - In the middle of digging in
-  if (unit.aiState === AIState.MOVING || unit.aiState === AIState.REPOSITIONING) {
-    return null;
-  }
-  if (unit.hp < unit.maxHp * 0.25) {
-    return null;
-  }
-  if (unit.isDugIn) {
-    return null;
-  }
-
-  // Score current position
-  const currentScore = evaluatePositionScore(b, unit.x, unit.y, b.units, b.hero);
-
-  // Search for better positions nearby (within 100px)
-  const searchRadius = 100;
-  const step = 30;
-  let bestPos = null;
-  let bestScore = currentScore;
-
-  for (let dx = -searchRadius; dx <= searchRadius; dx += step) {
-    for (let dy = -searchRadius; dy <= searchRadius; dy += step) {
-      if (dx === 0 && dy === 0) continue;
-
-      const testX = unit.x + dx;
-      const testY = unit.y + dy;
-
-      // Skip blocked terrain
-      if (isTerrainBlocked(b, testX, testY)) continue;
-
-      const score = evaluatePositionScore(b, testX, testY, b.units, b.hero);
-
-      // Need 30% improvement to be worth moving
-      if (score > bestScore * 1.3) {
-        bestScore = score;
-        bestPos = { x: testX, y: testY };
-      }
-    }
-  }
-
-  return bestPos;
-}
-
-/**
- * Score a position for quality (terrain, spacing, firing lines).
- * Used for repositioning decisions.
- */
-function evaluatePositionScore(b, x, y, units, hero) {
-  let score = 50; // Base score
-
-  // Terrain bonus
-  const terrain = getTerrainAt(b, x, y);
-  const terrainScores = {
-    pillbox: 50, trench: 40, forest: 25, brush: 15, grass: 5, open: 0
-  };
-  score += terrainScores[terrain] || 0;
-
-  // Distance from hero (optimal ~120px)
-  const heroDist = Math.sqrt((x - hero.x) ** 2 + (y - hero.y) ** 2);
-  score -= Math.abs(heroDist - 120) * 0.1;
-
-  // Spacing from other units (don't cluster)
-  for (const u of units) {
-    if (u.dead) continue;
-    const dist = Math.sqrt((x - u.x) ** 2 + (y - u.y) ** 2);
-    if (dist < 50) score -= 20;
-    else if (dist < 80) score -= 5;
-  }
-
-  // Forward position bonus (toward enemy)
-  if (y < b.mapHeight * 0.5) score += 10;
-
-  return score;
-}
-
-/**
- * Apply a formation to units around a center point.
- *
- * @param {Object} b - Battle state
- * @param {Array} units - Units to arrange
- * @param {string} formation - Formation type (line, wedge, column, spread)
- * @param {number} cx - Center X
- * @param {number} cy - Center Y
- * @param {number} facing - Direction to face (radians, default up)
- */
-export function applyFormation(b, units, formation, cx, cy, facing = -Math.PI/2) {
-  const positions = getFormationPositions(formation, cx, cy, units.length, facing);
-
-  for (let i = 0; i < units.length; i++) {
-    const unit = units[i];
-    if (unit.dead) continue;
-
-    if (i < positions.length) {
-      const pos = positions[i];
-      unit.currentDestination = { x: pos.x, y: pos.y };
-      unit.aiState = AIState.MOVING;
-      unit.reachedDestination = false;
-    }
-  }
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
 }
 
 // ═══════════════════════════════════════════════════════════════
-// TARGETING
+// PHASE 2: THE BRAIN — Unified AI for all combat units
+// Same brain for allies AND enemies. Commands + Stats + Personality → Action.
 // ═══════════════════════════════════════════════════════════════
 
-export function findNearestEnemy(unit, enemies) {
-  let nearest = null;
-  let nearestDist = Infinity;
-
-  for (const e of enemies) {
-    if (e.dead) continue;
-    const dx = e.x - unit.x;
-    const dy = e.y - unit.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist < nearestDist) {
-      nearestDist = dist;
-      nearest = e;
-    }
-  }
-
-  return { enemy: nearest, distance: nearestDist };
-}
-
-// Find target based on unit's priority setting and squad concentrate target
-export function findTargetByPriority(b, unit, enemies, range) {
-  // If squad has a concentrate target, prioritize it (unless unit has assigned priority)
-  if (b?.squad?.concentrateTarget && unit.targetPriority !== 'assigned') {
-    const concentrateEnemy = enemies.find(e => e.id === b.squad.concentrateTarget && !e.dead);
-    if (concentrateEnemy) {
-      const dx = concentrateEnemy.x - unit.x;
-      const dy = concentrateEnemy.y - unit.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      // Always target concentrate enemy even if out of range (will move toward or wait)
-      return { enemy: concentrateEnemy, distance: dist };
-    }
-  }
-
-  // Filter to enemies in range first
-  const inRange = [];
-  for (const e of enemies) {
-    if (e.dead) continue;
-    const dx = e.x - unit.x;
-    const dy = e.y - unit.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist <= range) {
-      inRange.push({ enemy: e, distance: dist });
-    }
-  }
-
-  if (inRange.length === 0) {
-    return { enemy: null, distance: Infinity };
-  }
-
-  const priority = unit.targetPriority || 'nearest';
-
-  switch (priority) {
-    case 'nearest':
-      // Sort by distance ascending
-      inRange.sort((a, b) => a.distance - b.distance);
-      return inRange[0];
-
-    case 'weakest':
-      // Sort by HP ascending
-      inRange.sort((a, b) => a.enemy.hp - b.enemy.hp);
-      return inRange[0];
-
-    case 'strongest':
-      // Sort by HP descending
-      inRange.sort((a, b) => b.enemy.hp - a.enemy.hp);
-      return inRange[0];
-
-    case 'armor':
-      // Prioritize armored units (check unitId for vehicle types)
-      const armored = inRange.filter(e => isArmoredEnemy(e.enemy));
-      if (armored.length > 0) {
-        armored.sort((a, b) => a.distance - b.distance);
-        return armored[0];
-      }
-      // Fallback to nearest
-      inRange.sort((a, b) => a.distance - b.distance);
-      return inRange[0];
-
-    case 'infantry':
-      // Prioritize infantry units
-      const infantry = inRange.filter(e => !isArmoredEnemy(e.enemy));
-      if (infantry.length > 0) {
-        infantry.sort((a, b) => a.distance - b.distance);
-        return infantry[0];
-      }
-      // Fallback to nearest
-      inRange.sort((a, b) => a.distance - b.distance);
-      return inRange[0];
-
-    case 'artillery':
-      // Prioritize support/artillery units (further back, high damage)
-      const artillery = inRange.filter(e => e.enemy.aiType === 'support' || e.enemy.isArtillery);
-      if (artillery.length > 0) {
-        artillery.sort((a, b) => a.distance - b.distance);
-        return artillery[0];
-      }
-      // Fallback to nearest
-      inRange.sort((a, b) => a.distance - b.distance);
-      return inRange[0];
-
-    case 'assigned':
-      // Only attack squad concentrate target, if not found return null
-      return { enemy: null, distance: Infinity };
-
+/**
+ * Map unitId to UnitCategory for skill lookups.
+ */
+function inferCategory(unit) {
+  switch (unit.unitId || 'infantry') {
+    case 'infantry': case 'medic': case 'specops':
+      return UnitCategory.INFANTRY;
+    case 'jeep': case 'humvee':
+      return UnitCategory.LIGHT_VEHICLE;
+    case 'sherman':
+      return UnitCategory.MEDIUM_TANK;
+    case 'tiger': case 'abrams': case 'howitzer':
+      return UnitCategory.HEAVY_TANK;
     default:
-      // Default to nearest
-      inRange.sort((a, b) => a.distance - b.distance);
-      return inRange[0];
+      return UnitCategory.INFANTRY;
   }
 }
 
-// Helper: Check if enemy is armored type
-function isArmoredEnemy(enemy) {
-  const armoredIds = ['sherman', 'tiger', 'abrams', 'panzer', 'halftrack', 'armored'];
-  return enemy.unitId && armoredIds.some(id => enemy.unitId.toLowerCase().includes(id));
-}
+// Range lookup — mirrors EFFECTIVE_RANGE from fire-decision.js
+// so the brain knows how far each unit can actually shoot.
+const BRAIN_RANGE = {
+  BASIC: 200, RUSHER: 100, HUNTER: 300, CAUTIOUS: 400,
+  FLANKER: 200, SWARMER: 60,
+  infantry: 150, jeep: 180, humvee: 180,
+  sherman: 250, tiger: 300, abrams: 350, howitzer: 350
+};
 
-export function findEnemiesInRange(unit, enemies, range) {
-  const inRange = [];
-  for (const e of enemies) {
-    if (e.dead) continue;
-    const dx = e.x - unit.x;
-    const dy = e.y - unit.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist <= range) {
-      inRange.push({ enemy: e, distance: dist });
+/**
+ * First-frame initialization. Sets personality, morale, command, team.
+ */
+function initBrain(unit, team) {
+  if (unit._brainInit) return;
+
+  if (!unit.personality) {
+    unit.personality = generatePersonality(inferCategory(unit));
+  }
+  if (unit.morale === undefined) unit.morale = 0.8;
+  if (unit.veterancy === undefined) unit.veterancy = 0;
+  if (!unit.team) unit.team = team;
+
+  // Ensure unit has a range (some enemies don't set it at spawn)
+  if (!unit.range) {
+    const typeKey = unit.aiTypeKey || unit.unitId || 'infantry';
+    unit.range = BRAIN_RANGE[typeKey] || 150;
+  }
+
+  // Map old orders to new commands
+  if (!unit.command) {
+    const order = unit.currentOrder || '';
+    switch (order) {
+      case 'hold': case 'digIn':
+        unit.command = Command.HOLD; break;
+      case 'advance': case 'search': case 'flank':
+        unit.command = Command.ADVANCE; break;
+      case 'fallback':
+        unit.command = Command.FALL_BACK; break;
+      default:
+        unit.command = Command.ADVANCE;
     }
   }
-  return inRange.sort((a, b) => a.distance - b.distance);
+
+  unit._brainInit = true;
 }
 
-// ═══════════════════════════════════════════════════════════════
-// MOVEMENT
-// ═══════════════════════════════════════════════════════════════
+/**
+ * Compute stat-driven targeting weight modifiers based on unit combat stats.
+ * Awareness scales the influence — low awareness = stats don't affect targeting.
+ * @param {object} unit - Unit with range, damage, hp, maxHp, speed
+ * @returns {{ dDist: number, dWeak: number, dThreat: number, dValue: number }}
+ */
+function getStatsTargetingModifiers(unit) {
+  const awareness = unit._awareness ?? 0.5;
+  if (awareness < 0.05) return { dDist: 0, dWeak: 0, dThreat: 0, dValue: 0 };
 
-export function moveToward(b, unit, targetX, targetY, dtSec, orderSpeedMod = 1.0) {
+  // Reference midpoints from unit stat ranges
+  const REF_RANGE = 200, REF_DAMAGE = 30, REF_HP = 120, REF_SPEED = 75;
+  const INFLUENCE = 0.2; // max modifier per axis
+
+  const range = unit.range || 150;
+  const damage = unit.damage || 10;
+  const hp = unit.maxHp || unit.hp || 60;
+  const speed = unit.speed || 80;
+
+  // Normalize each stat relative to reference (-1 to +1)
+  const rangeN = clamp((range - REF_RANGE) / REF_RANGE, -1, 1);
+  const damageN = clamp((damage - REF_DAMAGE) / REF_DAMAGE, -1, 1);
+  const hpN = clamp((hp - REF_HP) / REF_HP, -1, 1);
+  const speedN = clamp((speed - REF_SPEED) / REF_SPEED, -1, 1);
+
+  // Long-range units: reduce distance weight (don't prefer close), boost weakness
+  // Short-range units: boost distance weight (get close)
+  let dDist = -rangeN * INFLUENCE;
+  let dWeak = rangeN * INFLUENCE * 0.6;
+  // High-damage units prefer high-value targets
+  let dValue = damageN * INFLUENCE;
+  // Fragile units (low HP) prioritize threats (self-preservation)
+  let dThreat = -hpN * INFLUENCE * 0.8;
+  // Fast units slightly prefer closer targets
+  dDist += speedN * INFLUENCE * 0.3;
+
+  // Awareness scales the entire influence
+  return {
+    dDist: dDist * awareness,
+    dWeak: dWeak * awareness,
+    dThreat: dThreat * awareness,
+    dValue: dValue * awareness
+  };
+}
+
+/**
+ * Select best target from hostiles. Personality influences preference.
+ */
+function selectBrainTarget(b, unit, hostiles, leader, command) {
+  // Use spotted list (vision-gated) when available, fall back to raw hostiles
+  const spotted = unit._spotted;
+  const alive = [];
+  if (Array.isArray(spotted)) {
+    // Vision system active — only target what this unit can see
+    for (const s of spotted) {
+      if (s.enemy && !s.enemy.dead && s.enemy.hp > 0) alive.push(s.enemy);
+    }
+  } else {
+    // Fallback: no vision system active (e.g., campaign mode without vision)
+    for (const e of hostiles) {
+      if (e.dead || (e.hp !== undefined && e.hp <= 0)) continue;
+      alive.push(e);
+    }
+  }
+  if (alive.length === 0) return null;
+
+  // FOCUS_FIRE: match leader's target (hard override)
+  if (command === Command.FOCUS_FIRE && leader?._currentTarget) {
+    const lt = leader._currentTarget;
+    if (!lt.dead && lt.hp > 0) return lt;
+  }
+
+  const p = unit.personality || {};
+  const tgt = unit.targeting || {};
+
+  // --- Resolve effective weights: config base + personality + command modifiers ---
+  let wDist = tgt.distance ?? 0.7;
+  let wWeak = tgt.weakness ?? 0.3;
+  let wThreat = tgt.threat ?? 0.0;
+  let wValue = tgt.value ?? 0.0;
+
+  // Personality influence:
+  // - Patient units lean toward weakness (finish off wounded efficiently)
+  // - Aggressive units lean toward distance (push into closest)
+  // - Courageous units lean toward threat (take on the biggest danger)
+  const patience = p.patience ?? 0.5;
+  const aggression = p.aggression ?? 0.5;
+  const courage = p.courage ?? 0.5;
+  wWeak += (patience - 0.5) * 0.4;       // +0.2 at max patience, -0.2 at min
+  wDist += (aggression - 0.5) * 0.3;     // aggressive = close, cautious = less distance focus
+  wThreat += (courage - 0.5) * 0.3;      // brave = engage threats, cowardly = avoid them
+
+  // Command influence:
+  // - HOLD: boost distance (engage what's close, don't chase)
+  // - FALL_BACK: boost threat (watch the biggest danger while retreating)
+  // - COVER_ME: boost threat (suppress the most dangerous enemy)
+  if (command === Command.HOLD) { wDist += 0.3; }
+  else if (command === Command.FALL_BACK) { wThreat += 0.3; wDist += 0.2; }
+  else if (command === Command.COVER_ME) { wThreat += 0.4; }
+
+  // Stats influence: unit combat stats bias targeting (scaled by awareness)
+  const statsMod = getStatsTargetingModifiers(unit);
+  wDist += statsMod.dDist;
+  wWeak += statsMod.dWeak;
+  wThreat += statsMod.dThreat;
+  wValue += statsMod.dValue;
+
+  // Clamp weights to 0-2 range (allow amplification but not negative)
+  wDist = Math.max(0, wDist);
+  wWeak = Math.max(0, wWeak);
+  wThreat = Math.max(0, wThreat);
+  wValue = Math.max(0, wValue);
+
+  // Fallback: if all weights are ~0, default to distance
+  const totalW = wDist + wWeak + wThreat + wValue;
+  if (totalW < 0.01) wDist = 1.0;
+
+  // --- Compute per-target reference values for normalization ---
+  let maxDist = 0, maxDmg = 0, maxMaxHp = 0;
+  const targetData = [];
+  for (const e of alive) {
+    const dx = e.x - unit.x, dy = e.y - unit.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const dmg = e.damage || 10;
+    const mhp = e.maxHp || 60;
+    if (dist > maxDist) maxDist = dist;
+    if (dmg > maxDmg) maxDmg = dmg;
+    if (mhp > maxMaxHp) maxMaxHp = mhp;
+    targetData.push({ target: e, dist, dmg, hp: e.hp, maxHp: mhp });
+  }
+  if (maxDist < 1) maxDist = 1;
+  if (maxDmg < 1) maxDmg = 1;
+  if (maxMaxHp < 1) maxMaxHp = 1;
+
+  // --- Score each target ---
+  let bestScore = -Infinity, bestEntry = null;
+  for (const td of targetData) {
+    const distScore = 1.0 - (td.dist / (maxDist * 1.2));    // closer = higher (0-1)
+    const weakScore = 1.0 - (td.hp / (td.maxHp || 1));      // lower HP% = higher (0-1)
+    let threatScore = td.dmg / maxDmg;                       // higher damage = higher (0-1)
+    // Flank threat boost: flanking enemies get +0.5 threat for 2 seconds
+    if (td.target._flankThreatBoost && Date.now() < td.target._flankThreatBoost) {
+      threatScore = Math.min(1, threatScore + 0.5);
+    }
+    const valueScore = td.maxHp / maxMaxHp;                  // higher maxHP = higher (0-1)
+
+    td.score = distScore * wDist + weakScore * wWeak + threatScore * wThreat + valueScore * wValue;
+    td.factors = { dist: distScore, weak: weakScore, threat: threatScore, value: valueScore };
+
+    if (td.score > bestScore) {
+      bestScore = td.score;
+      bestEntry = td;
+    }
+  }
+
+  const chosen = bestEntry?.target || null;
+
+  // Log target selection reasoning when target changes
+  if (chosen && b._debugLog) {
+    const prevTarget = unit._dbg?.targetId;
+    if (chosen.id !== prevTarget) {
+      const logTeam = unit.team === 'enemy' ? 'red' : 'blue';
+      const f = bestEntry.factors;
+      const wStr = `w[d:${wDist.toFixed(1)} w:${wWeak.toFixed(1)} t:${wThreat.toFixed(1)} v:${wValue.toFixed(1)}]`;
+      const fStr = `f[d:${f.dist.toFixed(2)} w:${f.weak.toFixed(2)} t:${f.threat.toFixed(2)} v:${f.value.toFixed(2)}]`;
+      const sStr = `s[d:${statsMod.dDist.toFixed(2)} w:${statsMod.dWeak.toFixed(2)} t:${statsMod.dThreat.toFixed(2)} v:${statsMod.dValue.toFixed(2)}]`;
+      b._debugLog.push({ t: Date.now(), who: unit.id, team: logTeam, type: 'decision',
+        x: Math.round(unit.x), y: Math.round(unit.y),
+        action: `chose ${chosen.id}`,
+        detail: `score:${bestScore.toFixed(2)} ${wStr} ${sStr} ${fStr} hp:${chosen.hp}/${chosen.maxHp}` });
+    }
+  }
+  return chosen;
+}
+
+/**
+ * Move unit toward a point with separation steering.
+ * Returns true if arrived.
+ */
+function moveBrainUnit(b, unit, targetX, targetY, dtSec, allUnits, speedMult = 1.0) {
+  // Prone/hull-down units cannot move
+  if (unit._isProne || unit._isHullDown) return false;
+
   const dx = targetX - unit.x;
   const dy = targetY - unit.y;
   const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist < 5) return true;
 
-  if (dist < 5) return true; // Arrived at exact position
+  const category = inferCategory(unit);
+  const baseSpeed = unit._inFormation && unit._formationSpeed
+    ? Math.min(unit.speed || 80, unit._formationSpeed)
+    : (unit.speed || 80);
+  const waitMult = unit._formationWaitMult ?? 1;
+  const speed = baseSpeed * speedMult * waitMult;
+  const terrainMod = getTerrainSpeedMod(b, unit.x, unit.y);
+  // Water depth speed modifier (category-aware)
+  const waterMod = getWaterSpeedMod(b, unit.x, unit.y, category);
+  // Suppression slows movement (max 40% penalty)
+  const suppressionMod = 1 - (unit._suppression ?? 0) * 0.4;
+  // Threat-based speed (personality-modulated)
+  const threatMod = unit._moveCtx ? computeThreatSpeed(unit, unit._moveCtx) : 1.0;
+  const finalSpeed = speed * terrainMod * waterMod * suppressionMod * threatMod;
 
-  const unitDef = UNITS.find(u => u.id === unit.unitId);
-  const baseSpeed = unitDef?.speed || 100;
-  const terrainSpeedMod = getTerrainSpeedMod(b, unit.x, unit.y);
-  const speed = baseSpeed * terrainSpeedMod * orderSpeedMod;
+  let dirX = dx / dist;
+  let dirY = dy / dist;
 
-  // DEBUG: Log movement (throttled)
-  const now = Date.now();
-  if (!unit._lastMoveLog || now - unit._lastMoveLog > 2000) {
-    unit._lastMoveLog = now;
-    console.log(`[MOVE] Unit ${unit.id}: speed=${speed.toFixed(1)}, dtSec=${dtSec.toFixed(3)}, terrainMod=${terrainSpeedMod.toFixed(2)}, orderMod=${orderSpeedMod}`);
-  }
+  // Separation steering — avoid overlapping friendlies
+  const sep = calcSeparation(unit, allUnits, 40);
+  dirX += sep.x * 0.5;
+  dirY += sep.y * 0.5;
 
-  let moveX = (dx / dist) * speed * dtSec;
-  let moveY = (dy / dist) * speed * dtSec;
+  // Water avoidance steering — nudge away from nearby water cells
+  const waterNudge = calcWaterAvoidance(b, unit, dirX, dirY, category);
+  dirX += waterNudge.x;
+  dirY += waterNudge.y;
 
-  let newX = unit.x + moveX;
-  let newY = unit.y + moveY;
+  const dirLen = Math.sqrt(dirX * dirX + dirY * dirY);
+  if (dirLen > 0) { dirX /= dirLen; dirY /= dirLen; }
 
-  // Only check terrain collision (no unit collision for now)
-  const blockedX = isTerrainBlocked(b, newX, unit.y);
-  const blockedY = isTerrainBlocked(b, unit.x, newY);
+  const newX = unit.x + dirX * finalSpeed * dtSec;
+  const newY = unit.y + dirY * finalSpeed * dtSec;
 
-  if (!blockedX) {
-    unit.x = newX;
-  }
-  if (!blockedY) {
-    unit.y = newY;
-  }
+  // Axis-independent terrain blocking + water passability check
+  if (!isTerrainBlocked(b, newX, unit.y) && isTerrainPassable(b, newX, unit.y, category)) unit.x = newX;
+  if (!isTerrainBlocked(b, unit.x, newY) && isTerrainPassable(b, unit.x, newY, category)) unit.y = newY;
 
-  // Wall-sliding for terrain
-  if (blockedX || blockedY) {
-    unit.stuckTime = (unit.stuckTime || 0) + dtSec;
-
-    if (unit.stuckTime > 0.3) {
-      if (blockedX && !blockedY) {
-        const slideDir = dy > 0 ? 1 : -1;
-        const slideY = unit.y + slideDir * speed * dtSec;
-        if (!isTerrainBlocked(b, unit.x, slideY)) {
-          unit.y = slideY;
-        }
-      } else if (blockedY && !blockedX) {
-        const slideDir = dx > 0 ? 1 : -1;
-        const slideX = unit.x + slideDir * speed * dtSec;
-        if (!isTerrainBlocked(b, slideX, unit.y)) {
-          unit.x = slideX;
-        }
-      }
-    }
-  } else {
-    unit.stuckTime = 0;
-  }
-
-  // Face direction of movement
-  unit.angle = Math.atan2(dy, dx);
+  // Clamp to map bounds
+  const mapW = b.mapWidth || 2000;
+  const mapH = b.mapHeight || 2000;
+  unit.x = Math.max(20, Math.min(mapW - 20, unit.x));
+  unit.y = Math.max(20, Math.min(mapH - 20, unit.y));
 
   return false;
 }
 
 // ═══════════════════════════════════════════════════════════════
-// SHOOTING
+// COVER BIAS + BOUNDING MOVEMENT
+// Cover bias = how much a unit prefers cover-to-cover movement.
+// Bounding = advancing through intermediate cover waypoints.
 // ═══════════════════════════════════════════════════════════════
 
-export function tryShoot(b, unit, targetX, targetY, now) {
-  const unitDef = UNITS.find(u => u.id === unit.unitId);
-  const fireRate = unitDef?.fireRate || 1000;
-  const damage = unitDef?.damage || 10;
+// Category base cover bias — infantry loves cover, tanks don't care as much
+const CATEGORY_COVER_BASE = {
+  [UnitCategory.INFANTRY]:      0.5,
+  [UnitCategory.LIGHT_VEHICLE]: 0.2,
+  [UnitCategory.MEDIUM_TANK]:   0.3,
+  [UnitCategory.HEAVY_TANK]:    0.15
+};
 
-  if (now - unit.lastShot < fireRate) return false;
+// Command modifiers to cover bias
+const COMMAND_COVER_MOD = {
+  [Command.HOLD]:       0.3,
+  [Command.COVER_ME]:   0.4,
+  [Command.ADVANCE]:    0.0,
+  [Command.FOLLOW]:     0.1,
+  [Command.FALL_BACK]:  0.2,
+  [Command.FOCUS_FIRE]: -0.1
+};
 
-  unit.lastShot = now;
+/**
+ * Compute how much this unit prefers cover-to-cover movement.
+ * Returns 0-1. Higher = more cover-seeking. Cached per brain tick.
+ */
+function computeCoverBias(unit, command) {
+  const p = unit.personality || {};
+  const category = inferCategory(unit);
+  const awareness = unit._awareness ?? 0.5;
 
-  const dx = targetX - unit.x;
-  const dy = targetY - unit.y;
-  const angle = Math.atan2(dy, dx);
-  const projSpeed = 400;
+  const base = CATEGORY_COVER_BASE[category] ?? 0.3;
+  const cmdMod = COMMAND_COVER_MOD[command] ?? 0;
 
-  // Get projectile type from UNIT_PROJECTILES mapping
-  const projType = UNIT_PROJECTILES[unit.unitId] || 'bullet';
+  const bias = base
+    + (p.courage ?? 0.5)     * -0.15   // Brave = less cover need
+    + (p.aggression ?? 0.5)  * -0.1    // Aggressive = close distance
+    + (p.discipline ?? 0.5)  * 0.1     // Disciplined = methodical
+    + (p.patience ?? 0.5)    * 0.1     // Patient = takes covered route
+    + awareness              * 0.15    // Aware = finds cover better
+    + cmdMod;
 
-  b.projectiles.push({
-    x: unit.x,
-    y: unit.y,
-    vx: Math.cos(angle) * projSpeed,
-    vy: Math.sin(angle) * projSpeed,
-    damage: damage,
-    owner: 'ally',
-    sourceUnitId: unit.id,  // Track which unit fired for aggro
-    type: projType
-  });
+  return Math.max(0, Math.min(1, bias));
+}
 
+// ═══════════════════════════════════════════════════════════════
+// SUPPRESSION SYSTEM
+// Fire volume (even misses) pins units down. Decays over time.
+// Discipline accelerates recovery. Cover provides psychological safety.
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Decay suppression per frame. Called early in updateBrain().
+ * Base decay: 0.08/sec. Discipline bonus: +0.04 * discipline/sec.
+ * In cover bonus: +0.03/sec.
+ */
+function updateSuppression(unit, dtSec, b) {
+  const sup = unit._suppression ?? 0;
+  if (sup <= 0) return;
+
+  const discipline = unit.personality?.discipline ?? 0.5;
+  const inCover = (TERRAIN_COVER_SCORE[getTerrainAt(b, unit.x, unit.y)] || 0) >= 15;
+
+  let decayRate = 0.08 + discipline * 0.04;
+  if (inCover) decayRate += 0.03;
+
+  unit._suppression = Math.max(0, sup - decayRate * dtSec);
+}
+
+/**
+ * Apply suppression from an external event.
+ * Called by game.js when projectiles pass nearby, explosions happen, allies die.
+ */
+export function applySuppression(unit, amount) {
+  unit._suppression = Math.min(1, (unit._suppression ?? 0) + amount);
+}
+
+/**
+ * Find the next cover waypoint between the unit and its objective.
+ * Scans a forward arc (±60° from direction to objective) for cover cells.
+ * Returns { x, y, score } or null if no cover found in the arc.
+ */
+function findNextCoverBound(b, unit, objX, objY, friendlies) {
+  const cellSize = b.terrainMap?.cellSize || b.cellSize || 64;
+  const coverBias = unit._coverBias ?? 0.3;
+
+  // Direction to objective
+  const dxObj = objX - unit.x;
+  const dyObj = objY - unit.y;
+  const distToObj = Math.sqrt(dxObj * dxObj + dyObj * dyObj);
+  if (distToObj < cellSize) return null; // Already at objective
+
+  const angleToObj = Math.atan2(dyObj, dxObj);
+
+  // Search radius: 2-5 cells ahead, based on view range and cover bias
+  const viewRange = unit.viewRange || 200;
+  const searchDist = Math.min(viewRange * 0.6, distToObj); // Don't search past objective
+  const searchCells = Math.ceil(searchDist / cellSize);
+  const col = Math.floor(unit.x / cellSize);
+  const row = Math.floor(unit.y / cellSize);
+
+  let bestBound = null;
+  let bestScore = -Infinity;
+
+  for (let dr = -searchCells; dr <= searchCells; dr++) {
+    for (let dc = -searchCells; dc <= searchCells; dc++) {
+      if (dr === 0 && dc === 0) continue;
+      const cx = (col + dc + 0.5) * cellSize;
+      const cy = (row + dr + 0.5) * cellSize;
+
+      // Must be passable
+      if (isTerrainBlocked(b, cx, cy)) continue;
+
+      const t = getTerrainAt(b, cx, cy);
+      const coverScore = TERRAIN_COVER_SCORE[t] || 0;
+      if (coverScore < 15) continue; // Only consider actual cover (brush+)
+
+      // Angle from unit to this cell, relative to objective direction
+      const dxCell = cx - unit.x;
+      const dyCell = cy - unit.y;
+      const cellDist = Math.sqrt(dxCell * dxCell + dyCell * dyCell);
+      if (cellDist < cellSize * 0.5) continue; // Too close
+
+      const angleToCell = Math.atan2(dyCell, dxCell);
+      let angleDiff = angleToCell - angleToObj;
+      // Normalize to [-PI, PI]
+      while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+      while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+
+      // Forward arc: ±60° (±PI/3) widened slightly by coverBias
+      const arcHalf = Math.PI / 3 + coverBias * (Math.PI / 6); // ±60° to ±90° based on bias
+      if (Math.abs(angleDiff) > arcHalf) continue;
+
+      // Score components:
+      // 1. Forward progress (dot product with objective direction)
+      const normalDx = dxObj / distToObj;
+      const normalDy = dyObj / distToObj;
+      const forwardProgress = (dxCell * normalDx + dyCell * normalDy) / cellDist;
+
+      // 2. Cover quality (normalized 0-1)
+      const coverQuality = Math.min(1, coverScore / 50);
+
+      // 3. Distance sweet spot: prefer 60-150px ahead
+      const idealMin = 60, idealMax = 150;
+      let distScore;
+      if (cellDist >= idealMin && cellDist <= idealMax) {
+        distScore = 1.0;
+      } else if (cellDist < idealMin) {
+        distScore = cellDist / idealMin;
+      } else {
+        distScore = Math.max(0, 1.0 - (cellDist - idealMax) / idealMax);
+      }
+
+      // 4. Threat exposure: if enemies known, prefer cover that blocks LOS to them
+      let threatScore = 0;
+      if (unit._spotted && unit._spotted.length > 0) {
+        let blocked = 0;
+        const checks = Math.min(unit._spotted.length, 3); // Check top 3 threats
+        for (let i = 0; i < checks; i++) {
+          const enemy = unit._spotted[i].enemy;
+          if (enemy && !enemy.dead) {
+            if (!hasLineOfSight(b, cx, cy, enemy.x, enemy.y)) blocked++;
+          }
+        }
+        threatScore = checks > 0 ? blocked / checks : 0;
+      }
+
+      // 5. Crowding penalty: avoid positions where friendlies already are or heading
+      let crowdPenalty = 0;
+      if (friendlies) {
+        for (const f of friendlies) {
+          if (f === unit || f.dead) continue;
+          // Friendly already at this position
+          const fdist = Math.hypot(cx - f.x, cy - f.y);
+          if (fdist < cellSize * 1.5) crowdPenalty += 0.4;
+          // Friendly bound target heading to same position
+          if (f._boundTarget) {
+            const bdist = Math.hypot(cx - f._boundTarget.x, cy - f._boundTarget.y);
+            if (bdist < cellSize) crowdPenalty += 0.5;
+          }
+        }
+      }
+
+      // Weighted score — cover bias determines how much the unit deviates for cover
+      const score = forwardProgress * (1.0 - coverBias * 0.5)   // Less weight on forward if high bias
+                  + coverQuality   * (0.3 + coverBias * 0.4)    // More weight on cover quality if high bias
+                  + distScore      * 0.3
+                  + threatScore    * coverBias * 0.4
+                  - crowdPenalty;
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestBound = { x: cx, y: cy, score };
+      }
+    }
+  }
+
+  return bestBound;
+}
+
+/**
+ * Bounding movement: advance cover-to-cover toward objective.
+ * Called from command executors when unit is advancing and has coverBias > 0.2.
+ * Returns true if unit is bounding (caller should not do additional movement).
+ */
+function boundingAdvance(b, unit, objX, objY, dtSec, friendlies, now) {
+  const coverBias = unit._coverBias ?? 0;
+  if (coverBias <= 0.2) return false; // Too low bias, just advance directly
+
+  const p = unit.personality || {};
+  const patience = p.patience ?? 0.5;
+
+  // Check if we've arrived at current bound target
+  if (unit._boundTarget) {
+    const dist = Math.hypot(unit._boundTarget.x - unit.x, unit._boundTarget.y - unit.y);
+    if (dist < 10) {
+      // Arrived at bound — enter pause
+      unit._boundPauseUntil = now + (500 + patience * 1500) * coverBias;
+      unit._boundTarget = null;
+      unit._actionVerb = 'bounding_hold';
+
+      // Log arrival at cover
+      if (b._debugLog) {
+        const logTeam = unit.team === 'enemy' ? 'red' : 'blue';
+        b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'cover',
+          x: Math.round(unit.x), y: Math.round(unit.y),
+          action: 'bound reached', detail: `bias:${coverBias.toFixed(2)} pause:${Math.round((500 + patience * 1500) * coverBias)}ms` });
+      }
+      return true;
+    }
+
+    // Still en route to bound target
+    unit._actionVerb = 'bounding_advance';
+    moveBrainUnit(b, unit, unit._boundTarget.x, unit._boundTarget.y, dtSec, friendlies);
+    return true;
+  }
+
+  // Check if we're pausing at a bound
+  if (unit._boundPauseUntil) {
+    if (now < unit._boundPauseUntil) {
+      unit._actionVerb = 'bounding_hold';
+      return true; // Still pausing, scan & build stability
+    }
+    unit._boundPauseUntil = null; // Pause over, select next bound
+  }
+
+  // Select next bound toward objective
+  const nextBound = findNextCoverBound(b, unit, objX, objY, friendlies);
+  if (nextBound) {
+    unit._boundTarget = nextBound;
+    unit._actionVerb = 'bounding_advance';
+
+    if (b._debugLog) {
+      const logTeam = unit.team === 'enemy' ? 'red' : 'blue';
+      b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'cover',
+        x: Math.round(unit.x), y: Math.round(unit.y),
+        action: 'bound selected', target: `(${Math.round(nextBound.x)},${Math.round(nextBound.y)})`,
+        detail: `bias:${coverBias.toFixed(2)} score:${nextBound.score.toFixed(2)}` });
+    }
+
+    moveBrainUnit(b, unit, nextBound.x, nextBound.y, dtSec, friendlies);
+    return true;
+  }
+
+  // No cover found — behavior depends on cover bias
+  if (coverBias > 0.7) {
+    // Very cautious: slow to 50% speed
+    unit._actionVerb = 'advancing_cautious';
+    moveBrainUnit(b, unit, objX, objY, dtSec, friendlies, 0.5);
+    return true;
+  }
+
+  return false; // Low/mid bias, no cover found → advance normally
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FORMATION SYSTEM
+// Sergeant → formation → individual AI.
+// When in formation, units maintain slots relative to lead unit.
+// When dispersed or no sergeant, fall back to individual behavior.
+// ═══════════════════════════════════════════════════════════════
+
+// Command → default formation mapping
+const COMMAND_DEFAULT_FORMATION = {
+  [Command.ADVANCE]:    Formation.WEDGE,
+  [Command.HOLD]:       Formation.LINE,
+  [Command.FALL_BACK]:  Formation.COLUMN,
+  [Command.FOLLOW]:     Formation.COLUMN,
+  [Command.COVER_ME]:   Formation.LINE,
+  [Command.FOCUS_FIRE]: Formation.LINE
+};
+
+/**
+ * Select the formation lead unit — highest awareness in the squad.
+ * Commander can override by setting unit._isFormationLead = true.
+ */
+function selectFormationLead(friendlies) {
+  // Check for manual override first
+  const override = friendlies.find(u => !u.dead && u._isFormationLead);
+  if (override) return override;
+
+  // Composite score from stable base stats (no frame-to-frame fluctuation)
+  let bestUnit = null;
+  let bestScore = -1;
+  for (const u of friendlies) {
+    if (u.dead) continue;
+    const leadership = u.leadership ?? 0;
+    const veterancy = u.veterancy ?? 0;
+    const awareness = u.awareness ?? 0.5;
+    const score = leadership * 0.5 + veterancy * 0.3 + awareness * 0.2;
+    if (score > bestScore) {
+      bestScore = score;
+      bestUnit = u;
+    }
+  }
+  return bestUnit;
+}
+
+/**
+ * Compute world position of a slot given its offset, leader, angle, spacing.
+ * Used by assignFormationSlots for proximity matching.
+ */
+function slotWorldPos(offset, leader, formationAngle, spacingMult) {
+  const [ox, oy] = offset;
+  const sx = ox * spacingMult;
+  const sy = oy * spacingMult;
+  const cos = Math.cos(formationAngle + Math.PI / 2);
+  const sin = Math.sin(formationAngle + Math.PI / 2);
+  return { x: leader.x + sx * cos - sy * sin, y: leader.y + sx * sin + sy * cos };
+}
+
+/**
+ * Assign formation slots to units. Leader always slot 0 (center per doctrine).
+ * Doctrine groups (armor/infantry/support) determine which POOL of slots each
+ * group gets. Within each pool, slots are assigned by proximity to minimize
+ * travel distance and prevent cross-formation scrambling.
+ * @param {Array} friendlies - All friendly units
+ * @param {string} formationType - Formation key (wedge, line, etc.)
+ * @param {object} leader - The formation lead unit
+ * @param {string} terrain - Terrain type at leader's position
+ * @param {number} formationAngle - Current formation facing angle
+ * @param {number} spacingMult - Current spacing multiplier
+ */
+function assignFormationSlots(friendlies, formationType, leader, terrain, formationAngle, spacingMult) {
+  const alive = friendlies.filter(u => !u.dead);
+  if (alive.length === 0) return;
+
+  // Categorize units for slot priority
+  const armor = [];    // Tanks/vehicles
+  const infantry = []; // Foot soldiers
+  const support = [];  // Rear slots (medics, howitzers)
+
+  for (const u of alive) {
+    if (u === leader) continue; // Leader always slot 0
+    const cat = inferCategory(u);
+    const unitId = u.unitId || 'infantry';
+    if (unitId === 'medic' || unitId === 'howitzer') {
+      support.push(u);
+    } else if (cat === UnitCategory.MEDIUM_TANK || cat === UnitCategory.HEAVY_TANK) {
+      armor.push(u);
+    } else {
+      infantry.push(u);
+    }
+  }
+
+  // Slot 0 = leader (center position per platoon doctrine)
+  leader._formationSlot = 0;
+
+  // Doctrine ordering: determines which group gets forward vs rear slots
+  const restricted = terrain === 'forest' || terrain === 'brush';
+  const groups = restricted
+    ? [infantry, armor, support]
+    : [armor, infantry, support];
+
+  const offsets = FORMATION_OFFSETS[formationType] || FORMATION_OFFSETS.line;
+
+  // Build pool of available slot indices (1 through N, since 0 = leader)
+  let nextSlot = 1;
+
+  for (const group of groups) {
+    if (group.length === 0) continue;
+
+    // Collect this group's slot pool (consecutive slots based on doctrine order)
+    const slotPool = [];
+    for (let i = 0; i < group.length; i++) {
+      const idx = Math.min(nextSlot + i, offsets.length - 1);
+      slotPool.push(idx);
+    }
+
+    // Compute world positions for each slot in the pool
+    const slotPositions = slotPool.map(idx => ({
+      idx,
+      ...slotWorldPos(offsets[idx], leader, formationAngle, spacingMult)
+    }));
+
+    // Greedy proximity assignment: for each slot, find nearest unassigned unit
+    const assigned = new Set();
+    for (const slot of slotPositions) {
+      let bestUnit = null;
+      let bestDist = Infinity;
+      for (const u of group) {
+        if (assigned.has(u)) continue;
+        const d = Math.hypot(slot.x - u.x, slot.y - u.y);
+        if (d < bestDist) { bestDist = d; bestUnit = u; }
+      }
+      if (bestUnit) {
+        bestUnit._formationSlot = slot.idx;
+        assigned.add(bestUnit);
+      }
+    }
+
+    nextSlot += group.length;
+  }
+}
+
+/**
+ * Compute the world position of a unit's assigned formation slot.
+ * @param {object} unit - Unit with _formationSlot
+ * @param {object} leader - Formation lead unit
+ * @param {string} formationType - Formation key
+ * @param {number} formationAngle - Direction the formation faces (radians)
+ * @param {number} spacingMult - Spacing multiplier (discipline-based)
+ * @returns {{ x: number, y: number }}
+ */
+function getFormationSlotTarget(unit, leader, formationType, formationAngle, spacingMult) {
+  const offsets = FORMATION_OFFSETS[formationType] || FORMATION_OFFSETS.line;
+  const slotIdx = unit._formationSlot ?? 0;
+  const [ox, oy] = offsets[Math.min(slotIdx, offsets.length - 1)];
+
+  // Scale by spacing multiplier (discipline affects tightness)
+  const sx = ox * spacingMult;
+  const sy = oy * spacingMult;
+
+  // Rotate offset to match formation facing
+  const cos = Math.cos(formationAngle + Math.PI / 2); // +90° so "forward" = toward angle
+  const sin = Math.sin(formationAngle + Math.PI / 2);
+  const rx = sx * cos - sy * sin;
+  const ry = sx * sin + sy * cos;
+
+  return { x: leader.x + rx, y: leader.y + ry };
+}
+
+/**
+ * Move unit toward its assigned formation slot.
+ * Returns true if unit is close enough to its slot (within tolerance).
+ * @param {object} b - Battle state
+ * @param {object} unit - The unit to move
+ * @param {{ x: number, y: number }} slotTarget - Target slot position
+ * @param {number} dtSec - Frame delta
+ * @param {Array} friendlies - For separation steering
+ * @returns {boolean} true if within tolerance
+ */
+function maintainFormation(b, unit, slotTarget, dtSec, friendlies) {
+  const discipline = unit.personality?.discipline ?? 0.5;
+  const spacing = 40; // Base spacing
+  const tolerance = spacing * (1.2 + (1 - discipline) * 0.8); // High disc = 1.2x, low = 2.0x
+
+  const deviation = Math.hypot(slotTarget.x - unit.x, slotTarget.y - unit.y);
+  if (deviation <= tolerance * 0.3) return true; // Close enough — snap threshold
+
+  // Leader moving? Followers should continuously track, no dead zone.
+  const leader = unit._formationLeader;
+  const leaderMoving = leader && leader._movedThisFrame;
+
+  if (leaderMoving || deviation > tolerance * 0.5) {
+    // Match leader speed when tracking; urgency scales when far out of position
+    const urgency = Math.min(1.0, deviation / (tolerance * 3));
+    const speedMult = leaderMoving && deviation <= tolerance
+      ? 1.0   // Match leader speed exactly (formation speed cap ensures same base)
+      : 0.5 + urgency * 0.5;  // Catching up
+    moveBrainUnit(b, unit, slotTarget.x, slotTarget.y, dtSec, friendlies, speedMult);
+  }
+
+  return false;
+}
+
+/**
+ * Run formation logic for a team. Called once per frame per team.
+ * Sets up leader, assigns slots, computes facing, and flags units as in-formation.
+ * @param {object} b - Battle state
+ * @param {Array} friendlies - All units on one team
+ * @param {Array} hostiles - Enemy units (for facing determination)
+ * @param {number} now - Current timestamp
+ */
+export function updateFormation(b, friendlies, hostiles, now) {
+  const alive = friendlies.filter(u => !u.dead);
+  if (alive.length < 2) {
+    // Solo unit — no formation
+    for (const u of alive) u._inFormation = false;
+    return;
+  }
+
+  // Formation stress — personality-driven breaking
+  const teamKey = alive[0].team === 'enemy' ? 'red' : 'blue';
+  if (!b._formationStress) b._formationStress = {};
+  let stress = b._formationStress[teamKey] ?? 0;
+
+  // Stress sources
+  const casualtyRatio = 1 - alive.length / friendlies.length;
+  const casualtyStress = casualtyRatio * 0.6; // Up to 0.6 at total wipe
+
+  const avgSuppression = alive.reduce((sum, u) => sum + (u._suppression ?? 0), 0) / alive.length;
+  const suppressionStress = avgSuppression * 0.5;
+
+  const currentLead = alive.find(u => u === u._formationLeader);
+  const leaderStress = currentLead ? 0 : 0.4; // No leader = +0.4
+
+  // Can't shoot back? Check if anyone has spotted targets
+  const hasTargets = alive.some(u => (u._spotted?.length ?? 0) > 0);
+  const blindStress = (!hasTargets && avgSuppression > 0.2) ? 0.2 : 0;
+
+  const targetStress = casualtyStress + suppressionStress + leaderStress + blindStress;
+
+  // Decay toward target (fast if rising, slow if falling)
+  const avgDiscipline = alive.reduce((sum, u) => sum + (u.personality?.discipline ?? 0.5), 0) / alive.length;
+  const dtSec = 1 / 60; // approximate frame time
+  if (targetStress > stress) {
+    stress += (targetStress - stress) * Math.min(1, dtSec * 2); // Rise fast
+  } else {
+    stress -= (stress - targetStress) * Math.min(1, dtSec * 0.05 * (1 + avgDiscipline)); // Decay slow
+  }
+  stress = Math.max(0, Math.min(1, stress));
+  b._formationStress[teamKey] = stress;
+
+  // Break threshold: disciplined teams hold longer
+  const breakThreshold = 0.5 + avgDiscipline * 0.3;
+  if (stress >= breakThreshold) {
+    for (const u of alive) u._inFormation = false;
+    const fs = b._formationState?.[teamKey];
+    if (fs?.assigned && b._debugLog) {
+      b._debugLog.push({ t: now, who: alive[0].id, team: teamKey, type: 'formation',
+        x: Math.round(alive[0].x), y: Math.round(alive[0].y),
+        action: 'formation broken',
+        detail: `stress:${stress.toFixed(2)} thresh:${breakThreshold.toFixed(2)} cas:${casualtyStress.toFixed(2)} sup:${suppressionStress.toFixed(2)} ldr:${leaderStress.toFixed(1)} blind:${blindStress.toFixed(1)}` });
+      if (fs) fs.assigned = false;
+    }
+    return;
+  }
+
+  // Individual unit breaks (panic, high suppression + low discipline, critical HP)
+  for (const u of alive) {
+    if (u._panicking) {
+      u._inFormation = false;
+      continue;
+    }
+    const disc = u.personality?.discipline ?? 0.5;
+    if ((u._suppression ?? 0) > 0.8 && disc < 0.4) {
+      u._inFormation = false; // Pinned and undisciplined
+      continue;
+    }
+    const crg = u.personality?.courage ?? 0.5;
+    const criticalHp = 0.15 + crg * 0.15;
+    if ((u.hp / (u.maxHp || 100)) < criticalHp) {
+      u._inFormation = false; // Critically wounded
+    }
+  }
+
+  // Get the team's formation type (from first unit's command default, or override)
+  const firstAlive = alive[0];
+  const command = firstAlive.command || Command.ADVANCE;
+  const formationType = firstAlive._formationOverride
+    || COMMAND_DEFAULT_FORMATION[command]
+    || Formation.WEDGE;
+
+  // Dispersed/spread = no formation
+  if (formationType === Formation.SPREAD || formationType === 'dispersed') {
+    for (const u of alive) u._inFormation = false;
+    return;
+  }
+
+  // Select lead
+  const leader = selectFormationLead(alive);
+  if (!leader) {
+    for (const u of alive) u._inFormation = false;
+    return;
+  }
+
+  // teamKey already declared above in stress section
+  const formationState = b._formationState = b._formationState || {};
+  const teamState = formationState[teamKey] = formationState[teamKey] || {};
+
+  const aliveCount = alive.length;
+  const leaderTerrain = getTerrainAt(b, leader.x, leader.y);
+
+  // Compute formation facing (needed BEFORE slot assignment for proximity matching)
+  let formationAngle;
+  if (command === Command.HOLD || command === Command.COVER_ME || command === Command.FOCUS_FIRE) {
+    // Face nearest known threat
+    let nearestThreat = null, nearDist = Infinity;
+    for (const h of hostiles) {
+      if (h.dead) continue;
+      const d = distanceBetween(leader, h);
+      if (d < nearDist) { nearDist = d; nearestThreat = h; }
+    }
+    formationAngle = nearestThreat
+      ? Math.atan2(nearestThreat.y - leader.y, nearestThreat.x - leader.x)
+      : leader.angle || 0;
+  } else {
+    // Face direction of movement (leader's angle)
+    formationAngle = leader.angle || 0;
+  }
+
+  // Discipline affects spacing (high = tight, low = loose)
+  // avgDiscipline already computed above in stress section
+  const spacingMult = 0.8 + (1 - avgDiscipline) * 0.6; // 0.8x (high disc) to 1.4x (low)
+
+  // Terrain spacing modifier
+  if (leaderTerrain === 'forest') {
+    formationState[teamKey].spacingMult = spacingMult * 1.5;
+  } else {
+    formationState[teamKey].spacingMult = spacingMult;
+  }
+  const finalSpacing = formationState[teamKey].spacingMult;
+
+  // Assign slots (only reassign periodically or when composition changes)
+  if (teamState.leader !== leader.id || teamState.count !== aliveCount
+      || teamState.formation !== formationType || !teamState.assigned) {
+    assignFormationSlots(alive, formationType, leader, leaderTerrain, formationAngle, finalSpacing);
+    teamState.leader = leader.id;
+    teamState.count = aliveCount;
+    teamState.formation = formationType;
+    teamState.assigned = true;
+
+    // Log formation change with slot assignments
+    if (b._debugLog) {
+      const offsets = FORMATION_OFFSETS[formationType] || FORMATION_OFFSETS.line;
+      const slotDetails = alive.filter(u => u !== leader).map(u => {
+        const pos = slotWorldPos(offsets[Math.min(u._formationSlot, offsets.length - 1)], leader, formationAngle, finalSpacing);
+        return `${u.id}→s${u._formationSlot}(${Math.round(pos.x)},${Math.round(pos.y)}) d=${Math.round(Math.hypot(pos.x - u.x, pos.y - u.y))}`;
+      }).join(' ');
+      b._debugLog.push({ t: now, who: leader.id, team: teamKey, type: 'formation',
+        x: Math.round(leader.x), y: Math.round(leader.y),
+        action: `formation: ${formationType}`,
+        detail: `lead:${leader.id} units:${aliveCount} ang:${Math.round(formationAngle * 180 / Math.PI)}° spc:${finalSpacing.toFixed(2)} | ${slotDetails}` });
+    }
+  }
+
+  // Compute formation speed — match the slowest unit
+  let slowestSpeed = Infinity;
+  for (const u of alive) {
+    const spd = u.speed || u.spd || 60;
+    if (spd < slowestSpeed) slowestSpeed = spd;
+  }
+
+  // Store formation data on each unit
+  for (const u of alive) {
+    u._inFormation = true;
+    u._formationLeader = leader;
+    u._formationType = formationType;
+    u._formationAngle = formationAngle;
+    u._formationSpacing = finalSpacing;
+    u._formationSpeed = slowestSpeed;
+
+    // Compute slot target position
+    if (u !== leader) {
+      u._slotTarget = getFormationSlotTarget(u, leader, formationType, formationAngle, finalSpacing);
+    } else {
+      u._slotTarget = null; // Leader moves freely
+    }
+  }
+
+  // Periodic formation telemetry (every 4 seconds)
+  if (b._debugLog && now - (teamState.lastTelemetry || 0) > 4000) {
+    teamState.lastTelemetry = now;
+    const followers = alive.filter(u => u !== leader && u._slotTarget);
+    const maxDev = followers.reduce((mx, f) => Math.max(mx, Math.hypot(f._slotTarget.x - f.x, f._slotTarget.y - f.y)), 0);
+    const avgDev = followers.length > 0 ? followers.reduce((s, f) => s + Math.hypot(f._slotTarget.x - f.x, f._slotTarget.y - f.y), 0) / followers.length : 0;
+    const xSpread = alive.length > 1 ? Math.max(...alive.map(u => u.x)) - Math.min(...alive.map(u => u.x)) : 0;
+    const devList = followers.map(f => `${f.id}:${Math.round(Math.hypot(f._slotTarget.x - f.x, f._slotTarget.y - f.y))}`).join(' ');
+    b._debugLog.push({ t: now, who: leader.id, team: teamKey, type: 'formation',
+      x: Math.round(leader.x), y: Math.round(leader.y),
+      action: 'formation_state',
+      detail: `wMul:${(leader._formationWaitMult ?? 1).toFixed(2)} maxDev:${Math.round(maxDev)} avgDev:${Math.round(avgDev)} xSpd:${Math.round(xSpread)} ang:${Math.round(formationAngle * 180 / Math.PI)}° | ${devList}` });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MOVEMENT MODE EXECUTION
+// Scoring + resolution imported from movement-modes.js.
+// Execute functions stay here — they call moveBrainUnit, tryShoot, etc.
+// ═══════════════════════════════════════════════════════════════
+
+// buildMovementContext, scoring functions, and resolveMovementMode
+// are now in movement-modes.js
+
+/**
+ * Execute the winning movement mode. Only this function calls moveBrainUnit().
+ * Firing is handled independently — all modes can fire at targets.
+ */
+function executeMovementMode(b, unit, modeResult, ctx, range, speed, now, dtSec, friendlies) {
+  const { mode } = modeResult;
+  unit._movementMode = mode;
+
+  // Formation leader wait — smooth speed ramp based on follower deviation
+  if (unit._inFormation && unit === unit._formationLeader) {
+    const followers = friendlies.filter(f => !f.dead && f._formationLeader === unit && f !== unit);
+    if (followers.length > 0) {
+      const spacing = unit._formationSpacing ?? 1;
+      const tolerance = 40 * spacing * 1.2;
+      const maxDev = followers.reduce((mx, f) => {
+        if (!f._slotTarget) return mx;
+        return Math.max(mx, Math.hypot(f._slotTarget.x - f.x, f._slotTarget.y - f.y));
+      }, 0);
+
+      // Smooth ramp: speed scales continuously with deviation
+      // devNorm=0 → 1.0 speed, devNorm=1 → 0.4 speed, devNorm≥1.5 → near-stop
+      const devNorm = maxDev / tolerance;
+      const leadership = unit.leadership ?? 0;
+      const aggression = unit.personality?.aggression ?? 0.5;
+      const patienceMod = leadership * 0.15 - aggression * 0.1; // -0.1 to +0.15
+      const rawSpeed = 1 - devNorm * (0.6 + patienceMod);
+      const formUpSpeed = Math.max(0.05, Math.min(1, rawSpeed));
+      unit._formationWaitMult = formUpSpeed;
+      if (devNorm > 0.5) unit._actionVerb = 'waiting_for_squad';
+    }
+  }
+
+  switch (mode) {
+    case MovementMode.PANIC_FLEE:
+      executePanicFlee(b, unit, ctx, speed, dtSec, friendlies);
+      break;
+
+    case MovementMode.URGENT_COVER:
+      executeUrgentCover(b, unit, ctx, range, now, dtSec, friendlies);
+      break;
+
+    case MovementMode.SURVIVAL_ACTION: {
+      const survival = unit._lastSurvival;
+      if (survival) {
+        const didAct = executeSurvivalAction(b, unit, ctx.target, ctx.targetDist, range, survival, now, dtSec, friendlies);
+        if (!didAct) {
+          // Survival scored high but action failed — fall back to command
+          executeCommandMode(b, unit, ctx, range, speed, now, dtSec, friendlies);
+        }
+      } else {
+        executeCommandMode(b, unit, ctx, range, speed, now, dtSec, friendlies);
+      }
+      break;
+    }
+
+    case MovementMode.FORMATION_MOVE:
+      executeFormationMode(b, unit, ctx, range, now, dtSec, friendlies);
+      break;
+
+    case MovementMode.TACTICAL_BOUND:
+      executeTacticalBound(b, unit, ctx, range, speed, now, dtSec, friendlies);
+      break;
+
+    case MovementMode.COMMAND_EXECUTE:
+      executeCommandMode(b, unit, ctx, range, speed, now, dtSec, friendlies);
+      break;
+
+    case MovementMode.REGROUP:
+      executeRegroupMode(b, unit, ctx, range, now, dtSec, friendlies);
+      break;
+
+    default:
+      executeCommandMode(b, unit, ctx, range, speed, now, dtSec, friendlies);
+  }
+
+  // Independent firing — all modes can fire at spotted targets
+  // (some modes handle their own firing internally, e.g. survival actions)
+  // Command executors and formation mode handle firing themselves
+}
+
+/**
+ * Resolve retreat objective based on personality.
+ * Aggressive/courageous units push toward enemy base and dig in.
+ * Cautious/disciplined units fall back to own base.
+ * Cached per retreat episode — recalculated when command changes.
+ * @returns {{ x: number, y: number }}
+ */
+function resolveRetreatObjective(b, unit) {
+  // Cache: reuse same objective while retreating (no flip-flopping)
+  if (unit._retreatObjective && unit._retreatCmd === (unit.command || 'advance')) {
+    return unit._retreatObjective;
+  }
+
+  const p = unit.personality || {};
+  const aggression = p.aggression ?? 0.5;
+  const courage = p.courage ?? 0.5;
+
+  // Personality score: high = aggressive retreat (push forward, dig in at enemy base)
+  const pushScore = aggression * 0.5 + courage * 0.5;
+  const isBlue = unit.team !== 'enemy';
+  let obj;
+
+  if (pushScore > 0.6) {
+    // Aggressive retreat — advance to enemy base and dig in
+    const enemyZone = isBlue ? b.redSpawnZone : b.blueSpawnZone;
+    if (enemyZone) {
+      obj = { x: enemyZone.x, y: enemyZone.y };
+    } else {
+      const mapW = b.mapWidth || 2000;
+      obj = { x: isBlue ? mapW - 100 : 100, y: unit.y };
+    }
+  } else {
+    // Defensive retreat — fall back to own base
+    const ownZone = isBlue ? b.blueSpawnZone : b.redSpawnZone;
+    if (ownZone) {
+      obj = { x: ownZone.x, y: ownZone.y };
+    } else {
+      const mapW = b.mapWidth || 2000;
+      obj = { x: isBlue ? 100 : mapW - 100, y: unit.y };
+    }
+  }
+
+  unit._retreatObjective = obj;
+  unit._retreatCmd = unit.command || 'advance';
+  return obj;
+}
+
+/**
+ * PANIC_FLEE — run toward own spawn zone at sprint speed
+ */
+function executePanicFlee(b, unit, ctx, speed, dtSec, friendlies) {
+  unit._actionVerb = 'panicking';
+  const isBlue = unit.team !== 'enemy';
+  const ownZone = isBlue ? b.blueSpawnZone : b.redSpawnZone;
+  let fleeX, fleeY;
+  if (ownZone) {
+    fleeX = ownZone.x;
+    fleeY = ownZone.y;
+  } else {
+    const mapW = b.mapWidth || 2000;
+    fleeX = isBlue ? 50 : mapW - 50;
+    fleeY = unit.y;
+  }
+  moveBrainUnit(b, unit, fleeX, fleeY, dtSec, friendlies, 1.2);
+}
+
+/**
+ * URGENT_COVER — sprint to nearest cover, snap-fire while running
+ */
+function executeUrgentCover(b, unit, ctx, range, now, dtSec, friendlies) {
+  // Use existing sprint-to-cover if we have a target (it handles cover + firing)
+  if (ctx.target && ctx.nearestCover) {
+    // Sprint to cover position
+    const arrived = moveBrainUnit(b, unit, ctx.nearestCover.x, ctx.nearestCover.y, dtSec, friendlies, 1.3);
+    unit._actionVerb = arrived ? 'in_cover' : 'sprinting_to_cover';
+
+    // Snap-fire while running
+    if (ctx.target && ctx.targetDist <= range * 0.8) {
+      unit.angle = Math.atan2(ctx.target.y - unit.y, ctx.target.x - unit.x);
+      tryShoot(b, unit, ctx.target.x, ctx.target.y, now, ctx.target);
+    }
+  } else if (ctx.nearestCover) {
+    moveBrainUnit(b, unit, ctx.nearestCover.x, ctx.nearestCover.y, dtSec, friendlies, 1.3);
+    unit._actionVerb = 'sprinting_to_cover';
+  } else {
+    // No cover — go prone if infantry, otherwise just hunker
+    const category = inferCategory(unit);
+    if (CATEGORY_SKILLS[category]?.canGoProne) {
+      unit._isProne = true;
+      unit._actionVerb = 'prone';
+    } else {
+      unit._actionVerb = 'hunkered';
+    }
+  }
+}
+
+/**
+ * FORMATION_MOVE — maintain slot, fire at targets
+ */
+function executeFormationMode(b, unit, ctx, range, now, dtSec, friendlies) {
+  if (unit._slotTarget) {
+    const atSlot = maintainFormation(b, unit, unit._slotTarget, dtSec, friendlies);
+    unit._actionVerb = atSlot ? 'in_formation' : 'forming_up';
+  }
+
+  // Fire at targets while in formation
+  if (ctx.target && ctx.targetDist <= range * 1.5) {
+    unit.angle = Math.atan2(ctx.target.y - unit.y, ctx.target.x - unit.x);
+    if (tryShoot(b, unit, ctx.target.x, ctx.target.y, now, ctx.target)) {
+      unit._actionVerb = 'firing';
+    }
+  }
+}
+
+/**
+ * TACTICAL_BOUND — cover-to-cover advance using bounding system
+ */
+function executeTacticalBound(b, unit, ctx, range, speed, now, dtSec, friendlies) {
+  const activeCommand = ctx.command;
+  // Determine objective based on command
+  let objX, objY;
+  if (ctx.target) {
+    objX = ctx.target.x;
+    objY = ctx.target.y;
+  } else {
+    // No target — advance toward waypoint or enemy base
+    const teamKey = unit.team || 'player';
+    const wp = b._teamWaypoints?.[teamKey];
+    const commanderAlive = b._teamCommanders?.[teamKey]?.dead === false;
+    if (wp && commanderAlive) {
+      objX = wp.x; objY = wp.y;
+    } else {
+      // Default objective: enemy spawn zone or opposite edge
+      const enemyZone = unit.team === 'enemy' ? b.blueSpawnZone : b.redSpawnZone;
+      if (enemyZone) {
+        objX = enemyZone.x; objY = enemyZone.y;
+      } else {
+        const mapW = b.mapWidth || 2000;
+        const mapH = b.mapHeight || 2000;
+        objX = mapW / 2;
+        objY = unit.team === 'enemy' ? mapH - 128 : 128;
+      }
+    }
+  }
+
+  const bounded = boundingAdvance(b, unit, objX, objY, dtSec, friendlies, now);
+  if (!bounded) {
+    // Bounding returned false (no cover found) — fall back to command
+    executeCommandMode(b, unit, ctx, range, speed, now, dtSec, friendlies);
+    return;
+  }
+
+  // Fire while bounding (between bounds)
+  if (ctx.target && ctx.targetDist <= range) {
+    unit.angle = Math.atan2(ctx.target.y - unit.y, ctx.target.x - unit.x);
+    tryShoot(b, unit, ctx.target.x, ctx.target.y, now, ctx.target);
+  }
+}
+
+/**
+ * COMMAND_EXECUTE — directly execute the active command
+ */
+function executeCommandMode(b, unit, ctx, range, speed, now, dtSec, friendlies) {
+  unit._isProne = false;
+  unit._isHullDown = false;
+
+  const activeCommand = ctx.command;
+  switch (activeCommand) {
+    case Command.HOLD:
+      executeHold(b, unit, ctx.target, ctx.targetDist, range, now, dtSec, friendlies);
+      break;
+    case Command.ADVANCE:
+      executeAdvance(b, unit, ctx.target, ctx.targetDist, range, speed, now, dtSec, friendlies);
+      break;
+    case Command.FOLLOW:
+      executeFollow(b, unit, ctx.leader, ctx.target, ctx.targetDist, range, speed, now, dtSec, friendlies);
+      break;
+    case Command.FALL_BACK:
+      executeFallBack(b, unit, ctx.target, ctx.targetDist, range, speed, now, dtSec, friendlies);
+      break;
+    case Command.COVER_ME:
+      executeCoverMe(b, unit, ctx.leader, ctx.target, ctx.targetDist, range, now, dtSec, friendlies);
+      break;
+    case Command.FOCUS_FIRE:
+      executeFocusFire(b, unit, ctx.target, ctx.targetDist, range, speed, now, dtSec, friendlies);
+      break;
+    default:
+      executeAdvance(b, unit, ctx.target, ctx.targetDist, range, speed, now, dtSec, friendlies);
+  }
+}
+
+/**
+ * REGROUP — fall back toward nearest ally
+ */
+function executeRegroupMode(b, unit, ctx, range, now, dtSec, friendlies) {
+  unit._actionVerb = 'regrouping';
+  if (ctx.nearestAlly) {
+    moveBrainUnit(b, unit, ctx.nearestAlly.x, ctx.nearestAlly.y, dtSec, friendlies, 0.9);
+  }
+
+  // Fire while regrouping
+  if (ctx.target && ctx.targetDist <= range) {
+    unit.angle = Math.atan2(ctx.target.y - unit.y, ctx.target.x - unit.x);
+    tryShoot(b, unit, ctx.target.x, ctx.target.y, now, ctx.target);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// COMMAND EXECUTORS
+// Each implements a specific command. Stats + personality shape HOW.
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * HOLD — Stay put, defend position. Cover-seeking handled by general awareness system.
+ */
+function executeHold(b, unit, target, targetDist, range, now, dtSec, friendlies) {
+  unit._actionVerb = 'holding';
+
+  // Fire at target in range
+  if (target && targetDist <= range * 1.5) {
+    unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+    if (tryShoot(b, unit, target.x, target.y, now, target)) {
+      unit._actionVerb = 'firing';
+    }
+  }
+}
+
+/**
+ * ADVANCE — Push toward enemies. Personality determines engagement distance.
+ */
+function executeAdvance(b, unit, target, targetDist, range, speed, now, dtSec, friendlies) {
+  unit._actionVerb = 'advancing';
+  const p = unit.personality || {};
+
+  // Engagement distance: patient units stop further, aggressive push closer
+  const engageDist = range * (0.6 + (p.patience || 0.5) * 0.6);
+
+  if (!target) {
+    // No target — advance toward waypoint or enemy base
+    const teamKey = unit.team || 'player';
+    const wp = b._teamWaypoints?.[teamKey];
+    const commanderAlive = b._teamCommanders?.[teamKey]?.dead === false;
+    let cx, cy;
+    if (wp && commanderAlive) {
+      cx = wp.x; cy = wp.y;
+    } else {
+      // Default objective: enemy spawn zone or opposite edge
+      const enemyZone = unit.team === 'enemy' ? b.blueSpawnZone : b.redSpawnZone;
+      if (enemyZone) {
+        cx = enemyZone.x; cy = enemyZone.y;
+      } else {
+        const mapW = b.mapWidth || 1600;
+        const mapH = b.mapHeight || 1600;
+        cx = mapW / 2;
+        cy = unit.team === 'enemy' ? mapH - 128 : 128;
+      }
+    }
+    // Update facing toward objective so formation angle tracks movement direction
+    unit.angle = Math.atan2(cy - unit.y, cx - unit.x);
+    moveBrainUnit(b, unit, cx, cy, dtSec, friendlies);
+    return;
+  }
+
+  // Desired hold distance: aggressive units push to 40% of engage range, cautious stay at 80%
+  const agg = p.aggression || 0.5;
+  const holdDist = engageDist * (0.4 + (1 - agg) * 0.5);
+
+  if (targetDist > engageDist) {
+    // Out of engagement range — push toward target
+    unit._isBackingOff = false;
+    moveBrainUnit(b, unit, target.x, target.y, dtSec, friendlies);
+  } else if ((targetDist < holdDist * 0.6 && agg < 0.6) ||
+             (unit._isBackingOff && targetDist < holdDist * 0.85)) {
+    // Too close for a non-aggressive unit — reposition to desired hold distance
+    // Hysteresis: once backing off, continue until reaching 85% of holdDist
+    unit._isBackingOff = true;
+    const d = targetDist || 1;
+    const backX = target.x + ((unit.x - target.x) / d) * holdDist;
+    const backY = target.y + ((unit.y - target.y) / d) * holdDist;
+    moveBrainUnit(b, unit, backX, backY, dtSec, friendlies);
+    unit._actionVerb = 'repositioning';
+    // Log personality decision (once per backoff decision)
+    if (b._debugLog && !unit._lastDecisionLog?.backoff) {
+      const logTeam = unit.team === 'enemy' ? 'red' : 'blue';
+      b._debugLog.push({ t: Date.now(), who: unit.id, team: logTeam, type: 'decision',
+        x: Math.round(unit.x), y: Math.round(unit.y),
+        action: 'backing off (low aggression)', detail: `agg:${agg.toFixed(2)} dist:${Math.round(targetDist)} holdDist:${Math.round(holdDist)}` });
+      if (!unit._lastDecisionLog) unit._lastDecisionLog = {};
+      unit._lastDecisionLog.backoff = true;
+    }
+  } else {
+    // In comfortable zone — hold position
+    unit._isBackingOff = false;
+    if (unit._lastDecisionLog) unit._lastDecisionLog.backoff = false;
+  }
+
+  // Fire at target
+  unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+  if (tryShoot(b, unit, target.x, target.y, now, target)) {
+    unit._actionVerb = 'firing';
+  }
+}
+
+/**
+ * FOLLOW — Stay behind leader, fire at targets of opportunity.
+ */
+function executeFollow(b, unit, leader, target, targetDist, range, speed, now, dtSec, friendlies) {
+  unit._actionVerb = 'following';
+
+  if (!leader || leader.dead) {
+    // No leader — default to hold
+    executeHold(b, unit, target, targetDist, range, now, dtSec, friendlies);
+    return;
+  }
+
+  const leaderDist = distanceBetween(unit, leader);
+  const followDist = 80;
+
+  if (leaderDist > followDist * 2.5) {
+    // Far from leader — catch up
+    const behindX = leader.x - Math.cos(leader.angle || 0) * followDist;
+    const behindY = leader.y - Math.sin(leader.angle || 0) * followDist;
+    moveBrainUnit(b, unit, behindX, behindY, dtSec, friendlies);
+  } else if (leaderDist > followDist) {
+    // Gentle approach
+    moveBrainUnit(b, unit, leader.x, leader.y, dtSec, friendlies, 0.7);
+  }
+
+  // Fire at targets of opportunity
+  if (target && targetDist <= range * 1.2) {
+    unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+    if (tryShoot(b, unit, target.x, target.y, now, target)) {
+      unit._actionVerb = 'firing';
+    }
+  }
+}
+
+/**
+ * FALL_BACK — Retreat toward personality-driven objective, fire over shoulder.
+ * Aggressive units push to enemy base and dig in.
+ * Cautious units fall back to own base and dig in.
+ * Sergeant waypoint overrides if available.
+ */
+function executeFallBack(b, unit, target, targetDist, range, speed, now, dtSec, friendlies) {
+  // Resolve objective: sergeant waypoint > personality-driven destination
+  const teamKey = unit.team === 'enemy' ? 'enemy' : 'player';
+  const wp = b._teamWaypoints?.[teamKey];
+  const commanderAlive = b._teamCommanders?.[teamKey]?.dead === false;
+  let objX, objY;
+
+  if (wp && commanderAlive) {
+    objX = wp.x;
+    objY = wp.y;
+  } else {
+    const obj = resolveRetreatObjective(b, unit);
+    objX = obj.x;
+    objY = obj.y;
+  }
+
+  const distToObj = Math.hypot(objX - unit.x, objY - unit.y);
+
+  if (distToObj < 150) {
+    // Near objective — dig in: find cover and hold position
+    unit._actionVerb = 'digging_in';
+
+    // Search for cover nearby (wider search when digging in)
+    const coverPos = findNearbyCoverPos(b, unit, 4, friendlies);
+    if (coverPos) {
+      const arrived = moveBrainUnit(b, unit, coverPos.x, coverPos.y, dtSec, friendlies);
+      if (arrived) {
+        unit._actionVerb = 'dug_in';
+        // Infantry goes prone when dug in
+        const cat = inferCategory(unit);
+        if (cat === UnitCategory.INFANTRY) unit._isProne = true;
+      }
+    }
+    // else already at objective, just hold
+
+    // Fire at targets from position
+    if (target && targetDist <= range) {
+      unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+      tryShoot(b, unit, target.x, target.y, now, target);
+    }
+  } else {
+    // Moving toward objective
+    unit._actionVerb = 'retreating';
+    moveBrainUnit(b, unit, objX, objY, dtSec, friendlies);
+
+    // Fire over shoulder if in range
+    if (target && targetDist <= range) {
+      unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+      tryShoot(b, unit, target.x, target.y, now, target);
+    }
+  }
+}
+
+/**
+ * COVER_ME — Stay in position, suppress targets near leader. Cover handled by awareness system.
+ */
+function executeCoverMe(b, unit, leader, target, targetDist, range, now, dtSec, friendlies) {
+  unit._actionVerb = 'covering';
+
+  if (!leader || leader.dead) {
+    executeHold(b, unit, target, targetDist, range, now, dtSec, friendlies);
+    return;
+  }
+
+  // Suppress targets — fire aggressively even at longer range
+  if (target && targetDist <= range * 1.8) {
+    unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+    if (tryShoot(b, unit, target.x, target.y, now, target)) {
+      unit._actionVerb = 'suppressing';
+    }
+  }
+}
+
+/**
+ * FOCUS_FIRE — Everyone targets the same enemy. Move into range if needed.
+ */
+function executeFocusFire(b, unit, target, targetDist, range, speed, now, dtSec, friendlies) {
+  unit._actionVerb = 'focusing';
+
+  if (!target) {
+    unit._actionVerb = 'idle';
+    return;
+  }
+
+  // Move into range if needed
+  if (targetDist > range * 1.2) {
+    moveBrainUnit(b, unit, target.x, target.y, dtSec, friendlies);
+  }
+
+  // Fire at target
+  unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+  if (tryShoot(b, unit, target.x, target.y, now, target)) {
+    unit._actionVerb = 'firing';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SURVIVAL SYSTEM — Threat assessment + self-preservation actions
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Assess whether unit can survive engagement with current target.
+ * Compares time-to-kill estimates. Awareness gates the danger threshold.
+ * @param {object} unit - Firing unit
+ * @param {object} target - Current target
+ * @returns {{ survivalRatio: number, inDanger: boolean, action: string|null, myTTK: number, theirTTK: number }}
+ */
+function assessSurvival(unit, target) {
+  if (!target || target.dead) return { survivalRatio: Infinity, inDanger: false, action: null };
+
+  const myDmg = unit.damage || 10;
+  const myFireRate = (unit.fireRate || 2000) / 1000;
+  const myAccuracy = Math.max(0.3, unit.stability || 0.5);
+  const myDPS = (myDmg / myFireRate) * myAccuracy;
+  const myTTK = myDPS > 0 ? (target.hp || 60) / myDPS : Infinity;
+
+  const theirDmg = target.damage || 10;
+  const theirFireRate = (target.fireRate || 2000) / 1000;
+  const theirDPS = (theirDmg / theirFireRate) * 0.5; // assume average enemy accuracy
+  const theirTTK = theirDPS > 0 ? (unit.hp || 60) / theirDPS : Infinity;
+
+  // survivalRatio < 1 means I die first
+  const survivalRatio = myTTK > 0 ? theirTTK / myTTK : 0;
+
+  // Danger threshold scaled by courage and awareness
+  const courage = unit.personality?.courage ?? 0.5;
+  const awareness = unit._awareness ?? 0.5;
+  const dangerThreshold = (0.3 + courage * 0.5) * awareness;
+
+  const inDanger = survivalRatio < dangerThreshold;
+
+  let action = null;
+  if (inDanger) {
+    const aggression = unit.personality?.aggression ?? 0.5;
+    const discipline = unit.personality?.discipline ?? 0.5;
+    const category = inferCategory(unit);
+    const skills = CATEGORY_SKILLS[category];
+
+    if (category === UnitCategory.INFANTRY) {
+      if (aggression > 0.7 && skills.canGoProne) {
+        action = 'go_prone';
+      } else if (discipline > 0.6) {
+        action = 'fall_back_to_allies';
+      } else if (skills.canUseCover) {
+        action = 'sprint_to_cover';
+      } else {
+        action = 'fall_back_to_allies';
+      }
+    } else if (category === UnitCategory.LIGHT_VEHICLE) {
+      action = aggression > 0.6 ? 'reposition' : 'disengage';
+    } else { // MEDIUM_TANK, HEAVY_TANK
+      if (aggression > 0.7 && courage > 0.6) {
+        action = 'charge';
+      } else if (skills.canHullDown) {
+        action = 'hull_down';
+      } else {
+        action = null; // keep fighting normally
+      }
+    }
+  }
+
+  return { survivalRatio, inDanger, action, myTTK, theirTTK };
+}
+
+/**
+ * Execute a survival action. Returns true if action was taken (command overridden).
+ */
+function executeSurvivalAction(b, unit, target, targetDist, range, survival, now, dtSec, friendlies) {
+  const action = survival.action;
+  if (!action) return false;
+
+  switch (action) {
+    case 'go_prone':       return executeProne(b, unit, target, targetDist, range, now);
+    case 'sprint_to_cover': return executeSprintToCover(b, unit, target, targetDist, range, now, dtSec, friendlies);
+    case 'fall_back_to_allies': return executeFallBackToAllies(b, unit, target, range, now, dtSec, friendlies);
+    case 'disengage':      return executeDisengage(b, unit, target, dtSec, friendlies);
+    case 'reposition':     return executeReposition(b, unit, target, range, now, dtSec, friendlies);
+    case 'hull_down':      return executeHullDown(b, unit, target, targetDist, range, now);
+    case 'charge':         return executeCharge(b, unit, target, targetDist, range, now, dtSec, friendlies);
+    default: return false;
+  }
+}
+
+function executeProne(b, unit, target, targetDist, range, now) {
+  unit._isProne = true;
+  unit._isHullDown = false;
+  unit._actionVerb = 'prone';
+
+  if (target && targetDist <= range * 1.5) {
+    unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+    tryShoot(b, unit, target.x, target.y, now, target);
+  }
+  return true;
+}
+
+function executeSprintToCover(b, unit, target, targetDist, range, now, dtSec, friendlies) {
+  unit._isProne = false;
+  unit._isHullDown = false;
+  unit._actionVerb = 'sprinting_to_cover';
+
+  if (!unit._survivalCoverTarget) {
+    unit._survivalCoverTarget = findNearbyCoverPos(b, unit);
+  }
+
+  if (unit._survivalCoverTarget) {
+    const arrived = moveBrainUnit(b, unit, unit._survivalCoverTarget.x, unit._survivalCoverTarget.y, dtSec, friendlies, 1.3);
+    if (arrived) {
+      unit._survivalCoverTarget = null;
+      unit._actionVerb = 'in_cover';
+      unit._isProne = true; // Go prone once in cover
+    }
+  } else {
+    // No cover found — fall back to allies
+    return executeFallBackToAllies(b, unit, target, range, now, dtSec, friendlies);
+  }
+
+  // Snap-fire while running
+  if (target && targetDist <= range * 0.8) {
+    unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+    tryShoot(b, unit, target.x, target.y, now, target);
+  }
+  return true;
+}
+
+function executeFallBackToAllies(b, unit, target, range, now, dtSec, friendlies) {
+  unit._isProne = false;
+  unit._isHullDown = false;
+  unit._actionVerb = 'falling_back';
+
+  // Find nearest alive friendly
+  let nearestAlly = null, nearestDist = Infinity;
+  for (const ally of friendlies) {
+    if (ally === unit || ally.dead || ally.id === unit.id) continue;
+    const d = distanceBetween(unit, ally);
+    if (d < nearestDist && d > 30) {
+      nearestDist = d;
+      nearestAlly = ally;
+    }
+  }
+
+  if (nearestAlly && nearestDist > 60) {
+    moveBrainUnit(b, unit, nearestAlly.x, nearestAlly.y, dtSec, friendlies);
+  }
+
+  // Fire while retreating
+  if (target) {
+    const dist = distanceBetween(unit, target);
+    if (dist <= range) {
+      unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+      tryShoot(b, unit, target.x, target.y, now, target);
+    }
+  }
+  return true;
+}
+
+function executeDisengage(b, unit, target, dtSec, friendlies) {
+  unit._isProne = false;
+  unit._isHullDown = false;
+  unit._actionVerb = 'disengaging';
+
+  if (target) {
+    const d = distanceBetween(unit, target) || 1;
+    const retreatX = unit.x + ((unit.x - target.x) / d) * 300;
+    const retreatY = unit.y + ((unit.y - target.y) / d) * 300;
+    moveBrainUnit(b, unit, retreatX, retreatY, dtSec, friendlies);
+  }
+  return true;
+}
+
+function executeReposition(b, unit, target, range, now, dtSec, friendlies) {
+  unit._isProne = false;
+  unit._isHullDown = false;
+  unit._actionVerb = 'repositioning';
+
+  if (target) {
+    const dx = target.x - unit.x;
+    const dy = target.y - unit.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    // Move perpendicular to threat
+    if (!unit._repositionDir) {
+      unit._repositionDir = Math.random() > 0.5 ? 1 : -1;
+    }
+    const perpX = unit.x + (-dy / dist) * 150 * unit._repositionDir;
+    const perpY = unit.y + (dx / dist) * 150 * unit._repositionDir;
+    const arrived = moveBrainUnit(b, unit, perpX, perpY, dtSec, friendlies);
+    if (arrived) unit._repositionDir = null;
+
+    // Fire while repositioning
+    if (distanceBetween(unit, target) <= range) {
+      unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+      tryShoot(b, unit, target.x, target.y, now, target);
+    }
+  }
+  return true;
+}
+
+function executeHullDown(b, unit, target, targetDist, range, now) {
+  unit._isHullDown = true;
+  unit._isProne = false;
+  unit._actionVerb = 'hull_down';
+
+  if (target) {
+    unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+    if (targetDist <= range * 1.3) {
+      tryShoot(b, unit, target.x, target.y, now, target);
+    }
+  }
+  return true;
+}
+
+function executeCharge(b, unit, target, targetDist, range, now, dtSec, friendlies) {
+  unit._isProne = false;
+  unit._isHullDown = false;
+  unit._actionVerb = 'charging';
+
+  if (target) {
+    moveBrainUnit(b, unit, target.x, target.y, dtSec, friendlies, 1.2);
+    unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+    if (targetDist <= range) {
+      tryShoot(b, unit, target.x, target.y, now, target);
+    }
+  }
   return true;
 }
 
 // ═══════════════════════════════════════════════════════════════
-// AI STATE MACHINE
+// AWARENESS FACETS — Flank detection, proactive cover
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Scan for enemies flanking this unit (behind it, within detection range).
+ * Boosts flanker's threat score temporarily. Initiative controls scan frequency.
+ */
+function checkFlankThreats(b, unit, hostiles, now) {
+  const initiative = unit.personality?.initiative ?? 0.5;
+  const awareness = unit._awareness ?? 0.5;
+  const scanInterval = 3000 - initiative * 2000; // 1s (high) to 3s (low)
+
+  if (now - (unit._lastFlankScan || 0) < scanInterval) return;
+  unit._lastFlankScan = now;
+
+  const detectionRange = 150 * awareness; // awareness scales detection range
+  if (detectionRange < 30) return; // too low awareness to detect flanks
+
+  const facing = unit.angle || 0;
+  let flankerFound = false;
+
+  for (const e of hostiles) {
+    if (e.dead || (e.hp !== undefined && e.hp <= 0)) continue;
+    const dx = e.x - unit.x, dy = e.y - unit.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > detectionRange) continue;
+
+    // Check if enemy is behind unit (angle > 90 degrees from facing)
+    const angleToEnemy = Math.atan2(dy, dx);
+    let angleDiff = angleToEnemy - facing;
+    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+
+    if (Math.abs(angleDiff) > Math.PI / 2) {
+      // Flanker detected — mark for threat boost in targeting
+      e._flankThreatBoost = now + 2000; // boost lasts 2 seconds
+      flankerFound = true;
+
+      if (b._debugLog) {
+        const logTeam = unit.team === 'enemy' ? 'red' : 'blue';
+        b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'flank',
+          x: Math.round(unit.x), y: Math.round(unit.y),
+          action: `flanked by ${e.id}`,
+          detail: `dist:${Math.round(dist)} angle:${Math.round(Math.abs(angleDiff) * 180 / Math.PI)}°` });
+      }
+
+      // High awareness: auto-rotate to face flanker
+      if (awareness > 0.7) {
+        unit.angle = angleToEnemy;
+      }
+      break; // Only report first flanker per scan
+    }
+  }
+  return flankerFound;
+}
+
+/**
+ * General awareness-driven cover seeking. Runs for ALL commands.
+ * Higher awareness → lower threshold, wider search, faster checks.
+ * Initiative controls check interval. Replaces per-command cover logic.
+ */
+function awarenessCoverCheck(b, unit, friendlies, now, dtSec) {
+  const awareness = unit._awareness ?? 0.5;
+  if (awareness < 0.35) return; // Too unaware to seek cover
+
+  // Already in cover — but invalidate if unit moved significantly from cover position
+  if (unit._coverReached && unit._coverPos) {
+    const dFromCover = Math.hypot(unit.x - unit._coverPos.x, unit.y - unit._coverPos.y);
+    if (dFromCover > 40) {
+      // Unit displaced from cover (e.g., command moved it) — re-enable seeking
+      unit._coverReached = false;
+      unit._coverPos = null;
+      unit._proactiveCoverTarget = null;
+    } else {
+      return; // Still in cover, nothing to do
+    }
+  }
+
+  // Already moving to cover target — keep moving
+  if (unit._proactiveCoverTarget) {
+    unit._actionVerb = 'seeking_cover';
+    const arrived = moveBrainUnit(b, unit, unit._proactiveCoverTarget.x, unit._proactiveCoverTarget.y, dtSec, friendlies, 0.7);
+    if (arrived) {
+      unit._coverPos = { x: unit._proactiveCoverTarget.x, y: unit._proactiveCoverTarget.y };
+      unit._proactiveCoverTarget = null;
+      unit._coverReached = true;
+      unit._actionVerb = 'in_cover';
+    }
+    return;
+  }
+
+  // Throttle checks by initiative
+  const initiative = unit.personality?.initiative ?? 0.5;
+  const checkInterval = 4000 - initiative * 2500; // 1.5s (high init) to 4s (low init)
+  if (now - (unit._lastProactiveCoverCheck || 0) < checkInterval) return;
+  unit._lastProactiveCoverCheck = now;
+
+  // Only seek cover if not currently moving (stationary = stopped to fire, hold, etc.)
+  if (unit._movedThisFrame) return;
+
+  // Search radius scales with awareness: 2 cells (low) to 4 cells (high)
+  const searchRadius = Math.round(2 + awareness * 2);
+  const coverPos = findNearbyCoverPos(b, unit, searchRadius);
+  if (coverPos) {
+    unit._proactiveCoverTarget = coverPos;
+    if (b._debugLog) {
+      const logTeam = unit.team === 'enemy' ? 'red' : 'blue';
+      b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'decision',
+        x: Math.round(unit.x), y: Math.round(unit.y),
+        action: 'cover seek',
+        detail: `awr:${awareness.toFixed(2)} radius:${searchRadius} cover@(${Math.round(coverPos.x)},${Math.round(coverPos.y)})` });
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MAIN BRAIN LOOP — Called per frame for every combat unit
+// ═══════════════════════════════════════════════════════════════
+
+function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
+  // 0. Init on first frame
+  initBrain(unit, team);
+  unit._battle = b; // ref for morale event logging
+
+  // Create _dbg early so tryShoot can write fireResult to it
+  unit._dbg = unit._dbg || {};
+
+  const prevX = unit.x;
+  const prevY = unit.y;
+
+  // Stability type key (used after movement detection)
+  const typeKey = unit.aiTypeKey || unit.unitId || 'infantry';
+
+  // 1. Cohesion + awareness
+  const cohesion = getCohesion(unit, friendlies);
+  if (now - (unit._lastMoraleCheck || 0) > 2000) {
+    if (cohesion.isolated) {
+      applyMoraleEvent(unit, MoraleEvent.ISOLATED, 0.3);
+    } else if (cohesion.nearbyCount >= 2) {
+      applyMoraleEvent(unit, MoraleEvent.NEAR_ALLIES, 0.3);
+    }
+    unit._lastMoraleCheck = now;
+  }
+
+  // 2. Compute awareness (uses cohesion) + decay shock timer
+  if (unit._shockTimer > 0) unit._shockTimer = Math.max(0, unit._shockTimer - dtSec);
+  getAwareness(unit, cohesion);
+
+  // 3. Morale panic check — low morale + low courage = forced retreat
+  let activeCommand = unit.command || Command.ADVANCE;
+  const courage = unit.personality?.courage ?? 0.5;
+  if (unit.morale < 0.2 && courage < 0.4) {
+    activeCommand = Command.FALL_BACK;
+    unit._panicking = true;
+    unit._inFormation = false; // Panic breaks formation
+  } else {
+    unit._panicking = false;
+  }
+
+  // 2.4. Decay suppression
+  updateSuppression(unit, dtSec, b);
+
+  // 2.5. Build spotted list — vision scan of all hostiles
+  buildSpottedList(unit, hostiles, b, now);
+
+  // 2.6. Compute cover bias — how much this unit prefers cover-to-cover movement
+  unit._coverBias = computeCoverBias(unit, activeCommand);
+
+  // 4. Select target (initiative-driven re-evaluation interval)
+  const initiative = unit.personality?.initiative ?? 0.5;
+  const reEvalInterval = 1500 - initiative * 1000; // 500ms (high) to 1500ms (low)
+  let target;
+  const prevTarget = unit._currentTarget;
+  const prevTargetAlive = prevTarget && !prevTarget.dead && prevTarget.hp > 0;
+
+  if (prevTargetAlive && now < (unit._targetLockedUntil || 0)) {
+    // Keep current target (locked)
+    target = prevTarget;
+  } else {
+    // Re-evaluate target
+    target = selectBrainTarget(b, unit, hostiles, leader, activeCommand);
+    unit._targetLockedUntil = now + reEvalInterval;
+  }
+  unit._currentTarget = target;
+
+  // 5. Calculate distance
+  let targetDist = Infinity;
+  if (target) {
+    targetDist = distanceBetween(unit, target);
+  }
+
+  const range = unit.range || 150;
+  let speed = unit.speed || 80;
+  // In formation: cap to slowest unit so the squad stays together
+  if (unit._inFormation && unit._formationSpeed) {
+    speed = Math.min(speed, unit._formationSpeed);
+  }
+
+  // 5.5. Survival assessment — update survival state (used by mode scoring)
+  if (target && !unit._panicking) {
+    const survivalInterval = 800 - (unit._awareness ?? 0.5) * 300;
+    if (now - (unit._lastSurvivalCheck || 0) > survivalInterval) {
+      unit._lastSurvivalCheck = now;
+      const survival = assessSurvival(unit, target);
+      unit._lastSurvival = survival;
+      // Log survival state changes
+      if (survival.inDanger) {
+        unit._survivalAction = survival.action;
+        if (b._debugLog) {
+          const logTeam = team === 'enemy' ? 'red' : 'blue';
+          b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'survival',
+            x: Math.round(unit.x), y: Math.round(unit.y),
+            action: survival.action,
+            detail: `ratio:${survival.survivalRatio.toFixed(2)} myTTK:${survival.myTTK.toFixed(1)}s theirTTK:${survival.theirTTK.toFixed(1)}s` });
+        }
+      } else {
+        // Danger passed — clear survival state
+        if (unit._survivalAction && b._debugLog) {
+          const logTeam = team === 'enemy' ? 'red' : 'blue';
+          b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'survival',
+            x: Math.round(unit.x), y: Math.round(unit.y),
+            action: 'survival_clear',
+            detail: `ratio:${survival.survivalRatio.toFixed(2)} danger passed` });
+        }
+        unit._survivalAction = null;
+        unit._isProne = false;
+        unit._isHullDown = false;
+        unit._survivalCoverTarget = null;
+        unit._repositionDir = null;
+      }
+    }
+  } else if (!target) {
+    unit._isProne = false;
+    unit._isHullDown = false;
+    unit._survivalAction = null;
+    unit._survivalCoverTarget = null;
+    unit._repositionDir = null;
+    unit._lastSurvival = null;
+  }
+
+  // 6. Unified movement — build context, resolve mode, execute
+  const moveCtx = buildMovementContext(b, unit, target, targetDist, hostiles, friendlies, now, leader);
+  unit._moveCtx = moveCtx; // Cache for moveBrainUnit threat speed calculation
+  const modeResult = resolveMovementMode(unit, moveCtx);
+
+  // Log mode changes with full score breakdown
+  if (b._debugLog && unit._prevMovementMode !== modeResult.mode) {
+    const logTeam = team === 'enemy' ? 'red' : 'blue';
+    // Build compact score summary: UCvr:35 Surv:0 Fmt:50 Bnd:12 Cmd:40 Rgrp:5
+    const scoreStr = modeResult.scores ? Object.entries(modeResult.scores)
+      .map(([k, v]) => {
+        const abbr = { urgent_cover: 'UCvr', survival_action: 'Surv', formation_move: 'Fmt',
+          tactical_bound: 'Bnd', command_execute: 'Cmd', regroup: 'Rgrp' };
+        return `${abbr[k] || k}:${Math.round(v)}`;
+      }).join(' ') : '';
+    b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'movement',
+      x: Math.round(unit.x), y: Math.round(unit.y),
+      action: modeResult.mode,
+      detail: `winner:${Math.round(modeResult.score)} [${scoreStr}] prev:${unit._prevMovementMode || 'none'}` });
+    unit._prevMovementMode = modeResult.mode;
+  }
+
+  executeMovementMode(b, unit, modeResult, moveCtx, range, speed, now, dtSec, friendlies);
+
+  // 6.7. Flank detection (awareness + initiative gated) — read-only, no movement
+  checkFlankThreats(b, unit, hostiles, now);
+
+  // 7. Track movement and update stability
+  // Use a threshold so micro-adjustments (separation steering, float drift) don't count as movement
+  const moveDist = Math.hypot(unit.x - prevX, unit.y - prevY);
+  unit._movedThisFrame = moveDist > 1.5; // >1.5px = real movement (ignores formation micro-adjustments)
+  const prevStab = unit.stability ?? 0;
+  updateStability(unit, dtSec, typeKey);
+
+  // 8. State-change event logging
+  const unitTerrain = getTerrainAt(b, unit.x, unit.y);
+  const inCover = unitTerrain === 'trench' || unitTerrain === 'pillbox';
+  const prevDbg = unit._dbg || {};
+  const log = b._debugLog;
+  const logTeam = team === 'enemy' ? 'red' : 'blue';
+
+  if (log) {
+    const ux = Math.round(unit.x), uy = Math.round(unit.y);
+    const prevTarget = prevDbg.targetId || null;
+    const curTarget = target?.id || null;
+    const prevAction = prevDbg.state || null;
+    const curAction = unit._actionVerb || 'idle';
+
+    // Target changed
+    if (curTarget !== prevTarget) {
+      log.push({ t: now, who: unit.id, team: logTeam, type: 'target', x: ux, y: uy,
+        action: curTarget ? `target → ${curTarget}` : 'lost target',
+        detail: prevTarget ? `was ${prevTarget}` : 'had none' });
+    }
+    // Action/state changed (skip firing transitions — fire event covers those)
+    if (curAction !== prevAction && prevAction !== null
+        && curAction !== 'firing' && prevAction !== 'firing') {
+      log.push({ t: now, who: unit.id, team: logTeam, type: 'action', x: ux, y: uy,
+        action: `${prevAction} → ${curAction}` });
+    }
+    // Panic started/stopped
+    if (unit._panicking && !prevDbg.panicking) {
+      log.push({ t: now, who: unit.id, team: logTeam, type: 'panic', x: ux, y: uy,
+        action: 'PANIC', detail: `morale:${(unit.morale||0).toFixed(2)} crg:${courage.toFixed(2)}` });
+    } else if (!unit._panicking && prevDbg.panicking) {
+      log.push({ t: now, who: unit.id, team: logTeam, type: 'panic', x: ux, y: uy,
+        action: 'panic over', detail: `morale:${(unit.morale||0).toFixed(2)}` });
+    }
+    // Morale threshold crossings (check every update, but only log on cross)
+    const mrl = unit.morale ?? 0.8;
+    const prevMrl = prevDbg._rawMorale ?? mrl;
+    if (prevMrl >= 0.5 && mrl < 0.5) {
+      log.push({ t: now, who: unit.id, team: logTeam, type: 'morale', x: ux, y: uy,
+        action: 'morale LOW', detail: mrl.toFixed(2) });
+    } else if (prevMrl < 0.5 && mrl >= 0.5) {
+      log.push({ t: now, who: unit.id, team: logTeam, type: 'morale', x: ux, y: uy,
+        action: 'morale recovered', detail: mrl.toFixed(2) });
+    }
+    if (prevMrl >= 0.2 && mrl < 0.2) {
+      log.push({ t: now, who: unit.id, team: logTeam, type: 'morale', x: ux, y: uy,
+        action: 'morale CRITICAL', detail: mrl.toFixed(2) });
+    }
+    // Cover entered/left
+    if (inCover && !prevDbg.inCover) {
+      log.push({ t: now, who: unit.id, team: logTeam, type: 'cover', x: ux, y: uy, action: 'entered cover', detail: unitTerrain });
+    } else if (!inCover && prevDbg.inCover) {
+      log.push({ t: now, who: unit.id, team: logTeam, type: 'cover', x: ux, y: uy, action: 'left cover' });
+    }
+    // Movement start/stop
+    const wasMoving = prevDbg._moving || false;
+    if (unit._movedThisFrame && !wasMoving) {
+      log.push({ t: now, who: unit.id, team: logTeam, type: 'move', x: ux, y: uy, action: 'started moving',
+        detail: `stab:${prevStab.toFixed(2)}→decaying` });
+    } else if (!unit._movedThisFrame && wasMoving) {
+      log.push({ t: now, who: unit.id, team: logTeam, type: 'move', x: ux, y: uy,
+        action: 'stopped', detail: `stab:${(unit.stability||0).toFixed(2)} zeroing in...` });
+    }
+    // Stability threshold crossings
+    const curStab = unit.stability || 0;
+    if (prevStab < 0.95 && curStab >= 0.95) {
+      log.push({ t: now, who: unit.id, team: logTeam, type: 'stability', x: ux, y: uy,
+        action: 'zeroed in', detail: `stab:${curStab.toFixed(2)} type:${typeKey}` });
+    } else if (prevStab >= 0.5 && curStab < 0.5) {
+      log.push({ t: now, who: unit.id, team: logTeam, type: 'stability', x: ux, y: uy,
+        action: 'stability lost', detail: `stab:${curStab.toFixed(2)} (moving)` });
+    }
+  }
+
+  // 9. Debug telemetry — read by fire range overlay and debug panel
+  const p = unit.personality || {};
+  const lastFire = unit.lastShot || unit.lastAttack || 0;
+  const fireRate = unit.fireRate || 2000;
+  const cooldownElapsed = now - lastFire;
+  const cooldownPct = Math.min(1, cooldownElapsed / fireRate); // 1 = ready
+  const fireResult = unit._dbg?.fireResult || null;
+
+  unit._dbg = {
+    // Action state
+    command: activeCommand,
+    state: unit._actionVerb || 'idle',
+    targetId: target?.id || null,
+    targetDist: target ? Math.round(targetDist) : null,
+    // Personality axes
+    aggression: +(p.aggression ?? 0.5).toFixed(2),
+    patience: +(p.patience ?? 0.5).toFixed(2),
+    courage: +(p.courage ?? 0.5).toFixed(2),
+    discipline: +(p.discipline ?? 0.5).toFixed(2),
+    // Morale & veterancy
+    morale: +(unit.morale ?? 0.8).toFixed(2),
+    veterancy: +(unit.veterancy ?? 0).toFixed(2),
+    panicking: unit._panicking || false,
+    // Awareness & initiative & vision
+    awareness: +(unit._awareness ?? 0.5).toFixed(2),
+    initiative: +(p.initiative ?? 0.5).toFixed(2),
+    spotted: unit._spotted ? unit._spotted.length : 0,
+    viewRange: unit.viewRange || 200,
+    coverBias: +(unit._coverBias ?? 0).toFixed(2),
+    // Formation
+    formation: unit._formationType || null,
+    formationSlot: unit._formationSlot ?? null,
+    inFormation: unit._inFormation || false,
+    isLead: unit._inFormation && unit === unit._formationLeader,
+    slotDev: unit._slotTarget ? Math.round(Math.hypot(unit._slotTarget.x - unit.x, unit._slotTarget.y - unit.y)) : null,
+    slotX: unit._slotTarget ? Math.round(unit._slotTarget.x) : null,
+    slotY: unit._slotTarget ? Math.round(unit._slotTarget.y) : null,
+    waitMult: unit._formationWaitMult != null ? +unit._formationWaitMult.toFixed(2) : null,
+    fmtAngle: unit._formationAngle != null ? +(unit._formationAngle * 180 / Math.PI).toFixed(1) : null,
+    // Movement mode
+    movementMode: unit._movementMode || null,
+    modeScores: modeResult?.scores || null,
+    // Survival
+    survivalAction: unit._survivalAction || null,
+    survivalRatio: unit._lastSurvival ? +unit._lastSurvival.survivalRatio.toFixed(2) : null,
+    isProne: unit._isProne || false,
+    isHullDown: unit._isHullDown || false,
+    inCover: unit._coverReached || false,
+    suppression: +(unit._suppression ?? 0).toFixed(2),
+    _rawMorale: unit.morale ?? 0.8,
+    _moving: unit._movedThisFrame,
+    // Fire readiness
+    stability: +(unit.stability || 0).toFixed(2),
+    cooldown: +cooldownPct.toFixed(2),
+    aimTime: lastFire > 0 ? Math.round(cooldownElapsed) : null,
+    accuracy: fireResult?.accuracy ? +fireResult.accuracy.toFixed(2) : null,
+    canFire: fireResult?.canFire ?? null,
+    fireResult,
+    // Terrain
+    terrain: unitTerrain,
+    cover: TERRAIN_COVER_SCORE[unitTerrain] || 0,
+    inCover,
+    // Legacy compat fields
+    behavior: unit._behaviorKey || activeCommand,
+    typeKey
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// LEGACY EXPORTS — Kept for game.js compatibility
+// ═══════════════════════════════════════════════════════════════
+
+// Old AIState — aliased to Command for transition
+export const AIState = {
+  IDLE: 'idle',
+  ADVANCING: 'advancing',
+  MOVING: 'moving',
+  ENGAGING: 'engaging',
+  ATTACKING: 'attacking',
+  DEFENDING: 'defending',
+  FOLLOWING: 'following',
+  RETREATING: 'retreating',
+  REPOSITIONING: 'repositioning',
+  COVERING: 'covering'
+};
+
+// Old AIBehavior — stub, will be replaced by personality
+export const AIBehavior = {
+  AGGRESSIVE: { retreatThreshold: 0.15 },
+  DEFENSIVE: { retreatThreshold: 0.35 },
+  SUPPORT: { retreatThreshold: 0.25 },
+  SNIPER: { retreatThreshold: 0.40 },
+  FLANKER: { retreatThreshold: 0.20 }
+};
+
+// Old EnemyAIType — stub, will be replaced by personality + commander
+export const EnemyAIType = {
+  BASIC: { speed: 1.0, aggression: 0.5, attackRange: 60, retreatHP: 0 },
+  RUSHER: { speed: 1.4, aggression: 1.0, attackRange: 40, retreatHP: 0 },
+  HUNTER: { speed: 1.0, aggression: 0.6, attackRange: 80, retreatHP: 0.1 },
+  CAUTIOUS: { speed: 0.8, aggression: 0.3, attackRange: 120, retreatHP: 0.4 },
+  FLANKER: { speed: 1.2, aggression: 0.7, attackRange: 60, retreatHP: 0.2 },
+  SWARMER: { speed: 1.6, aggression: 1.0, attackRange: 30, retreatHP: 0 }
+};
+
+// Old TacticalCommand — stub
+export const TacticalCommand = {
+  FOLLOW: { key: '1', label: 'Follow', state: 'following' },
+  HOLD: { key: '2', label: 'Hold', state: 'defending' },
+  ATTACK: { key: '3', label: 'Attack', state: 'attacking' },
+  MOVE: { key: '4', label: 'Move', state: 'moving', needsTarget: true },
+  RETREAT: { key: '5', label: 'Retreat', state: 'retreating' }
+};
+
+// ═══════════════════════════════════════════════════════════════
+// PUBLIC API — Called by game.js
 // ═══════════════════════════════════════════════════════════════
 
 export function updateUnitAI(b, unit, hero, enemies, now, dtSec) {
-  // Initialize AI state and behavior if needed
-  if (!unit.aiState) {
-    // If unit has a destination to move to, start in MOVING state
-    unit.aiState = unit.currentDestination ? AIState.MOVING : AIState.DEFENDING;
+  if (unit.dead) return;
+  updateBrain(b, unit, hero, enemies, b.units || [], now, dtSec, 'player');
+}
+
+export function updateEnemyAI(b, enemy, hero, allies, now, dtSec) {
+  if (enemy.dead) return;
+  // Build hostiles list: hero + player allies
+  const hostiles = [];
+  if (hero && !hero.dead && hero.hp > 0 && hero.x > -1000) {
+    hostiles.push(hero);
   }
-  if (!unit.aiBehavior) {
-    unit.aiBehavior = AIBehavior.DEFENSIVE; // Default behavior
-  }
-
-  // DEBUG: Log unit state every 2 seconds (throttled)
-  if (!unit._lastDebugLog || now - unit._lastDebugLog > 2000) {
-    unit._lastDebugLog = now;
-    console.log(`[AI] Unit ${unit.id}: order=${unit.currentOrder}, state=${unit.aiState}, pos=(${Math.round(unit.x)},${Math.round(unit.y)}), enemies=${enemies.filter(e => !e.dead).length}`);
-  }
-
-  const unitDef = UNITS.find(u => u.id === unit.unitId);
-  const baseRange = unitDef?.range || 200;
-  const behavior = unit.aiBehavior;
-
-  // === GET ORDER EFFECTS ===
-  const order = unit.currentOrder || 'hold';
-  const orderEffects = ORDER_EFFECTS[order] || ORDER_EFFECTS.hold;
-
-  // Apply order-based modifiers
-  const speedMod = orderEffects.speedMod ?? 1.0;
-  const defenseMod = orderEffects.defenseMod ?? 1.0;
-  const canMove = orderEffects.canMove ?? true;
-  const range = baseRange * (behavior.engageRange || 1.0);
-
-  // Store defense modifier for damage calculations elsewhere
-  unit.currentDefenseMod = defenseMod;
-
-  // === DIG IN: Handle setup time ===
-  if (order === 'digIn') {
-    if (!unit.digInStartTime) {
-      unit.digInStartTime = now;
-    }
-    const setupTime = orderEffects.setupTime || 2000;
-    const elapsed = now - unit.digInStartTime;
-    unit.isDugIn = elapsed >= setupTime;
-    // Can't do anything while digging in
-    if (!unit.isDugIn) {
-      return;
-    }
-  } else {
-    unit.digInStartTime = null;
-    unit.isDugIn = false;
-  }
-
-  // Check for retreat condition based on behavior threshold
-  const retreatThreshold = behavior.retreatThreshold || 0.25;
-  if (unit.hp && unit.maxHp && unit.hp < unit.maxHp * retreatThreshold) {
-    unit.aiState = AIState.RETREATING;
-  }
-
-  // === ORDER-BASED STATE TRANSITIONS ===
-  // Advance order: Move toward enemies aggressively
-  if (order === 'advance' && orderEffects.aggressive) {
-    if (unit.advancePos) {
-      unit.currentDestination = unit.advancePos;
-      unit.reachedDestination = false;
-      unit.aiState = AIState.MOVING;
-    } else {
-      // No advance position, just be aggressive
-      unit.aiState = AIState.ATTACKING;
+  if (allies) {
+    for (const a of allies) {
+      if (!a.dead) hostiles.push(a);
     }
   }
+  updateBrain(b, enemy, null, hostiles, b.enemies || [], now, dtSec, 'enemy');
+}
 
-  // Fallback order: Move toward fallback position or follow hero
-  if (order === 'fallback' && orderEffects.retreating) {
-    if (unit.fallbackPos) {
-      unit.currentDestination = unit.fallbackPos;
-      unit.reachedDestination = false;
-      unit.aiState = AIState.MOVING;
-    } else if (unit.primaryPos) {
-      // Fallback to primary if no fallback set
-      unit.currentDestination = unit.primaryPos;
-      unit.reachedDestination = false;
-      unit.aiState = AIState.MOVING;
-    } else {
-      // No positions set - fall back to hero
-      unit.aiState = AIState.FOLLOWING;
+/**
+ * Share spotted intel between friendly units via cohesion.
+ * Call once per frame per team, AFTER all individual brain updates.
+ * Nearby allies share their _spotted lists. Quality scales with receiver's awareness.
+ * Scouts (hasRecon) share at 2x cohesion range.
+ */
+export function shareTeamIntel(friendlies, now) {
+  const COHESION_RANGE = 120;
+  const SCOUT_MULT = 2.0;
+
+  for (const unit of friendlies) {
+    if (unit.dead) continue;
+    if (!unit._spotted || unit._spotted.length === 0) continue;
+
+    const isScout = CATEGORY_SKILLS[inferCategory(unit)]?.hasRecon || false;
+    const shareRange = isScout ? COHESION_RANGE * SCOUT_MULT : COHESION_RANGE;
+
+    for (const ally of friendlies) {
+      if (ally === unit || ally.dead) continue;
+      const d = distanceBetween(unit, ally);
+      if (d > shareRange) continue;
+
+      const allyAwareness = ally._awareness ?? 0.5;
+      // Accuracy degradation by receiver's awareness
+      let posUncertainty;
+      if (allyAwareness < 0.4) posUncertainty = 80;       // direction only
+      else if (allyAwareness < 0.7) posUncertainty = 40;   // approximate
+      else posUncertainty = 10;                             // near-exact
+
+      // Share each spotted entry the ally doesn't already have from direct vision
+      if (!ally._spotted) ally._spotted = [];
+      const allyDirectIds = new Set();
+      for (const s of ally._spotted) {
+        if (s.direct) allyDirectIds.add(s.enemy?.id);
+      }
+
+      for (const entry of unit._spotted) {
+        if (!entry.enemy || entry.enemy.dead) continue;
+        if (allyDirectIds.has(entry.enemy.id)) continue; // Ally already sees this directly
+
+        // Check if ally already has a shared entry for this enemy
+        const existing = ally._spotted.find(s => s.enemy?.id === entry.enemy.id && !s.direct);
+        const sharedAccuracy = Math.min(entry.accuracy, allyAwareness * 0.8);
+
+        if (existing) {
+          // Update if newer
+          if (entry.timestamp > existing.timestamp) {
+            existing.accuracy = sharedAccuracy;
+            existing.timestamp = entry.timestamp;
+            existing.posUncertainty = posUncertainty;
+          }
+        } else {
+          // Add new shared entry
+          ally._spotted.push({
+            enemy: entry.enemy,
+            dist: distanceBetween(ally, entry.enemy),
+            zone: entry.zone,
+            accuracy: sharedAccuracy,
+            concealment: entry.concealment,
+            direct: false,
+            source: isScout ? 'scout_relay' : 'shared',
+            posUncertainty,
+            timestamp: entry.timestamp
+          });
+        }
+      }
     }
-  }
-
-  // Hold order: Stay in position and defend
-  if (order === 'hold' && !canMove) {
-    unit.aiState = AIState.DEFENDING;
-  }
-
-  // Search order: Hunt enemies
-  if (order === 'search' && orderEffects.hunting) {
-    unit.aiState = AIState.ATTACKING;
-  }
-
-  // Flank order: Attack from the side
-  if (order === 'flank') {
-    unit.aiState = AIState.ATTACKING;
-    unit.aiBehavior = { ...unit.aiBehavior, preferFlank: true };
-  }
-
-  // Suppress order: Hold position and provide covering fire
-  if (order === 'suppress' && orderEffects.areaFire) {
-    unit.aiState = AIState.DEFENDING;
-  }
-
-  // === SUPPORT UNIT BEHAVIOR: Follow hero ===
-  if (unit.isSupport && order !== 'hold' && order !== 'digIn') {
-    // Support units follow the hero unless commanded otherwise
-    if (unit.aiState !== AIState.RETREATING) {
-      unit.aiState = AIState.FOLLOWING;
-    }
-  }
-
-  // === DESTINATION-BASED MOVEMENT ===
-  // Handle movement toward currentDestination (from primary/advance/fallback positions)
-  if (unit.aiState === AIState.MOVING && unit.currentDestination && !unit.reachedDestination && canMove) {
-    const dest = unit.currentDestination;
-    const arrived = moveToward(b, unit, dest.x, dest.y, dtSec, speedMod);
-
-    if (arrived) {
-      unit.reachedDestination = true;
-      unit.aiState = AIState.DEFENDING;
-    }
-
-    // Shoot at enemies while moving (use priority targeting)
-    const { enemy, distance } = findTargetByPriority(b, unit, enemies, range * 2);
-    if (enemy && distance <= range) {
-      unit.angle = Math.atan2(enemy.y - unit.y, enemy.x - unit.x);
-      tryShoot(b, unit, enemy.x, enemy.y, now);
-    }
-    return;  // Don't execute other behaviors while moving to destination
-  }
-
-  // Execute based on current state
-  switch (unit.aiState) {
-    case AIState.IDLE:
-      executeIdle(b, unit, enemies, now, range);
-      break;
-
-    case AIState.ADVANCING:
-      executeAdvancing(b, unit, hero, enemies, now, dtSec, range);
-      break;
-
-    case AIState.ENGAGING:
-      executeEngaging(b, unit, hero, enemies, now, dtSec, range);
-      break;
-
-    case AIState.REPOSITIONING:
-      executeRepositioning(b, unit, enemies, now, dtSec, range);
-      break;
-
-    case AIState.DEFENDING:
-      executeDefending(b, unit, enemies, now, dtSec, range, behavior);
-      break;
-
-    case AIState.ATTACKING:
-      executeAttacking(b, unit, enemies, now, dtSec, range, behavior);
-      break;
-
-    case AIState.FOLLOWING:
-      executeFollowing(b, unit, hero, enemies, now, dtSec, range, behavior);
-      break;
-
-    case AIState.RETREATING:
-      executeRetreating(b, unit, hero, enemies, now, dtSec);
-      break;
-
-    case AIState.MOVING:
-      executeMoving(b, unit, enemies, now, dtSec, range, behavior);
-      break;
-
-    default:
-      // Default to advancing if state is unknown
-      executeAdvancing(b, unit, hero, enemies, now, dtSec, range);
   }
 }
 
-// Set unit AI behavior preset
+export function issueCommand(units, command, params = {}) {
+  for (const unit of units) {
+    if (unit.dead) continue;
+    unit.command = command;
+    // Reset cover state when command changes — awareness system will re-seek
+    unit._coverReached = false;
+    unit._coverPos = null;
+    unit._proactiveCoverTarget = null;
+    unit._lastProactiveCoverCheck = 0;
+    // Reset bounding state
+    unit._boundTarget = null;
+    unit._boundPauseUntil = null;
+    // Formation override (commander can set formation per command)
+    if (params.formation) {
+      unit._formationOverride = params.formation;
+    }
+  }
+}
+
+export function issueFrontLineCommand(units, command) {
+  issueCommand(units, command);
+}
+
+export function recordDamage(entity, sourceId, amount) {
+  if (!entity.recentDamageFrom) entity.recentDamageFrom = {};
+  entity.recentDamageFrom[sourceId] = (entity.recentDamageFrom[sourceId] || 0) + amount;
+  // Trigger morale event
+  applyMoraleEvent(entity, MoraleEvent.TOOK_DAMAGE, Math.min(1, amount / (entity.maxHp || 100)));
+}
+
 export function setUnitBehavior(unit, behaviorKey) {
-  const behavior = AIBehavior[behaviorKey];
-  if (behavior) {
-    unit.aiBehavior = behavior;
-  }
+  // Legacy — personality replaces this
 }
 
-// Set custom behavior parameters
-export function setCustomBehavior(unit, params) {
-  unit.aiBehavior = { ...AIBehavior.DEFENSIVE, ...params };
+export function setEnemyAIType(enemy, typeKey) {
+  // Legacy — personality + commander replaces this
 }
 
-// ═══════════════════════════════════════════════════════════════
-// STATE BEHAVIORS
-// ═══════════════════════════════════════════════════════════════
-
-function executeIdle(b, unit, enemies, now, range) {
-  // Don't stay idle - proactively advance to front line
-  // This makes units useful without babysitting
-  unit.aiState = AIState.ADVANCING;
-}
-
-/**
- * ADVANCING state: Move toward the front line, shoot while moving.
- * Units advance until they reach a good position or heavy contact.
- */
-function executeAdvancing(b, unit, hero, enemies, now, dtSec, range) {
-  const stance = unit.stance || 'autonomous';
-  const stanceParams = STANCE_PARAMS[stance] || STANCE_PARAMS.autonomous;
-
-  // Calculate front line and get advance target
-  const frontLineY = calculateFrontLine(b);
-
-  // If no advance target, find one using smart positioning
-  if (!unit.advanceTarget) {
-    const existingUnits = b.units.filter(u => u.id !== unit.id && !u.dead).map(u => ({
-      x: u.advanceTarget?.x || u.x,
-      y: u.advanceTarget?.y || u.y
-    }));
-
-    const smartPos = findSmartPositions(b, hero, existingUnits, 1);
-    if (smartPos.length > 0) {
-      // Adjust Y to be near front line
-      unit.advanceTarget = {
-        x: smartPos[0].x,
-        y: Math.min(smartPos[0].y, frontLineY)
-      };
-    } else {
-      // Fallback: position based on unit index
-      const unitIndex = b.units.indexOf(unit);
-      const spread = 60;
-      unit.advanceTarget = {
-        x: hero.x + (unitIndex % 5 - 2) * spread,
-        y: frontLineY
-      };
-    }
-  }
-
-  // Move toward advance target
-  const target = unit.advanceTarget;
-  const dx = target.x - unit.x;
-  const dy = target.y - unit.y;
-  const distToTarget = Math.sqrt(dx * dx + dy * dy);
-
-  // Apply stance speed modifier
-  const speedMod = stanceParams.advanceSpeed || 1.0;
-  const arrived = moveToward(b, unit, target.x, target.y, dtSec, speedMod);
-
-  // Shoot at enemies while moving
-  const { enemy, distance } = findTargetByPriority(b, unit, enemies, range * 1.5);
-  if (enemy && distance <= range) {
-    unit.angle = Math.atan2(enemy.y - unit.y, enemy.x - unit.x);
-    tryShoot(b, unit, enemy.x, enemy.y, now);
-
-    // If in heavy contact (2+ enemies nearby), switch to ENGAGING
-    const nearbyEnemies = findEnemiesInRange(unit, enemies, range);
-    if (nearbyEnemies.length >= 2) {
-      unit.aiState = AIState.ENGAGING;
-      return;
-    }
-  } else if (distToTarget > 10) {
-    // Face movement direction
-    unit.angle = Math.atan2(dy, dx);
-  }
-
-  // Arrived at position - switch to defending
-  if (arrived || distToTarget < 20) {
-    unit.aiState = AIState.DEFENDING;
-    unit.advanceTarget = null;
-  }
-}
-
-/**
- * ENGAGING state: In combat, stance determines exact behavior.
- * - AGGRESSIVE: Keep pushing toward enemy
- * - DEFENSIVE: Find cover, hold position
- * - AUTONOMOUS: Evaluate threat and decide
- * - SUPPORT: Stay near hero
- */
-function executeEngaging(b, unit, hero, enemies, now, dtSec, range) {
-  const stance = unit.stance || 'autonomous';
-  const stanceParams = STANCE_PARAMS[stance] || STANCE_PARAMS.autonomous;
-
-  const { enemy, distance } = findTargetByPriority(b, unit, enemies, range * 1.5);
-
-  // No enemies - switch to advancing
-  if (!enemy) {
-    unit.aiState = AIState.ADVANCING;
-    unit.advanceTarget = null;
-    return;
-  }
-
-  // Face enemy
-  const dx = enemy.x - unit.x;
-  const dy = enemy.y - unit.y;
-  unit.angle = Math.atan2(dy, dx);
-
-  // Behavior based on stance
-  switch (stance) {
-    case 'aggressive':
-      // Keep pushing toward enemy
-      if (distance > range * 0.6) {
-        moveToward(b, unit, enemy.x, enemy.y, dtSec, stanceParams.advanceSpeed);
-      }
-      tryShoot(b, unit, enemy.x, enemy.y, now);
-      break;
-
-    case 'defensive':
-      // Find cover if not in cover
-      if (!isInCover(b, unit.x, unit.y)) {
-        const betterPos = shouldReposition(unit, b);
-        if (betterPos) {
-          unit.repositionTarget = betterPos;
-          unit.aiState = AIState.REPOSITIONING;
-          return;
-        }
-      }
-      // Stay put and shoot
-      if (distance <= range) {
-        tryShoot(b, unit, enemy.x, enemy.y, now);
-      }
-      break;
-
-    case 'support':
-      // Stay near hero
-      const heroDistSq = (unit.x - hero.x) ** 2 + (unit.y - hero.y) ** 2;
-      const followDist = stanceParams.followDistance || 80;
-      if (heroDistSq > followDist * followDist) {
-        moveToward(b, unit, hero.x, hero.y, dtSec);
-      }
-      // Shoot at enemies
-      if (distance <= range) {
-        tryShoot(b, unit, enemy.x, enemy.y, now);
-      }
-      break;
-
-    case 'autonomous':
-    default:
-      // Evaluate threat and decide
-      const threat = evaluateThreat(unit, b, enemies);
-
-      if (threat > stanceParams.threatHoldThreshold) {
-        // High threat - reposition
-        const betterPos = shouldReposition(unit, b);
-        if (betterPos) {
-          unit.repositionTarget = betterPos;
-          unit.aiState = AIState.REPOSITIONING;
-          return;
-        }
-      } else if (threat < stanceParams.threatPushThreshold && distance > range * 0.7) {
-        // Low threat - can push forward
-        moveToward(b, unit, enemy.x, enemy.y, dtSec);
-      }
-      // Always shoot if in range
-      if (distance <= range) {
-        tryShoot(b, unit, enemy.x, enemy.y, now);
-      }
-      break;
-  }
-
-  // Check retreat threshold
-  const hpRatio = unit.hp / unit.maxHp;
-  if (hpRatio < stanceParams.retreatThreshold) {
-    unit.aiState = AIState.RETREATING;
-  }
-}
-
-/**
- * REPOSITIONING state: Moving to a better position mid-combat.
- */
-function executeRepositioning(b, unit, enemies, now, dtSec, range) {
-  if (!unit.repositionTarget) {
-    unit.aiState = AIState.DEFENDING;
-    return;
-  }
-
-  const target = unit.repositionTarget;
-  const arrived = moveToward(b, unit, target.x, target.y, dtSec);
-
-  // Shoot while moving if enemies in range
-  const { enemy, distance } = findTargetByPriority(b, unit, enemies, range);
-  if (enemy && distance <= range) {
-    unit.angle = Math.atan2(enemy.y - unit.y, enemy.x - unit.x);
-    tryShoot(b, unit, enemy.x, enemy.y, now);
-  }
-
-  if (arrived) {
-    unit.repositionTarget = null;
-    unit.aiState = AIState.DEFENDING;
-  }
-}
-
-function executeDefending(b, unit, enemies, now, dtSec, range, behavior = {}) {
-  // Stay in position, shoot at enemies in range (use priority targeting)
-  const { enemy, distance } = findTargetByPriority(b, unit, enemies, range * 1.5);
-
-  if (!enemy) {
-    unit.aiState = AIState.IDLE;
-    return;
-  }
-
-  // Face enemy
-  const dx = enemy.x - unit.x;
-  const dy = enemy.y - unit.y;
-  unit.angle = Math.atan2(dy, dx);
-
-  // Shoot if in range
-  if (distance <= range) {
-    tryShoot(b, unit, enemy.x, enemy.y, now);
-  }
-}
-
-// Find weakest enemy in range (for priority targeting)
-function findWeakestInRange(unit, enemies, range) {
-  let weakest = null;
-  let lowestHP = Infinity;
-  let dist = Infinity;
-
-  for (const e of enemies) {
-    if (e.dead) continue;
-    const dx = e.x - unit.x;
-    const dy = e.y - unit.y;
-    const d = Math.sqrt(dx * dx + dy * dy);
-    if (d <= range && e.hp < lowestHP) {
-      lowestHP = e.hp;
-      weakest = e;
-      dist = d;
-    }
-  }
-
-  return { enemy: weakest, distance: dist };
-}
-
-function executeAttacking(b, unit, enemies, now, dtSec, range, behavior = {}) {
-  // First try priority targeting within extended range
-  let { enemy, distance } = findTargetByPriority(b, unit, enemies, range * 1.5);
-
-  // If no nearby enemy, hunt any alive enemy on the map
-  if (!enemy) {
-    const aliveEnemies = enemies.filter(e => !e.dead);
-    if (aliveEnemies.length > 0) {
-      // Find closest enemy anywhere on map
-      let closest = null;
-      let closestDist = Infinity;
-      for (const e of aliveEnemies) {
-        const dx = e.x - unit.x;
-        const dy = e.y - unit.y;
-        const d = Math.sqrt(dx * dx + dy * dy);
-        if (d < closestDist) {
-          closestDist = d;
-          closest = e;
-        }
-      }
-      enemy = closest;
-      distance = closestDist;
-    }
-  }
-
-  if (!enemy) {
-    // No enemies left - go to defending
-    unit.aiState = AIState.DEFENDING;
-    return;
-  }
-
-  // DEBUG: Log attacking behavior
-  if (!unit._lastAttackLog || now - unit._lastAttackLog > 2000) {
-    unit._lastAttackLog = now;
-    console.log(`[ATTACK] Unit ${unit.id}: target=${enemy.id}, dist=${Math.round(distance)}, range=${Math.round(range)}, willMove=${distance > range * 0.8}`);
-  }
-
-  // Face enemy
-  const dx = enemy.x - unit.x;
-  const dy = enemy.y - unit.y;
-  unit.angle = Math.atan2(dy, dx);
-
-  // Move closer if out of range (unless behavior says don't advance)
-  if (distance > range * 0.8 && behavior.advanceWhenBlocked !== false) {
-    // If flanking behavior, try to approach from the side
-    if (behavior.preferFlank) {
-      const flankAngle = unit.angle + (Math.random() > 0.5 ? 1 : -1) * (Math.PI / 4);
-      const flankX = enemy.x - Math.cos(flankAngle) * (range * 0.6);
-      const flankY = enemy.y - Math.sin(flankAngle) * (range * 0.6);
-      moveToward(b, unit, flankX, flankY, dtSec);
-    } else {
-      moveToward(b, unit, enemy.x, enemy.y, dtSec);
-    }
-  }
-
-  // Shoot if in range (unless holdFireWhenMoving and we're moving)
-  const isMoving = distance > range * 0.8;
-  if (distance <= range && !(behavior.holdFireWhenMoving && isMoving)) {
-    tryShoot(b, unit, enemy.x, enemy.y, now);
-  }
-}
-
-function executeFollowing(b, unit, hero, enemies, now, dtSec, range, behavior = {}) {
-  const followDistance = behavior.followDistance || 60; // Distance behind hero
-  const unitSpacing = ENTITY_RADIUS.ally * 2; // Space between units in line
-  const pathSpacing = 12; // Distance between breadcrumb points
-
-  // Get all followers sorted by their index/order
-  const followers = b.units ? b.units.filter(u => u.aiState === AIState.FOLLOWING && !u.dead) : [];
-  const unitIndex = followers.indexOf(unit);
-
-  // Initialize or update hero's breadcrumb path
-  if (!b.heroPath) b.heroPath = [];
-
-  // Add hero position to path if moved far enough from last point
-  const lastPos = b.heroPath[0];
-  if (!lastPos ||
-      Math.hypot(hero.x - lastPos.x, hero.y - lastPos.y) > pathSpacing) {
-    b.heroPath.unshift({ x: hero.x, y: hero.y, time: now });
-    // Keep path limited to reasonable length
-    if (b.heroPath.length > 100) b.heroPath.pop();
-  }
-
-  // Calculate how far along the path this unit should be
-  // First unit is followDistance behind hero, each subsequent unit is unitSpacing further
-  const targetDistance = followDistance + (unitIndex * unitSpacing);
-
-  // Find the point on the breadcrumb path at the target distance
-  let targetX = hero.x;
-  let targetY = hero.y;
-  let accumulatedDist = 0;
-  let foundTarget = false;
-
-  for (let i = 0; i < b.heroPath.length - 1; i++) {
-    const p1 = b.heroPath[i];
-    const p2 = b.heroPath[i + 1];
-    const segmentDist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-
-    if (accumulatedDist + segmentDist >= targetDistance) {
-      // Target point is on this segment
-      const t = (targetDistance - accumulatedDist) / segmentDist;
-      targetX = p1.x + (p2.x - p1.x) * t;
-      targetY = p1.y + (p2.y - p1.y) * t;
-      foundTarget = true;
-      break;
-    }
-    accumulatedDist += segmentDist;
-  }
-
-  // If path isn't long enough, use the last point or fall back to behind hero
-  if (!foundTarget) {
-    if (b.heroPath.length > 0) {
-      const lastPoint = b.heroPath[b.heroPath.length - 1];
-      targetX = lastPoint.x;
-      targetY = lastPoint.y;
-    } else {
-      // No path yet - position behind hero
-      const heroFacing = hero.angle || 0;
-      const behindAngle = heroFacing + Math.PI;
-      targetX = hero.x + Math.cos(behindAngle) * targetDistance;
-      targetY = hero.y + Math.sin(behindAngle) * targetDistance;
-    }
-  }
-
-  // Check if target position is blocked by another unit
-  const allyRadius = ENTITY_RADIUS.ally;
-  const allAllies = b.units ? b.units.filter(u => u.id !== unit.id && !u.dead) : [];
-  const blocked = wouldCollide(targetX, targetY, allyRadius, allAllies, unit.id);
-
-  if (blocked) {
-    // Find nearest unoccupied position by searching in a spiral pattern
-    const searchAngles = [0, Math.PI/6, -Math.PI/6, Math.PI/3, -Math.PI/3,
-                          Math.PI/2, -Math.PI/2, 2*Math.PI/3, -2*Math.PI/3,
-                          5*Math.PI/6, -5*Math.PI/6, Math.PI];
-    const searchDistances = [unitSpacing, unitSpacing * 1.5, unitSpacing * 2];
-
-    outerLoop:
-    for (const dist of searchDistances) {
-      for (const angleOffset of searchAngles) {
-        const testX = targetX + Math.cos(angleOffset) * dist;
-        const testY = targetY + Math.sin(angleOffset) * dist;
-        if (!wouldCollide(testX, testY, allyRadius, allAllies, unit.id) &&
-            !isTerrainBlocked(b, testX, testY)) {
-          targetX = testX;
-          targetY = testY;
-          break outerLoop;
-        }
-      }
-    }
-  }
-
-  const dx = targetX - unit.x;
-  const dy = targetY - unit.y;
-  const distToTarget = Math.hypot(dx, dy);
-
-  // Only move if far enough from target (prevents jittering)
-  if (distToTarget > unitSpacing * 0.4) {
-    moveToward(b, unit, targetX, targetY, dtSec);
-  }
-
-  // Shoot at enemies in range (use priority targeting)
-  const isMoving = distToTarget > unitSpacing;
-  const { enemy, distance } = findTargetByPriority(b, unit, enemies, range);
-
-  if (enemy && distance <= range && !(behavior.holdFireWhenMoving && isMoving)) {
-    unit.angle = Math.atan2(enemy.y - unit.y, enemy.x - unit.x);
-    tryShoot(b, unit, enemy.x, enemy.y, now);
-  } else if (distToTarget > 10) {
-    // Face direction of movement
-    unit.angle = Math.atan2(dy, dx);
-  }
-}
-
-function executeRetreating(b, unit, hero, enemies, now, dtSec) {
-  // Move toward hero (safety)
-  const arrived = moveToward(b, unit, hero.x, hero.y, dtSec);
-
-  // If reached hero and HP recovered, switch to following
-  if (unit.hp >= unit.maxHP * 0.5) {
-    unit.aiState = AIState.FOLLOWING;
-  }
-
-  // Still shoot at enemies while retreating (use priority targeting)
-  const { enemy, distance } = findTargetByPriority(b, unit, enemies, 150);
-  if (enemy && distance < 150) {
-    tryShoot(b, unit, enemy.x, enemy.y, now);
-  }
-}
-
-function executeMoving(b, unit, enemies, now, dtSec, range, behavior = {}) {
-  // Check for waypoints first
-  if (unit.waypoints && unit.waypoints.length > 0) {
-    const wpIndex = unit.currentWaypoint || 0;
-    if (wpIndex < unit.waypoints.length) {
-      const waypoint = unit.waypoints[wpIndex];
-      const arrived = moveToward(b, unit, waypoint.x, waypoint.y, dtSec);
-
-      if (arrived) {
-        unit.currentWaypoint = wpIndex + 1;
-        // If more waypoints, continue moving; otherwise switch to defending
-        if (unit.currentWaypoint >= unit.waypoints.length) {
-          unit.aiState = AIState.DEFENDING;
-          unit.waypoints = []; // Clear waypoints
-        }
-      }
-    } else {
-      unit.aiState = AIState.DEFENDING;
-    }
-  }
-  // Fall back to direct target movement
-  else if (unit.targetX && unit.targetY) {
-    const arrived = moveToward(b, unit, unit.targetX, unit.targetY, dtSec);
-
-    if (arrived) {
-      unit.aiState = AIState.DEFENDING;
-      unit.targetX = null;
-      unit.targetY = null;
-    }
-  } else {
-    // No waypoints or target, switch to defending
-    unit.aiState = AIState.DEFENDING;
-    return;
-  }
-
-  // Shoot at enemies while moving (unless holdFireWhenMoving) - use priority targeting
-  if (!behavior.holdFireWhenMoving) {
-    const { enemy, distance } = findTargetByPriority(b, unit, enemies, range);
-    if (enemy && distance <= range) {
-      unit.angle = Math.atan2(enemy.y - unit.y, enemy.x - unit.x);
-      tryShoot(b, unit, enemy.x, enemy.y, now);
-    }
-  }
-}
-
-// Add waypoint to a unit's path
 export function addWaypoint(unit, x, y) {
   if (!unit.waypoints) unit.waypoints = [];
   unit.waypoints.push({ x, y });
 }
 
-// Clear all waypoints
 export function clearWaypoints(unit) {
   unit.waypoints = [];
-  unit.currentWaypoint = 0;
+  unit.currentWaypointIndex = 0;
 }
 
-// Set waypoints from grid coordinates
 export function setWaypointsFromGrid(unit, gridWaypoints, cellSize) {
   unit.waypoints = gridWaypoints.map(wp => ({
     x: (wp.col + 0.5) * cellSize,
     y: (wp.row + 0.5) * cellSize
   }));
-  unit.currentWaypoint = 0;
-  if (unit.waypoints.length > 0) {
-    unit.aiState = AIState.MOVING;
-  }
+  unit.currentWaypointIndex = 0;
 }
 
-// ═══════════════════════════════════════════════════════════════
-// COMMANDS (Real-time orders from player)
-// ═══════════════════════════════════════════════════════════════
-
-export function issueCommand(units, command, params = {}) {
-  // For move commands with multiple units, spread them in formation
-  const spreadRadius = ENTITY_RADIUS.ally * 2.5; // Space between units
-
-  units.forEach((unit, index) => {
-    switch (command) {
-      case 'follow':
-        unit.aiState = AIState.FOLLOWING;
-        clearWaypoints(unit);
-        break;
-
-      case 'hold':
-        unit.aiState = AIState.DEFENDING;
-        clearWaypoints(unit);
-        break;
-
-      case 'attack':
-        unit.aiState = AIState.ATTACKING;
-        clearWaypoints(unit);
-        break;
-
-      case 'move':
-        unit.aiState = AIState.MOVING;
-        // If waypoints provided, use them; otherwise use single target
-        if (params.waypoints && params.waypoints.length > 0) {
-          unit.waypoints = params.waypoints;
-          unit.currentWaypoint = 0;
-        } else if (params.x !== undefined && params.y !== undefined) {
-          // Spread units in formation around the target point
-          let targetX = params.x;
-          let targetY = params.y;
-
-          if (units.length > 1) {
-            // Calculate formation offset (circular pattern)
-            const angle = (index / units.length) * Math.PI * 2;
-            const radius = spreadRadius * Math.ceil((index + 1) / 6); // Expand radius for more units
-            targetX = params.x + Math.cos(angle) * radius;
-            targetY = params.y + Math.sin(angle) * radius;
-          }
-
-          unit.waypoints = [{ x: targetX, y: targetY }];
-          unit.currentWaypoint = 0;
-          unit.targetX = targetX;
-          unit.targetY = targetY;
-        }
-        break;
-
-      case 'retreat':
-        unit.aiState = AIState.RETREATING;
-        clearWaypoints(unit);
-        break;
-    }
-  });
+export function assignSmartPositions(b) {
+  // Will be reimplemented in Phase 3
 }
 
-// ═══════════════════════════════════════════════════════════════
-// FRONT LINE COMMANDS (Advance / Hold / Retreat)
-// ═══════════════════════════════════════════════════════════════
-
-/**
- * Issue a front line command to all non-support units.
- * Changes which destination they move toward based on their planned positions.
- *
- * Commands:
- * - ADVANCE: Move to advance position (or forward if not set)
- * - HOLD: Staged fallback - if above primary go to primary, else go to fallback, then defend
- * - RETREAT: Full retreat - always go to fallback position immediately
- *
- * @param {Array} units - Array of player units
- * @param {string} command - 'advance' | 'hold' | 'retreat'
- */
-export function issueFrontLineCommand(units, command) {
-  units.forEach(unit => {
-    // Skip support units - they always follow the hero
-    if (unit.isSupport) return;
-
-    switch (command) {
-      case 'advance':
-        // Move to advance position if set, otherwise push toward enemy
-        if (unit.advancePos) {
-          unit.currentDestination = unit.advancePos;
-          unit.reachedDestination = false;
-          unit.aiState = AIState.MOVING;
-          unit.fallbackStage = 0;  // Reset fallback stage
-        } else if (unit.primaryPos) {
-          // No advance pos set - push forward from primary
-          unit.currentDestination = {
-            x: unit.primaryPos.x,
-            y: unit.primaryPos.y - 100  // Move forward (up) toward enemy
-          };
-          unit.reachedDestination = false;
-          unit.aiState = AIState.ATTACKING; // More aggressive behavior
-          unit.fallbackStage = 0;
-        }
-        break;
-
-      case 'hold':
-        // Staged fallback: Find cover and hold position
-        // Stage 0: If above primary position -> go to primary
-        // Stage 1: If at primary -> go to fallback (if set)
-        // Stage 2+: Stay and defend
-        if (!unit.primaryPos) {
-          unit.aiState = AIState.DEFENDING;
-          return;
-        }
-
-        const atPrimary = unit.reachedDestination &&
-          unit.currentDestination === unit.primaryPos;
-        const abovePrimary = unit.y < unit.primaryPos.y - 50;  // More than 50px above
-
-        // Track fallback stage per unit
-        if (unit.fallbackStage === undefined) unit.fallbackStage = 0;
-
-        if (abovePrimary) {
-          // Above primary - fall back to primary
-          unit.currentDestination = unit.primaryPos;
-          unit.reachedDestination = false;
-          unit.aiState = AIState.MOVING;
-          unit.fallbackStage = 1;
-        } else if (unit.fallbackStage < 2 && unit.fallbackPos) {
-          // At or below primary - check if should go to fallback
-          const atFallback = unit.y >= unit.fallbackPos.y - 50;
-          if (!atFallback) {
-            unit.currentDestination = unit.fallbackPos;
-            unit.reachedDestination = false;
-            unit.aiState = AIState.MOVING;
-            unit.fallbackStage = 2;
-          } else {
-            // At fallback - just defend
-            unit.aiState = AIState.DEFENDING;
-          }
-        } else {
-          // No fallback or already there - just defend in place
-          unit.aiState = AIState.DEFENDING;
-        }
-        break;
-
-      case 'retreat':
-        // FULL RETREAT: Always go to fallback position immediately
-        if (unit.fallbackPos) {
-          unit.currentDestination = unit.fallbackPos;
-          unit.reachedDestination = false;
-          unit.aiState = AIState.MOVING;
-          unit.fallbackStage = 2;
-        } else if (unit.primaryPos) {
-          // No fallback pos set - retreat behind primary
-          unit.currentDestination = {
-            x: unit.primaryPos.x,
-            y: unit.primaryPos.y + 100  // Move backward (down) toward spawn
-          };
-          unit.reachedDestination = false;
-          unit.aiState = AIState.RETREATING;
-          unit.fallbackStage = 2;
-        } else {
-          unit.aiState = AIState.RETREATING;
-        }
-        break;
-    }
-  });
-}
-
-// ═══════════════════════════════════════════════════════════════
-// ENEMY AI
-// ═══════════════════════════════════════════════════════════════
-
-export function updateEnemyAI(b, enemy, hero, allies, now, dtSec) {
-  if (enemy.dead) return;
-
-  // Get AI type (default to BASIC)
-  const aiType = enemy.aiType || EnemyAIType.BASIC;
-
-  // Decay damage memory (aggro fades over time based on personality)
-  decayDamageMemory(enemy, dtSec);
-
-  // Use threat-based target selection
-  const target = selectTarget(enemy, hero, allies);
-  if (!target) return;
-
-  // Calculate distance to target
-  const dx = target.x - enemy.x;
-  const dy = target.y - enemy.y;
-  const targetDist = Math.sqrt(dx * dx + dy * dy);
-
-  // Update enemy facing angle toward target
-  enemy.angle = Math.atan2(dy, dx);
-
-  // Check for retreat - find cover instead of just moving away
-  if (aiType.retreatHP > 0 && enemy.hp && enemy.maxHp) {
-    if (enemy.hp < enemy.maxHp * aiType.retreatHP) {
-      // Find nearest cover and retreat there
-      if (!enemy.retreatPath) {
-        const enemyGrid = worldToGrid(enemy.x, enemy.y, b.cellSize);
-        const cover = findNearestCover({
-          terrain: b.terrain,
-          fromRow: enemyGrid.row,
-          fromCol: enemyGrid.col,
-          gridHeight: b.gridHeight,
-          gridWidth: b.gridWidth,
-          maxDistance: 8
-        });
-        if (cover) {
-          enemy.retreatPath = pathToWorld(cover.path, b.cellSize);
-          enemy.retreatPathIndex = 0;
-        }
-      }
-
-      // Follow retreat path
-      if (enemy.retreatPath && enemy.retreatPathIndex < enemy.retreatPath.length) {
-        const wp = enemy.retreatPath[enemy.retreatPathIndex];
-        const arrived = moveEnemyTowardPoint(b, enemy, wp.x, wp.y, aiType.speed, dtSec);
-        if (arrived) {
-          enemy.retreatPathIndex++;
-        }
-        return;
-      }
-    }
-  }
-
-  // Calculate attack range from AI type
-  const attackRange = aiType.attackRange || 60;
-  const preferDistance = aiType.preferDistance || attackRange;
-
-  // Movement logic - use A* pathfinding with direct movement fallback
-  if (targetDist > preferDistance) {
-    // Check if we need to calculate a new path
-    const needsNewPath = !enemy.path ||
-      enemy.pathTargetX !== target.x ||
-      enemy.pathTargetY !== target.y ||
-      (now - (enemy.lastPathTime || 0)) > 2000; // Recalc every 2 seconds
-
-    if (needsNewPath) {
-      const enemyGrid = worldToGrid(enemy.x, enemy.y, b.cellSize);
-      let targetGrid = worldToGrid(target.x, target.y, b.cellSize);
-
-      // Flanking behavior - adjust target position
-      if (aiType.flankAngle) {
-        const baseAngle = Math.atan2(dy, dx);
-        const flankDir = (enemy.id || Math.random()) > 0.5 ? 1 : -1;
-        const flankAngle = baseAngle + flankDir * aiType.flankAngle;
-        const flankX = target.x - Math.cos(flankAngle) * preferDistance;
-        const flankY = target.y - Math.sin(flankAngle) * preferDistance;
-        targetGrid = worldToGrid(flankX, flankY, b.cellSize);
-      }
-
-      const path = findPath({
-        terrain: b.terrain,
-        startRow: enemyGrid.row,
-        startCol: enemyGrid.col,
-        endRow: targetGrid.row,
-        endCol: targetGrid.col,
-        gridHeight: b.gridHeight,
-        gridWidth: b.gridWidth,
-        maxIterations: 500
-      });
-
-      if (path && path.length > 0) {
-        // Smooth the path and convert to world coords
-        const smoothed = smoothPath(path, b.terrain, b.gridHeight, b.gridWidth);
-        enemy.path = pathToWorld(smoothed, b.cellSize);
-        enemy.pathIndex = 0;
-        enemy.pathTargetX = target.x;
-        enemy.pathTargetY = target.y;
-        enemy.lastPathTime = now;
-      } else {
-        // Pathfinding failed - clear path to use direct movement
-        enemy.path = null;
-        enemy.lastPathTime = now;
-      }
-    }
-
-    // Follow the path if we have one
-    if (enemy.path && enemy.pathIndex < enemy.path.length) {
-      const wp = enemy.path[enemy.pathIndex];
-      const arrived = moveEnemyTowardPoint(b, enemy, wp.x, wp.y, aiType.speed, dtSec);
-      if (arrived) {
-        enemy.pathIndex++;
-      }
-    } else {
-      // No path available - move directly toward target (fallback)
-      moveEnemyTowardPoint(b, enemy, target.x, target.y, aiType.speed, dtSec);
-    }
-  } else if (targetDist < preferDistance * 0.6 && aiType.preferDistance) {
-    // Cautious AI backs off if too close
-    const backX = enemy.x - (dx / targetDist) * 50;
-    const backY = enemy.y - (dy / targetDist) * 50;
-    moveEnemyTowardPoint(b, enemy, backX, backY, aiType.speed * 0.5, dtSec);
-  }
-
-  // Attack if in range
-  if (targetDist < attackRange && now - (enemy.lastAttack || 0) > 1000) {
-    enemy.lastAttack = now;
-
-    // Apply stance modifiers for enemy attacks
-    const attackerStance = getEnemyStance(enemy.aiType);
-    const targetStance = target.stance || (target.isHero ? 'aggressive' : 'autonomous');
-
-    // Get stance modifier and apply to damage
-    const stanceMod = getStanceModifier(attackerStance, targetStance);
-    const baseDamage = enemy.damage || 10;
-    const finalDamage = Math.round(baseDamage * stanceMod.damageMod);
-
-    target.hp -= finalDamage;
-  }
-}
-
-// Simple point-to-point movement (terrain collision only)
-function moveEnemyTowardPoint(b, enemy, targetX, targetY, speedMult, dtSec) {
-  const dx = targetX - enemy.x;
-  const dy = targetY - enemy.y;
+export function moveToward(b, unit, targetX, targetY, dtSec, orderSpeedMod = 1.0) {
+  // Basic movement — kept as foundation, will be enhanced in Phase 2
+  const dx = targetX - unit.x;
+  const dy = targetY - unit.y;
   const dist = Math.sqrt(dx * dx + dy * dy);
-
   if (dist < 5) return true; // Arrived
 
-  const baseSpeed = enemy.speed || 80;
-  const terrainMod = getTerrainSpeedMod(b, enemy.x, enemy.y);
-  const speed = baseSpeed * (speedMult || 1.0) * terrainMod;
+  const unitDef = UNITS.find(u => u.id === unit.unitId);
+  const speed = unit.speed || unitDef?.speed || 100;
+  const terrainMod = getTerrainSpeedMod(b, unit.x, unit.y);
+  const finalSpeed = speed * terrainMod * orderSpeedMod;
 
-  const moveX = (dx / dist) * speed * dtSec;
-  const moveY = (dy / dist) * speed * dtSec;
+  const step = finalSpeed * dtSec;
+  const ratio = Math.min(1, step / dist);
 
-  const newX = enemy.x + moveX;
-  const newY = enemy.y + moveY;
+  const newX = unit.x + dx * ratio;
+  const newY = unit.y + dy * ratio;
 
-  // Only check terrain collision (no unit collision for now)
-  if (!isTerrainBlocked(b, newX, enemy.y)) {
-    enemy.x = newX;
-  }
-  if (!isTerrainBlocked(b, enemy.x, newY)) {
-    enemy.y = newY;
+  if (!isTerrainBlocked(b, newX, newY)) {
+    unit.x = newX;
+    unit.y = newY;
   }
 
-  return false;
+  return dist < step;
 }
 
-// Set enemy AI type
-export function setEnemyAIType(enemy, typeKey) {
-  const aiType = EnemyAIType[typeKey];
-  if (aiType) {
-    enemy.aiType = aiType;
+export function tryShoot(b, unit, targetX, targetY, now, targetEntity) {
+  // Kept — uses fire decision pipeline
+  const unitDef = UNITS.find(u => u.id === unit.unitId);
+  const damage = unit.damage || unitDef?.damage || 10;
+  const projType = UNIT_PROJECTILES[unit.unitId] || 'bullet';
+
+  const dx = targetX - unit.x;
+  const dy = targetY - unit.y;
+
+  const target = targetEntity || { x: targetX, y: targetY };
+  const fireDecision = shouldFire(unit, target, b, now);
+
+  if (unit._dbg) unit._dbg.fireResult = fireDecision;
+  if (!fireDecision.canFire) return false;
+
+  unit.lastShot = now;
+  const baseAngle = Math.atan2(dy, dx);
+  // Suppression reduces accuracy (max 30% penalty)
+  const suppressionAccPenalty = 1 - (unit._suppression ?? 0) * 0.3;
+  const accuracy = fireDecision.accuracy * suppressionAccPenalty;
+  const maxSpread = Math.PI / 6;
+  const spread = (1.0 - accuracy) * maxSpread;
+  const angle = baseAngle + (Math.random() - 0.5) * 2 * spread;
+
+  const projSpeed = unit.projectileSpeed || 400;
+  b.projectiles.push({
+    x: unit.x,
+    y: unit.y,
+    vx: Math.cos(angle) * projSpeed,
+    vy: Math.sin(angle) * projSpeed,
+    damage,
+    owner: unit.team || (unit.isHero ? 'player' : 'player'),
+    sourceId: unit.id,
+    attackerTier: getArmorTier(unit),
+    type: projType
+  });
+
+  if (b._debugLog) {
+    const factorStr = fireDecision.factors
+      ? fireDecision.factors.map(f => `${f.name}:${f.value.toFixed(2)}`).join(' ')
+      : `stab:${(unit.stability||0).toFixed(2)}`;
+    b._debugLog.push({
+      t: now,
+      who: unit.id,
+      team: unit.team === 'enemy' ? 'red' : 'blue',
+      type: 'fire',
+      x: Math.round(unit.x), y: Math.round(unit.y),
+      action: 'fire',
+      target: targetEntity?.id || '?',
+      acc: accuracy.toFixed(2),
+      dmg: damage,
+      detail: `${factorStr} dist:${Math.round(Math.sqrt(dx*dx+dy*dy))}`
+    });
   }
+
+  return true;
 }
 
-// Set custom enemy AI parameters
-export function setCustomEnemyAI(enemy, params) {
-  enemy.aiType = { ...EnemyAIType.BASIC, ...params };
+// Utility kept for compatibility
+export function findNearestEnemy(unit, enemies) {
+  let nearest = null;
+  let nearestDist = Infinity;
+  for (const e of enemies) {
+    if (e.dead) continue;
+    const d = distanceBetween(unit, e);
+    if (d < nearestDist) {
+      nearestDist = d;
+      nearest = e;
+    }
+  }
+  return nearest ? { enemy: nearest, distance: nearestDist } : { enemy: null, distance: Infinity };
 }

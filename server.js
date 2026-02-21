@@ -120,6 +120,61 @@ app.delete('/api/debug/log', (req, res) => {
   }
 });
 
+// POST /api/debug/fire-range - Save fire range snapshot (optionally named)
+const FR_LOG_DIR = path.join(DEBUG_DIR, 'fire-range');
+app.post('/api/debug/fire-range', (req, res) => {
+  try {
+    const snapshot = req.body.snapshot || '';
+    const name = req.body.name;
+    if (name) {
+      // Named log — save to fire-range/{name}.log
+      const safeName = String(name).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80);
+      if (!safeName) return res.status(400).json({ success: false, error: 'Invalid name' });
+      ensureDir(FR_LOG_DIR);
+      const logFile = path.join(FR_LOG_DIR, `${safeName}.log`);
+      fs.writeFileSync(logFile, snapshot);
+      console.log(`Fire range log saved: ${safeName}.log (${snapshot.length} chars)`);
+    } else {
+      // Legacy unnamed — save to debug/fire-range.log
+      ensureDir(DEBUG_DIR);
+      const logFile = path.join(DEBUG_DIR, 'fire-range.log');
+      fs.writeFileSync(logFile, snapshot);
+      console.log(`Fire range snapshot saved (${snapshot.length} chars)`);
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/debug/fire-range/logs - List all saved fire range logs
+app.get('/api/debug/fire-range/logs', (req, res) => {
+  try {
+    if (!fs.existsSync(FR_LOG_DIR)) return res.json({ logs: [] });
+    const files = fs.readdirSync(FR_LOG_DIR).filter(f => f.endsWith('.log'));
+    const logs = files.map(f => {
+      const stat = fs.statSync(path.join(FR_LOG_DIR, f));
+      return { name: f.replace('.log', ''), size: stat.size, modified: stat.mtime.toISOString() };
+    });
+    logs.sort((a, b) => new Date(b.modified) - new Date(a.modified));
+    res.json({ logs });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/debug/fire-range/logs/:name - Read a specific fire range log
+app.get('/api/debug/fire-range/logs/:name', (req, res) => {
+  try {
+    const safeName = String(req.params.name).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80);
+    const logFile = path.join(FR_LOG_DIR, `${safeName}.log`);
+    if (!fs.existsSync(logFile)) return res.status(404).json({ success: false, error: 'Log not found' });
+    res.type('text/plain').send(fs.readFileSync(logFile, 'utf8'));
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Shared object definitions
 const gameObjects = {
   units: [
@@ -164,21 +219,28 @@ app.get('/api/terrain/sprites', (req, res) => {
   const brushDir = path.join(__dirname, 'sprites', 'terrain', 'brush');
   const groundDir = path.join(__dirname, 'sprites', 'terrain', 'ground');
   const floorDir = path.join(__dirname, 'sprites', 'terrain', 'floor');
+  const bridgeDir = path.join(__dirname, 'sprites', 'terrain', 'bridge');
+  const bouldersDir = path.join(__dirname, 'sprites', 'terrain', 'boulders');
+  const particlesDir = path.join(__dirname, 'sprites', 'terrain', 'particles');
 
   const result = {
     trees: {},
     brush: {},
+    boulders: {},
+    particles: {},
     ground: [],
     water: [],   // Water sprites (terrain-water-*.png)
-    floor: {}    // Floor patches with variants (floor-oak-1, floor-oak-2, etc.)
+    floor: {},   // Floor patches with variants (floor-oak-1, floor-oak-2, etc.)
+    bridge: {}   // Bridge truss sprites (bridge-truss-1, etc.)
   };
 
-  // Scan ground textures (separating water sprites)
-  if (fs.existsSync(groundDir)) {
-    fs.readdirSync(groundDir)
+  // Scan ground textures from resized/ folder (separating water sprites)
+  const groundResizedDir = path.join(groundDir, 'resized');
+  if (fs.existsSync(groundResizedDir)) {
+    fs.readdirSync(groundResizedDir)
       .filter(f => f.endsWith('.png'))
       .forEach(f => {
-        const name = f.replace('.png', '').replace('terrain-', '');
+        const name = f.replace('.png', '');
         // Separate water sprites into their own category
         if (name.startsWith('water')) {
           result.water.push(name);
@@ -230,6 +292,39 @@ app.get('/api/terrain/sprites', (req, res) => {
         // Format: bush-small-1.png -> key: bush-small-1
         const key = f.replace('.png', '');
         result.brush[key] = `/sprites/terrain/brush/resized/${f}`;
+      });
+  }
+
+  // Scan bridge sprites from resized/ folder (truss overlays, etc.)
+  const bridgeResizedDir = path.join(bridgeDir, 'resized');
+  if (fs.existsSync(bridgeResizedDir)) {
+    fs.readdirSync(bridgeResizedDir)
+      .filter(f => f.endsWith('.png'))
+      .forEach(f => {
+        const key = f.replace('.png', '');
+        result.bridge[key] = `/sprites/terrain/bridge/resized/${f}`;
+      });
+  }
+
+  // Scan boulder sprites from resized/ folder
+  const bouldersResizedDir = path.join(bouldersDir, 'resized');
+  if (fs.existsSync(bouldersResizedDir)) {
+    fs.readdirSync(bouldersResizedDir)
+      .filter(f => f.endsWith('.png'))
+      .forEach(f => {
+        const key = f.replace('.png', '');
+        result.boulders[key] = `/sprites/terrain/boulders/resized/${f}`;
+      });
+  }
+
+  // Scan particle sprites from resized/ folder
+  const particlesResizedDir = path.join(particlesDir, 'resized');
+  if (fs.existsSync(particlesResizedDir)) {
+    fs.readdirSync(particlesResizedDir)
+      .filter(f => f.endsWith('.png'))
+      .forEach(f => {
+        const key = f.replace('.png', '');
+        result.particles[key] = `/sprites/terrain/particles/resized/${f}`;
       });
   }
 

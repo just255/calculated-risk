@@ -34,8 +34,11 @@ import { SCATTER_TYPES, getVisibleScatter, getSpriteKey } from './scatter.js';
  * @param {object} options - Rendering options
  */
 export function renderScatterLayer(ctx, terrainMap, layer, viewport, images, options = {}) {
-  // Get visible items for this layer
-  const visible = getVisibleScatter(terrainMap, viewport, { layer });
+  // Get visible items for this layer (pass through category filter if provided)
+  const filterOpts = { layer };
+  if (options.category) filterOpts.category = options.category;
+  if (options.excludeCategories) filterOpts.excludeCategories = options.excludeCategories;
+  const visible = getVisibleScatter(terrainMap, viewport, filterOpts);
 
   if (visible.length === 0) {
     console.log(`[ScatterRenderer] Layer '${layer}': 0 visible items`);

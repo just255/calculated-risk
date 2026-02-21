@@ -3,16 +3,18 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { State, SubState, HQTab, UNITS, PROJECTILES, UNIT_PROJECTILES, SquadOrder, ENDLESS_VEHICLES } from './constants.js';
-import { Game, newBattlePlan, newCampaign, createAdvancingScenario, createFrontlineScenario, newZoneBattle, newEndlessRun } from './state.js';
+import { Game, newBattlePlan, newCampaign, createAdvancingScenario, createFrontlineScenario, newZoneBattle, newEndlessRun, newFireRangeRun } from './state.js';
 import { initAudio, sound } from './audio.js';
-import { save, load } from './storage.js';
-import { goto, deploy, switchUnit, stopLoop, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, campaignMouseDown, campaignMouseUp, campaignSetAimAngle, campaignClearAimAngle, campaignSetJoystick, campaignClearJoystick, endlessKeyDown, endlessKeyUp, endlessMouseMove, endlessMouseDown, endlessMouseUp } from './game.js';
+import { save, load, saveFRConfig, loadFRConfig, saveFRNamedConfig, loadFRNamedConfigs, deleteFRNamedConfig, migrateFRConfig } from './storage.js';
+import { goto, deploy, switchUnit, stopLoop, stopFireRangeLoop, formatFireRangeLog, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, campaignMouseDown, campaignMouseUp, campaignSetAimAngle, campaignClearAimAngle, campaignSetJoystick, campaignClearJoystick, endlessKeyDown, endlessKeyUp, endlessMouseMove, endlessMouseDown, endlessMouseUp, fireRangeKeyDown, fireRangeKeyUp, fireRangeWheel } from './game.js';
+import { FR_PRESETS } from './fire-range-presets.js';
 import { render, setSubState, fetchAvailableVehicles, fetchUnitVariants, fetchVariantData, getUnitVariants } from './ui.js';
 import { initController, getControllerInput, updateButtonStates, setControllerCallbacks, isControllerConnected } from './controller.js';
 import { initGestures, setResetJoysticksCallback } from './gestures.js';
 import { moveJoystick, shootJoystick, getNearJoystickAnchor, setJoystickAnchor, getClosestJoystickSide, getDragThreshold } from './joystick.js';
 import * as sprites from './sprites.js';
 const { initSprites } = sprites;
+import { loadTerrainImages } from './world-builder/battle-terrain.js';
 
 // Expose sprites module for console testing
 window.sprites = sprites;
@@ -159,6 +161,13 @@ async function initApp() {
   load();
   // Preload PNG sprites (non-blocking, falls back to SVG if missing)
   initSprites();
+  // Preload terrain sprites for PCG battle terrain (non-blocking)
+  loadTerrainImages().then(images => {
+    Game.terrainImages = images;
+    console.log('[main] Terrain sprites preloaded');
+  }).catch(err => {
+    console.warn('[main] Terrain sprite preload failed (battles will use fallback):', err);
+  });
   // Render initial state
   render();
   setupEventHandlers();
@@ -432,7 +441,7 @@ document.getElementById('app').addEventListener('click', e => {
     else if (a === 'hq') goto(State.HQ);
     else if (a === 'sprite-editor') window.open('/sprite-editor.html', '_blank');
     else if (a === 'terrain-editor') window.open('/terrain-editor.html', '_blank');
-    else if (a === 'menu') { stopLoop(); Game.h2h = null; Game.h2hDefenseSlot = undefined; Game.h2hWaveLane = undefined; goto(State.MENU); }
+    else if (a === 'menu') { stopLoop(); Game.h2h = null; Game.h2hDefenseSlot = undefined; Game.h2hWaveLane = undefined; Game.fireRange = null; goto(State.MENU); }
     else if (a === 'pause') goto(State.PAUSED);
     else if (a === 'resume') goto(State.BATTLE);
     else if (a === 'quit') { stopLoop(); goto(State.MENU); }
@@ -1131,7 +1140,11 @@ document.getElementById('app').addEventListener('click', e => {
     }
     else if (a === 'endless-start') {
       if (Game.endless && Game.endless.loadout.vehicle) {
-        Game.endless.wave = 1;
+        // Read debug wave selector (defaults to 1)
+        const waveInput = document.querySelector('.header-wave-select');
+        const startWave = waveInput ? Math.max(1, parseInt(waveInput.value, 10) || 1) : 1;
+        Game.endless.wave = startWave;
+        Game.endless.debugWave = startWave;
         Game.endless.runStartTime = Date.now();
         goto(State.ENDLESS_BATTLE);
       }
@@ -1156,6 +1169,272 @@ document.getElementById('app').addEventListener('click', e => {
     else if (a === 'endless-retry') {
       Game.endless = newEndlessRun();
       fetchUnitVariants().then(() => { goto(State.ENDLESS_LOADOUT); render(); });
+    }
+    // Fire Range actions
+    else if (a === 'fire-range') {
+      Game.fireRange = newFireRangeRun();
+      // Restore last config if available
+      const lastCfg = loadFRConfig();
+      if (lastCfg && lastCfg.blueTeam && lastCfg.redTeam) {
+        Game.fireRange.config = lastCfg;
+      }
+      initAudio();
+      goto(State.FIRE_RANGE);
+    }
+    else if (a === 'fr-deploy') {
+      if (Game.fireRange) {
+        // Capture terrain seed from input
+        const seedInput = document.getElementById('fr-terrain-seed');
+        const seedVal = seedInput?.value?.trim();
+        Game.fireRange.config.terrainSeed = seedVal ? parseInt(seedVal, 10) || 0 : null;
+
+        saveFRConfig(Game.fireRange.config);
+        stopFireRangeLoop(); // Destroy BattleRenderer BEFORE nulling battle
+        Game.fireRange.battle = null;
+        Game.fireRange.result = null;
+        goto(State.FIRE_RANGE_BATTLE);
+      }
+    }
+    else if (a === 'fr-config') {
+      if (Game.fireRange) {
+        // Preserve the seed from the current battle so config screen shows it
+        if (Game.fireRange.battle?.terrainSeed) {
+          Game.fireRange.config.terrainSeed = Game.fireRange.battle.terrainSeed;
+        }
+        stopFireRangeLoop(); // Destroy BattleRenderer BEFORE nulling battle
+        Game.fireRange.battle = null;
+        goto(State.FIRE_RANGE);
+      }
+    }
+    else if (a === 'fr-reset') {
+      if (Game.fireRange) {
+        saveFRConfig(Game.fireRange.config);
+        stopFireRangeLoop(); // Destroy BattleRenderer BEFORE nulling battle
+        Game.fireRange.battle = null;
+        Game.fireRange.result = null;
+        goto(State.FIRE_RANGE_BATTLE);
+      }
+    }
+    else if (a === 'fr-speed') {
+      if (Game.fireRange) {
+        Game.fireRange.speed = parseFloat(action.dataset.speed);
+        // Update active state on all speed buttons
+        const bar = action.closest('.fr-speed-bar');
+        if (bar) {
+          bar.querySelectorAll('.speed-btn').forEach(btn => {
+            btn.classList.toggle('active', parseFloat(btn.dataset.speed) === Game.fireRange.speed);
+          });
+        }
+      }
+    }
+    else if (a === 'fr-map-size') {
+      if (Game.fireRange) {
+        Game.fireRange.config.mapSize = action.dataset.size;
+        render();
+      }
+    }
+    else if (a === 'fr-add') {
+      if (Game.fireRange) {
+        const team = action.dataset.team;
+        if (team === 'blue') {
+          Game.fireRange.config.blueTeam.push({ unitId: 'infantry', count: 2, command: 'advance', aggression: 0.5, patience: 0.5, courage: 0.5, discipline: 0.5, initiative: 0.5, veterancy: 0, morale: 0.8, awareness: 0.5, isLeader: false, tgtDistance: 0.7, tgtWeakness: 0.3, tgtThreat: 0.0, tgtValue: 0.0 });
+        } else {
+          Game.fireRange.config.redTeam.push({ unitId: 'infantry', count: 4, command: 'advance', aggression: 0.5, patience: 0.5, courage: 0.5, discipline: 0.5, initiative: 0.5, veterancy: 0, morale: 0.8, awareness: 0.5, isLeader: false, tgtDistance: 0.7, tgtWeakness: 0.3, tgtThreat: 0.0, tgtValue: 0.0 });
+        }
+        render();
+      }
+    }
+    else if (a === 'fr-remove') {
+      if (Game.fireRange) {
+        const team = action.dataset.team;
+        const idx = parseInt(action.dataset.idx, 10);
+        if (team === 'blue') Game.fireRange.config.blueTeam.splice(idx, 1);
+        else Game.fireRange.config.redTeam.splice(idx, 1);
+        render();
+      }
+    }
+    // Expand/collapse slot detail
+    else if (a === 'fr-expand') {
+      if (Game.fireRange) {
+        const team = action.dataset.team;
+        const idx = parseInt(action.dataset.idx, 10);
+        const arr = team === 'blue' ? Game.fireRange.config.blueTeam : Game.fireRange.config.redTeam;
+        if (arr[idx]) {
+          arr[idx]._expanded = !arr[idx]._expanded;
+          render();
+        }
+      }
+    }
+    // Leader toggle (only one per team)
+    else if (a === 'fr-leader') {
+      if (Game.fireRange) {
+        const team = action.dataset.team;
+        const idx = parseInt(action.dataset.idx, 10);
+        const arr = team === 'blue' ? Game.fireRange.config.blueTeam : Game.fireRange.config.redTeam;
+        if (arr[idx]) {
+          const wasLeader = arr[idx].isLeader;
+          // Clear all leaders on this team
+          for (const slot of arr) slot.isLeader = false;
+          // Toggle: if it was the leader, it's now off; otherwise set it
+          arr[idx].isLeader = !wasLeader;
+          render();
+        }
+      }
+    }
+    // Debug option toggles on config screen
+    else if (a === 'fr-debug-toggle') {
+      if (Game.fireRange) {
+        const key = action.dataset?.key || action.closest('[data-key]')?.dataset?.key;
+        if (key) {
+          if (!Game.fireRange.config.debug) Game.fireRange.config.debug = {};
+          Game.fireRange.config.debug[key] = !Game.fireRange.config.debug[key];
+        }
+      }
+    }
+    // Load test preset
+    else if (a === 'fr-preset-load') {
+      if (Game.fireRange) {
+        const sel = document.querySelector('.fr-preset-select');
+        const id = sel?.value;
+        if (id && FR_PRESETS[id]) {
+          Game.fireRange.config = JSON.parse(JSON.stringify(FR_PRESETS[id]));
+          Game.fireRange.scenarioName = id;
+          render();
+        }
+      }
+    }
+    // Save named config
+    else if (a === 'fr-save') {
+      if (Game.fireRange) {
+        const name = prompt('Save config as:');
+        if (name && name.trim()) {
+          saveFRNamedConfig(name.trim(), Game.fireRange.config);
+          action.textContent = 'Saved!';
+          setTimeout(() => { action.textContent = 'Save'; }, 1500);
+        }
+      }
+    }
+    // Load named config
+    else if (a === 'fr-load') {
+      if (Game.fireRange) {
+        const saves = loadFRNamedConfigs();
+        const names = Object.keys(saves);
+        if (names.length === 0) {
+          alert('No saved configs');
+          return;
+        }
+        const choice = prompt('Load config:\\n' + names.map((n, i) => `${i + 1}. ${n}`).join('\\n') + '\\n\\nEnter name or number:');
+        if (!choice) return;
+        let key = choice.trim();
+        // Allow selecting by number
+        const num = parseInt(key, 10);
+        if (num >= 1 && num <= names.length) key = names[num - 1];
+        if (saves[key]) {
+          Game.fireRange.config = migrateFRConfig(JSON.parse(JSON.stringify(saves[key].config)));
+          render();
+        } else {
+          alert('Config not found: ' + key);
+        }
+      }
+    }
+    // Export config as JSON file
+    else if (a === 'fr-export') {
+      if (Game.fireRange) {
+        const json = JSON.stringify(Game.fireRange.config, (k, v) => k === '_expanded' ? undefined : v, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a2 = document.createElement('a');
+        a2.href = url;
+        a2.download = 'fire-range-config.json';
+        a2.click();
+        URL.revokeObjectURL(url);
+      }
+    }
+    // Import config from JSON file
+    else if (a === 'fr-import') {
+      if (Game.fireRange) {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json';
+        input.onchange = () => {
+          const file = input.files[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = () => {
+            try {
+              const imported = JSON.parse(reader.result);
+              if (imported.blueTeam && imported.redTeam) {
+                Game.fireRange.config = migrateFRConfig(imported);
+                render();
+              } else {
+                alert('Invalid config file');
+              }
+            } catch (err) {
+              alert('Failed to parse: ' + err.message);
+            }
+          };
+          reader.readAsText(file);
+        };
+        input.click();
+      }
+    }
+    // Fire Range debug toggles
+    else if (a === 'fr-toggle-overlay') {
+      const b = Game.fireRange?.battle;
+      if (b) {
+        b.debugOverlay = !b.debugOverlay;
+        const btn = action;
+        btn.classList.toggle('active', b.debugOverlay);
+      }
+    }
+    else if (a === 'fr-toggle-terrain-grid') {
+      const b = Game.fireRange?.battle;
+      if (b) {
+        b.showTerrainGrid = !b.showTerrainGrid;
+        const btn = action;
+        btn.classList.toggle('active', b.showTerrainGrid);
+      }
+    }
+    else if (a === 'fr-toggle-panel') {
+      const panel = document.getElementById('fr-debug-panel');
+      if (panel) panel.classList.toggle('collapsed');
+    }
+    else if (a === 'fr-event-filter') {
+      const b = Game.fireRange?.battle;
+      if (b) {
+        const type = action.dataset.type;
+        if (!b._eventFilters) b._eventFilters = {};
+        const wasOn = b._eventFilters[type] !== false;
+        b._eventFilters[type] = !wasOn;
+        action.classList.toggle('active', !wasOn);
+      }
+    }
+    else if (a === 'fr-col-group') {
+      const b = Game.fireRange?.battle;
+      if (b) {
+        const group = action.dataset.group;
+        if (!b._hiddenColGroups) b._hiddenColGroups = {};
+        b._hiddenColGroups[group] = !b._hiddenColGroups[group];
+        action.classList.toggle('active', !b._hiddenColGroups[group]);
+      }
+    }
+    else if (a === 'fr-copy-log') {
+      const b = Game.fireRange?.battle;
+      if (!b) return;
+      const text = formatFireRangeLog(b);
+      const name = Game.fireRange.scenarioName || null;
+      fetch('/api/debug/fire-range', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ snapshot: text, name })
+      }).then(r => r.json()).then(() => {
+        action.textContent = 'Saved!';
+        setTimeout(() => { action.textContent = 'Copy Log'; }, 1500);
+      }).catch(() => {
+        navigator.clipboard.writeText(text);
+        action.textContent = 'Copied!';
+        setTimeout(() => { action.textContent = 'Copy Log'; }, 1500);
+      });
     }
     // Toggle collapsible panels
     else if (a === 'toggle-panel') {
@@ -1507,10 +1786,80 @@ document.getElementById('app').addEventListener('change', e => {
     }
     return;
   }
+
+  // Fire Range config selects and count inputs
+  if (Game.state === State.FIRE_RANGE && Game.fireRange) {
+    const cfg = Game.fireRange.config;
+    const sel = e.target.closest('.fr-select');
+    const cnt = e.target.closest('.fr-count');
+    if (sel) {
+      const team = sel.dataset.team;
+      const idx = parseInt(sel.dataset.idx, 10);
+      const field = sel.dataset.field;
+      if (team === 'blue' && cfg.blueTeam[idx]) cfg.blueTeam[idx][field] = sel.value;
+      else if (team === 'red' && cfg.redTeam[idx]) {
+        cfg.redTeam[idx][field] = sel.value;
+        // Migrate: if setting unitId, clear old enemyType key
+        if (field === 'unitId') delete cfg.redTeam[idx].enemyType;
+      }
+    }
+    if (cnt) {
+      const team = cnt.dataset.team;
+      const idx = parseInt(cnt.dataset.idx, 10);
+      const val = Math.max(1, Math.min(20, parseInt(cnt.value, 10) || 1));
+      if (team === 'blue' && cfg.blueTeam[idx]) cfg.blueTeam[idx].count = val;
+      else if (team === 'red' && cfg.redTeam[idx]) cfg.redTeam[idx].count = val;
+    }
+    return;
+  }
 });
 
-// Input events (for range sliders)
+// Input events (for range sliders and fire range counts)
 document.getElementById('app').addEventListener('input', e => {
+  // Fire Range slider + count inputs
+  if (Game.state === State.FIRE_RANGE && Game.fireRange) {
+    const cfg = Game.fireRange.config;
+    // Personality / veterancy / morale sliders
+    // Sergeant trait sliders
+    const sgtSlider = e.target.closest('.fr-sgt-slider');
+    if (sgtSlider) {
+      const team = sgtSlider.dataset.sgtTeam;
+      const trait = sgtSlider.dataset.sgtTrait;
+      const val = parseFloat(sgtSlider.value);
+      const sgtKey = team === 'blue' ? 'blueSergeant' : 'redSergeant';
+      if (!cfg[sgtKey]) cfg[sgtKey] = {};
+      cfg[sgtKey][trait] = val;
+      const valSpan = sgtSlider.parentElement.querySelector('.fr-slider-val');
+      if (valSpan) valSpan.textContent = val.toFixed(2);
+      return;
+    }
+
+    const slider = e.target.closest('.fr-slider');
+    if (slider) {
+      const team = slider.dataset.team;
+      const idx = parseInt(slider.dataset.idx, 10);
+      const field = slider.dataset.field;
+      const val = parseFloat(slider.value);
+      const arr = team === 'blue' ? cfg.blueTeam : cfg.redTeam;
+      if (arr[idx]) {
+        arr[idx][field] = val;
+        // Update value label
+        const valSpan = slider.parentElement.querySelector('.fr-slider-val');
+        if (valSpan) valSpan.textContent = val.toFixed(2);
+      }
+      return;
+    }
+    // Count inputs
+    const cnt = e.target.closest('.fr-count');
+    if (cnt) {
+      const team = cnt.dataset.team;
+      const idx = parseInt(cnt.dataset.idx, 10);
+      const val = Math.max(1, Math.min(20, parseInt(cnt.value, 10) || 1));
+      if (team === 'blue' && cfg.blueTeam[idx]) cfg.blueTeam[idx].count = val;
+      else if (team === 'red' && cfg.redTeam[idx]) cfg.redTeam[idx].count = val;
+      return;
+    }
+  }
   // Control settings sliders
   const slider = e.target.closest('[data-control]');
   if (slider && Game.state === State.SETTINGS) {
@@ -1538,6 +1887,10 @@ document.addEventListener('keydown', e => {
   if (Game.state === State.ENDLESS_BATTLE) {
     endlessKeyDown(e.key);
   }
+  // Fire Range keyboard (camera pan)
+  if (Game.state === State.FIRE_RANGE_BATTLE) {
+    fireRangeKeyDown(e.key);
+  }
 });
 
 document.addEventListener('keyup', e => {
@@ -1547,6 +1900,10 @@ document.addEventListener('keyup', e => {
   // Endless mode keyboard
   if (Game.state === State.ENDLESS_BATTLE) {
     endlessKeyUp(e.key);
+  }
+  // Fire Range keyboard
+  if (Game.state === State.FIRE_RANGE_BATTLE) {
+    fireRangeKeyUp(e.key);
   }
 });
 
@@ -1593,6 +1950,17 @@ document.addEventListener('mouseup', e => {
     if (plan) plan.isPanning = false;
   }
 });
+
+// Mouse wheel zoom for fire range
+document.addEventListener('wheel', e => {
+  if (Game.state === State.FIRE_RANGE_BATTLE) {
+    const bf = document.querySelector('.endless-battlefield');
+    if (bf && bf.contains(e.target)) {
+      e.preventDefault();
+      fireRangeWheel(e.deltaY);
+    }
+  }
+}, { passive: false });
 
 // ═══════════════════════════════════════════════════════════════
 // MOBILE TOUCH CONTROLS

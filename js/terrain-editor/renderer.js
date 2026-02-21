@@ -11,6 +11,7 @@ import { renderScatterLayer, renderScatterItem, getVisibleScatter, SCATTER_TYPES
 import { updateAnimations, hasActiveAnimations, getActiveAnimationCount, animateStrokes } from '../world-builder/scatter-animation.js';
 // LOD (Level of Detail) system
 import { getPreviewScale, shouldRenderCategory, shouldRenderItem, getTextureScale, getCullMargin, getSpriteScale } from './lod.js';
+import { renderBridgeDecks as _sharedRenderBridgeDecks, renderBridgeTrusses as _sharedRenderBridgeTrusses } from '../world-builder/bridge-renderer.js';
 
 // Ground texture scale (1 = native 256px, 0.25 = 64px tiles = matches cell size)
 const GROUND_TEXTURE_SCALE = 0.25;
@@ -38,6 +39,9 @@ export class Renderer {
       brush: {},
       floor: {},     // Floor patch sprites (discrete sprites with variants)
       particle: {},  // Particle sprites (leaves, needles, twigs)
+      bridge: {},    // Bridge truss sprites (canopy overlay)
+      boulders: {},  // Boulder sprites (hard cover)
+      particles: {}, // Particle sprites (rock-particles, etc.)
       // NEW: Category-based images for scatter system
       tree: {},      // Alias for trees (scatter uses 'tree' category)
     };
@@ -68,6 +72,11 @@ export class Renderer {
     this._waterCacheWaterCount = 0;
     this._waterCacheShoreCount = 0;
     this._waterCacheDepthCount = 0;
+
+    // Cached bridge deck layer (rendered after water so deck is visible over river)
+    this._bridgeDeckCache = null;
+    this._bridgeDeckCacheValid = false;
+    this._bridgeDeckCacheBridgeCount = 0;
 
     // Paint preview layer (for showing strokes during drag painting)
     this._paintPreview = null;
@@ -196,14 +205,24 @@ export class Renderer {
     this._state.on(Events.RENDER_REQUESTED, () => this.requestRender());
 
     // Invalidate caches on major changes (not individual strokes during painting)
-    this._state.on(Events.STROKES_CLEARED, () => { this._invalidateGroundCache(); this._invalidateWaterCache(); this._invalidateCanopyCache(); });
+    this._state.on(Events.STROKES_CLEARED, () => { this._invalidateGroundCache(); this._invalidateWaterCache(); this._invalidateBridgeDeckCache(); this._invalidateCanopyCache(); });
     this._state.on(Events.MAP_LOADED, () => {
-      this._invalidateGroundCache(); this._invalidateWaterCache(); this._invalidateCanopyCache();
+      this._invalidateGroundCache(); this._invalidateWaterCache(); this._invalidateBridgeDeckCache(); this._invalidateCanopyCache();
     });
     this._state.on(Events.MAP_CLEARED, () => {
-      this._invalidateGroundCache(); this._invalidateWaterCache(); this._invalidateCanopyCache();
+      this._invalidateGroundCache(); this._invalidateWaterCache(); this._invalidateBridgeDeckCache(); this._invalidateCanopyCache();
     });
     this._state.on(Events.BASE_LAYER_CHANGED, () => this._invalidateGroundCache());
+
+    // Invalidate bridge caches when debug checkbox toggles
+    const debugCheckbox = document.getElementById('pcg-preview-debug');
+    if (debugCheckbox) {
+      debugCheckbox.addEventListener('change', () => {
+        this._invalidateBridgeDeckCache();
+        this._invalidateCanopyCache();
+        this.requestRender();
+      });
+    }
 
     // Invalidate caches when post-processing settings change (seasonOverrides)
     this._state.on(Events.TOOL_OPTIONS_CHANGED, ({ key }) => {
@@ -223,6 +242,10 @@ export class Renderer {
 
   _invalidateWaterCache() {
     this._waterCacheValid = false;
+  }
+
+  _invalidateBridgeDeckCache() {
+    this._bridgeDeckCacheValid = false;
   }
 
   _invalidateCanopyCache() {
@@ -1018,9 +1041,17 @@ export class Renderer {
     this.requestRender();
   }
 
+  handleResize() {
+    this._handleResize();
+  }
+
   get uiCanvas() {
     return this._canvases.ui;
   }
+
+  /** Screen viewport dimensions in CSS pixels */
+  get screenWidth() { return this._viewportWidth; }
+  get screenHeight() { return this._viewportHeight; }
 
   /**
    * Get list of available water types (populated after loadImages)
@@ -1060,7 +1091,7 @@ export class Renderer {
     spriteManifest.ground.forEach(type => {
       promises.push(this._loadImage(
         `ground-${type}`,
-        `/sprites/terrain/ground/terrain-${type}.png`,
+        `/sprites/terrain/ground/resized/${type}.png`,
         this._images.ground,
         type
       ));
@@ -1070,7 +1101,7 @@ export class Renderer {
     (spriteManifest.water || []).forEach(type => {
       promises.push(this._loadImage(
         `ground-${type}`,
-        `/sprites/terrain/ground/terrain-${type}.png`,
+        `/sprites/terrain/ground/resized/${type}.png`,
         this._images.ground,
         type
       ));
@@ -1093,12 +1124,30 @@ export class Renderer {
       promises.push(this._loadImage(key, path, this._images.floor));
     }
 
+    // Bridge truss sprites
+    for (const [key, path] of Object.entries(spriteManifest.bridge || {})) {
+      promises.push(this._loadImage(key, path, this._images.bridge));
+    }
+
+    // Boulder sprites
+    for (const [key, path] of Object.entries(spriteManifest.boulders || {})) {
+      promises.push(this._loadImage(key, path, this._images.boulders));
+    }
+
+    // Particle sprites (new particles folder)
+    for (const [key, path] of Object.entries(spriteManifest.particles || {})) {
+      promises.push(this._loadImage(key, path, this._images.particles));
+    }
+
     await Promise.all(promises);
     console.log('[Renderer] Images loaded:', {
       ground: Object.keys(this._images.ground).length,
       trees: Object.keys(this._images.trees).length,
       brush: Object.keys(this._images.brush).length,
-      floor: Object.keys(this._images.floor).length
+      floor: Object.keys(this._images.floor).length,
+      bridge: Object.keys(this._images.bridge).length,
+      boulders: Object.keys(this._images.boulders).length,
+      particles: Object.keys(this._images.particles).length
     });
 
     // Invalidate caches now that images are loaded
@@ -1106,6 +1155,20 @@ export class Renderer {
     this._invalidateWaterCache();
     this._invalidateCanopyCache();
     this.requestRender();
+  }
+
+  /**
+   * Returns merged image maps for the scatter renderer.
+   * Single source of truth for category → image map merging.
+   */
+  getScatterImages() {
+    return {
+      tree: this._images.trees,
+      brush: { ...this._images.brush },
+      boulder: this._images.boulders,
+      floor: this._images.floor,
+      particle: { ...this._images.brush, ...this._images.particles }
+    };
   }
 
   _loadImage(name, path, target, key = null) {
@@ -1255,6 +1318,11 @@ export class Renderer {
         this._waterCacheShoreCount !== shoreStrokeCount ||
         this._waterCacheDepthCount !== depthStrokeCount;
 
+    // Check if bridge deck cache needs rebuild
+    const bridgeCount = terrainMap.bridges?.length || 0;
+    const needsBridgeDeckRebuild = !this._bridgeDeckCacheValid ||
+        this._bridgeDeckCacheBridgeCount !== bridgeCount;
+
     // Skip cache rebuilds during drag painting
     // Full rebuild happens on mouseup via endDragPaint()
     if (!this._isDragPainting) {
@@ -1272,6 +1340,11 @@ export class Renderer {
         this._waterCacheShoreCount = shoreStrokeCount;
         this._waterCacheDepthCount = depthStrokeCount;
       }
+
+      if (needsBridgeDeckRebuild) {
+        this._rebuildBridgeDeckCache();
+        this._bridgeDeckCacheBridgeCount = bridgeCount;
+      }
     }
 
     // Draw cached ground layer
@@ -1282,6 +1355,11 @@ export class Renderer {
     // Draw cached water layer (on top of ground)
     if (this._waterCache) {
       ctx.drawImage(this._waterCache, 0, 0);
+    }
+
+    // Draw cached bridge deck layer (on top of water, so deck is visible over river)
+    if (this._bridgeDeckCache) {
+      ctx.drawImage(this._bridgeDeckCache, 0, 0);
     }
 
     // Render floor items directly when:
@@ -1374,20 +1452,17 @@ export class Renderer {
     // Draw forest floor (ground texture radiating from each tree)
     // Skip floor rendering if there are too many items - render directly with viewport culling instead
     const floorItemCount = terrainMap.scatterItems?.filter(i => SCATTER_TYPES[i.type]?.layer === 'ground').length || 0;
-    const MAX_FLOOR_ITEMS_FOR_CACHE = 10000; // Above this, render directly with culling
+    const MAX_FLOOR_ITEMS_FOR_CACHE = 100000; // Always cache floor items for consistent 1x resolution
 
     if (viewSettings.useScatterRendering && floorItemCount <= MAX_FLOOR_ITEMS_FOR_CACHE) {
       // SCATTER SYSTEM: Discrete floor sprites (small maps only)
       const viewport = { x: 0, y: 0, width, height };
-      const images = {
-        tree: this._images.trees,
-        brush: this._images.brush,
-        floor: this._images.floor,
-        particle: this._images.brush
-      };
+      const images = this.getScatterImages();
       // Get post-processing settings from state (applied at render time)
       const postProcessing = this._state.toolOptions?.seasonOverrides || {};
       renderScatterLayer(cacheCtx, terrainMap, 'ground', viewport, images, { postProcessing });
+      // Particles (debris, leaves, rocks) render on ground so units appear above them
+      renderScatterLayer(cacheCtx, terrainMap, 'particle', viewport, images, { postProcessing, skipFilters: true, skipAnimation: true });
       this._floorNotInCache = false; // Floor is in cache
     } else if (viewSettings.useScatterRendering) {
       // Too many floor items - skip caching, will render directly with viewport culling
@@ -1450,32 +1525,40 @@ export class Renderer {
       }
       cacheCtx.restore();
 
-      // Erase shore pixels where ANY water stroke exists
-      // This prevents shores from showing through overlapping water
-      // Skip during drag painting for performance - renders correctly on mouseup
+      // Erase shore pixels where water exists
+      // Use the solid mask (if available from unified rendering) for clean erasure
       if (!this._isDragPainting) {
         cacheCtx.save();
         cacheCtx.globalCompositeOperation = 'destination-out';
         for (const water of waterStrokes) {
           const { x, y, radius, fadeWidth } = water;
-          // Erase the water area (inner part, not the fade edge)
+          const centers = water.centers;
           const innerRadius = Math.max(0, radius - (fadeWidth || 12));
-          const gradient = cacheCtx.createRadialGradient(x, y, innerRadius * 0.8, x, y, radius);
-          gradient.addColorStop(0, 'rgba(0,0,0,1)');
-          gradient.addColorStop(1, 'rgba(0,0,0,0)');
-          cacheCtx.fillStyle = gradient;
-          cacheCtx.beginPath();
-          cacheCtx.arc(x, y, radius, 0, Math.PI * 2);
-          cacheCtx.fill();
+
+          const drawErase = (cx, cy) => {
+            const gradient = cacheCtx.createRadialGradient(cx, cy, innerRadius * 0.8, cx, cy, radius);
+            gradient.addColorStop(0, 'rgba(0,0,0,1)');
+            gradient.addColorStop(1, 'rgba(0,0,0,0)');
+            cacheCtx.fillStyle = gradient;
+            cacheCtx.beginPath();
+            cacheCtx.arc(cx, cy, radius, 0, Math.PI * 2);
+            cacheCtx.fill();
+          };
+
+          if (centers && centers.length > 0) {
+            for (const c of centers) drawErase(c.x, c.y);
+          } else {
+            drawErase(x, y);
+          }
         }
         cacheCtx.restore();
       }
     }
 
-    // Draw water strokes on top
-    for (const stroke of waterStrokes) {
-      this._renderWaterStroke(cacheCtx, stroke, previewMode);
-    }
+    // Draw water using unified mask approach:
+    // 1) Solid circles → mask  2) Blur mask  3) Clip water texture
+    // This eliminates per-circle scalloped edges
+    this._renderWaterUnifiedMask(cacheCtx, waterStrokes, width, height, previewMode);
 
     // Render water depth using per-stroke gradients
     // Skip during drag painting for performance - depth renders on mouseup
@@ -1492,6 +1575,60 @@ export class Renderer {
   }
 
   /**
+   * Rebuild bridge deck cache — renders deck texture along bridge centerline.
+   * Drawn AFTER water so the deck is visible above the river.
+   */
+  _rebuildBridgeDeckCache() {
+    const terrainMap = this._state.terrainMap;
+    const bridges = terrainMap.bridges;
+    const canvasW = this._state.canvasWidth;
+    const canvasH = this._state.canvasHeight;
+
+    if (!bridges || bridges.length === 0) {
+      this._bridgeDeckCache = null;
+      this._bridgeDeckCacheValid = true;
+      return;
+    }
+
+    // Create or resize cache canvas
+    if (!this._bridgeDeckCache ||
+        this._bridgeDeckCache.width !== canvasW ||
+        this._bridgeDeckCache.height !== canvasH) {
+      this._bridgeDeckCache = document.createElement('canvas');
+      this._bridgeDeckCache.width = canvasW;
+      this._bridgeDeckCache.height = canvasH;
+    }
+
+    const ctx = this._bridgeDeckCache.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, canvasW, canvasH);
+
+    _sharedRenderBridgeDecks(ctx, bridges, this._images.ground);
+
+    // Debug: draw deck bounds (only when PCG debug checkbox is checked)
+    const _bridgeDebug = document.getElementById('pcg-preview-debug')?.checked;
+    if (_bridgeDebug) for (const bridge of bridges) {
+      const { x, y, width: deckWidth, length, dirX, dirY } = bridge;
+      const angle = Math.atan2(dirY, dirX);
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(angle);
+      ctx.strokeStyle = 'cyan';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.strokeRect(-length / 2, -deckWidth / 2, length, deckWidth);
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'cyan';
+      ctx.font = '12px monospace';
+      ctx.fillText(`DECK ${Math.round(length)}×${Math.round(deckWidth)}`, -length / 2 + 4, -deckWidth / 2 - 6);
+      ctx.restore();
+    }
+
+    this._bridgeDeckCacheValid = true;
+    console.log(`[Renderer] Bridge deck cache rebuilt (${bridges.length} bridge(s))`);
+  }
+
+  /**
    * Core texture stroke renderer - renders any texture with alpha fade
    * @param {CanvasRenderingContext2D} ctx - Target canvas context
    * @param {string} textureType - Texture key in this._images.ground
@@ -1502,7 +1639,7 @@ export class Renderer {
    * @param {number} fadeWidth - Edge fade width in display pixels (default 12)
    * @param {boolean} previewMode - Use lower resolution for faster preview rendering
    */
-  _renderTextureStroke(ctx, textureType, x, y, radius, intensity, fadeWidth = 12, previewMode = false) {
+  _renderTextureStroke(ctx, textureType, x, y, radius, intensity, fadeWidth = 12, previewMode = false, noiseOpts = null) {
     const textureImg = this._images.ground[textureType];
 
     if (!textureImg) {
@@ -1585,6 +1722,11 @@ export class Renderer {
     tempCtx.fillStyle = gradient;
     tempCtx.fillRect(0, 0, size, size);
 
+    // Noise alpha: break up the circular shape with patchy blobs
+    if (noiseOpts) {
+      this._applyNoiseAlpha(tempCtx, size, scaledRadius, noiseOpts.seed);
+    }
+
     // Draw to main canvas, scaling down from 4x
     // Use source rect to handle cases where temp canvas is larger than needed
     ctx.save();
@@ -1592,6 +1734,59 @@ export class Renderer {
     ctx.globalAlpha = intensity;
     ctx.drawImage(tempCanvas, 0, 0, size, size, x - radius, y - radius, radius * 2, radius * 2);
     ctx.restore();
+  }
+
+  /**
+   * Apply patchy noise to break up circular ground textures.
+   * Draws overlapping blobs as a destination-in mask so the texture
+   * looks like irregular patches instead of a perfect circle.
+   * @param {CanvasRenderingContext2D} ctx - The temp canvas context (after radial gradient mask)
+   * @param {number} size - Canvas size in pixels
+   * @param {number} scaledRadius - Stroke radius at current scale
+   * @param {number} seed - Deterministic seed for noise pattern
+   */
+  _applyNoiseAlpha(ctx, size, scaledRadius, seed) {
+    // Simple LCG for deterministic per-stroke noise
+    let s = (seed * 2654435761) >>> 0; // hash the seed
+    const rand = () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
+
+    // Get or create noise canvas (reuse across calls, sized to fit)
+    if (!this._noiseCanvas || this._noiseCanvasSize < size) {
+      this._noiseCanvas = document.createElement('canvas');
+      this._noiseCanvas.width = size;
+      this._noiseCanvas.height = size;
+      this._noiseCtx = this._noiseCanvas.getContext('2d');
+      this._noiseCanvasSize = size;
+    }
+    const nCtx = this._noiseCtx;
+    nCtx.setTransform(1, 0, 0, 1, 0, 0);
+    nCtx.clearRect(0, 0, this._noiseCanvas.width, this._noiseCanvas.height);
+
+    // Base: moderate fill so texture is visible everywhere, just patchy
+    nCtx.fillStyle = 'rgba(255,255,255,0.45)';
+    nCtx.fillRect(0, 0, size, size);
+
+    // Overlapping blobs of varying brightness create patchy pattern
+    const blobCount = 5 + Math.floor(rand() * 5);
+    for (let i = 0; i < blobCount; i++) {
+      const bx = rand() * size;
+      const by = rand() * size;
+      const br = scaledRadius * (0.25 + rand() * 0.45);
+      const alpha = 0.6 + rand() * 0.4;
+
+      // Soft blob with radial gradient
+      const grad = nCtx.createRadialGradient(bx, by, 0, bx, by, br);
+      grad.addColorStop(0, `rgba(255,255,255,${alpha})`);
+      grad.addColorStop(0.5, `rgba(255,255,255,${alpha * 0.6})`);
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      nCtx.fillStyle = grad;
+      nCtx.fillRect(bx - br, by - br, br * 2, br * 2);
+    }
+
+    // Apply noise as alpha modulation (destination-in multiplies alpha)
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.drawImage(this._noiseCanvas, 0, 0, size, size, 0, 0, size, size);
+    ctx.globalCompositeOperation = 'source-over';
   }
 
   /**
@@ -1835,18 +2030,105 @@ export class Renderer {
   }
 
   _renderGroundTextureStroke(ctx, stroke, previewMode = false) {
-    const { radius, intensity, textureType, fadeWidth, centers } = stroke;
+    const { radius, intensity, textureType, fadeWidth, centers, noiseAlpha, seed } = stroke;
     const fade = fadeWidth ?? 12;
+    const noiseOpts = noiseAlpha ? { seed: seed || 0 } : null;
 
     // Multi-center stroke: render at each center position
     if (centers && centers.length > 0) {
       for (const center of centers) {
-        this._renderTextureStroke(ctx, textureType, center.x, center.y, radius, intensity, fade, previewMode);
+        this._renderTextureStroke(ctx, textureType, center.x, center.y, radius, intensity, fade, previewMode, noiseOpts);
       }
     } else {
       // Single center (legacy)
-      this._renderTextureStroke(ctx, textureType, stroke.x, stroke.y, radius, intensity, fade, previewMode);
+      this._renderTextureStroke(ctx, textureType, stroke.x, stroke.y, radius, intensity, fade, previewMode, noiseOpts);
     }
+  }
+
+  /**
+   * Render all water strokes using a unified mask approach.
+   * Instead of per-circle fade edges (which create scalloped seams),
+   * this draws solid circles to a mask, blurs the mask for uniform
+   * soft edges, then clips a tiled water texture through it.
+   */
+  _renderWaterUnifiedMask(ctx, waterStrokes, width, height, previewMode) {
+    if (waterStrokes.length === 0) return;
+
+    // Average fadeWidth across all strokes for the blur radius
+    let totalFade = 0;
+    for (const s of waterStrokes) totalFade += (s.fadeWidth ?? 12);
+    const blurRadius = Math.max(4, Math.round(totalFade / waterStrokes.length));
+
+    // ── 1) Build solid union mask (white circles, no per-circle fade) ──
+    if (!this._waterMaskCanvas || this._waterMaskCanvas.width !== width || this._waterMaskCanvas.height !== height) {
+      this._waterMaskCanvas = document.createElement('canvas');
+      this._waterMaskCanvas.width = width;
+      this._waterMaskCanvas.height = height;
+    }
+    const maskCtx = this._waterMaskCanvas.getContext('2d');
+    maskCtx.clearRect(0, 0, width, height);
+    maskCtx.fillStyle = '#fff';
+
+    for (const stroke of waterStrokes) {
+      const centers = stroke.centers;
+      if (centers && centers.length > 0) {
+        for (const c of centers) {
+          maskCtx.beginPath();
+          maskCtx.arc(c.x, c.y, stroke.radius, 0, Math.PI * 2);
+          maskCtx.fill();
+        }
+      } else {
+        maskCtx.beginPath();
+        maskCtx.arc(stroke.x, stroke.y, stroke.radius, 0, Math.PI * 2);
+        maskCtx.fill();
+      }
+    }
+
+    // ── 2) Blur the mask for uniform soft edges ──
+    if (!this._waterBlurCanvas || this._waterBlurCanvas.width !== width || this._waterBlurCanvas.height !== height) {
+      this._waterBlurCanvas = document.createElement('canvas');
+      this._waterBlurCanvas.width = width;
+      this._waterBlurCanvas.height = height;
+    }
+    const blurCtx = this._waterBlurCanvas.getContext('2d');
+    blurCtx.clearRect(0, 0, width, height);
+    blurCtx.filter = `blur(${blurRadius}px)`;
+    blurCtx.drawImage(this._waterMaskCanvas, 0, 0);
+    blurCtx.filter = 'none';
+
+    // ── 3) Tile water texture onto a temp canvas ──
+    if (!this._waterTexCanvas || this._waterTexCanvas.width !== width || this._waterTexCanvas.height !== height) {
+      this._waterTexCanvas = document.createElement('canvas');
+      this._waterTexCanvas.width = width;
+      this._waterTexCanvas.height = height;
+    }
+    const texCtx = this._waterTexCanvas.getContext('2d');
+    texCtx.clearRect(0, 0, width, height);
+
+    const waterType = waterStrokes[0].textureType || 'water';
+    const textureImg = this._images.ground[waterType];
+
+    if (textureImg) {
+      const tileSize = 256 * GROUND_TEXTURE_SCALE;
+      texCtx.imageSmoothingEnabled = false;
+      for (let ty = 0; ty < height; ty += tileSize) {
+        for (let tx = 0; tx < width; tx += tileSize) {
+          texCtx.drawImage(textureImg, tx, ty, tileSize, tileSize);
+        }
+      }
+    } else {
+      // Fallback solid color
+      texCtx.fillStyle = '#1e5a8c';
+      texCtx.fillRect(0, 0, width, height);
+    }
+
+    // ── 4) Clip texture with blurred mask ──
+    texCtx.globalCompositeOperation = 'destination-in';
+    texCtx.drawImage(this._waterBlurCanvas, 0, 0);
+    texCtx.globalCompositeOperation = 'source-over';
+
+    // ── 5) Draw masked texture onto the water cache ──
+    ctx.drawImage(this._waterTexCanvas, 0, 0);
   }
 
   _renderWaterStroke(ctx, stroke, previewMode = false) {
@@ -2214,10 +2496,10 @@ export class Renderer {
       ? terrainMap.scatterItems
       : terrainMap.scatterItems.slice(this._groundCacheScatterCount);
 
-    // Filter to floor items only (ground layer)
+    // Filter to floor items (ground layer) and particles (now also on ground)
     const floorItems = itemsToRender.filter(item => {
       const config = SCATTER_TYPES[item.type];
-      return config && config.layer === 'ground';
+      return config && (config.layer === 'ground' || config.layer === 'particle');
     });
 
     if (floorItems.length === 0) return;
@@ -2258,12 +2540,7 @@ export class Renderer {
     if (visibleFloor.length === 0) return;
 
     // Prepare images
-    const images = {
-      tree: this._images.trees,
-      brush: this._images.brush,
-      floor: this._images.floor,
-      particle: this._images.brush
-    };
+    const images = this.getScatterImages();
 
     // Render floor items
     for (const item of visibleFloor) {
@@ -2353,6 +2630,7 @@ export class Renderer {
     const brushCount = terrainMap.brushes?.length || 0;
     const particleCount = terrainMap.particles?.length || 0;
     const scatterCount = terrainMap.scatterItems?.length || 0;
+    const bridgeCount = terrainMap.bridges?.length || 0;
 
     // Throttle cache rebuild during drag painting, skip during animations
     const animating = hasActiveAnimations();
@@ -2360,14 +2638,20 @@ export class Renderer {
         this._canopyCacheTreeCount !== treeCount ||
         this._canopyCacheBrushCount !== brushCount ||
         this._canopyCacheParticleCount !== particleCount ||
-        this._canopyCacheScatterCount !== scatterCount;
+        this._canopyCacheScatterCount !== scatterCount ||
+        this._canopyCacheBridgeCount !== bridgeCount;
 
     // Rebuild cache if needed (skip during drag painting - handled on mouseUp)
     if (needsRebuild && !this._isDragPainting && !animating) {
       this._rebuildCanopyCache();
     }
 
-    // Draw cached canopy layer
+    // Draw unit layer (below canopy, above ground features)
+    if (this._testModeUnitOverlay) {
+      this._testModeUnitOverlay(ctx);
+    }
+
+    // Draw cached canopy layer (above units)
     if (this._canopyCache) {
       const width = this._state.canvasWidth;
       const height = this._state.canvasHeight;
@@ -2378,12 +2662,7 @@ export class Renderer {
     if (this._isDragPainting && terrainMap.scatterItems && scatterCount > this._canopyCacheScatterCount) {
       const newItems = terrainMap.scatterItems.slice(this._canopyCacheScatterCount);
       if (newItems.length > 0) {
-        const images = {
-          tree: this._images.trees,
-          brush: this._images.brush,
-          floor: this._images.floor,
-          particle: this._images.brush
-        };
+        const images = this.getScatterImages();
 
         // Filter to canopy/particle layer items only
         const canopyItems = newItems.filter(item => {
@@ -2456,6 +2735,7 @@ export class Renderer {
     this._canopyCacheBrushCount = terrainMap.brushes?.length || 0;
     this._canopyCacheParticleCount = terrainMap.particles?.length || 0;
     this._canopyCacheScatterCount = terrainMap.scatterItems?.length || 0;
+    this._canopyCacheBridgeCount = terrainMap.bridges?.length || 0;
     const scatterCount = terrainMap.scatterItems?.length || 0;
     const mode = viewSettings.useScatterRendering ? 'scatter' : 'legacy';
     console.log(`[Renderer] Canopy cache rebuilt [${mode}] (${this._canopyCacheTreeCount} trees, ${this._canopyCacheBrushCount} brush, ${this._canopyCacheParticleCount} particles, ${scatterCount} scatter, dpr=${canopyDpr})`);
@@ -2600,14 +2880,7 @@ export class Renderer {
     // Full map viewport (render everything for the cache)
     const viewport = { x: 0, y: 0, width, height };
 
-    // Prepare images for scatter renderer
-    // Map legacy image collections to scatter categories
-    const images = {
-      tree: this._images.trees,      // trees → tree category
-      brush: this._images.brush,     // brush → brush category
-      floor: this._images.floor,     // floor patches
-      particle: this._images.brush   // particles use brush sprites for now
-    };
+    const images = this.getScatterImages();
 
     // Debug: count items by layer and category
     const scatterItems = terrainMap.scatterItems || [];
@@ -2629,13 +2902,67 @@ export class Renderer {
     // Get post-processing settings from state (applied at render time, not generation)
     const postProcessing = this._state.toolOptions?.seasonOverrides || {};
 
-    // Render layers in order: particle (under trees) → canopy (trees, brush)
+    // Render canopy layer only (trees, brush) — particles are now in ground cache
     // skipFilters: true - CSS filters are extremely slow when applied per-item
     // skipAnimation: true - use final alpha/scale values, not mid-animation values (prevents transparent trees in cache)
-    renderScatterLayer(ctx, terrainMap, 'particle', viewport, images, { postProcessing, skipFilters: true, skipAnimation: true });
     renderScatterLayer(ctx, terrainMap, 'canopy', viewport, images, { postProcessing, skipFilters: true, skipAnimation: true });
 
+    // Bridge truss overlay (rendered above canopy)
+    this._renderBridgeTrusses(ctx, terrainMap);
+
     return cache;
+  }
+
+  /**
+   * Render bridge truss sprites as canopy overlay.
+   * Tiles truss sprites along the bridge path, rotated to match bridge direction.
+   */
+  _renderBridgeTrusses(ctx, terrainMap) {
+    const bridges = terrainMap.bridges;
+    if (!bridges || bridges.length === 0) return;
+
+    _sharedRenderBridgeTrusses(ctx, bridges, this._images.bridge);
+
+    // Debug: draw truss body + end cap bounds
+    const _trussDebug = document.getElementById('pcg-preview-debug')?.checked;
+    if (_trussDebug && this._images.bridge) {
+      for (const bridge of bridges) {
+        if (!bridge.trussEnabled) continue;
+        const { x, y, width, length, dirX, dirY, trussVariant } = bridge;
+        const key = `truss-${trussVariant || 1}`;
+        const img = this._images.bridge[key];
+        if (!img) continue;
+
+        const angle = Math.atan2(dirY, dirX);
+        const trussWidth = width * 0.95;
+        const tileHeight = trussWidth * (img.height / img.width);
+        const maxBody = length * 0.85;
+        const totalTiles = Math.max(1, Math.floor(maxBody / tileHeight));
+        const trussLength = totalTiles * tileHeight;
+        const halfTruss = trussLength / 2;
+        const halfDeck = length / 2;
+        const halfTW = Math.round(trussWidth / 2);
+        const capLen = halfDeck - halfTruss;
+
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(angle - Math.PI / 2);
+        ctx.strokeStyle = 'magenta';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.strokeRect(-halfTW, -halfTruss, trussWidth, trussLength);
+        ctx.strokeStyle = 'yellow';
+        if (capLen > 0) {
+          ctx.strokeRect(-halfTW, -halfDeck, trussWidth, capLen);
+          ctx.strokeRect(-halfTW, halfTruss, trussWidth, capLen);
+        }
+        ctx.setLineDash([]);
+        ctx.fillStyle = 'magenta';
+        ctx.font = '12px monospace';
+        ctx.fillText(`TRUSS ${Math.round(trussLength)}×${Math.round(trussWidth)} cap=${Math.round(capLen)}`, -halfTW + 4, -halfDeck - 6);
+        ctx.restore();
+      }
+    }
   }
 
   /**
@@ -2801,6 +3128,16 @@ export class Renderer {
     if (this._brushPreview) {
       this._renderBrushPreview(ctx);
     }
+
+    // Test mode overlay (hero, HUD)
+    if (this._testModeOverlay) {
+      this._testModeOverlay(ctx);
+    }
+  }
+
+  setTestModeOverlay(hudCallback, unitCallback) {
+    this._testModeOverlay = hudCallback;
+    this._testModeUnitOverlay = unitCallback || null;
   }
 
   /**
@@ -2810,12 +3147,7 @@ export class Renderer {
     const items = this._scatterPreview;
     if (!items || items.length === 0) return;
 
-    const images = {
-      tree: this._images.trees,
-      brush: this._images.brush,
-      floor: this._images.floor,
-      particle: this._images.brush
-    };
+    const images = this.getScatterImages();
 
     ctx.save();
     ctx.globalAlpha = 0.45;

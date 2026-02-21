@@ -146,7 +146,7 @@ class SpatialHash {
  * Global spatial hash instance (per terrainMap)
  * Stored on terrainMap._spatialHash
  */
-function getSpatialHash(terrainMap) {
+export function getSpatialHash(terrainMap) {
   if (!terrainMap._spatialHash) {
     terrainMap._spatialHash = new SpatialHash();
     // Index existing items if any
@@ -270,6 +270,9 @@ export function generateScatter(terrainMap, source, type, options = {}) {
   // Existing items to check for collision in dry run mode (for multi-type preview generation)
   const existingItems = options.existingItems ?? [];
 
+  // Restrict which variant numbers are used (e.g., [1, 3] = only variants 1 and 3)
+  const allowedVariants = options.allowedVariants ?? null;
+
   // ═══════════════════════════════════════════════════════════════
   // SPACING-BASED DENSITY CALCULATION
   // ═══════════════════════════════════════════════════════════════
@@ -326,8 +329,8 @@ export function generateScatter(terrainMap, source, type, options = {}) {
       }
     }
 
-    // Check water collision (for trees and brush)
-    if (config.category === 'tree' || config.category === 'brush') {
+    // Check water collision (for trees, brush, and boulders)
+    if (config.category === 'tree' || config.category === 'brush' || config.category === 'boulder') {
       const allowInWater = options.allowInWater ?? false;
       if (!allowInWater && terrainMap.strokes) {
         const inWater = terrainMap.strokes.some(s => {
@@ -383,8 +386,8 @@ export function generateScatter(terrainMap, source, type, options = {}) {
       selectedAge = chosen.age;
     }
 
-    // Scale with variance
-    const scaleVariance = config.scaleVariance ?? 0.3;
+    // Scale with variance (options override allows per-stroke control)
+    const scaleVariance = options.scaleVariance ?? config.scaleVariance ?? 0.3;
     const scaleRand = 1 + (seededRandom(itemSeed + 2) - 0.5) * 2 * scaleVariance;
     const finalScale = config.baseScale * ageScale * scaleRand * globalScale;
 
@@ -411,9 +414,9 @@ export function generateScatter(terrainMap, source, type, options = {}) {
 
     if (config.spacing > 0) {
       const isTree = config.category === 'tree';
-      const isBrush = config.category === 'brush';
+      const isBrush = config.category === 'brush' || config.category === 'boulder';
 
-      // Only trees and brush have collision detection
+      // Only trees and brush/boulder have collision detection
       if (isTree || isBrush) {
         // Tree spacing is modified by treeSpacing option (50%-150%)
         const treeSpacing = isTree ? (options.treeSpacing ?? 1.0) : 1.0;
@@ -442,11 +445,11 @@ export function generateScatter(terrainMap, source, type, options = {}) {
           if (!existingConfig) return false;
 
           const existingIsTree = existingConfig.category === 'tree';
-          const existingIsBrush = existingConfig.category === 'brush';
+          const existingIsBrush = existingConfig.category === 'brush' || existingConfig.category === 'boulder';
 
           // Skip if not a relevant collision pair
           if (isTree && !existingIsTree) return false; // Trees only collide with trees
-          if (isBrush && !existingIsBrush && !existingIsTree) return false; // Brush collides with brush and trees
+          if (isBrush && !existingIsBrush && !existingIsTree) return false; // Brush/boulder collides with brush/boulder and trees
           if (!isTree && !isBrush) return false; // floor/particle don't collide here
 
           const dx = existing.x - ix;
@@ -478,8 +481,14 @@ export function generateScatter(terrainMap, source, type, options = {}) {
 
           // ─────────────────────────────────────────────────────────
           // BRUSH VS BRUSH: Use spacing-based collision (like trees)
+          // Boulder vs Boulder: NO collision — free stacking for formations
           // ─────────────────────────────────────────────────────────
           if (isBrush && existingIsBrush) {
+            const isBoulder = config.category === 'boulder';
+            const existingIsBoulder = existingConfig.category === 'boulder';
+            // Boulders never collide with other boulders — stack freely
+            if (isBoulder && existingIsBoulder) return false;
+
             const existingBaseSpacing = existingConfig.spacing || 100;
             const existingEffectiveSpacing = existingBaseSpacing / densityMultiplier;
             const existingSpacing = existingEffectiveSpacing * existing.scale * 4;
@@ -514,7 +523,9 @@ export function generateScatter(terrainMap, source, type, options = {}) {
       scale: finalScale,
       rotation,
       alpha: 1.0,
-      variant: Math.floor(seededRandom(itemSeed + 3) * config.variants) + 1,
+      variant: allowedVariants
+        ? allowedVariants[Math.floor(seededRandom(itemSeed + 3) * allowedVariants.length)]
+        : Math.floor(seededRandom(itemSeed + 3) * config.variants) + 1,
       hueShift: (seededRandom(itemSeed + 6) - 0.5) * COLOR_VARIATION.hueRange,
       brightness: 1 + (seededRandom(itemSeed + 7) - 0.5) * COLOR_VARIATION.brightnessRange,
       saturation: 1 + (seededRandom(itemSeed + 8) - 0.5) * COLOR_VARIATION.saturationRange
@@ -711,6 +722,8 @@ export function spawnChildren(terrainMap, parent, options = {}) {
     // Calculate density: use override if provided, otherwise rule + variance
     const densityVariance = spawnRule.densityVariance ?? 0;
     let density = catOverrides.density ?? (spawnRule.density + Math.floor((seededRandom(baseSeed) - 0.5) * 2 * densityVariance));
+    // Apply per-category density multiplier (e.g., PCG particle density slider)
+    if (catOverrides.densityMult !== undefined) density *= catOverrides.densityMult;
     if (density <= 0) continue;
 
     // Apply age modifier based on child category
@@ -822,7 +835,7 @@ export function spawnChildren(terrainMap, parent, options = {}) {
       }
 
       // Calculate child scale - use override if provided, else spawn rule default
-      const scaleVariance = childConfig.scaleVariance ?? 0.3;
+      const scaleVariance = catOverrides.scaleVariance ?? childConfig.scaleVariance ?? 0.3;
       const scaleRand = 1 + (seededRandom(childSeed + 3) - 0.5) * 2 * scaleVariance;
       // User scale override, or spawn rule default
       const ruleScale = catOverrides.scale ?? spawnRule.scale ?? 0.12;
@@ -988,7 +1001,7 @@ export function regenerateChildrenForStroke(terrainMap, strokeId, options = {}) 
   const parents = terrainMap.scatterItems.filter(item => {
     if (item.strokeId !== strokeId) return false;
     const config = SCATTER_TYPES[item.type];
-    return config && (config.category === 'tree' || config.category === 'brush');
+    return config && (config.category === 'tree' || config.category === 'brush' || config.category === 'boulder');
   });
 
   if (parents.length === 0) return [];
@@ -1187,6 +1200,12 @@ export function getVisibleScatter(terrainMap, viewport, options = {}) {
       if (!config || config.category !== options.category) return false;
     }
 
+    // Exclude categories filter
+    if (options.excludeCategories) {
+      const config = SCATTER_TYPES[item.type];
+      if (config && options.excludeCategories.includes(config.category)) return false;
+    }
+
     return true;
   });
 }
@@ -1322,6 +1341,7 @@ export function generateForestItems(terrainMap, stroke, options = {}) {
     brushRatios = {},
     brushDensity = 1.0,
     brushScale = 0.25,
+    brushScaleVariance = undefined,  // Override per-type scaleVariance (undefined = use config default)
     season = 'summer',
     biome = 'temperate',
     seasonOverrides = {},
@@ -1336,7 +1356,9 @@ export function generateForestItems(terrainMap, stroke, options = {}) {
     // Water collision
     allowInWater = false,
     // Item limits (from LOD system)
-    maxItems = null
+    maxItems = null,
+    // Variant filter (e.g., [1, 3] = only use variants 1 and 3)
+    allowedVariants = null
   } = options;
 
   const { x, y, radius, seed = 42 } = stroke;
@@ -1352,8 +1374,13 @@ export function generateForestItems(terrainMap, stroke, options = {}) {
   }
 
   // Filter out 'dead' from types - it's a modifier, not a real type
-  const speciesTypes = treeTypes.filter(t => t !== 'dead' && !t.endsWith('-dead'));
+  // Exception: if 'dead' is the ONLY type and 'tree-dead' exists in SCATTER_TYPES,
+  // treat it as a standalone species (dead-forest biome)
+  let speciesTypes = treeTypes.filter(t => t !== 'dead' && !t.endsWith('-dead'));
   const deadVariantTypes = treeTypes.filter(t => t.endsWith('-dead'));
+  if (speciesTypes.length === 0 && treeTypes.includes('dead') && SCATTER_TYPES['tree-dead']) {
+    speciesTypes = ['dead'];
+  }
   // Support both old format (treeRatios['dead']) and new format (options.deadRatio)
   const deadRatio = options.deadRatio ?? treeRatios['dead'] ?? 0;
   // Which species can have dead variants (new UI format: ['oak-dead', 'pine-dead'])
@@ -1481,6 +1508,7 @@ export function generateForestItems(terrainMap, stroke, options = {}) {
           density: brushDensity,
           ratioFraction,
           scale: brushScale,
+          scaleVariance: brushScaleVariance,
           spawnChildren: true,
           season,
           biome,
@@ -1489,6 +1517,7 @@ export function generateForestItems(terrainMap, stroke, options = {}) {
           images,
           strokeId,
           allowInWater,
+          allowedVariants,
           maxItems
         }
       );

@@ -4,11 +4,12 @@
 
 import { State, SubState, HQTab, UNITS, ENEMIES, getTypeMultiplier, UNIT_COSTS, H2H_BUDGET, PROJECTILES, UNIT_PROJECTILES, UNIT_COMBAT_STATS, getTerrainSVG, getStanceModifier, getEnemyStance, ZoneOwner, ScenarioType, SHADOW_CONFIG } from './constants.js';
 import { renderBaseTerrainToCanvas, renderCanopyToCanvas } from './world-builder/terrain-renderer.js';
-import { Game, newBattle, newH2H, newCampaign, newCampaignBattle, newEndlessBattle } from './state.js';
+import { Game, newBattle, newH2H, newCampaign, newCampaignBattle, newEndlessBattle, newFireRangeRun, newFireRangeBattle } from './state.js';
 import { sound } from './audio.js';
 import { save } from './storage.js';
 import { render, setSubState, getCustomizedSvg, getCustomizedSvgFrames, getEntitySvg, getEntitySvgFrames, drawCommandUI, getUnitVisual, getUnitShadow } from './ui.js';
 import * as sprites from './sprites.js';
+import { BattleRenderer } from './battle-renderer.js';
 import {
   isBlocked,
   findTargetsInRange,
@@ -16,9 +17,9 @@ import {
   createProjectile,
   updateProjectiles
 } from './combat.js';
+import { isTerrainBlocked, getTerrainSpeedMod } from './terrain-utils.js';
+import { updateSergeant } from './sergeant.js';
 import {
-  isTerrainBlocked,
-  getTerrainSpeedMod,
   updateUnitAI,
   updateEnemyAI,
   issueCommand,
@@ -32,10 +33,29 @@ import {
   clearWaypoints,
   setWaypointsFromGrid,
   recordDamage,
+  applyMoraleEvent,
+  MoraleEvent,
   ENTITY_RADIUS,
   issueFrontLineCommand,
-  assignSmartPositions
+  assignSmartPositions,
+  shareTeamIntel,
+  updateFormation,
+  applySuppression,
+  getArmorTier,
+  getTierDamageMultiplier
 } from './ai.js';
+import {
+  VEHICLE_TURN_RATES,
+  normalizeAngle,
+  smoothRotateToward,
+  parseTankInput as parseTankInputBase,
+  applyTankMovement as applyTankMovementBase,
+  applyTurretAim as applyTurretAimPure,
+  calculateAimAngle as calculateAimAnglePure,
+  parseTankInputExtended,
+  applyTankMovementExtended
+} from './movement.js';
+import { rollModifier, applyModifier, updateModifierEffects, getModifiedDamage } from './elite-modifiers.js';
 
 // Get effective unit stats with upgrades applied
 function getUnitStats(unitIdx) {
@@ -61,6 +81,7 @@ let animFrame = 0; // Animation frame counter for track/wheel animation
 let battleCanvas = null;
 let battleCtx = null;
 let useCanvasRendering = true; // Feature flag for canvas-based animated sprites
+const USE_CANVAS_BATTLE = true; // Feature flag: full canvas battle rendering (BattleRenderer)
 
 // Unique ID counter for units
 let unitIdCounter = 0;
@@ -144,63 +165,14 @@ function setupCampaignCanvas() {
 /**
  * Default turn rates for vehicles (radians per second)
  */
-const VEHICLE_TURN_RATES = {
-  tank: {
-    hull: Math.PI * 0.8,    // ~144 deg/sec - tanks turn slowly
-    turret: Math.PI * 1.5   // ~270 deg/sec - turrets turn faster
-  },
-  light: {
-    hull: Math.PI * 1.2,    // ~216 deg/sec - light vehicles turn faster
-    turret: Math.PI * 2.0   // ~360 deg/sec
-  }
-};
-
-/**
- * Normalize angle to -PI to PI range
- * @param {number} angle - Angle in radians
- * @returns {number} Normalized angle
- */
-function normalizeAngle(angle) {
-  while (angle > Math.PI) angle -= Math.PI * 2;
-  while (angle < -Math.PI) angle += Math.PI * 2;
-  return angle;
-}
-
-/**
- * Smoothly rotate an angle toward a target angle at a max speed
- * Handles angle wrapping correctly (takes shortest path)
- * @param {number} current - Current angle in radians
- * @param {number} target - Target angle in radians
- * @param {number} maxDelta - Maximum rotation this frame in radians
- * @returns {number} New angle in radians
- */
-function smoothRotateToward(current, target, maxDelta) {
-  current = normalizeAngle(current);
-  target = normalizeAngle(target);
-
-  // Calculate shortest rotation direction
-  let diff = target - current;
-  if (diff > Math.PI) diff -= Math.PI * 2;
-  if (diff < -Math.PI) diff += Math.PI * 2;
-
-  // Clamp rotation to max speed
-  if (Math.abs(diff) <= maxDelta) {
-    return target; // Close enough, snap to target
-  }
-
-  // Rotate toward target at max speed
-  return normalizeAngle(current + Math.sign(diff) * maxDelta);
-}
+// NOTE: VEHICLE_TURN_RATES, normalizeAngle, smoothRotateToward imported from movement.js
 
 // Default joystick control settings
 const JOYSTICK_DEFAULTS = {
-  deadzone: 0.25,        // 0-25% = rotate only
-  reverseCone: 22        // degrees from rear that triggers reverse
+  deadzone: 0.25,
+  reverseCone: 22
 };
 
-/**
- * Get joystick control settings (from Game.settings or defaults)
- */
 function getJoystickSettings() {
   const settings = Game.settings?.controls || {};
   return {
@@ -210,110 +182,39 @@ function getJoystickSettings() {
 }
 
 /**
- * Parse input into tank control values
- * @param {object} keys - Keyboard state { w, a, s, d }
- * @param {object} joystickInput - Optional joystick { dx, dy }
- * @param {number} currentHullAngle - Current hull angle in radians (for joystick drive-toward)
- * @returns {object} { moveInput, turnInput, targetHullAngle } moveInput/turnInput -1 to 1, targetHullAngle in radians or null
+ * Parse input into tank control values (with joystick support)
+ * Thin wrapper over shared parseTankInputExtended — passes game-specific joystick settings
  */
 function parseTankInput(keys, joystickInput, currentHullAngle = 0) {
-  let moveInput = 0;  // -1 = backward, 0 = none, 1 = forward
-  let turnInput = 0;  // -1 = left, 0 = none, 1 = right
-  let targetHullAngle = null;  // For joystick drive-toward mode
-
-  // Check for analog joystick input first (drive-toward mode)
-  if (joystickInput && (joystickInput.dx !== 0 || joystickInput.dy !== 0)) {
-    const magnitude = Math.sqrt(joystickInput.dx * joystickInput.dx + joystickInput.dy * joystickInput.dy);
-    const { deadzone, reverseCone } = getJoystickSettings();
-
-    // Calculate target angle from joystick (screen coords: up = -Y)
-    targetHullAngle = Math.atan2(joystickInput.dy, joystickInput.dx);
-
-    // Calculate angle difference to determine if we should reverse
-    let angleDiff = targetHullAngle - currentHullAngle;
-    // Normalize to -PI to PI
-    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-
-    // Check if target is within reverse cone (close to directly behind)
-    const isReverseZone = Math.abs(angleDiff) > Math.PI - reverseCone;
-
-    if (isReverseZone) {
-      // Reverse: flip target angle so we turn the rear toward target
-      targetHullAngle = normalizeAngle(targetHullAngle + Math.PI);
-      // Move backward if past deadzone
-      if (magnitude > deadzone) {
-        moveInput = -((magnitude - deadzone) / (1 - deadzone));  // -1 to 0 scaled
-      }
-    } else {
-      // Forward: move toward target if past deadzone
-      if (magnitude > deadzone) {
-        moveInput = (magnitude - deadzone) / (1 - deadzone);  // 0 to 1 scaled
-      }
-    }
-  } else if (keys) {
-    // WASD tank controls (unchanged)
-    if (keys.w) moveInput = 1;   // Forward
-    if (keys.s) moveInput = -1;  // Backward
-    if (keys.a) turnInput = -1;  // Turn left
-    if (keys.d) turnInput = 1;   // Turn right
-  }
-
-  return { moveInput, turnInput, targetHullAngle };
+  return parseTankInputExtended(keys, joystickInput, currentHullAngle, getJoystickSettings());
 }
 
 /**
  * Apply tank controls to update hull angle and calculate movement
- * @param {object} entity - Entity with hullAngle property
- * @param {number} moveInput - Forward/backward input (-1 to 1)
- * @param {number} turnInput - Left/right turn input (-1 to 1) for keyboard
- * @param {number|null} targetHullAngle - Target hull angle in radians (for joystick drive-toward)
- * @param {number} hullTurnRate - Hull turn rate in radians/sec
- * @param {number} dtSec - Delta time in seconds
- * @returns {object} { dx, dy, isMoving } - Movement direction and state
+ * Thin wrapper — delegates to shared pure function, then mutates entity
  */
 function applyTankMovement(entity, moveInput, turnInput, targetHullAngle, hullTurnRate, dtSec) {
-  // Apply hull turning - either toward target angle (joystick) or via turn input (keyboard)
-  if (targetHullAngle !== null) {
-    // Joystick: smooth rotate toward target angle
-    entity.hullAngle = smoothRotateToward(entity.hullAngle, targetHullAngle, hullTurnRate * dtSec);
-  } else if (turnInput !== 0) {
-    // Keyboard: direct turn rate control
-    entity.hullAngle = normalizeAngle(entity.hullAngle + turnInput * hullTurnRate * dtSec);
-  }
-
-  // Calculate movement in hull direction
-  const isMoving = moveInput !== 0;
-  let dx = 0, dy = 0;
-  if (isMoving) {
-    dx = Math.cos(entity.hullAngle) * moveInput;
-    dy = Math.sin(entity.hullAngle) * moveInput;
-  }
-
-  return { dx, dy, isMoving };
+  const result = applyTankMovementExtended(entity.hullAngle, moveInput, turnInput, targetHullAngle, hullTurnRate, dtSec);
+  entity.hullAngle = result.hullAngle;
+  return { dx: result.dx, dy: result.dy, isMoving: result.isMoving };
 }
 
 /**
  * Update turret aim with smooth rotation
- * @param {object} entity - Entity with angle (turret) and hullAngle
- * @param {number} targetWorldAngle - Target aim angle in world space (radians)
- * @param {number} turretTurnRate - Turret turn rate in radians/sec
- * @param {number} dtSec - Delta time in seconds
+ * Thin wrapper — delegates to shared pure function, then mutates entity
  */
 function applyTurretAim(entity, targetWorldAngle, turretTurnRate, dtSec) {
-  entity.angle = smoothRotateToward(entity.angle, targetWorldAngle, turretTurnRate * dtSec);
+  entity.angle = applyTurretAimPure(entity.angle, targetWorldAngle, turretTurnRate, dtSec);
 }
 
 /**
  * Calculate world aim angle from mouse position
- * @param {object} entity - Entity with x, y position
- * @param {object} mouse - Mouse position { x, y } in screen coords
- * @param {object} camera - Camera position { x, y }
- * @returns {number} World angle in radians
+ * Game-style: camera.x/y are world offsets, camera.zoom scales screen→world
  */
 function calculateAimAngle(entity, mouse, camera) {
-  const worldMouseX = mouse.x + camera.x;
-  const worldMouseY = mouse.y + camera.y;
+  const z = camera.zoom || 1;
+  const worldMouseX = mouse.x / z + camera.x;
+  const worldMouseY = mouse.y / z + camera.y;
   return Math.atan2(worldMouseY - entity.y, worldMouseX - entity.x);
 }
 
@@ -522,12 +423,34 @@ export function goto(newState, data = {}) {
 
       render();
       // Setup canvas after render creates the battlefield element
-      setTimeout(() => setupCampaignCanvas(), 0);
+      if (USE_CANVAS_BATTLE) {
+        setTimeout(() => {
+          const bf = document.querySelector('.campaign-battlefield');
+          if (bf) {
+            const b = Game.campaign.heroBattle;
+            b._battleStartTime = Date.now();
+            b.battleRenderer = new BattleRenderer(bf);
+            b.battleRenderer.init();
+            if (b.terrainCanvases) {
+              b.battleRenderer.setTerrainFromCanvases(
+                b.terrainCanvases.terrainCanvas,
+                b.terrainCanvases.canopyCanvas,
+                b.mapWidth, b.mapHeight
+              );
+            } else {
+              b.battleRenderer.setTerrain(b.terrain, b.cellSize);
+            }
+          }
+        }, 0);
+      } else {
+        setTimeout(() => setupCampaignCanvas(), 0);
+      }
       startCampaignLoop();
       break;
 
     case State.CAMPAIGN_RESULT:
       stopLoop();
+      stopCampaignLoop();
       render();
       break;
 
@@ -542,7 +465,38 @@ export function goto(newState, data = {}) {
         Game.endless.battle = newEndlessBattle(Game.endless.loadout, Game.endless.wave);
         console.log('[game] Created endless battle for wave', Game.endless.wave);
       }
+
+      // Initialize hero sprite animation
+      {
+        const hero = Game.endless.battle.hero;
+        if (hero.animId && useCanvasRendering && !sprites.hasAnimatedUnit(hero.animId)) {
+          sprites.initAnimatedUnit(hero.animId, hero.unitId, hero.variantId || 'default').then(v => {
+            if (v) console.log(`[endless] Hero sprite loaded: ${hero.animId}`);
+          });
+        }
+      }
+
       render();
+      if (USE_CANVAS_BATTLE) {
+        setTimeout(() => {
+          const bf = document.querySelector('.endless-battlefield');
+          if (bf && Game.endless?.battle) {
+            const b = Game.endless.battle;
+            b._battleStartTime = Date.now();
+            b.battleRenderer = new BattleRenderer(bf);
+            b.battleRenderer.init();
+            if (b.terrainCanvases) {
+              b.battleRenderer.setTerrainFromCanvases(
+                b.terrainCanvases.terrainCanvas,
+                b.terrainCanvases.canopyCanvas,
+                b.mapWidth, b.mapHeight
+              );
+            } else {
+              b.battleRenderer.setTerrain(b.terrain, b.cellSize);
+            }
+          }
+        }, 0);
+      }
       startEndlessLoop();
       break;
 
@@ -554,6 +508,57 @@ export function goto(newState, data = {}) {
     case State.ENDLESS_RESULT:
       stopEndlessLoop();
       render();
+      break;
+
+    // Fire Range States
+    case State.FIRE_RANGE:
+      stopFireRangeLoop();
+      render();
+      break;
+
+    case State.FIRE_RANGE_BATTLE:
+      // Create battle from config
+      if (Game.fireRange && !Game.fireRange.battle) {
+        Game.fireRange.battle = newFireRangeBattle(Game.fireRange.config);
+        console.log('[fire-range] Battle created');
+      }
+
+      // Apply pending modifiers (needs ai imports)
+      {
+        const b = Game.fireRange.battle;
+        for (const enemy of b.enemies) {
+          if (enemy._pendingModifier) {
+            applyModifier(enemy, enemy._pendingModifier);
+            setEnemyAIType(enemy, enemy.aiTypeKey || 'BASIC');
+            delete enemy._pendingModifier;
+          } else {
+            setEnemyAIType(enemy, enemy.aiTypeKey || 'BASIC');
+          }
+        }
+      }
+
+      render();
+      if (USE_CANVAS_BATTLE) {
+        setTimeout(() => {
+          const bf = document.querySelector('.endless-battlefield');
+          if (bf && Game.fireRange?.battle && !Game.fireRange.battle.battleRenderer) {
+            const b = Game.fireRange.battle;
+            b._battleStartTime = Date.now();
+            b.battleRenderer = new BattleRenderer(bf);
+            b.battleRenderer.init();
+            if (b.terrainCanvases) {
+              b.battleRenderer.setTerrainFromCanvases(
+                b.terrainCanvases.terrainCanvas,
+                b.terrainCanvases.canopyCanvas,
+                b.mapWidth, b.mapHeight
+              );
+            } else {
+              b.battleRenderer.setTerrain(b.terrain, b.cellSize);
+            }
+          }
+        }, 0);
+      }
+      startFireRangeLoop();
       break;
 
     default:
@@ -721,6 +726,8 @@ export function stopLoop() {
     cancelAnimationFrame(loopId);
     loopId = null;
   }
+  // Stop fire range loop if running
+  stopFireRangeLoop();
   // Clear all animation states when loop stops
   if (useCanvasRendering) {
     sprites.clearAllAnimatedUnits();
@@ -1997,6 +2004,12 @@ function stopCampaignLoop() {
     cancelAnimationFrame(campaignLoopId);
     campaignLoopId = null;
   }
+  // Destroy BattleRenderer to stop its RAF loop and resize observer
+  const b = Game.campaign?.heroBattle;
+  if (b?.battleRenderer) {
+    b.battleRenderer.destroy();
+    b.battleRenderer = null;
+  }
 }
 
 function campaignLoop(t) {
@@ -2038,6 +2051,12 @@ function stopEndlessLoop() {
   if (endlessLoopId) {
     cancelAnimationFrame(endlessLoopId);
     endlessLoopId = null;
+  }
+  // Destroy BattleRenderer to stop its RAF loop and resize observer
+  const b = Game.endless?.battle;
+  if (b?.battleRenderer) {
+    b.battleRenderer.destroy();
+    b.battleRenderer = null;
   }
 }
 
@@ -2095,12 +2114,20 @@ function updateEndlessBattle(dt) {
   hero.x = Math.max(30, Math.min(b.mapWidth - 30, hero.x));
   hero.y = Math.max(30, Math.min(b.mapHeight - 30, hero.y));
 
+  // Track hero velocity (pixels/sec) — used by fire decision pipeline
+  const velDx = hero.x - (hero.lastX || hero.x);
+  const velDy = hero.y - (hero.lastY || hero.y);
+  hero.velocity = dtSec > 0 ? Math.sqrt(velDx * velDx + velDy * velDy) / dtSec : 0;
+
   // Update movement animation
   if (useCanvasRendering && hero.animId) {
     if (isMoving !== hero.isMoving) {
       hero.isMoving = isMoving;
       sprites.setUnitAnimTrigger(hero.animId, isMoving ? 'move' : 'idle');
     }
+    hero.lastX = hero.x;
+    hero.lastY = hero.y;
+  } else {
     hero.lastX = hero.x;
     hero.lastY = hero.y;
   }
@@ -2175,40 +2202,49 @@ function updateEndlessBattle(dt) {
   b.camera.x = Math.max(0, Math.min(b.mapWidth - screenW, targetX));
   b.camera.y = Math.max(0, Math.min(b.mapHeight - screenH, targetY));
 
-  // --- UPDATE ENEMIES ---
+  // --- PROCESS SPAWN QUEUE (staggered reinforcements) ---
+  if (b.spawnQueue && b.spawnQueue.length > 0) {
+    const readyToSpawn = [];
+    const stillWaiting = [];
+    for (const entry of b.spawnQueue) {
+      if (now >= entry.spawnTime) {
+        readyToSpawn.push(entry.enemy);
+      } else {
+        stillWaiting.push(entry);
+      }
+    }
+    for (const enemy of readyToSpawn) {
+      b.enemies.push(enemy);
+      b.enemiesRemaining = Math.max(0, b.enemiesRemaining - 1);
+    }
+    b.spawnQueue = stillWaiting;
+  }
+
+  // --- UPDATE MODIFIER EFFECTS (commander aura, berserker rage) ---
+  updateModifierEffects(b.enemies, dtSec);
+
+  // --- UPDATE ENEMIES (modular AI) ---
   b.enemies.forEach(e => {
     if (e.dead) return;
+    updateEnemyAI(b, e, hero, b.units, now, dtSec);
 
-    // Simple AI: move toward hero and shoot
-    const dx = hero.x - e.x;
-    const dy = hero.y - e.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-
-    if (dist > 150) {
-      // Move toward hero
-      const moveSpeed = e.speed || 60;
-      e.x += (dx / dist) * moveSpeed * dtSec;
-      e.y += (dy / dist) * moveSpeed * dtSec;
-    }
-
-    // Face hero
-    e.angle = Math.atan2(dy, dx);
-
-    // Shoot at hero
-    if (dist < 400 && now - (e.lastShot || 0) > (e.fireRate || 2000)) {
-      e.lastShot = now;
-
-      b.projectiles.push({
-        x: e.x,
-        y: e.y,
-        vx: Math.cos(e.angle) * 300,
-        vy: Math.sin(e.angle) * 300,
-        damage: e.damage || 10,
-        owner: 'enemy',
-        type: 'bullet'
-      });
+    // Check hero defeat after each enemy update
+    if (hero.hp <= 0) {
+      hero.hp = 0;
+      b.result = 'defeat';
+      Game.endless.result = 'death';
+      Game.endless.exitWave = Game.endless.wave;
+      goto(State.ENDLESS_RESULT);
     }
   });
+
+  // --- UPDATE ALLY UNITS ---
+  if (b.units && b.units.length > 0) {
+    b.units.forEach(unit => {
+      if (unit.dead) return;
+      updateUnitAI(b, unit, hero, b.enemies, now, dtSec);
+    });
+  }
 
   // --- UPDATE PROJECTILES ---
   b.projectiles.forEach(p => {
@@ -2221,16 +2257,39 @@ function updateEndlessBattle(dt) {
       return;
     }
 
+    // Boulder collision — artillery arcs over, everything else stops
+    if (p.type !== 'artillery' && b.terrainMap && isTerrainBlocked(b, p.x, p.y)) {
+      p.dead = true;
+      return;
+    }
+
     // Check collision
-    if (p.owner === 'player') {
-      // Hit enemies
+    if (p.owner === 'player' || p.owner === 'ally') {
+      // Player/ally projectiles hit enemies
       b.enemies.forEach(e => {
         if (e.dead || p.dead) return;
         const dx = p.x - e.x;
         const dy = p.y - e.y;
         if (dx * dx + dy * dy < 400) {  // ~20px radius
-          e.hp -= p.damage;
+          // Apply modifier damage reduction (armored, shielded)
+          let dmg = p.damage;
+          if (e.modifier === 'armored') {
+            dmg = Math.round(dmg * 0.5);
+          } else if (e.modifier === 'shielded') {
+            // Frontal damage reduction — check angle between projectile and enemy facing
+            const projAngle = Math.atan2(p.vy, p.vx);
+            let angleDiff = projAngle - e.angle;
+            while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+            while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+            // If projectile is within 90° of enemy's facing (frontal arc)
+            if (Math.abs(angleDiff) > Math.PI / 2) {
+              dmg = Math.round(dmg * 0.3); // 70% frontal reduction
+            }
+          }
+
+          e.hp -= dmg;
           p.dead = true;
+          recordDamage(e, p.sourceId || 'hero', dmg);
           if (e.hp <= 0) {
             e.dead = true;
             b.kills++;
@@ -2240,11 +2299,11 @@ function updateEndlessBattle(dt) {
           }
         }
       });
-    } else {
-      // Hit hero
-      const dx = p.x - hero.x;
-      const dy = p.y - hero.y;
-      if (dx * dx + dy * dy < 625) {  // ~25px radius
+    } else if (p.owner === 'enemy') {
+      // Enemy projectiles hit hero
+      const hdx = p.x - hero.x;
+      const hdy = p.y - hero.y;
+      if (hdx * hdx + hdy * hdy < 625) {  // ~25px radius
         hero.hp -= p.damage;
         p.dead = true;
 
@@ -2260,6 +2319,23 @@ function updateEndlessBattle(dt) {
           goto(State.ENDLESS_RESULT);
         }
       }
+
+      // Enemy projectiles also hit ally units
+      if (!p.dead && b.units) {
+        for (const unit of b.units) {
+          if (unit.dead || p.dead) continue;
+          const udx = p.x - unit.x;
+          const udy = p.y - unit.y;
+          if (udx * udx + udy * udy < 400) {  // ~20px radius
+            unit.hp -= p.damage;
+            p.dead = true;
+            if (unit.hp <= 0) {
+              unit.hp = 0;
+              unit.dead = true;
+            }
+          }
+        }
+      }
     }
   });
 
@@ -2268,7 +2344,8 @@ function updateEndlessBattle(dt) {
 
   // --- CHECK WAVE COMPLETE ---
   const aliveEnemies = b.enemies.filter(e => !e.dead).length;
-  if (aliveEnemies === 0 && b.enemiesRemaining <= 0 && !b.waveComplete) {
+  const queuedEnemies = b.spawnQueue ? b.spawnQueue.length : 0;
+  if (aliveEnemies === 0 && b.enemiesRemaining <= 0 && queuedEnemies === 0 && !b.waveComplete) {
     b.waveComplete = true;
 
     // Short delay then go to between screen
@@ -2281,47 +2358,188 @@ function updateEndlessBattle(dt) {
   }
 }
 
-// Spawn enemies for endless wave
-function spawnEndlessWave(b) {
-  const wave = b.wave;
+// ═══════════════════════════════════════════════════════════════
+// WAVE TEMPLATES — Diablo-style composition variety
+// ═══════════════════════════════════════════════════════════════
+
+const WAVE_TEMPLATES = {
+  swarmer_rush: {
+    groups: [
+      { type: 'swarmer', count: [6, 8], delay: 0, cluster: true },
+      { type: 'grunt', count: [2, 3], delay: 2500 }
+    ],
+    minWave: 1
+  },
+  heavy_advance: {
+    groups: [
+      { type: 'heavy', count: [1, 2], delay: 0 },
+      { type: 'grunt', count: [3, 4], delay: 1000 }
+    ],
+    minWave: 3
+  },
+  mixed_assault: {
+    groups: [
+      { type: 'grunt', count: [3, 4], delay: 0 },
+      { type: 'swarmer', count: [3, 5], delay: 1500, cluster: true },
+      { type: 'heavy', count: [1, 1], delay: 3000 }
+    ],
+    minWave: 2
+  },
+  elite_strike: {
+    groups: [
+      { type: 'swarmer', count: [4, 6], delay: 0, cluster: true },
+      { type: 'grunt', count: [2, 2], delay: 1000 },
+      { type: 'elite', count: [1, 1], delay: 2000 }
+    ],
+    minWave: 5
+  },
+  swarm: {
+    groups: [
+      { type: 'swarmer', count: [10, 15], delay: 0, cluster: true }
+    ],
+    minWave: 1
+  }
+};
+
+// Pick 1-2 templates for a wave based on wave number
+function pickWaveTemplates(wave, sizeMult) {
+  const eligible = Object.entries(WAVE_TEMPLATES)
+    .filter(([, t]) => wave >= t.minWave);
+
+  if (eligible.length === 0) return [WAVE_TEMPLATES.swarmer_rush];
+
+  // Shuffle and pick 1-2
+  const shuffled = eligible.sort(() => Math.random() - 0.5);
+  const count = wave >= 4 ? 2 : 1;
+  return shuffled.slice(0, count).map(([, t]) => t);
+}
+
+// Create a single enemy from definition
+function createEndlessEnemy(b, enemyType, spawnX, spawnY, wave, sizeMult, index) {
   const CELL_SIZE = b.cellSize;
+  const enemyDef = ENEMIES.find(e => e.id === enemyType) || ENEMIES.find(e => e.id === 'grunt');
+  const hpScale = (1 + wave * 0.1) * (1 + (sizeMult - 1) * 0.3);
+  const isArmored = enemyType === 'heavy' || enemyType === 'elite';
+  const isSwarmer = enemyType === 'swarmer';
+  const baseSpeed = isSwarmer ? 90 : (isArmored ? 50 : 70);
+  const unitId = enemyDef.unitId || 'infantry';
+  const animId = `enemy-${unitId}-${index}-${Date.now()}`;
 
-  // Enemy count scales with wave
-  const baseCount = 3;
-  const waveBonus = Math.floor(wave * 1.5);
-  const enemyCount = baseCount + waveBonus;
+  // Assign AI type based on enemy type
+  let aiTypeKey;
+  if (enemyType === 'swarmer') {
+    aiTypeKey = 'SWARMER';
+  } else if (enemyType === 'grunt') {
+    aiTypeKey = Math.random() < 0.2 ? 'RUSHER' : 'BASIC';
+  } else if (enemyType === 'heavy') {
+    aiTypeKey = 'CAUTIOUS';
+  } else if (enemyType === 'elite') {
+    aiTypeKey = Math.random() < 0.3 ? 'FLANKER' : 'HUNTER';
+  } else {
+    aiTypeKey = 'BASIC';
+  }
 
-  b.enemiesRemaining = enemyCount;
+  const enemy = {
+    id: `enemy_${index}_${Date.now()}`,
+    type: enemyType,
+    unitId,
+    x: spawnX,
+    y: spawnY,
+    hp: Math.floor(enemyDef.health * hpScale),
+    maxHp: Math.floor(enemyDef.health * hpScale),
+    damage: enemyDef.damage,
+    speed: baseSpeed + Math.random() * 30,
+    fireRate: isSwarmer ? 3000 : (enemyType === 'elite' ? 1500 : 2000),
+    angle: Math.PI / 2,
+    hullAngle: Math.PI / 2,
+    lastShot: 0,
+    lastAttack: 0,
+    dead: false,
+    stability: 0,
+    aiType: EnemyAIType[aiTypeKey],
+    aiTypeKey,
+    animId
+  };
 
-  // Spawn enemies at top of map
-  for (let i = 0; i < enemyCount; i++) {
-    const spawnX = CELL_SIZE * 2 + Math.random() * (b.mapWidth - CELL_SIZE * 4);
-    const spawnY = CELL_SIZE * 2 + Math.random() * CELL_SIZE * 3;
+  // Apply elite modifier
+  if (enemyType === 'elite' && wave >= 5) {
+    applyModifier(enemy, rollModifier(wave));
+  } else if (enemyType === 'heavy' && wave >= 8 && Math.random() < 0.3) {
+    applyModifier(enemy, rollModifier(wave));
+  }
 
-    // Vary enemy types by wave
-    let enemyType = 'grunt';
-    if (wave >= 3 && Math.random() < 0.3) enemyType = 'heavy';
-    if (wave >= 5 && Math.random() < 0.15) enemyType = 'elite';
-
-    const enemyDef = ENEMIES.find(e => e.type === enemyType) || ENEMIES[0];
-
-    b.enemies.push({
-      id: `enemy_${i}_${Date.now()}`,
-      type: enemyType,
-      x: spawnX,
-      y: spawnY,
-      hp: enemyDef.hp * (1 + wave * 0.1),  // Scale HP with wave
-      maxHp: enemyDef.hp * (1 + wave * 0.1),
-      damage: enemyDef.damage,
-      speed: enemyDef.speed,
-      fireRate: 2000,
-      angle: Math.PI / 2,  // Face down (toward player)
-      lastShot: 0,
-      dead: false
+  // Initialize sprite
+  if (useCanvasRendering) {
+    sprites.initAnimatedUnit(animId, unitId, 'default').then(v => {
+      if (v) sprites.setUnitAnimTrigger(animId, 'move');
     });
   }
 
-  b.enemiesRemaining = 0;  // All spawned immediately for now
+  return enemy;
+}
+
+// Spawn enemies for endless wave using template system
+function spawnEndlessWave(b) {
+  const wave = b.wave;
+  const CELL_SIZE = b.cellSize;
+  const sizeMult = b.enemyMult || 1.0;
+
+  const templates = pickWaveTemplates(wave, sizeMult);
+
+  // Initialize spawn queue for staggered spawns
+  if (!b.spawnQueue) b.spawnQueue = [];
+
+  let totalEnemies = 0;
+  let enemyIndex = 0;
+
+  for (const template of templates) {
+    // Pick a random spawn edge for this template's groups
+    // 0=top, 1=left, 2=right (not bottom — that's player)
+    const edge = Math.floor(Math.random() * 3);
+
+    for (const group of template.groups) {
+      const count = group.count[0] + Math.floor(Math.random() * (group.count[1] - group.count[0] + 1));
+      const scaledCount = Math.round(count * sizeMult);
+
+      for (let i = 0; i < scaledCount; i++) {
+        // Generate spawn position based on edge
+        let spawnX, spawnY;
+        if (edge === 0) { // Top
+          spawnX = CELL_SIZE * 2 + Math.random() * (b.mapWidth - CELL_SIZE * 4);
+          spawnY = CELL_SIZE * 2 + Math.random() * CELL_SIZE * 2;
+        } else if (edge === 1) { // Left
+          spawnX = CELL_SIZE * 2 + Math.random() * CELL_SIZE * 2;
+          spawnY = CELL_SIZE * 2 + Math.random() * (b.mapHeight * 0.6);
+        } else { // Right
+          spawnX = b.mapWidth - CELL_SIZE * 4 + Math.random() * CELL_SIZE * 2;
+          spawnY = CELL_SIZE * 2 + Math.random() * (b.mapHeight * 0.6);
+        }
+
+        // Cluster spawns tight for swarmer groups
+        if (group.cluster && i > 0) {
+          spawnX += (Math.random() - 0.5) * 40;
+          spawnY += (Math.random() - 0.5) * 40;
+        }
+
+        const enemy = createEndlessEnemy(b, group.type, spawnX, spawnY, wave, sizeMult, enemyIndex++);
+
+        if (group.delay > 0) {
+          // Staggered spawn — add to queue
+          b.spawnQueue.push({
+            enemy,
+            spawnTime: Date.now() + group.delay + Math.random() * 500
+          });
+        } else {
+          // Immediate spawn
+          b.enemies.push(enemy);
+        }
+
+        totalEnemies++;
+      }
+    }
+  }
+
+  b.enemiesRemaining = totalEnemies - b.enemies.length; // Remaining in queue
 }
 
 // Draw endless battle - uses shared hero battle rendering
@@ -2398,6 +2616,588 @@ export function endlessMouseUp() {
   if (!b) return;
 
   b.mouse.down = false;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FIRE RANGE — AI battle observer loop
+// ═══════════════════════════════════════════════════════════════
+
+let fireRangeLoopId = null;
+let fireRangeLastT = 0;
+
+function startFireRangeLoop() {
+  if (fireRangeLoopId) return;
+  fireRangeLastT = performance.now();
+  fireRangeLoopId = requestAnimationFrame(fireRangeLoop);
+}
+
+export function stopFireRangeLoop() {
+  if (fireRangeLoopId) {
+    cancelAnimationFrame(fireRangeLoopId);
+    fireRangeLoopId = null;
+  }
+  const b = Game.fireRange?.battle;
+  if (b?.battleRenderer) {
+    b.battleRenderer.destroy();
+    b.battleRenderer = null;
+  }
+}
+
+/** Format a fire range battle state + event log into a human-readable snapshot string. */
+export function formatFireRangeLog(b) {
+  const lines = ['=== FIRE RANGE SNAPSHOT ==='];
+  lines.push(`Result: ${b.result || 'in progress'}`);
+  lines.push(`Map: ${b.gridWidth}x${b.gridHeight} cells, cellSize=${b.cellSize}`);
+  if (Game.fireRange?.scenarioName) lines.push(`Scenario: ${Game.fireRange.scenarioName}`);
+  lines.push('');
+
+  lines.push('BLUE TEAM:');
+  if (b.units) {
+    for (const u of b.units) {
+      const d = u._dbg || {};
+      lines.push(`  ${u.id} [${u.unitId}] | hp:${u.hp}/${u.maxHp} | pos:(${Math.round(u.x)},${Math.round(u.y)}) | state:${d.state||'-'} | mMode:${d.movementMode||'-'} | sup:${d.suppression??0} | target:${d.targetId||'-'} | dist:${d.targetDist||'-'} | stab:${d.stability??'-'} | behavior:${d.behavior||'-'} | range:${u.range||'?'} | fireRate:${u.fireRate||'?'} | dmg:${u.damage||'?'} | spd:${u.speed||'?'} | terrain:${d.terrain||'-'} | cover:${d.cover??0}${d.inCover?' [IN COVER]':''} | vr:${d.viewRange??'?'} | spt:${d.spotted??0} | awr:${d.awareness??'-'} | cvBias:${d.coverBias??'-'} | fmt:${d.formation||'-'}${d.isLead?' [LEAD]':''} slot:${d.formationSlot??'-'} dev:${d.slotDev??'-'} slotXY:${d.slotX!=null?d.slotX+','+d.slotY:'-'} wMul:${d.waitMult??'-'}${u.dead?' | DEAD':''}`);
+    }
+  }
+  lines.push('');
+
+  lines.push('RED TEAM:');
+  if (b.enemies) {
+    for (const e of b.enemies) {
+      const d = e._dbg || {};
+      lines.push(`  ${e.id} [${e.unitId||'?'}] | hp:${e.hp}/${e.maxHp} | pos:(${Math.round(e.x)},${Math.round(e.y)}) | state:${d.state||'-'} | mMode:${d.movementMode||'-'} | sup:${d.suppression??0} | target:${d.targetId||'-'} | dist:${d.targetDist||'-'} | stab:${d.stability??'-'} | type:${d.typeKey||'-'} | range:${e.range||'?'} | fireRate:${e.fireRate||'?'} | dmg:${e.damage||'?'} | spd:${e.speed||'?'} | terrain:${d.terrain||'-'} | cover:${d.cover??0}${d.inCover?' [IN COVER]':''} | vr:${d.viewRange??'?'} | spt:${d.spotted??0} | awr:${d.awareness??'-'} | cvBias:${d.coverBias??'-'} | fmt:${d.formation||'-'}${d.isLead?' [LEAD]':''} slot:${d.formationSlot??'-'} dev:${d.slotDev??'-'} slotXY:${d.slotX!=null?d.slotX+','+d.slotY:'-'} wMul:${d.waitMult??'-'}${e.dead?' | DEAD':''}${e.modifier?' | mod:'+e.modifier:''}`);
+    }
+  }
+  lines.push('');
+
+  const logLen = b._debugLog?.length || 0;
+  lines.push(`EVENT LOG (${logLen} events):`);
+  if (b._debugLog) {
+    for (const ev of b._debugLog) {
+      const ts = ev.t ? ((ev.t - b._debugLog[0]?.t) / 1000).toFixed(1) + 's' : '?';
+      const parts = [`[${ts}]`];
+      if (ev.type) parts.push(`[${ev.type}]`);
+      if (ev.team) parts.push(`(${ev.team})`);
+      parts.push(ev.who || '?');
+      if (ev.x !== undefined) parts.push(`@(${ev.x},${ev.y})`);
+      parts.push(ev.action || '');
+      if (ev.target) parts.push(`\u2192 ${ev.target}`);
+      if (ev.dmg) parts.push(`dmg:${ev.dmg}`);
+      if (ev.acc) parts.push(`acc:${ev.acc}`);
+      if (ev.detail) parts.push(`| ${ev.detail}`);
+      lines.push(`  ${parts.join(' ')}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+function fireRangeLoop(t) {
+  if (Game.state !== State.FIRE_RANGE_BATTLE) {
+    fireRangeLoopId = null;
+    return;
+  }
+
+  const dt = t - fireRangeLastT;
+  fireRangeLastT = t;
+
+  // Speed multiplier: 0=paused, <1=slow-mo, 1=normal, >1=fast-forward
+  const speed = Game.fireRange?.speed ?? 1;
+  if (speed > 0) {
+    if (speed >= 1) {
+      for (let i = 0; i < speed; i++) {
+        updateFireRangeBattle(dt);
+      }
+    } else {
+      // Fractional speed: scale dt down
+      updateFireRangeBattle(dt * speed);
+    }
+  }
+  drawFireRangeBattle();
+
+  fireRangeLoopId = requestAnimationFrame(fireRangeLoop);
+}
+
+function updateFireRangeBattle(dt) {
+  const fr = Game.fireRange;
+  const b = fr?.battle;
+  if (!b || b.result) return;
+
+  const dtSec = dt / 1000;
+  const now = Date.now();
+  const hero = b.hero;
+
+  // --- UPDATE MODIFIER EFFECTS ---
+  updateModifierEffects(b.enemies, dtSec);
+
+  // --- DEBUG: NO COOLDOWNS ---
+  if (b.debug?.noCooldowns) {
+    if (b.units) for (const u of b.units) { u.lastShot = 0; u.lastAttack = 0; }
+    if (b.enemies) for (const e of b.enemies) { e.lastShot = 0; e.lastAttack = 0; }
+  }
+
+  // --- UPDATE SERGEANTS (before formations — sets commands/waypoints/formations) ---
+  if (b._sergeants) {
+    b._now = now;
+    updateSergeant(b, b._sergeants.red,  b.enemies, b.units || [], now);
+    if (b.units) updateSergeant(b, b._sergeants.blue, b.units, b.enemies, now);
+  }
+
+  // --- UPDATE FORMATIONS (before brains so units know their slots) ---
+  updateFormation(b, b.enemies, b.units || [], now);
+  if (b.units) updateFormation(b, b.units, b.enemies, now);
+
+  // --- UPDATE ENEMIES (modular AI) ---
+  b.enemies.forEach(e => {
+    if (e.dead) return;
+    updateEnemyAI(b, e, hero, b.units, now, dtSec);
+  });
+
+  // --- UPDATE ALLY UNITS ---
+  if (b.units && b.units.length > 0) {
+    b.units.forEach(unit => {
+      if (unit.dead) return;
+      updateUnitAI(b, unit, hero, b.enemies, now, dtSec);
+    });
+  }
+
+  // --- SHARE SPOTTED INTEL between team members ---
+  shareTeamIntel(b.enemies, now);
+  if (b.units) shareTeamIntel(b.units, now);
+
+  // --- UPDATE PROJECTILES ---
+  b.projectiles.forEach(p => {
+    p.x += p.vx * dtSec;
+    p.y += p.vy * dtSec;
+
+    if (p.x < 0 || p.x > b.mapWidth || p.y < 0 || p.y > b.mapHeight) {
+      p.dead = true;
+      return;
+    }
+
+    // Boulder collision — artillery arcs over, everything else stops
+    if (p.type !== 'artillery' && b.terrainMap && isTerrainBlocked(b, p.x, p.y)) {
+      p.dead = true;
+      return;
+    }
+
+    if (p.owner === 'player' || p.owner === 'ally') {
+      b.enemies.forEach(e => {
+        if (e.dead || p.dead) return;
+        const dx = p.x - e.x;
+        const dy = p.y - e.y;
+        if (dx * dx + dy * dy < 400) {
+          let dmg = p.damage;
+          // Tier-based damage scaling (infantry < light < medium < heavy)
+          const defTier = getArmorTier(e);
+          dmg = Math.round(dmg * getTierDamageMultiplier(p.attackerTier ?? 0, defTier));
+          // Legacy modifier damage reduction
+          if (e.modifier === 'armored') dmg = Math.round(dmg * 0.5);
+          else if (e.modifier === 'shielded') {
+            const projAngle = Math.atan2(p.vy, p.vx);
+            let angleDiff = projAngle - e.angle;
+            while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+            while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+            if (Math.abs(angleDiff) > Math.PI / 2) dmg = Math.round(dmg * 0.3);
+          }
+          e.hp -= dmg;
+          if (e.hp < 0) e.hp = 0;
+          p.dead = true;
+          e._shockTimer = 2; // Awareness shock from taking damage
+          applySuppression(e, 0.25); // Direct hit suppression
+          recordDamage(e, p.sourceId || 'ally', dmg);
+          // Debug: red invincible — prevent death
+          if (b.debug?.redInvincible) {
+            e.hp = e.maxHp; e.dead = false;
+          }
+          if (e.hp <= 0) {
+            e.dead = true; b.kills++;
+            if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: 'blue', type: 'kill', x: Math.round(e.x), y: Math.round(e.y), action: 'kill', target: e.id, dmg, detail: `hp:0/${e.maxHp}` });
+            // Killer gets morale boost
+            const killer = b.units?.find(u => u.id === p.sourceId);
+            if (killer && !killer.dead) applyMoraleEvent(killer, MoraleEvent.LANDED_KILL, 0.5);
+            // Commander death: clear enemy team waypoint
+            if (e.isLeader && b._teamWaypoints) {
+              delete b._teamWaypoints.enemy;
+              if (b._debugLog) b._debugLog.push({ t: now, who: e.id, team: 'red', type: 'movement', x: Math.round(e.x), y: Math.round(e.y), action: 'commander died', detail: 'waypoint cleared' });
+            }
+            // Nearby enemies of dead unit lose morale + gain suppression
+            for (const ally of b.enemies) {
+              if (ally.dead || ally === e) continue;
+              const adx = ally.x - e.x, ady = ally.y - e.y;
+              if (adx * adx + ady * ady < 40000) { // within ~200px
+                applyMoraleEvent(ally, MoraleEvent.ALLY_DIED, 0.5);
+                if (adx * adx + ady * ady < 6400) { // within ~80px — closer = suppression
+                  applySuppression(ally, 0.20);
+                }
+              }
+            }
+          } else {
+            if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: 'blue', type: 'hit', x: Math.round(e.x), y: Math.round(e.y), action: 'hit', target: e.id, dmg, detail: `hp:${e.hp}/${e.maxHp}` });
+          }
+        }
+      });
+    } else if (p.owner === 'enemy') {
+      // Enemy projectiles hit ally units only (no hero in fire range)
+      if (b.units) {
+        for (const unit of b.units) {
+          if (unit.dead || p.dead) continue;
+          const udx = p.x - unit.x;
+          const udy = p.y - unit.y;
+          if (udx * udx + udy * udy < 400) {
+            // Tier-based damage scaling
+            const defTier = getArmorTier(unit);
+            const tierDmg = Math.round(p.damage * getTierDamageMultiplier(p.attackerTier ?? 0, defTier));
+            unit.hp -= tierDmg;
+            p.dead = true;
+            unit._shockTimer = 2; // Awareness shock from taking damage
+            applySuppression(unit, 0.25); // Direct hit suppression
+            // Debug: blue invincible — prevent death
+            if (b.debug?.blueInvincible) {
+              unit.hp = unit.maxHp; unit.dead = false;
+            }
+            if (unit.hp <= 0) {
+              unit.hp = 0; unit.dead = true;
+              if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: 'red', type: 'kill', x: Math.round(unit.x), y: Math.round(unit.y), action: 'kill', target: unit.id, dmg: tierDmg, detail: `hp:0/${unit.maxHp}` });
+              // Killer gets morale boost
+              const killer = b.enemies?.find(en => en.id === p.sourceId);
+              if (killer && !killer.dead) applyMoraleEvent(killer, MoraleEvent.LANDED_KILL, 0.5);
+              // Commander death: clear player team waypoint
+              if (unit.isLeader && b._teamWaypoints) {
+                delete b._teamWaypoints.player;
+                if (b._debugLog) b._debugLog.push({ t: now, who: unit.id, team: 'blue', type: 'movement', x: Math.round(unit.x), y: Math.round(unit.y), action: 'commander died', detail: 'waypoint cleared' });
+              }
+              // Nearby blue allies of dead unit lose morale + gain suppression
+              for (const ally of b.units) {
+                if (ally.dead || ally === unit) continue;
+                const adx = ally.x - unit.x, ady = ally.y - unit.y;
+                if (adx * adx + ady * ady < 40000) { // within ~200px
+                  applyMoraleEvent(ally, MoraleEvent.ALLY_DIED, 0.5);
+                  if (adx * adx + ady * ady < 6400) { // within ~80px — closer = suppression
+                    applySuppression(ally, 0.20);
+                  }
+                }
+              }
+            } else {
+              if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: 'red', type: 'hit', x: Math.round(unit.x), y: Math.round(unit.y), action: 'hit', target: unit.id, dmg: tierDmg, detail: `hp:${unit.hp}/${unit.maxHp}` });
+            }
+          }
+        }
+      }
+    }
+  });
+
+  // --- NEAR-MISS SUPPRESSION --- Projectiles within 30px suppress nearby units
+  b.projectiles.forEach(p => {
+    if (p.dead) return;
+    if (!p._suppressedIds) p._suppressedIds = new Set();
+    const nearMissRadSq = 900; // 30px^2
+    // Allied projectiles suppress enemies, enemy projectiles suppress allies
+    const nearTargets = (p.owner === 'player' || p.owner === 'ally') ? b.enemies : (b.units || []);
+    for (const u of nearTargets) {
+      if (u.dead || p._suppressedIds.has(u.id)) continue;
+      const dx = p.x - u.x, dy = p.y - u.y;
+      if (dx * dx + dy * dy < nearMissRadSq) {
+        applySuppression(u, 0.15);
+        p._suppressedIds.add(u.id);
+      }
+    }
+  });
+
+  b.projectiles = b.projectiles.filter(p => !p.dead);
+
+  // --- CLEAN UP EFFECTS ---
+  b.effects = b.effects.filter(e => {
+    const age = now - e.t;
+    if (e.type === 'muzzle') return age < 80;
+    if (e.type === 'impact') return age < 200;
+    return age < 1000;
+  });
+
+  // --- CAP DEBUG LOG (prevent unbounded memory growth) ---
+  if (b._debugLog && b._debugLog.length > 2000) {
+    b._debugLog = b._debugLog.slice(-1000);
+  }
+
+  // --- AUTO-CAMERA: handled in drawHeroBattle (fit-to-view) ---
+
+  // --- CHECK BATTLE END ---
+  const blueAlive = b.units ? b.units.filter(u => !u.dead).length : 0;
+  const redAlive = b.enemies.filter(e => !e.dead).length;
+
+  if (blueAlive === 0 && redAlive > 0) {
+    b.result = 'red_wins';
+    fr.result = 'red_wins';
+  } else if (redAlive === 0 && blueAlive > 0) {
+    b.result = 'blue_wins';
+    fr.result = 'blue_wins';
+  } else if (blueAlive === 0 && redAlive === 0) {
+    b.result = 'draw';
+    fr.result = 'draw';
+  }
+
+  // Auto-save log when battle ends
+  if (b.result && !b._logSaved) {
+    b._logSaved = true;
+    const now = new Date();
+    const ts = now.getFullYear().toString() +
+      String(now.getMonth() + 1).padStart(2, '0') +
+      String(now.getDate()).padStart(2, '0') + '-' +
+      String(now.getHours()).padStart(2, '0') +
+      String(now.getMinutes()).padStart(2, '0') +
+      String(now.getSeconds()).padStart(2, '0');
+    const name = fr.scenarioName || `manual-${ts}`;
+    const snapshot = formatFireRangeLog(b);
+    fetch('/api/debug/fire-range', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ snapshot, name })
+    }).catch(() => { /* silent — debug only */ });
+  }
+}
+
+let _lastDebugPanelUpdate = 0;
+
+function drawFireRangeBattle() {
+  const b = Game.fireRange?.battle;
+  if (!b) return;
+
+  const bf = document.querySelector('.endless-battlefield');
+  if (!bf) return;
+
+  drawHeroBattle(bf, b);
+
+  // Update HUD
+  const blueAlive = b.units ? b.units.filter(u => !u.dead).length : 0;
+  const blueTotal = b.units ? b.units.length : 0;
+  const redAlive = b.enemies.filter(e => !e.dead).length;
+  const redTotal = b.enemies.length;
+
+  const blueEl = document.querySelector('.fr-team-count.blue');
+  const redEl = document.querySelector('.fr-team-count.red');
+  const statusEl = document.querySelector('.fr-status');
+
+  if (blueEl) blueEl.textContent = `${blueAlive} / ${blueTotal} Blue`;
+  if (redEl) redEl.textContent = `${redAlive} / ${redTotal} Red`;
+  if (statusEl) {
+    if (b.result === 'blue_wins') statusEl.textContent = 'BLUE WINS';
+    else if (b.result === 'red_wins') statusEl.textContent = 'RED WINS';
+    else if (b.result === 'draw') statusEl.textContent = 'DRAW';
+    else statusEl.textContent = 'BATTLE';
+  }
+
+  // Update zoom display
+  const zoomEl = document.querySelector('.fr-zoom-display');
+  if (zoomEl) {
+    const uz = b.camera.userZoom || 1;
+    zoomEl.textContent = uz !== 1 ? `${Math.round(uz * 100)}%` : '';
+  }
+
+  // Update debug panel (throttled to 4 fps for DOM perf)
+  const now = performance.now();
+  if (now - _lastDebugPanelUpdate > 250) {
+    _lastDebugPanelUpdate = now;
+    _updateDebugPanel(b);
+  }
+}
+
+// Column groups for debug panel — togglable
+const DEBUG_COL_GROUPS = {
+  core:    [
+    { key: 'state',    hdr: 'State',  fn: (u, d) => d.state || '-' },
+    { key: 'cmd',      hdr: 'Cmd',    fn: (u, d) => (d.command || '-').slice(0, 6) },
+    { key: 'hp',       hdr: 'HP',     fn: (u) => u.maxHp ? Math.round(u.hp / u.maxHp * 100) + '%' : '-' },
+    { key: 'target',   hdr: 'Target', fn: (u, d) => d.targetId || '-' },
+    { key: 'dist',     hdr: 'Dist',   fn: (u, d) => d.targetDist ?? '-' }
+  ],
+  brain:   [
+    { key: 'agg',      hdr: 'Agg',   fn: (u, d) => d.aggression ?? '-' },
+    { key: 'pat',      hdr: 'Pat',   fn: (u, d) => d.patience ?? '-' },
+    { key: 'crg',      hdr: 'Crg',   fn: (u, d) => d.courage ?? '-' },
+    { key: 'dis',      hdr: 'Dis',   fn: (u, d) => d.discipline ?? '-' },
+    { key: 'mrl',      hdr: 'Mrl',   fn: (u, d) => d.morale ?? '-' },
+    { key: 'vet',      hdr: 'Vet',   fn: (u, d) => d.veterancy ?? '-' },
+    { key: 'panic',    hdr: '!',     fn: (u, d) => d.panicking ? 'PNC' : '' }
+  ],
+  fire:    [
+    { key: 'stab',     hdr: 'Stab',  fn: (u, d) => d.stability ?? '-' },
+    { key: 'cd',       hdr: 'CD',    fn: (u, d) => d.cooldown ?? '-' },
+    { key: 'aim',      hdr: 'Aim ms', fn: (u, d) => d.aimTime ?? '-' },
+    { key: 'acc',      hdr: 'Acc',   fn: (u, d) => d.accuracy ?? '-' },
+    { key: 'canfire',  hdr: 'Fire?', fn: (u, d) => d.canFire == null ? '-' : d.canFire ? 'Y' : 'N' }
+  ],
+  terrain: [
+    { key: 'terrain',  hdr: 'Terr',  fn: (u, d) => (d.terrain || '-') + (d.inCover ? '*' : '') },
+    { key: 'cover',    hdr: 'Cov',   fn: (u, d) => d.cover ?? 0 }
+  ],
+  awareness: [
+    { key: 'awr',      hdr: 'Awr',   fn: (u, d) => d.awareness ?? '-' },
+    { key: 'ini',      hdr: 'Ini',   fn: (u, d) => d.initiative ?? '-' },
+    { key: 'spotted',  hdr: 'Spt',   fn: (u, d) => d.spotted ?? 0 },
+    { key: 'vr',       hdr: 'VR',    fn: (u, d) => d.viewRange ?? '-' },
+    { key: 'cvbias',   hdr: 'CvB',  fn: (u, d) => d.coverBias ?? '-' },
+    { key: 'surv',     hdr: 'Surv',  fn: (u, d) => d.survivalAction || '-' },
+    { key: 'ratio',    hdr: 'S.Rat', fn: (u, d) => d.survivalRatio ?? '-' },
+    { key: 'prone',    hdr: 'Prn',   fn: (u, d) => d.isProne ? 'Y' : (d.isHullDown ? 'HD' : '') },
+    { key: 'cvr',      hdr: 'Cvr',   fn: (u, d) => d.inCover ? 'Y' : '' }
+  ],
+  formation: [
+    { key: 'fmt',      hdr: 'Fmt',   fn: (u, d) => d.formation || '-' },
+    { key: 'slot',     hdr: 'Slot',  fn: (u, d) => d.formationSlot ?? '-' },
+    { key: 'lead',     hdr: 'Lead',  fn: (u, d) => d.isLead ? 'Y' : '' },
+    { key: 'sdev',     hdr: 'SDev',  fn: (u, d) => d.slotDev ?? '-' },
+    { key: 'slotxy',   hdr: 'SlotXY', fn: (u, d) => d.slotX != null ? `${d.slotX},${d.slotY}` : '-' },
+    { key: 'wmul',     hdr: 'Wait',  fn: (u, d) => d.waitMult != null ? d.waitMult : '' },
+    { key: 'fang',     hdr: 'FAng',  fn: (u, d) => d.fmtAngle != null ? `${d.fmtAngle}°` : '' }
+  ],
+  movement: [
+    { key: 'mmode',    hdr: 'MMode', fn: (u, d) => {
+      const m = d.movementMode;
+      if (!m) return '-';
+      // Short abbreviation for display
+      const abbr = { panic_flee: 'PNC', urgent_cover: 'UCvr', survival_action: 'Surv',
+        formation_move: 'Fmt', tactical_bound: 'Bnd', command_execute: 'Cmd', regroup: 'Rgrp' };
+      return abbr[m] || m;
+    }},
+    { key: 'sup',      hdr: 'Sup',   fn: (u, d) => d.suppression ?? 0 }
+  ]
+};
+
+function _updateDebugPanel(b) {
+  const blueTable = document.getElementById('fr-blue-table');
+  const redTable = document.getElementById('fr-red-table');
+  const logEl = document.getElementById('fr-event-log');
+
+  // Build visible columns from toggled groups
+  const hidden = b._hiddenColGroups || {};
+  const cols = [];
+  for (const [group, groupCols] of Object.entries(DEBUG_COL_GROUPS)) {
+    if (!hidden[group]) cols.push(...groupCols);
+  }
+
+  const headerHtml = '<tr><th>ID</th>' + cols.map(c => `<th>${c.hdr}</th>`).join('') + '</tr>';
+
+  if (blueTable && b.units) {
+    let html = headerHtml;
+    for (const u of b.units) {
+      const d = u._dbg || {};
+      const dead = u.dead ? ' style="opacity:0.3"' : '';
+      html += `<tr${dead}><td>${u.id}</td>` + cols.map(c => `<td>${c.fn(u, d)}</td>`).join('') + '</tr>';
+    }
+    blueTable.innerHTML = html;
+  }
+
+  if (redTable && b.enemies) {
+    let html = headerHtml;
+    for (const e of b.enemies) {
+      const d = e._dbg || {};
+      const dead = e.dead ? ' style="opacity:0.3"' : '';
+      html += `<tr${dead}><td>${e.id}</td>` + cols.map(c => `<td>${c.fn(e, d)}</td>`).join('') + '</tr>';
+    }
+    redTable.innerHTML = html;
+  }
+
+  if (logEl && b._debugLog) {
+    // Filter by active event types
+    const filters = b._eventFilters;
+    const filtered = filters
+      ? b._debugLog.filter(ev => !ev.type || filters[ev.type] !== false)
+      : b._debugLog;
+    // Show last 40 events
+    const events = filtered.slice(-40);
+    let html = '';
+    for (const ev of events) {
+      const color = ev.team === 'blue' ? '#4a9eff' : ev.team === 'red' ? '#ff4444' : '#888';
+      const tag = ev.type ? `<span class="fr-log-tag fr-log-${ev.type}">${ev.type}</span> ` : '';
+      html += `<div class="fr-log-entry">${tag}<span style="color:${color}">${ev.who}</span> ${ev.action} <span style="color:#aaa">${ev.target || ''}</span>${ev.dmg ? ` (${ev.dmg} dmg)` : ''}${ev.acc ? ` acc:${ev.acc}` : ''}${ev.detail ? ` <span style="color:#555">${ev.detail}</span>` : ''}</div>`;
+    }
+    logEl.innerHTML = html;
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+}
+
+// Fire Range input handlers (WASD = camera pan only)
+export function fireRangeKeyDown(key) {
+  const b = Game.fireRange?.battle;
+  if (!b) return;
+  const k = key.toLowerCase();
+  if (k === 'w' || k === 'arrowup') b.keys.w = true;
+  if (k === 'a' || k === 'arrowleft') b.keys.a = true;
+  if (k === 's' || k === 'arrowdown') b.keys.s = true;
+  if (k === 'd' || k === 'arrowright') b.keys.d = true;
+
+  // Zoom controls
+  if (k === '=' || k === '+' || k === 'numpadadd') {
+    fireRangeZoom(-1); // zoom in
+  }
+  if (k === '-' || k === 'numpadsubtract') {
+    fireRangeZoom(1); // zoom out
+  }
+  // M = fit whole map
+  if (k === 'm') {
+    fireRangeFitMap();
+  }
+  // F = re-center on leader (exit manual pan)
+  if (k === 'f') {
+    b.camera._manualPan = false;
+  }
+}
+
+export function fireRangeKeyUp(key) {
+  const b = Game.fireRange?.battle;
+  if (!b) return;
+  const k = key.toLowerCase();
+  if (k === 'w' || k === 'arrowup') b.keys.w = false;
+  if (k === 'a' || k === 'arrowleft') b.keys.a = false;
+  if (k === 's' || k === 'arrowdown') b.keys.s = false;
+  if (k === 'd' || k === 'arrowright') b.keys.d = false;
+}
+
+/**
+ * Handle mouse wheel zoom in fire range.
+ * @param {number} deltaY - Wheel delta (positive = scroll down = zoom out)
+ */
+export function fireRangeWheel(deltaY) {
+  fireRangeZoom(deltaY);
+}
+
+function fireRangeZoom(deltaY) {
+  const b = Game.fireRange?.battle;
+  if (!b) return;
+  const step = deltaY > 0 ? -0.1 : 0.1; // scroll down = zoom out
+  const current = b.camera.userZoom || 1;
+  b.camera.userZoom = Math.max(0.15, Math.min(3, current + step));
+}
+
+function fireRangeFitMap() {
+  const b = Game.fireRange?.battle;
+  if (!b) return;
+  const bf = document.querySelector('.endless-battlefield');
+  if (!bf) return;
+
+  const screenW = bf.offsetWidth;
+  const screenH = bf.offsetHeight;
+  const TACTICAL_RADIUS = 600;
+  const baseZoom = Math.min(screenW, screenH) / (TACTICAL_RADIUS * 2);
+
+  // Calculate zoom to fit entire map
+  const fitZoomX = screenW / (b.mapWidth * baseZoom);
+  const fitZoomY = screenH / (b.mapHeight * baseZoom);
+  const fitZoom = Math.min(fitZoomX, fitZoomY);
+
+  // Toggle: if already near fit-map zoom, reset to 1.0
+  const current = b.camera.userZoom || 1;
+  if (Math.abs(current - fitZoom) < 0.05) {
+    b.camera.userZoom = 1;
+    b.camera._manualPan = false;
+  } else {
+    b.camera.userZoom = fitZoom;
+    // Center camera on map
+    const zoom = baseZoom * fitZoom;
+    const viewW = screenW / zoom;
+    const viewH = screenH / zoom;
+    b.camera.x = (b.mapWidth - viewW) / 2;
+    b.camera.y = (b.mapHeight - viewH) / 2;
+    b.camera._manualPan = true;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -3173,6 +3973,12 @@ function updateCampaignBattle(dt) {
       return;
     }
 
+    // Boulder collision — artillery arcs over, everything else stops
+    if (p.type !== 'artillery' && b.terrainMap && isTerrainBlocked(b, p.x, p.y)) {
+      p.hit = true;
+      return;
+    }
+
     // Check hit on enemies (player and ally projectiles)
     if (p.owner === 'player' || p.owner === 'ally') {
       for (const e of b.enemies) {
@@ -3186,8 +3992,8 @@ function updateCampaignBattle(dt) {
           let attackerStance = 'autonomous';
 
           // Get attacker stance
-          if (p.owner === 'ally' && p.sourceUnitId) {
-            const sourceUnit = b.units.find(u => u.id === p.sourceUnitId);
+          if (p.owner === 'ally' && p.sourceId) {
+            const sourceUnit = b.units.find(u => u.id === p.sourceId);
             if (sourceUnit) {
               attackerStance = sourceUnit.stance || 'autonomous';
             }
@@ -3209,8 +4015,8 @@ function updateCampaignBattle(dt) {
           // Record damage for aggro system
           if (p.owner === 'player') {
             recordDamage(e, 'hero', finalDamage);
-          } else if (p.owner === 'ally' && p.sourceUnitId) {
-            recordDamage(e, p.sourceUnitId, finalDamage);
+          } else if (p.owner === 'ally' && p.sourceId) {
+            recordDamage(e, p.sourceId, finalDamage);
           }
 
           if (e.hp <= 0) {
@@ -3342,11 +4148,73 @@ function drawHeroBattle(bf, b) {
 
   const screenW = bf.offsetWidth;
   const screenH = bf.offsetHeight;
-  const cellSize = b.cellSize;
 
-  // Update camera with hero in lower 1/4 of screen
-  b.camera.x = Math.max(0, Math.min(b.mapWidth - screenW, b.hero.x - screenW / 2));
-  b.camera.y = Math.max(0, Math.min(b.mapHeight - screenH, b.hero.y - screenH * 0.75));
+  const TACTICAL_RADIUS = b.fireRange ? 600 : 450;
+  const baseZoom = Math.min(screenW, screenH) / (TACTICAL_RADIUS * 2);
+  // Apply user zoom multiplier (scroll wheel / keyboard)
+  const userZoom = b.camera.userZoom || 1;
+  const zoom = baseZoom * userZoom;
+  const viewW = screenW / zoom;
+  const viewH = screenH / zoom;
+
+  if (b.fireRange) {
+    // Fire Range: smooth follow on blue leader (or free pan with WASD)
+    const leader = b.units?.find(u => !u.dead && u._formationSlot === 0)
+                || b.units?.find(u => !u.dead)
+                || { x: b.mapWidth / 2, y: b.mapHeight / 2 };
+
+    // WASD camera pan override
+    const panSpeed = 400 / zoom; // pixels/sec in world space, faster when zoomed out
+    const dtSec = 1 / 60; // approximate frame dt
+    let panX = 0, panY = 0;
+    if (b.keys.a) panX -= panSpeed * dtSec;
+    if (b.keys.d) panX += panSpeed * dtSec;
+    if (b.keys.w) panY -= panSpeed * dtSec;
+    if (b.keys.s) panY += panSpeed * dtSec;
+
+    if (panX !== 0 || panY !== 0) {
+      // Manual pan mode — move camera directly
+      b.camera.x += panX;
+      b.camera.y += panY;
+      b.camera._manualPan = true;
+    } else if (!b.camera._manualPan) {
+      // Auto-follow blue leader
+      const targetX = leader.x - viewW / 2;
+      const targetY = leader.y - viewH / 2;
+      const clampX = Math.max(0, Math.min(b.mapWidth - viewW, targetX));
+      const clampY = Math.max(0, Math.min(b.mapHeight - viewH, targetY));
+      b.camera.x += (clampX - b.camera.x) * 0.08;
+      b.camera.y += (clampY - b.camera.y) * 0.08;
+    }
+
+    // Clamp camera within map bounds (center if view is larger than map)
+    if (viewW >= b.mapWidth) {
+      b.camera.x = (b.mapWidth - viewW) / 2; // center horizontally
+    } else {
+      b.camera.x = Math.max(0, Math.min(b.mapWidth - viewW, b.camera.x));
+    }
+    if (viewH >= b.mapHeight) {
+      b.camera.y = (b.mapHeight - viewH) / 2; // center vertically
+    } else {
+      b.camera.y = Math.max(0, Math.min(b.mapHeight - viewH, b.camera.y));
+    }
+  } else {
+    // Hero modes: center on hero
+    b.camera.x = Math.max(0, Math.min(b.mapWidth - viewW, b.hero.x - viewW / 2));
+    b.camera.y = Math.max(0, Math.min(b.mapHeight - viewH, b.hero.y - viewH * 0.65));
+  }
+  b.camera.zoom = zoom;
+
+  // ── Canvas rendering path (BattleRenderer) ──
+  if (USE_CANVAS_BATTLE && b.battleRenderer) {
+    b.battleRenderer.setCamera(b.camera.x, b.camera.y, zoom);
+    b.battleRenderer.render(b);
+    drawMinimap(b);
+    return;
+  }
+
+  // ── Legacy DOM rendering path ──
+  const cellSize = b.cellSize;
 
   // Clear previous entities (but keep terrain if already drawn)
   bf.querySelectorAll('.battle-entity').forEach(el => el.remove());
@@ -3532,26 +4400,25 @@ function drawMinimap(b) {
   ctx.fillStyle = '#1a1a1a';
   ctx.fillRect(0, 0, w, h);
 
-  // Draw terrain (simplified colors)
-  const terrainColors = {
-    open: '#4a4035',
-    grass: '#3a5a2a',
-    brush: '#2a4a1a',
-    forest: '#1e3a18',
-    high: '#5a4a3a',
-    water: '#1a4a65',
-    trench: '#3a2a1a',
-    pillbox: '#5a5a5a'
-  };
-
-  const cellW = (b.cellSize * scaleX);
-  const cellH = (b.cellSize * scaleY);
-
-  for (let row = 0; row < b.gridHeight; row++) {
-    for (let col = 0; col < b.gridWidth; col++) {
-      const terrainType = b.terrain[row]?.[col] || 'open';
-      ctx.fillStyle = terrainColors[terrainType] || terrainColors.open;
-      ctx.fillRect(col * cellW, row * cellH, cellW + 0.5, cellH + 0.5);
+  // Draw terrain background
+  if (b.terrainCanvases?.terrainCanvas) {
+    // PCG terrain: draw the pre-rendered ground canvas scaled to minimap
+    ctx.drawImage(b.terrainCanvases.terrainCanvas, 0, 0, w, h);
+  } else {
+    // Fallback: simplified grid colors
+    const terrainColors = {
+      open: '#4a4035', grass: '#3a5a2a', brush: '#2a4a1a',
+      forest: '#1e3a18', high: '#5a4a3a', water: '#1a4a65',
+      trench: '#3a2a1a', pillbox: '#5a5a5a'
+    };
+    const cellW = (b.cellSize * scaleX);
+    const cellH = (b.cellSize * scaleY);
+    for (let row = 0; row < b.gridHeight; row++) {
+      for (let col = 0; col < b.gridWidth; col++) {
+        const terrainType = b.terrain[row]?.[col] || 'open';
+        ctx.fillStyle = terrainColors[terrainType] || terrainColors.open;
+        ctx.fillRect(col * cellW, row * cellH, cellW + 0.5, cellH + 0.5);
+      }
     }
   }
 
@@ -3688,10 +4555,12 @@ export function campaignMouseDown() {
   const b = Game.campaign?.heroBattle;
   if (!b) return;
 
+  const z = b.camera.zoom || 1;
+
   // Handle pending move command
   if (b.pendingCommand === 'MOVE') {
-    const worldX = b.mouse.x + b.camera.x;
-    const worldY = b.mouse.y + b.camera.y;
+    const worldX = b.mouse.x / z + b.camera.x;
+    const worldY = b.mouse.y / z + b.camera.y;
 
     // Issue move command to all units with target position
     issueCommand(b.units, 'move', { x: worldX, y: worldY });
@@ -3702,8 +4571,8 @@ export function campaignMouseDown() {
 
   // Handle concentrate fire targeting mode
   if (b.commandMode === 'selectTarget' && b.commandAction === 'concentrate') {
-    const worldX = b.mouse.x + b.camera.x;
-    const worldY = b.mouse.y + b.camera.y;
+    const worldX = b.mouse.x / z + b.camera.x;
+    const worldY = b.mouse.y / z + b.camera.y;
 
     // Find enemy at click position (check within 40px radius for easier targeting)
     const targetEnemy = findEnemyAtPosition(b, worldX, worldY, 40);

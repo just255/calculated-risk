@@ -78,7 +78,13 @@
       "Skill(build-plan)",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\just_\\\\Downloads\\\\calculated-risk\\\\calculated-risk\\\\sprites\\\\terrain\\\\trees\" -Filter \"*dead*\")",
       "Bash(Select-Object Name)",
-      "Bash(test:*)"
+      "Bash(test:*)",
+      "Bash(git stash pop:*)",
+      "Bash(if exist debug-snapshot.txt type debug-snapshot.txt)",
+      "WebFetch(domain:infantrydrills.com)",
+      "WebFetch(domain:www.steelbeasts.com)",
+      "WebFetch(domain:www.globalsecurity.org)",
+      "WebFetch(domain:www.benning.army.mil)"
     ]
   }
 }

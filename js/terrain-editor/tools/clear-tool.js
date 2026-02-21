@@ -125,6 +125,12 @@ export const ClearTool = {
       if (brushRemoved > 0) anyCleared = true;
     }
 
+    // Clear boulders if mode allows
+    if (clearMode === 'all' || clearMode === 'boulder') {
+      const boulderRemoved = state.clearBouldersAt(x, y, radius, options.falloff || 'hard');
+      if (boulderRemoved > 0) anyCleared = true;
+    }
+
     // Clear water strokes if mode allows
     if (clearMode === 'all' || clearMode === 'water') {
       const removed = this._removeStrokesByType(state, x, y, radius, 'water');

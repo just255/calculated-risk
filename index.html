@@ -8501,10 +8501,13 @@
       border-bottom: 2px solid var(--bg-light);
     }
 
-    .hud-left, .hud-right {
+    .hud-left, .hud-right, .hud-center {
       display: flex;
       align-items: center;
       gap: 16px;
+    }
+    .fps-display {
+      font: bold 13px monospace;
     }
 
     .wave-display {
@@ -8561,6 +8564,24 @@
       position: absolute;
       top: 60px;
       right: 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 8px;
+    }
+
+    .endless-minimap {
+      background: rgba(0, 0, 0, 0.7);
+      border: 1px solid var(--accent-green);
+      border-radius: 6px;
+      padding: 3px;
+    }
+
+    .endless-minimap .minimap-canvas {
+      display: block;
+      border-radius: 4px;
+      width: 80px;
+      height: 80px;
     }
 
     .control-btn {
@@ -8768,6 +8789,602 @@
         flex: 1;
         min-width: 140px;
       }
+    }
+
+    /* ═══ FIRE RANGE ═══ */
+    .fr-config-screen {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      background: var(--bg-dark, #0a0a1a);
+      padding: 12px;
+      overflow-y: auto;
+    }
+    .fr-header {
+      text-align: center;
+      margin-bottom: 12px;
+    }
+    .fr-header h1 {
+      font-size: 1.6rem;
+      letter-spacing: 3px;
+      color: var(--text-primary, #eee);
+      margin: 0;
+    }
+    .fr-subtitle {
+      font-size: 0.75rem;
+      color: var(--text-secondary, #888);
+      margin: 4px 0 0;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+    }
+    .fr-body {
+      display: flex;
+      gap: 16px;
+      flex: 1;
+      min-height: 0;
+    }
+    .fr-team-panel {
+      flex: 1;
+      background: var(--bg-medium, #1a1a2e);
+      border-radius: 8px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .fr-team-title {
+      font-size: 0.85rem;
+      letter-spacing: 2px;
+      margin: 0 0 4px;
+    }
+    .fr-slot-header {
+      display: flex;
+      gap: 6px;
+      font-size: 0.6rem;
+      color: var(--text-secondary, #888);
+      text-transform: uppercase;
+      padding: 0 2px;
+    }
+    .fr-slot-header span { flex: 1; }
+    .fr-slot-header span:nth-child(3) { flex: 0 0 36px; text-align: center; }
+    .fr-slot-header span:nth-child(4) { flex: 0 0 24px; }
+    .fr-slot-header span:nth-child(5) { flex: 0 0 24px; }
+    .fr-slot-header span:nth-child(6) { flex: 0 0 24px; }
+    .fr-slot {
+      background: rgba(255,255,255,0.03);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .fr-slot-main {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 6px;
+    }
+    .fr-slot-detail {
+      padding: 6px 8px 8px;
+      background: rgba(255,255,255,0.02);
+      border-top: 1px solid rgba(255,255,255,0.05);
+    }
+    .fr-tgt-label {
+      font-size: 0.55rem;
+      color: var(--text-secondary, #888);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-top: 6px;
+      margin-bottom: 2px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      padding-top: 4px;
+    }
+    .fr-slider-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px 12px;
+    }
+    .fr-slider-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .fr-slider-label {
+      font-size: 0.6rem;
+      color: var(--text-secondary, #888);
+      width: 28px;
+      flex-shrink: 0;
+      text-transform: uppercase;
+    }
+    .fr-slider {
+      flex: 1;
+      height: 4px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: rgba(255,255,255,0.15);
+      border-radius: 2px;
+      outline: none;
+    }
+    .fr-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #4a9eff;
+      cursor: pointer;
+    }
+    .fr-slider::-moz-range-thumb {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #4a9eff;
+      cursor: pointer;
+      border: none;
+    }
+    .fr-red .fr-slider::-webkit-slider-thumb { background: #ff4444; }
+    .fr-red .fr-slider::-moz-range-thumb { background: #ff4444; }
+    .fr-slider-val {
+      font-size: 0.6rem;
+      color: var(--text-secondary, #888);
+      width: 30px;
+      text-align: right;
+      flex-shrink: 0;
+    }
+    .fr-leader-btn {
+      width: 24px;
+      height: 24px;
+      border: none;
+      background: rgba(255,255,255,0.05);
+      color: #555;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      line-height: 1;
+    }
+    .fr-leader-btn.active {
+      color: #ffd700;
+      background: rgba(255,215,0,0.15);
+    }
+    .fr-expand-btn {
+      width: 24px;
+      height: 24px;
+      border: none;
+      background: rgba(255,255,255,0.05);
+      color: var(--text-secondary, #888);
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 0.65rem;
+      line-height: 1;
+    }
+    .fr-expand-btn:hover { background: rgba(255,255,255,0.1); }
+    .fr-select {
+      flex: 1;
+      background: var(--bg-dark, #0a0a1a);
+      color: var(--text-primary, #eee);
+      border: 1px solid var(--border-color, #333);
+      border-radius: 3px;
+      font-size: 0.7rem;
+      padding: 4px;
+    }
+    .fr-count {
+      width: 36px;
+      text-align: center;
+      background: var(--bg-dark, #0a0a1a);
+      color: var(--text-primary, #eee);
+      border: 1px solid var(--border-color, #333);
+      border-radius: 3px;
+      font-size: 0.7rem;
+      padding: 4px;
+    }
+    .fr-remove {
+      width: 24px;
+      height: 24px;
+      border: none;
+      background: rgba(255,60,60,0.15);
+      color: #f66;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 0.75rem;
+      line-height: 1;
+    }
+    .fr-remove:hover { background: rgba(255,60,60,0.3); }
+    .fr-debug-options {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-top: 8px;
+    }
+    .fr-check {
+      font-size: 0.7rem;
+      color: var(--text-secondary, #888);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+    }
+    .fr-check input[type="checkbox"] {
+      accent-color: #4a9eff;
+    }
+    .fr-sergeant-panel {
+      margin-top: 10px;
+      padding: 6px;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 4px;
+    }
+    .fr-sgt-cols {
+      display: flex;
+      gap: 10px;
+      margin-top: 4px;
+    }
+    .fr-sgt-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .fr-sgt-team {
+      font-size: 0.65rem;
+      font-weight: bold;
+      text-align: center;
+      margin-bottom: 2px;
+    }
+    .fr-sgt-slider {
+      width: 60px !important;
+    }
+    .fr-save-panel {
+      display: flex;
+      gap: 4px;
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }
+    .fr-save-btn {
+      flex: 1;
+      min-width: 50px;
+      padding: 4px 6px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border-color, #333);
+      color: var(--text-secondary, #888);
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 0.65rem;
+      text-transform: uppercase;
+    }
+    .fr-save-btn:hover { background: rgba(255,255,255,0.1); color: var(--text-primary, #eee); }
+    .fr-add-btn {
+      margin-top: 4px;
+      padding: 6px;
+      background: rgba(255,255,255,0.05);
+      border: 1px dashed var(--border-color, #333);
+      color: var(--text-secondary, #888);
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.7rem;
+    }
+    .fr-add-btn:hover { background: rgba(255,255,255,0.1); }
+    .fr-center-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      min-width: 120px;
+    }
+    .fr-map-size {
+      text-align: center;
+    }
+    .fr-label {
+      display: block;
+      font-size: 0.7rem;
+      color: var(--text-secondary, #888);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 6px;
+    }
+    .fr-size-btns {
+      display: flex;
+      gap: 4px;
+    }
+    .fr-size-btn {
+      padding: 6px 10px;
+      border: 1px solid var(--border-color, #333);
+      background: var(--bg-medium, #1a1a2e);
+      color: var(--text-primary, #eee);
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.7rem;
+      text-transform: capitalize;
+    }
+    .fr-size-btn.active {
+      background: var(--accent-blue, #4a9eff);
+      border-color: var(--accent-blue, #4a9eff);
+      color: #fff;
+    }
+    .fr-deploy-btn { font-size: 1rem; padding: 12px 32px; }
+
+    /* Fire Range Battle */
+    .fr-battle-screen {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      background: var(--bg-dark, #0a0a1a);
+    }
+    .fr-battle-hud {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 16px;
+      background: var(--bg-medium, #1a1a2e);
+      border-bottom: 2px solid var(--bg-light, #2a2a3e);
+    }
+    .fr-team-count {
+      font-weight: 700;
+      font-size: 0.9rem;
+    }
+    .fr-team-count.blue { color: #4a9eff; }
+    .fr-team-count.red { color: #ff4444; }
+    .fr-sgt-phase {
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      opacity: 0.7;
+    }
+    .fr-sgt-phase.blue { color: #4a9eff; }
+    .fr-sgt-phase.red { color: #ff4444; }
+    .fr-status {
+      font-weight: 700;
+      font-size: 1rem;
+      color: var(--text-primary, #eee);
+      letter-spacing: 2px;
+    }
+    .fr-zoom-display {
+      font: bold 11px monospace;
+      color: #aaa;
+      margin-left: 8px;
+    }
+    .fr-battle-controls {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      background: rgba(0,0,0,0.8);
+      border-top: 1px solid #333;
+      flex-shrink: 0;
+    }
+    .fr-battle-controls .control-btn {
+      width: auto;
+      height: auto;
+      padding: 6px 12px;
+      background: rgba(0,0,0,0.85);
+      border: 1px solid rgba(255,255,255,0.25);
+      color: var(--text-primary, #eee);
+      border-radius: 4px;
+      cursor: pointer;
+      font: 700 11px/1 'Share Tech Mono', monospace;
+      white-space: nowrap;
+    }
+    .fr-battle-controls .control-btn:hover {
+      background: rgba(255,255,255,0.15);
+    }
+    .fr-battle-controls .control-btn.active {
+      background: rgba(74, 158, 255, 0.3);
+      border-color: #4a9eff;
+    }
+
+    /* Speed bar — segmented control */
+    .fr-speed-bar {
+      display: inline-flex;
+      border-radius: 4px;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.25);
+      pointer-events: auto;
+    }
+    .fr-speed-bar .speed-btn {
+      padding: 6px 8px;
+      background: rgba(0,0,0,0.85);
+      border: none;
+      border-right: 1px solid rgba(255,255,255,0.1);
+      color: rgba(255,255,255,0.5);
+      cursor: pointer;
+      font: 700 11px/1 'Share Tech Mono', monospace;
+      white-space: nowrap;
+    }
+    .fr-speed-bar .speed-btn:last-child {
+      border-right: none;
+    }
+    .fr-speed-bar .speed-btn:hover {
+      background: rgba(255,255,255,0.1);
+      color: #fff;
+    }
+    .fr-speed-bar .speed-btn.active {
+      background: rgba(74, 158, 255, 0.35);
+      color: #fff;
+    }
+
+    /* Middle section: battlefield+controls on left, event log sidebar on right */
+    .fr-mid {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .fr-mid-left {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+    .fr-main-area {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+    }
+    .fr-main-area .endless-battlefield {
+      width: 100%;
+      height: 100%;
+      position: relative;
+    }
+    .fr-event-sidebar {
+      width: 200px;
+      flex-shrink: 0;
+      background: rgba(0,0,0,0.85);
+      border-left: 1px solid #333;
+      display: flex;
+      flex-direction: column;
+      padding: 6px;
+      overflow: hidden;
+    }
+    .fr-event-filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px;
+      margin-bottom: 4px;
+      flex-shrink: 0;
+    }
+    .fr-evt-filter {
+      padding: 1px 4px;
+      font-size: 0.5rem;
+      text-transform: uppercase;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.12);
+      color: #555;
+      border-radius: 2px;
+      cursor: pointer;
+      font-family: 'Share Tech Mono', monospace;
+    }
+    .fr-evt-filter.active {
+      background: rgba(74,158,255,0.12);
+      border-color: rgba(74,158,255,0.35);
+      color: #4a9eff;
+    }
+    .fr-evt-filter:hover { border-color: rgba(255,255,255,0.25); }
+    .fr-log-tag {
+      font-size: 0.45rem;
+      padding: 0 2px;
+      border-radius: 2px;
+      text-transform: uppercase;
+      font-family: 'Share Tech Mono', monospace;
+    }
+    .fr-log-fire { background: rgba(255,160,0,0.2); color: #ffa000; }
+    .fr-log-hit { background: rgba(255,80,80,0.2); color: #ff5050; }
+    .fr-log-kill { background: rgba(255,0,0,0.25); color: #ff3333; }
+    .fr-log-target { background: rgba(74,158,255,0.15); color: #4a9eff; }
+    .fr-log-action { background: rgba(0,200,150,0.15); color: #00c896; }
+    .fr-log-panic { background: rgba(255,0,255,0.2); color: #ff66ff; }
+    .fr-log-morale { background: rgba(255,200,0,0.2); color: #ffc800; }
+    .fr-log-cover { background: rgba(0,180,0,0.15); color: #00b400; }
+    .fr-log-move { background: rgba(150,150,255,0.15); color: #9696ff; }
+    .fr-log-stability { background: rgba(255,220,100,0.15); color: #ffdc64; }
+    .fr-log-decision { background: rgba(200,100,255,0.2); color: #c864ff; }
+    .fr-log-morale_event { background: rgba(255,180,0,0.2); color: #ffb400; }
+    .fr-log-survival { background: rgba(220,50,50,0.2); color: #dc3232; }
+    .fr-log-flank { background: rgba(255,120,50,0.2); color: #ff7832; }
+    .fr-event-sidebar .fr-event-log {
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    /* Debug Panel (bottom, full width) */
+    .fr-debug-panel {
+      background: rgba(0, 0, 0, 0.92);
+      border-top: 1px solid #333;
+      overflow: hidden;
+      flex-shrink: 0;
+      max-height: 200px;
+    }
+    .fr-debug-panel.collapsed {
+      display: none;
+    }
+    .fr-debug-body {
+      display: flex;
+      flex-direction: column;
+      padding: 4px 6px;
+      height: 100%;
+      overflow: hidden;
+    }
+    .fr-debug-teams {
+      display: flex;
+      gap: 8px;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .fr-debug-teams > .fr-debug-section {
+      flex: 1;
+      min-width: 0;
+      overflow: auto;
+      margin-bottom: 0;
+    }
+    .fr-debug-col-toggles {
+      display: flex;
+      gap: 3px;
+      padding: 2px 0 4px;
+      flex-shrink: 0;
+    }
+    .fr-col-toggle {
+      padding: 2px 6px;
+      font-size: 0.6rem;
+      text-transform: uppercase;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.15);
+      color: #666;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .fr-col-toggle.active {
+      background: rgba(74,158,255,0.15);
+      border-color: rgba(74,158,255,0.4);
+      color: #4a9eff;
+    }
+    .fr-col-toggle:hover { border-color: rgba(255,255,255,0.3); }
+    .fr-debug-section {
+      margin-bottom: 8px;
+    }
+    .fr-debug-section h4 {
+      font-size: 0.65rem;
+      letter-spacing: 1px;
+      padding: 2px 4px;
+    }
+
+    /* Debug Tables */
+    .fr-debug-table {
+      width: max-content;
+      min-width: 100%;
+      border-collapse: collapse;
+      font-size: 0.55rem;
+      font-family: 'Share Tech Mono', monospace;
+    }
+    .fr-debug-table th {
+      color: #666;
+      text-align: left;
+      padding: 1px 3px;
+      border-bottom: 1px solid #333;
+      font-weight: 400;
+      position: sticky;
+      top: 0;
+      background: rgba(0,0,0,0.95);
+    }
+    .fr-debug-table td {
+      padding: 1px 3px;
+      color: #bbb;
+      border-bottom: 1px solid #1a1a1a;
+      white-space: nowrap;
+      max-width: 60px;
+    }
+
+    /* Event Log */
+    .fr-event-log {
+      overflow-y: auto;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.5rem;
+      line-height: 1.3;
+      padding: 2px 0;
+    }
+    .fr-log-entry {
+      padding: 1px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: #888;
     }
   </style>
 </head>

@@ -145,7 +145,8 @@ export const SCATTER_TYPES = {
     scaleVariance: 0.15,
     spacing: 0,
     variants: 3,
-    fadeWithDistance: true
+    fadeWithDistance: true,
+    spriteBase: 'leaf'
   },
   'floor-leaf-fall': {
     category: 'floor',
@@ -154,7 +155,8 @@ export const SCATTER_TYPES = {
     scaleVariance: 0.15,
     spacing: 0,
     variants: 3,
-    fadeWithDistance: true
+    fadeWithDistance: true,
+    spriteBase: 'leaf-fall'
   },
   'floor-leaf-dry': {
     category: 'floor',
@@ -163,7 +165,8 @@ export const SCATTER_TYPES = {
     scaleVariance: 0.15,
     spacing: 0,
     variants: 3,
-    fadeWithDistance: true
+    fadeWithDistance: true,
+    spriteBase: 'leaf-dry'
   },
   'floor-needle': {
     category: 'floor',
@@ -172,7 +175,8 @@ export const SCATTER_TYPES = {
     scaleVariance: 0.1,
     spacing: 0,
     variants: 3,
-    fadeWithDistance: true
+    fadeWithDistance: true,
+    spriteBase: 'needle'
   },
   'floor-debris': {
     category: 'floor',
@@ -181,7 +185,8 @@ export const SCATTER_TYPES = {
     scaleVariance: 0.2,
     spacing: 0,
     variants: 3,
-    fadeWithDistance: true
+    fadeWithDistance: true,
+    spriteBase: 'debris'
   },
 
   // ── BRUSH ──────────────────────────────────────────────────
@@ -236,7 +241,44 @@ export const SCATTER_TYPES = {
     scaleVariance: 0.3,
     spacing: 120,
     variants: 3,
-    canopyRadius: 10     // Sparse dead brush
+    canopyRadius: 10,     // Sparse dead brush
+    spriteBase: 'bush-small' // TODO: use 'bramble' once resized sprites exist
+  },
+
+  // ── BOULDERS ──────────────────────────────────────────────
+  // Each boulder type is a separate entry (like bush-small, bush-large)
+  'boulder-erratic': {
+    category: 'boulder',
+    layer: 'canopy',
+    featureType: 'boulder',
+    baseScale: 1.0,
+    scaleVariance: 0.3,
+    spacing: 40,
+    variants: 1,
+    canopyRadius: 10,
+    spriteBase: 'erratic'
+  },
+  'boulder-field': {
+    category: 'boulder',
+    layer: 'canopy',
+    featureType: 'boulder',
+    baseScale: 1.0,
+    scaleVariance: 0.3,
+    spacing: 40,
+    variants: 1,
+    canopyRadius: 10,
+    spriteBase: 'field'
+  },
+  'boulder-outcrop': {
+    category: 'boulder',
+    layer: 'canopy',
+    featureType: 'boulder',
+    baseScale: 1.0,
+    scaleVariance: 0.3,
+    spacing: 40,
+    variants: 1,
+    canopyRadius: 10,
+    spriteBase: 'outcrop'
   },
 
   // ── PARTICLES ──────────────────────────────────────────────
@@ -249,7 +291,7 @@ export const SCATTER_TYPES = {
     scaleVariance: 0.4,
     spacing: 0,
     variants: 3,
-    spriteBase: 'leaf-particles'  // Maps to leaf-particles-1.png, etc.
+    spriteBase: 'leaf'
   },
   'particle-leaf-fall': {
     category: 'particle',
@@ -258,7 +300,7 @@ export const SCATTER_TYPES = {
     scaleVariance: 0.4,
     spacing: 0,
     variants: 3,
-    spriteBase: 'leaf-fall-particles'
+    spriteBase: 'leaf-fall'
   },
   'particle-leaf-dry': {
     category: 'particle',
@@ -267,7 +309,7 @@ export const SCATTER_TYPES = {
     scaleVariance: 0.35,
     spacing: 0,
     variants: 3,
-    spriteBase: 'leaf-dry-particles'
+    spriteBase: 'leaf-dry'
   },
   'particle-petal': {
     category: 'particle',
@@ -276,7 +318,7 @@ export const SCATTER_TYPES = {
     scaleVariance: 0.3,
     spacing: 0,
     variants: 3,
-    spriteBase: 'leaf-particles'  // Uses leaf for now (needs petal sprites)
+    spriteBase: 'leaf'  // Uses leaf for now (needs petal sprites)
   },
   'particle-needle': {
     category: 'particle',
@@ -285,7 +327,7 @@ export const SCATTER_TYPES = {
     scaleVariance: 0.3,
     spacing: 0,
     variants: 3,
-    spriteBase: 'needle-particles'
+    spriteBase: 'needle'
   },
   'particle-twig': {
     category: 'particle',
@@ -294,7 +336,28 @@ export const SCATTER_TYPES = {
     scaleVariance: 0.35,
     spacing: 0,
     variants: 3,
-    spriteBase: 'twig-particles'
+    spriteBase: 'twig'
+  },
+  'particle-rock': {
+    category: 'particle',
+    layer: 'particle',
+    baseScale: 0.45,
+    scaleVariance: 0.35,
+    spacing: 0,
+    variants: 3,
+    spriteBase: 'rock'
+  },
+
+  // ── BOULDER FLOOR ─────────────────────────────────────────
+  'floor-rock': {
+    category: 'floor',
+    layer: 'ground',
+    baseScale: 0.35,
+    scaleVariance: 0.2,
+    spacing: 0,
+    variants: 3,
+    fadeWithDistance: true,
+    spriteBase: 'rock'
   }
 };
 
@@ -362,6 +425,26 @@ export const SPAWN_RULES = {
     spawns: [
       { type: 'floor-leaf', density: 1, densityVariance: 1, scale: 0.2, distribution: 'under-canopy' },
       { type: 'particle-leaf', density: 1, densityVariance: 1, scale: 0.15, distribution: 'ring', minRadius: 0.6, maxRadius: 1.0 }
+    ]
+  },
+
+  // === BOULDERS (each type shares spawn rules) ===
+  'boulder-erratic': {
+    spawns: [
+      { type: 'floor-rock', density: 3, densityVariance: 1, scale: 0.35, distribution: 'under-canopy' },
+      { type: 'particle-rock', density: 3, densityVariance: 1, scale: 0.25, distribution: 'ring', minRadius: 0.7, maxRadius: 1.3 }
+    ]
+  },
+  'boulder-field': {
+    spawns: [
+      { type: 'floor-rock', density: 3, densityVariance: 1, scale: 0.35, distribution: 'under-canopy' },
+      { type: 'particle-rock', density: 3, densityVariance: 1, scale: 0.25, distribution: 'ring', minRadius: 0.7, maxRadius: 1.3 }
+    ]
+  },
+  'boulder-outcrop': {
+    spawns: [
+      { type: 'floor-rock', density: 3, densityVariance: 1, scale: 0.35, distribution: 'under-canopy' },
+      { type: 'particle-rock', density: 3, densityVariance: 1, scale: 0.25, distribution: 'ring', minRadius: 0.7, maxRadius: 1.3 }
     ]
   }
 };

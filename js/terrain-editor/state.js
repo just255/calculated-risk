@@ -71,6 +71,21 @@ const DEFAULT_TOOL_OPTIONS = {
   brushScale: 0.25,             // Global scale multiplier for brush
   brushInWater: false,          // Allow brush to spawn in water areas
 
+  // Boulder options
+  boulderDensity: 0.8,          // Density multiplier
+  boulderScale: 0.3,            // Global scale multiplier for boulders
+  boulderScaleVariance: 0.3,    // Size variation (0 = uniform, 0.5 = very varied)
+  boulderFloorEnabled: true,    // Generate floor patches around boulders
+  boulderParticlesEnabled: true, // Generate rock particles around boulders
+  boulderParticleDensity: 1.0,  // Rock particle density multiplier
+  boulderParticleScale: 0.25,   // Rock particle scale
+  boulderParticleScaleVariance: 0.35, // Rock particle size variation
+  boulderInWater: false,        // Allow boulders in water
+  boulderTypes: ['boulder-erratic', 'boulder-field', 'boulder-outcrop'],
+  boulderRatios: {},            // Equal ratios by default
+  boulderFloorTypes: ['floor-rock'],  // Floor type(s) under boulders
+  boulderParticleTypes: ['particle-rock'],  // Particle type(s) around boulders
+
   // Category toggles (enable/disable each category independently)
   treesEnabled: true,           // Generate trees
   floorEnabled: true,           // Generate floor (as children or direct)
@@ -274,7 +289,7 @@ export class EditorState extends EventEmitter {
           season: this._toolOptions.season ?? 'summer',
           biome: this._toolOptions.biome ?? 'temperate',
           seasonOverrides: this._toolOptions.seasonOverrides ?? {},
-          childSpawnOverrides: this._toolOptions.childSpawnOverrides ?? {},
+          childSpawnOverrides: this._mergeChildOverrides(stroke.childSpawnOverrides),
           // Category toggles - reduce particles/floor during drag painting for performance
           treesEnabled: this._toolOptions.treesEnabled ?? true,
           floorEnabled: dragPainting ? false : (this._toolOptions.floorEnabled ?? true),
@@ -330,6 +345,23 @@ export class EditorState extends EventEmitter {
           ? stroke.brushTypes
           : [stroke.brushType || 'bush-small'];
 
+        // Boulder strokes use their own spawn rules (particle-rock, floor-rock)
+        // Don't let global childSpawnOverrides (from forest/brush panel) override types
+        const isBoulder = stroke.isBoulder || brushTypes.some(t => t.startsWith('boulder-'));
+        const childOverrides = isBoulder
+          ? {
+              floor: {
+                type: (stroke.boulderFloorTypes?.length === 1) ? stroke.boulderFloorTypes[0] : 'auto'
+              },
+              particle: {
+                type: (stroke.boulderParticleTypes?.length === 1) ? stroke.boulderParticleTypes[0] : 'auto',
+                densityMult: stroke.boulderParticleDensity ?? 1.0,
+                scale: stroke.boulderParticleScale ?? 0.25,
+                scaleVariance: stroke.boulderParticleScaleVariance ?? 0.35
+              }
+            }
+          : this._mergeChildOverrides(stroke.childSpawnOverrides);
+
         // Common generation options
         const genOptions = {
           // Disable trees - brush is the parent
@@ -340,6 +372,7 @@ export class EditorState extends EventEmitter {
           brushRatios: stroke.brushRatios || this._toolOptions.brushRatios || {},
           brushDensity: stroke.density ?? this._toolOptions.brushDensity ?? 1.0,
           brushScale: stroke.brushScale ?? this._toolOptions.brushScale ?? 0.25,
+          brushScaleVariance: stroke.brushScaleVariance,
           brushEnabled: true,
           // Floor/particle children - reduce during drag painting for performance
           floorEnabled: dragPainting ? false : (stroke.floorEnabled ?? this._toolOptions.floorEnabled ?? true),
@@ -348,7 +381,7 @@ export class EditorState extends EventEmitter {
           season: this._toolOptions.season ?? 'summer',
           biome: this._toolOptions.biome ?? 'temperate',
           seasonOverrides: this._toolOptions.seasonOverrides ?? {},
-          childSpawnOverrides: this._toolOptions.childSpawnOverrides ?? {},
+          childSpawnOverrides: childOverrides,
           strokeId: stroke.id,
           // Water collision
           allowInWater: stroke.allowBrushInWater ?? false,
@@ -577,6 +610,21 @@ export class EditorState extends EventEmitter {
     return removed + scatterRemoved;
   }
 
+  clearBouldersAt(x, y, radius, falloff = 'hard', options = {}) {
+    const cascadeDelete = options.cascadeDelete ?? this._toolOptions.cascadeDelete ?? true;
+    const scatterRemoved = removeScatterInRadius(this._terrainMap, x, y, radius, {
+      categories: ['boulder'],
+      cascade: cascadeDelete,
+      falloff
+    });
+    if (scatterRemoved > 0) {
+      this._terrainMap.dirty = true;
+      this._markDirty();
+      this.emit(Events.RENDER_REQUESTED);
+    }
+    return scatterRemoved;
+  }
+
   clearParticlesAt(x, y, radius) {
     // NEW: Remove from unified scatter system
     const scatterRemoved = removeScatterInRadius(this._terrainMap, x, y, radius, {
@@ -623,6 +671,20 @@ export class EditorState extends EventEmitter {
       this._toolOptions[key] = value;
     });
     this.emit(Events.TOOL_OPTIONS_CHANGED, { options });
+  }
+
+  /**
+   * Merge per-stroke childSpawnOverrides with toolOptions defaults.
+   * Stroke-level overrides take priority per-category.
+   */
+  _mergeChildOverrides(strokeOverrides) {
+    const tool = this._toolOptions.childSpawnOverrides ?? {};
+    if (!strokeOverrides) return tool;
+    return {
+      floor: { ...tool.floor, ...strokeOverrides.floor },
+      particle: { ...tool.particle, ...strokeOverrides.particle },
+      brush: { ...tool.brush, ...strokeOverrides.brush }
+    };
   }
 
   // ═══════════════════════════════════════════════════════════════

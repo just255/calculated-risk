@@ -8,10 +8,12 @@ import { createRenderer } from './renderer.js';
 import { createToolManager } from './tools/tool-manager.js';
 import { PaintTool } from './tools/paint-tool.js';
 import { ClearTool } from './tools/clear-tool.js';
+import { PCGTool } from './tools/pcg-tool.js';
 import { Events } from './events.js';
 import * as Presets from './presets.js';
 import { BIOME_PRESETS, SEASON_BIOME_CONFIG, getSeasonBiomeConfig, getConfigSchema, exportConfigString, SCATTER_TYPES, generateForestItems, renderScatterItem, getSpriteKey } from '../world-builder/index.js';
 import { setQualityPreset, getCurrentPreset, saveQualityPreset, loadQualityPreset, getLODSettings, applyLODSettings, resetToPreset, LOD_PRESETS, getCategoryMinZoom, BASE_SPRITE_SIZE } from './lod.js';
+import { TestMode } from './test-mode.js';
 
 /**
  * Terrain Editor Application
@@ -48,8 +50,13 @@ class TerrainEditor {
     this._toolManager = createToolManager(this._state, this._renderer);
     this._toolManager.register(PaintTool);
     this._toolManager.register(ClearTool);
+    this._toolManager.register(PCGTool);
     // TODO: Register select, transform tools
     this._toolManager.attach(this._renderer.uiCanvas);
+
+    // Test mode (walk around the map)
+    this._testMode = new TestMode(this._state, this._renderer);
+    this._toolManager.setKeyInterceptor((e) => this._testModeKeyHandler(e));
 
     // Bind UI events
     this._bindUIEvents();
@@ -63,6 +70,9 @@ class TerrainEditor {
     // Refresh scatter preview now that state events are bound
     // (biome was applied during _bindUIEvents but preview listener wasn't ready yet)
     this._refreshScatterPreview();
+
+    // Fit map to screen on load
+    this._fitMapToView();
 
     // Initial render
     this._state.emit(Events.RENDER_REQUESTED);
@@ -204,6 +214,33 @@ class TerrainEditor {
       brushStandaloneInWater: document.getElementById('brush-standalone-in-water'),
       toggleBrushFloor: document.getElementById('toggle-brush-floor'),
       toggleBrushParticles: document.getElementById('toggle-brush-particles'),
+
+      // Boulder standalone settings (boulder tool panel)
+      boulderSettings: document.getElementById('boulder-settings'),
+      boulderStandaloneDensity: document.getElementById('boulder-standalone-density'),
+      boulderStandaloneDensityVal: document.getElementById('boulder-standalone-density-val'),
+      boulderStandaloneScale: document.getElementById('boulder-standalone-scale'),
+      boulderStandaloneScaleVal: document.getElementById('boulder-standalone-scale-val'),
+      boulderStandaloneScaleVariance: document.getElementById('boulder-standalone-scale-variance'),
+      boulderStandaloneScaleVarianceVal: document.getElementById('boulder-standalone-scale-variance-val'),
+      boulderInWater: document.getElementById('boulder-in-water'),
+      boulderTypesDropdown: document.getElementById('boulder-types-dropdown'),
+      boulderTypesMenu: document.getElementById('boulder-types-menu'),
+      boulderTypesValue: document.getElementById('boulder-types-value'),
+      boulderFloorTypesDropdown: document.getElementById('boulder-floor-types-dropdown'),
+      boulderFloorTypesMenu: document.getElementById('boulder-floor-types-menu'),
+      boulderFloorTypesValue: document.getElementById('boulder-floor-types-value'),
+      boulderParticleTypesDropdown: document.getElementById('boulder-particle-types-dropdown'),
+      boulderParticleTypesMenu: document.getElementById('boulder-particle-types-menu'),
+      boulderParticleTypesValue: document.getElementById('boulder-particle-types-value'),
+      boulderParticleDensity: document.getElementById('boulder-particle-density'),
+      boulderParticleDensityVal: document.getElementById('boulder-particle-density-val'),
+      boulderParticleScale: document.getElementById('boulder-particle-scale'),
+      boulderParticleScaleVal: document.getElementById('boulder-particle-scale-val'),
+      boulderParticleScaleVariance: document.getElementById('boulder-particle-scale-variance'),
+      boulderParticleScaleVarianceVal: document.getElementById('boulder-particle-scale-variance-val'),
+      toggleBoulderFloor: document.getElementById('toggle-boulder-floor'),
+      toggleBoulderParticles: document.getElementById('toggle-boulder-particles'),
 
       // Floor types dropdown (category cards)
       floorTypesDropdown: document.getElementById('floor-types-dropdown'),
@@ -393,6 +430,18 @@ class TerrainEditor {
     this._elements.btnLoad.addEventListener('click', () => this._elements.fileInput.click());
     this._elements.btnSave.addEventListener('click', () => this._saveMap());
     this._elements.btnExport.addEventListener('click', () => this._exportPNG());
+
+    // Test mode button + unit selector
+    const testBtn = document.getElementById('test-mode-btn');
+    if (testBtn) {
+      testBtn.addEventListener('click', () => this._toggleTestMode());
+    }
+    const testUnitSelect = document.getElementById('test-unit-select');
+    if (testUnitSelect) {
+      testUnitSelect.addEventListener('change', (e) => {
+        this._testMode.setUnit(e.target.value);
+      });
+    }
     this._elements.fileInput.addEventListener('change', (e) => this._loadMap(e));
 
     // Tool buttons (including feature tools)
@@ -801,6 +850,21 @@ class TerrainEditor {
       this._updateSelectedBrushStandaloneTypes();
     });
 
+    // Boulder types dropdown (variant selector)
+    this._initDropdown('boulderTypes', () => {
+      this._updateSelectedBoulderVariants();
+    });
+
+    // Boulder floor types dropdown
+    this._initDropdown('boulderFloorTypes', () => {
+      this._updateSelectedBoulderFloorTypes();
+    });
+
+    // Boulder particle types dropdown
+    this._initDropdown('boulderParticleTypes', () => {
+      this._updateSelectedBoulderParticleTypes();
+    });
+
     // Brush standalone density
     if (this._elements.brushStandaloneDensity) {
       this._elements.brushStandaloneDensity.addEventListener('input', (e) => {
@@ -837,6 +901,81 @@ class TerrainEditor {
     if (this._elements.toggleBrushParticles) {
       this._elements.toggleBrushParticles.addEventListener('change', (e) => {
         this._state.setToolOption('particlesEnabled', e.target.checked);
+      });
+    }
+
+    // Boulder standalone density
+    if (this._elements.boulderStandaloneDensity) {
+      this._elements.boulderStandaloneDensity.addEventListener('input', (e) => {
+        const value = parseFloat(e.target.value);
+        this._state.setToolOption('boulderDensity', value);
+        this._elements.boulderStandaloneDensityVal.textContent = `${value.toFixed(1)}×`;
+      });
+    }
+
+    // Boulder standalone scale
+    if (this._elements.boulderStandaloneScale) {
+      this._elements.boulderStandaloneScale.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value) / 100;
+        this._state.setToolOption('boulderScale', value);
+        this._elements.boulderStandaloneScaleVal.textContent = `${e.target.value}%`;
+      });
+    }
+
+    // Boulder scale variance
+    if (this._elements.boulderStandaloneScaleVariance) {
+      this._elements.boulderStandaloneScaleVariance.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value) / 100;
+        this._state.setToolOption('boulderScaleVariance', value);
+        this._elements.boulderStandaloneScaleVarianceVal.textContent = `${e.target.value}%`;
+      });
+    }
+
+    // Boulder in water toggle
+    if (this._elements.boulderInWater) {
+      this._elements.boulderInWater.addEventListener('change', (e) => {
+        this._state.setToolOption('boulderInWater', e.target.checked);
+      });
+    }
+
+    // Boulder floor toggle
+    if (this._elements.toggleBoulderFloor) {
+      this._elements.toggleBoulderFloor.addEventListener('change', (e) => {
+        this._state.setToolOption('boulderFloorEnabled', e.target.checked);
+      });
+    }
+
+    // Boulder particles toggle
+    if (this._elements.toggleBoulderParticles) {
+      this._elements.toggleBoulderParticles.addEventListener('change', (e) => {
+        this._state.setToolOption('boulderParticlesEnabled', e.target.checked);
+      });
+    }
+
+    // Boulder particle density
+    if (this._elements.boulderParticleDensity) {
+      this._elements.boulderParticleDensity.addEventListener('input', (e) => {
+        const value = parseFloat(e.target.value);
+        this._state.setToolOption('boulderParticleDensity', value);
+        this._elements.boulderParticleDensityVal.textContent = `${value.toFixed(1)}×`;
+      });
+    }
+
+    // Boulder particle scale
+    if (this._elements.boulderParticleScale) {
+      this._elements.boulderParticleScale.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value) / 100;
+        this._state.setToolOption('boulderParticleScale', value);
+        this._elements.boulderParticleScaleVal.textContent = `${e.target.value}%`;
+      });
+    }
+
+    // Boulder particle scale variance
+    if (this._elements.boulderParticleScaleVariance) {
+      this._elements.boulderParticleScaleVariance.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value) / 100;
+        this._state.setToolOption('boulderParticleScaleVariance', value);
+        this._elements.boulderParticleScaleVarianceVal.textContent = `${e.target.value}%`;
       });
     }
 
@@ -1051,9 +1190,10 @@ class TerrainEditor {
     if (this._elements.categoryHeaders) {
       this._elements.categoryHeaders.forEach(header => {
         header.addEventListener('click', (e) => {
-          // Don't toggle if clicking on the toggle switch area (input, label, or slider span)
+          // Don't toggle if clicking on the toggle switch or slider areas
           if (e.target.tagName === 'INPUT') return;
           if (e.target.closest('.category-toggle')) return;
+          if (e.target.closest('.category-slider-wrap')) return;
 
           const category = header.dataset.category;
           const body = document.getElementById(`cat-${category}-body`);
@@ -1169,6 +1309,11 @@ class TerrainEditor {
     // ═══════════════════════════════════════════════════════════════
     this._bindChildSpawnControls();
 
+    // ═══════════════════════════════════════════════════════════════
+    // PCG PANEL EVENTS
+    // ═══════════════════════════════════════════════════════════════
+    this._bindPCGEvents();
+
     // Track cursor position
     this._renderer.uiCanvas.addEventListener('mousemove', (e) => {
       const coords = this._renderer.screenToCanvas(e.clientX, e.clientY);
@@ -1216,8 +1361,8 @@ class TerrainEditor {
     this._state.on(Events.STROKE_ADDED, () => this._updateStrokeCount());
     this._state.on(Events.STROKE_REMOVED, () => this._updateStrokeCount());
     this._state.on(Events.STROKES_CLEARED, () => this._updateStrokeCount());
-    this._state.on(Events.MAP_LOADED, () => this._updateStrokeCount());
-    this._state.on(Events.MAP_CLEARED, () => this._updateStrokeCount());
+    this._state.on(Events.MAP_LOADED, () => { this._updateStrokeCount(); this._fitMapToView(); });
+    this._state.on(Events.MAP_CLEARED, () => { this._updateStrokeCount(); this._fitMapToView(); });
 
     // Refresh scatter preview when painting finishes (new seed was generated)
     this._state.on(Events.PAINTING_FINISHED, () => this._refreshScatterPreview());
@@ -1232,7 +1377,11 @@ class TerrainEditor {
         'brushTypes', 'brushRatios', 'brushDensity', 'brushScale',
         'season', 'biome', 'seasonOverrides', 'childSpawnOverrides', 'brushRadius',
         'useScatterSystem', 'treesEnabled', 'floorEnabled',
-        'particlesEnabled', 'brushEnabled', 'floorTypes', 'particleTypes'];
+        'particlesEnabled', 'brushEnabled', 'floorTypes', 'particleTypes',
+        'boulderTypes', 'boulderRatios', 'boulderDensity', 'boulderScale', 'boulderScaleVariance',
+        'boulderFloorEnabled', 'boulderFloorTypes', 'boulderParticlesEnabled',
+        'boulderParticleTypes', 'boulderParticleDensity', 'boulderParticleScale',
+        'boulderParticleScaleVariance'];
       if (!key || scatterPreviewKeys.includes(key)) {
         this._refreshScatterPreview();
       }
@@ -1250,6 +1399,104 @@ class TerrainEditor {
 
   _updateStrokeCount() {
     this._elements.strokeCount.textContent = this._state.strokes.length;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // PCG PANEL EVENTS
+  // ═══════════════════════════════════════════════════════════════
+
+  _bindPCGEvents() {
+    // Generate button
+    const generateBtn = document.getElementById('pcg-generate');
+    if (generateBtn) {
+      generateBtn.addEventListener('click', () => {
+        const pcgTool = this._toolManager.get('pcg');
+        if (pcgTool) {
+          pcgTool.generate(this._state, this._renderer);
+        }
+      });
+    }
+
+    // Random seed button
+    const randomSeedBtn = document.getElementById('pcg-random-seed');
+    if (randomSeedBtn) {
+      randomSeedBtn.addEventListener('click', () => {
+        const seedInput = document.getElementById('pcg-seed');
+        if (seedInput) {
+          seedInput.value = '';  // Empty = random seed on next generate
+        }
+      });
+    }
+
+    // Wire all range sliders to update their value displays (preserving suffix)
+    const pcgPanel = document.getElementById('pcg-settings');
+    if (pcgPanel) {
+      pcgPanel.querySelectorAll('input[type="range"]').forEach(slider => {
+        const valSpan = document.getElementById(slider.id + '-val');
+        if (valSpan) {
+          // Detect suffix from initial text (e.g. "60%" → "%", "20px" → "px")
+          const initial = valSpan.textContent.trim();
+          const suffixMatch = initial.match(/[^\d.\-]+$/);
+          const suffix = suffixMatch ? suffixMatch[0] : '';
+          slider.addEventListener('input', () => {
+            valSpan.textContent = slider.value + suffix;
+          });
+        }
+      });
+    }
+
+    // Live mode: debounced auto-regenerate on any PCG input change
+    this._pcgLiveTimer = null;
+    const liveToggle = document.getElementById('pcg-live-mode');
+
+    const triggerLiveGenerate = () => {
+      if (!liveToggle || !liveToggle.checked) return;
+      clearTimeout(this._pcgLiveTimer);
+      this._pcgLiveTimer = setTimeout(() => {
+        const pcgTool = this._toolManager.get('pcg');
+        if (pcgTool) {
+          pcgTool.generate(this._state, this._renderer, { _live: true });
+        }
+      }, 300);
+    };
+
+    if (pcgPanel) {
+      // Sliders fire 'input' continuously while dragging
+      pcgPanel.querySelectorAll('input[type="range"]').forEach(slider => {
+        if (slider.id === 'pcg-live-mode') return;
+        slider.addEventListener('input', triggerLiveGenerate);
+      });
+
+      // Checkboxes and selects fire 'change'
+      pcgPanel.querySelectorAll('input[type="checkbox"], select').forEach(el => {
+        if (el.id === 'pcg-live-mode') return;
+        el.addEventListener('change', triggerLiveGenerate);
+      });
+
+      // Number inputs (seed) fire 'input'
+      pcgPanel.querySelectorAll('input[type="number"]').forEach(el => {
+        el.addEventListener('input', triggerLiveGenerate);
+      });
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // VIEWPORT HELPERS
+  // ═══════════════════════════════════════════════════════════════
+
+  _fitMapToView() {
+    const sw = this._renderer.screenWidth;
+    const sh = this._renderer.screenHeight;
+    if (!sw || !sh) return;
+
+    const mw = this._state.canvasWidth;
+    const mh = this._state.canvasHeight;
+    const padding = 20;
+
+    const zoom = Math.min((sw - padding * 2) / mw, (sh - padding * 2) / mh);
+    const x = (sw - mw * zoom) / 2;
+    const y = (sh - mh * zoom) / 2;
+    this._state.setViewport(x, y, zoom);
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -1682,6 +1929,11 @@ class TerrainEditor {
       }
     }
 
+    // Show/hide boulder settings
+    if (this._elements.boulderSettings) {
+      this._elements.boulderSettings.style.display = feature === 'boulder' ? 'block' : 'none';
+    }
+
     // Show/hide ground settings
     if (this._elements.groundSettings) {
       this._elements.groundSettings.style.display = feature === 'groundTexture' ? 'block' : 'none';
@@ -1698,15 +1950,15 @@ class TerrainEditor {
       }
     }
 
-    // Show/hide scatter preview - only for forest/brush in scatter mode, hide for water/ground
-    const showScatterPreview = useScatter && (feature === 'forest' || feature === 'brush');
+    // Show/hide scatter preview - only for forest/brush/boulder in scatter mode, hide for water/ground
+    const showScatterPreview = useScatter && (feature === 'forest' || feature === 'brush' || feature === 'boulder');
     if (this._elements.scatterPreviewSection) {
       this._elements.scatterPreviewSection.style.display = showScatterPreview ? 'block' : 'none';
       if (showScatterPreview) this._refreshScatterPreview();
     }
 
-    // Show/hide scatter environment (biome/season) - for forest OR brush in scatter mode
-    const showEnvironment = useScatter && (feature === 'forest' || feature === 'brush');
+    // Show/hide scatter environment (biome/season) - for forest, brush, or boulder in scatter mode
+    const showEnvironment = useScatter && (feature === 'forest' || feature === 'brush' || feature === 'boulder');
     if (this._elements.scatterEnvironment) {
       this._elements.scatterEnvironment.style.display = showEnvironment ? 'block' : 'none';
     }
@@ -2597,6 +2849,83 @@ class TerrainEditor {
   }
 
   /**
+   * Update selected boulder variants from dropdown checkboxes
+   */
+  _updateSelectedBoulderVariants() {
+    const menu = this._elements.boulderTypesMenu;
+    if (!menu) return;
+
+    const selectedTypes = [];
+    menu.querySelectorAll('.dropdown-item').forEach(item => {
+      const boulderType = item.dataset.boulder;
+      const checkbox = item.querySelector('input[type="checkbox"]');
+      if (checkbox?.checked) {
+        selectedTypes.push(boulderType);
+      }
+    });
+
+    // Require at least one type
+    if (selectedTypes.length === 0) {
+      const firstItem = menu.querySelector('.dropdown-item');
+      if (firstItem) {
+        const checkbox = firstItem.querySelector('input[type="checkbox"]');
+        if (checkbox) checkbox.checked = true;
+        selectedTypes.push(firstItem.dataset.boulder);
+      }
+    }
+
+    // Build equal ratios
+    const ratios = {};
+    const equalRatio = 1 / selectedTypes.length;
+    selectedTypes.forEach(type => { ratios[type] = equalRatio; });
+
+    this._state.setToolOption('boulderTypes', selectedTypes);
+    this._state.setToolOption('boulderRatios', ratios);
+
+    this._refreshScatterPreview();
+  }
+
+  /**
+   * Update selected boulder floor types from dropdown checkboxes
+   */
+  _updateSelectedBoulderFloorTypes() {
+    const menu = this._elements.boulderFloorTypesMenu;
+    if (!menu) return;
+
+    const selectedTypes = [];
+    menu.querySelectorAll('.dropdown-item').forEach(item => {
+      const floorType = item.dataset.boulderFloor;
+      const checkbox = item.querySelector('input[type="checkbox"]');
+      if (checkbox?.checked) {
+        selectedTypes.push(floorType);
+      }
+    });
+
+    this._state.setToolOption('boulderFloorTypes', selectedTypes);
+    this._refreshScatterPreview();
+  }
+
+  /**
+   * Update selected boulder particle types from dropdown checkboxes
+   */
+  _updateSelectedBoulderParticleTypes() {
+    const menu = this._elements.boulderParticleTypesMenu;
+    if (!menu) return;
+
+    const selectedTypes = [];
+    menu.querySelectorAll('.dropdown-item').forEach(item => {
+      const particleType = item.dataset.boulderParticle;
+      const checkbox = item.querySelector('input[type="checkbox"]');
+      if (checkbox?.checked) {
+        selectedTypes.push(particleType);
+      }
+    });
+
+    this._state.setToolOption('boulderParticleTypes', selectedTypes);
+    this._refreshScatterPreview();
+  }
+
+  /**
    * Sync brush standalone UI with current tool options state
    */
   _syncBrushStandaloneUI() {
@@ -3351,6 +3680,13 @@ class TerrainEditor {
     const virtualCy = 1000;
     const radius = options.brushRadius;
 
+    // Boulder tool overrides brush types/ratios/density/scale
+    const isBoulderTool = options.featureType === 'boulder';
+    const pvBrushTypes = isBoulderTool ? (options.boulderTypes ?? ['boulder-erratic', 'boulder-field', 'boulder-outcrop']) : (options.brushTypes || ['bush-small']);
+    const pvBrushRatios = isBoulderTool ? (options.boulderRatios ?? {}) : (options.brushRatios || {});
+    const pvBrushDensity = isBoulderTool ? (options.boulderDensity ?? 0.8) : (options.brushDensity ?? 1.0);
+    const pvBrushScale = isBoulderTool ? (options.boulderScale ?? 0.3) : (options.brushScale ?? 0.25);
+
     const previewItems = generateForestItems(mockTerrain,
       { x: virtualCx, y: virtualCy, radius, seed: options.previewSeed ?? 42 },
       {
@@ -3363,25 +3699,33 @@ class TerrainEditor {
         treeSpacing: options.treeSpacing ?? 1.0,
         selectedAges: options.selectedAges ?? ['young', 'transitional', 'old'],
         ageRatios: options.ageRatios ?? null,
-        brushTypes: options.brushTypes || ['bush-small'],
-        brushRatios: options.brushRatios || {},
-        brushDensity: options.brushDensity ?? 1.0,
-        brushScale: options.brushScale ?? 0.25,
+        brushTypes: pvBrushTypes,
+        brushRatios: pvBrushRatios,
+        brushDensity: pvBrushDensity,
+        brushScale: pvBrushScale,
+        brushScaleVariance: isBoulderTool ? (options.boulderScaleVariance ?? 0.3) : undefined,
         season: options.season ?? 'summer',
         biome: options.biome ?? 'temperate',
         seasonOverrides: options.seasonOverrides ?? {},
-        childSpawnOverrides: options.childSpawnOverrides ?? {},
-        // Category toggles - for brush tool, disable trees (brush is the parent)
-        treesEnabled: options.featureType === 'brush' ? false : (options.treesEnabled ?? true),
+        childSpawnOverrides: isBoulderTool
+          ? {
+              floor: {
+                type: (options.boulderFloorTypes?.length === 1) ? options.boulderFloorTypes[0] : 'auto'
+              },
+              particle: {
+                type: (options.boulderParticleTypes?.length === 1) ? options.boulderParticleTypes[0] : 'auto',
+                densityMult: options.boulderParticleDensity ?? 1.0,
+                scale: options.boulderParticleScale ?? 0.25,
+                scaleVariance: options.boulderParticleScaleVariance ?? 0.35
+              }
+            }
+          : (options.childSpawnOverrides ?? {}),
+        // Category toggles - for brush/boulder tool, disable trees
+        treesEnabled: (options.featureType === 'brush' || options.featureType === 'boulder') ? false : (options.treesEnabled ?? true),
         brushEnabled: options.brushEnabled ?? true,
-        floorEnabled: options.floorEnabled ?? true,
-        particlesEnabled: options.particlesEnabled ?? true,
-        images: {
-          tree: this._renderer._images.trees,
-          brush: this._renderer._images.brush,
-          floor: this._renderer._images.floor,
-          particle: this._renderer._images.brush
-        }
+        floorEnabled: isBoulderTool ? (options.boulderFloorEnabled ?? true) : (options.floorEnabled ?? true),
+        particlesEnabled: isBoulderTool ? (options.boulderParticlesEnabled ?? true) : (options.particlesEnabled ?? true),
+        images: this._renderer.getScatterImages()
       }
     );
 
@@ -3425,12 +3769,7 @@ class TerrainEditor {
     const canvasCy = canvas.height / 2;
 
     // Prepare images
-    const images = {
-      tree: this._renderer._images.trees,
-      brush: this._renderer._images.brush,
-      floor: this._renderer._images.floor,
-      particle: this._renderer._images.brush
-    };
+    const images = this._renderer.getScatterImages();
 
     // Build list of canopy occluders (trees) with their occlusion radii
     const occluders = [];
@@ -3827,6 +4166,79 @@ class TerrainEditor {
       // Fallback: log to console
       console.log('Season config export:\n' + header + output);
     });
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // TEST MODE
+  // ═══════════════════════════════════════════════════════════════
+
+  _testModeKeyHandler(e) {
+    const key = e.key.toLowerCase();
+
+    // T toggles test mode on/off
+    if (key === 't' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      this._toggleTestMode();
+      return true; // consumed
+    }
+
+    // When test mode is active, consume all keys (don't let tool manager handle them)
+    if (this._testMode.active) {
+      // Escape exits test mode
+      if (key === 'escape') {
+        e.preventDefault();
+        this._toggleTestMode();
+        return true;
+      }
+      // Consume WASD and arrows (test-mode.js handles via its own listeners)
+      return true;
+    }
+
+    return false; // not consumed
+  }
+
+  async _toggleTestMode() {
+    const container = document.querySelector('.editor-container');
+    const toolbar = document.querySelector('.toolbar');
+    const properties = document.querySelector('.properties');
+    const header = document.querySelector('.header');
+    const statusBar = document.querySelector('.status-bar');
+
+    if (this._testMode.active) {
+      // Exit test mode
+      this._testMode.exit();
+
+      // Restore editor layout
+      toolbar.style.display = '';
+      properties.style.display = '';
+      header.style.display = '';
+      if (statusBar) statusBar.style.display = '';
+      container.style.gridTemplateColumns = '';
+      container.style.gridTemplateRows = '';
+
+      // Resize canvases to fit restored layout
+      this._renderer.handleResize();
+
+      const btn = document.getElementById('test-mode-btn');
+      if (btn) btn.classList.remove('active');
+    } else {
+      // Enter test mode — canvas takes full screen
+      toolbar.style.display = 'none';
+      properties.style.display = 'none';
+      header.style.display = 'none';
+      if (statusBar) statusBar.style.display = 'none';
+      container.style.gridTemplateColumns = '1fr';
+      container.style.gridTemplateRows = '1fr';
+
+      // Resize canvases to fill the expanded area
+      this._renderer.handleResize();
+
+      // Enter after resize so camera centers correctly
+      await this._testMode.enter();
+
+      const btn = document.getElementById('test-mode-btn');
+      if (btn) btn.classList.add('active');
+    }
   }
 }
 

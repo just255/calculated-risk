@@ -36,7 +36,10 @@ export const State = {
   ENDLESS_LOADOUT: 'endless_loadout',     // Pre-run: select gear, buy insurance
   ENDLESS_BATTLE: 'endless_battle',       // Combat (hero control)
   ENDLESS_BETWEEN: 'endless_between',     // Between waves: exit/continue/repair
-  ENDLESS_RESULT: 'endless_result'        // Run complete: death or extraction
+  ENDLESS_RESULT: 'endless_result',        // Run complete: death or extraction
+  // Fire Range (AI test bed)
+  FIRE_RANGE: 'fire_range',               // Config screen: pick units, behaviors
+  FIRE_RANGE_BATTLE: 'fire_range_battle'   // Active AI battle (observer mode)
 };
 
 export const HQTab = {
@@ -74,10 +77,13 @@ export const TargetPriority = {
 // Squad formation types
 export const Formation = {
   AUTO: 'auto',           // Automatically arrange by unit type
-  LINE: 'line',           // Horizontal line
-  WEDGE: 'wedge',         // V-shape with leader at front
-  COLUMN: 'column',       // Single file
-  SPREAD: 'spread'        // Maximum spacing (anti-artillery)
+  LINE: 'line',           // Horizontal line — holding, covering fire
+  WEDGE: 'wedge',         // V-shape with leader at front — general advance
+  COLUMN: 'column',       // Single file — retreating, following
+  SPREAD: 'spread',       // Maximum spacing (anti-artillery) — same as dispersed
+  STAGGERED: 'staggered', // Two offset columns — road movement, approach march
+  ECHELON_L: 'echelon_l', // Diagonal line left — flanking left
+  ECHELON_R: 'echelon_r'  // Diagonal line right — flanking right
 };
 
 // Order effects on unit behavior
@@ -292,39 +298,75 @@ export const STANCE_PARAMS = {
 // Each array element is [offsetX, offsetY] relative to formation center
 export const FORMATION_OFFSETS = {
   line: [
-    // Spread horizontally
-    [0, 0],
+    // Assault line — leader at center, units spread horizontally
+    [0, 0],              // 0: Leader (center)
     [-60, 0], [60, 0],
     [-120, 0], [120, 0],
     [-180, 0], [180, 0],
     [-240, 0], [240, 0]
   ],
   wedge: [
-    // V-shape pointing forward (up)
-    [0, 0],           // Leader at point
-    [-40, 40], [40, 40],
-    [-80, 80], [80, 80],
-    [-120, 120], [120, 120],
-    [-160, 160], [160, 160]
+    // V-shape — leader center, point man at front tip
+    // Per FM 3-21.8: platoon leader stays center for C2, point element leads
+    [0, 0],                    // 0: Leader (center — reference point)
+    [0, -50],                  // 1: Point man (50px ahead of leader)
+    [-35, -25], [35, -25],     // 2-3: Forward wings
+    [-70, 15], [70, 15],       // 4-5: Flanks beside leader
+    [-105, 55], [105, 55],     // 6-7: Rear wings
+    [0, 75]                    // 8: Tail guard
   ],
   column: [
-    // Single file
-    [0, 0],
-    [0, 50],
-    [0, 100],
-    [0, 150],
-    [0, 200],
-    [0, 250],
-    [0, 300],
-    [0, 350]
+    // Single file — leader in 3rd position for C2
+    // Per doctrine: point man leads, slack man 2nd, leader 3rd
+    [0, 0],              // 0: Leader (3rd position)
+    [0, -100],           // 1: Point man
+    [0, -50],            // 2: Slack man
+    [0, 50],             // 3: Behind leader
+    [0, 100],            // 4:
+    [0, 150],            // 5:
+    [0, 200],            // 6:
+    [0, 250]             // 7: Tail-end charlie
   ],
   spread: [
-    // Maximum spacing (anti-artillery)
+    // Maximum spacing (anti-artillery / dispersed) — leader at center
     [0, 0],
     [-100, -50], [100, -50],
     [-100, 50], [100, 50],
     [-200, 0], [200, 0],
     [0, -100], [0, 100]
+  ],
+  staggered: [
+    // Two offset columns — leader in 3rd position
+    [0, 0],              // 0: Leader (3rd position)
+    [0, -100],           // 1: Point man
+    [30, -50],           // 2: Slack (offset right)
+    [-30, 50],           // 3: Behind leader
+    [30, 100],           // 4:
+    [-30, 150],          // 5:
+    [30, 200],           // 6:
+    [-30, 250]           // 7: Tail
+  ],
+  echelon_l: [
+    // Diagonal stepping left — leader 2nd position
+    [0, 0],              // 0: Leader (2nd position)
+    [40, -45],           // 1: Point (ahead, right)
+    [-40, 45],           // 2: Step left-back
+    [-80, 90],           // 3:
+    [-120, 135],         // 4:
+    [-160, 180],         // 5:
+    [-200, 225],         // 6:
+    [-240, 270]          // 7:
+  ],
+  echelon_r: [
+    // Diagonal stepping right — leader 2nd position
+    [0, 0],              // 0: Leader (2nd position)
+    [-40, -45],          // 1: Point (ahead, left)
+    [40, 45],            // 2: Step right-back
+    [80, 90],            // 3:
+    [120, 135],          // 4:
+    [160, 180],          // 5:
+    [200, 225],          // 6:
+    [240, 270]           // 7:
   ]
 };
 
@@ -551,19 +593,21 @@ export const UNIT_PROJECTILES = {
 };
 
 // Unit combat stats: range (pixels), speed (pixels/second), isAir
+// viewRange (pixels): how far the crew can see (independent of fire range)
+// viewCone (degrees): forward vision cone angle (peripheral/rear zones computed from this)
 export const UNIT_COMBAT_STATS = {
-  infantry:  { range: 100, speed: 30, isAir: false },
-  medic:     { range: 80,  speed: 25, isAir: false },
-  specops:   { range: 150, speed: 35, isAir: false },
-  stinger:   { range: 200, speed: 30, isAir: false },
-  jeep:      { range: 100, speed: 60, isAir: false },
-  humvee:    { range: 120, speed: 50, isAir: false },
-  sherman:   { range: 150, speed: 35, isAir: false },
-  tiger:     { range: 160, speed: 25, isAir: false },
-  abrams:    { range: 180, speed: 40, isAir: false },
-  howitzer:  { range: 300, speed: 20, isAir: false },
-  drone:     { range: 180, speed: 70, isAir: true },
-  apache:    { range: 200, speed: 50, isAir: true }
+  infantry:  { range: 100, speed: 30, isAir: false, viewRange: 200, viewCone: 140 },
+  medic:     { range: 80,  speed: 25, isAir: false, viewRange: 180, viewCone: 150 },
+  specops:   { range: 150, speed: 35, isAir: false, viewRange: 350, viewCone: 130 },
+  stinger:   { range: 200, speed: 30, isAir: false, viewRange: 220, viewCone: 140 },
+  jeep:      { range: 100, speed: 60, isAir: false, viewRange: 280, viewCone: 120 },
+  humvee:    { range: 120, speed: 50, isAir: false, viewRange: 260, viewCone: 130 },
+  sherman:   { range: 150, speed: 35, isAir: false, viewRange: 250, viewCone: 100 },
+  tiger:     { range: 160, speed: 25, isAir: false, viewRange: 280, viewCone: 100 },
+  abrams:    { range: 180, speed: 40, isAir: false, viewRange: 320, viewCone: 110 },
+  howitzer:  { range: 300, speed: 20, isAir: false, viewRange: 120, viewCone: 140 },
+  drone:     { range: 180, speed: 70, isAir: true,  viewRange: 400, viewCone: 160 },
+  apache:    { range: 200, speed: 50, isAir: true,  viewRange: 450, viewCone: 160 }
 };
 
 // Unit descriptions for details panel
@@ -1209,6 +1253,7 @@ export const UNITS = [
 ];
 
 export const ENEMIES = [
+  { id: 'swarmer', unitId: 'infantry', health: 15, speed: 2.2, damage: 5, scrap: 2, partsChance: 0, range: 40, isAir: false, types: ['infantry'] },
   { id: 'scout', unitId: 'jeep', health: 30, speed: 1.8, damage: 10, scrap: 5, partsChance: 0, range: 80, isAir: false, types: ['recon'] },
   { id: 'grunt', unitId: 'infantry', health: 60, speed: 1.3, damage: 15, scrap: 10, partsChance: 0.1, range: 100, isAir: false, types: ['infantry'] },
   { id: 'heavy', unitId: 'sherman', health: 120, speed: 0.9, damage: 25, scrap: 20, partsChance: 0.25, range: 120, isAir: false, types: ['armor'] },

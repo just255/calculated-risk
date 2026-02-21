@@ -5,6 +5,8 @@
 import { Game } from './state.js';
 
 const SAVE_KEY = 'cr_save';
+const FR_LAST_KEY = 'cr_fr_last_config';
+const FR_SAVES_KEY = 'cr_fr_saves';
 
 export function save() {
   try {
@@ -50,5 +52,76 @@ export function load() {
     }
   } catch (e) {
     console.warn('Failed to load:', e);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FIRE RANGE CONFIG PERSISTENCE
+// ═══════════════════════════════════════════════════════════════
+
+function stripExpanded(config) {
+  const c = JSON.parse(JSON.stringify(config));
+  for (const slot of [...(c.blueTeam || []), ...(c.redTeam || [])]) {
+    delete slot._expanded;
+  }
+  return c;
+}
+
+// Migrate old red team configs: enemyType → unitId
+export function migrateFRConfig(config) {
+  if (!config || !config.redTeam) return config;
+  for (const slot of config.redTeam) {
+    if (slot.enemyType && !slot.unitId) {
+      slot.unitId = slot.enemyType;
+      delete slot.enemyType;
+    }
+  }
+  return config;
+}
+
+export function saveFRConfig(config) {
+  try {
+    localStorage.setItem(FR_LAST_KEY, JSON.stringify(stripExpanded(config)));
+  } catch (e) {
+    console.warn('Failed to save FR config:', e);
+  }
+}
+
+export function loadFRConfig() {
+  try {
+    const raw = localStorage.getItem(FR_LAST_KEY);
+    return raw ? migrateFRConfig(JSON.parse(raw)) : null;
+  } catch (e) {
+    console.warn('Failed to load FR config:', e);
+    return null;
+  }
+}
+
+export function saveFRNamedConfig(name, config) {
+  try {
+    const saves = JSON.parse(localStorage.getItem(FR_SAVES_KEY) || '{}');
+    saves[name] = { config: stripExpanded(config), savedAt: Date.now() };
+    localStorage.setItem(FR_SAVES_KEY, JSON.stringify(saves));
+  } catch (e) {
+    console.warn('Failed to save named FR config:', e);
+  }
+}
+
+export function loadFRNamedConfigs() {
+  try {
+    return JSON.parse(localStorage.getItem(FR_SAVES_KEY) || '{}');
+  } catch (e) {
+    console.warn('Failed to load named FR configs:', e);
+    return {};
+  }
+}
+
+export function deleteFRNamedConfig(name) {
+  try {
+    const saves = JSON.parse(localStorage.getItem(FR_SAVES_KEY) || '{}');
+    delete saves[name];
+    localStorage.setItem(FR_SAVES_KEY, JSON.stringify(saves));
+  } catch (e) {
+    console.warn('Failed to delete named FR config:', e);
   }
 }

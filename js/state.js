@@ -2,8 +2,11 @@
 // STATE - Game state object and battle factory
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, H2H_BUDGET, CAMPAIGN_HERO_UNITS, UNITS, ZoneOwner, ScenarioType, Biome, BIOME_TERRAIN } from './constants.js';
+import { State, SubState, HQTab, H2H_BUDGET, CAMPAIGN_HERO_UNITS, UNITS, ENEMIES, ZoneOwner, ScenarioType, Biome, BIOME_TERRAIN } from './constants.js';
 import { WorldBuilder } from './world-builder/index.js';
+import { generateBattleTerrain, randomizeBattleConfig } from './world-builder/battle-terrain.js';
+import { hashString } from './world-builder/rng.js';
+import { createSergeant, DEFAULT_SERGEANT } from './sergeant.js';
 
 export const Game = {
   state: State.MENU,
@@ -549,6 +552,33 @@ export function newCampaignBattle(era, mos, battlePlan) {
     }
   }
 
+  // Generate PCG terrain if images are preloaded
+  let terrainCanvases = null;
+  let terrainMap = null;
+  let pcgSpawnZones = null;
+  let terrainLabel = null;
+  let terrainConfig = null;
+  const battleSeed = battlePlan?.seed || Math.floor(Math.random() * 999999);
+  if (Game.terrainImages) {
+    try {
+      const varied = randomizeBattleConfig(battleSeed);
+      terrainConfig = { biome: varied.biome, season: varied.season, templateName: varied.templateName, pcgParams: { ...varied.pcgParams } };
+      const pcg = generateBattleTerrain({
+        mapWidth, mapHeight, cellSize: CELL_SIZE,
+        biome: varied.biome, season: varied.season,
+        seed: battleSeed,
+        images: Game.terrainImages,
+        pcgParams: varied.pcgParams
+      });
+      terrainCanvases = { terrainCanvas: pcg.terrainCanvas, canopyCanvas: pcg.canopyCanvas };
+      terrainMap = pcg.terrainMap;
+      pcgSpawnZones = pcg.spawnZones;
+      terrainLabel = `${varied.templateName} (${varied.season}) #${battleSeed}`;
+    } catch (err) {
+      console.warn('[state] PCG terrain generation failed, using fallback:', err);
+    }
+  }
+
   return {
     // Cell/grid config
     cellSize: CELL_SIZE,
@@ -559,8 +589,16 @@ export function newCampaignBattle(era, mos, battlePlan) {
     mapWidth,
     mapHeight,
 
-    // Terrain from battlePlan
+    // Terrain from battlePlan (fallback)
     terrain: battlePlan?.terrain || [],
+
+    // PCG terrain (pre-rendered canvases)
+    terrainCanvases,
+    terrainMap,
+    pcgSpawnZones,
+    terrainLabel,
+    terrainSeed: battleSeed,
+    terrainConfig,
 
     // Camera position
     camera: { x: 0, y: 0 },
@@ -1245,20 +1283,81 @@ export function newEndlessRun() {
   };
 }
 
+// Create AI-controlled ally squad for endless mode testing
+function createEndlessSquad(heroX, heroY, mapWidth, mapHeight, cellSize) {
+  const units = [];
+
+  // Squad composition: mixed unit types spread across the bottom half
+  const squad = [
+    { unitId: 'infantry', behavior: 'AGGRESSIVE', order: 'search' },
+    { unitId: 'infantry', behavior: 'AGGRESSIVE', order: 'search' },
+    { unitId: 'infantry', behavior: 'DEFENSIVE', order: 'hold' },
+    { unitId: 'infantry', behavior: 'FLANKER',   order: 'flank' },
+    { unitId: 'sherman',  behavior: 'DEFENSIVE', order: 'hold' },
+    { unitId: 'sherman',  behavior: 'AGGRESSIVE', order: 'advance' },
+  ];
+
+  const spawnCenterX = mapWidth / 2;
+  const spawnCenterY = mapHeight - cellSize * 5;
+
+  squad.forEach((def, i) => {
+    // Spread in a line across the map
+    const offsetX = (i - squad.length / 2) * 60;
+    const offsetY = (Math.random() - 0.5) * 80;
+
+    units.push({
+      id: `ally_${i}`,
+      unitId: def.unitId,
+      x: spawnCenterX + offsetX,
+      y: spawnCenterY + offsetY,
+      hp: def.unitId === 'sherman' ? 150 : 60,
+      maxHp: def.unitId === 'sherman' ? 150 : 60,
+      damage: def.unitId === 'sherman' ? 30 : 10,
+      fireRate: def.unitId === 'sherman' ? 1500 : 1000,
+      speed: def.unitId === 'sherman' ? 60 : 80,
+      range: def.unitId === 'sherman' ? 200 : 150,
+      lastShot: 0,
+      angle: -Math.PI / 2,
+      dead: false,
+      // AI config
+      currentOrder: def.order,
+      hasIndividualOrder: false,
+      aiState: null,  // Will be initialized by updateUnitAI
+      aiBehavior: null,  // Will be set below via key
+      _behaviorKey: def.behavior,  // Used to set behavior on first frame
+      stance: 'autonomous',
+      targetPriority: 'nearest',
+      isSelected: false
+    });
+  });
+
+  return units;
+}
+
 // Endless battle factory - creates a battle instance for endless mode
 export function newEndlessBattle(loadout, wave = 1) {
   const CELL_SIZE = 64;
 
-  // Map size scales slightly with wave (bigger arenas later)
-  const baseSize = 16;
-  const sizeBonus = Math.min(8, Math.floor(wave / 5));
-  const gridWidth = baseSize + sizeBonus;
-  const gridHeight = baseSize + sizeBonus;
+  // Get seed and generate terrain config
+  const seed = Game.endless?.seed || null;
+  const battleSeed = seed ? (typeof seed === 'string' ? hashString(seed) : seed) + wave : Math.floor(Math.random() * 999999);
+  const varied = Game.terrainImages ? randomizeBattleConfig(battleSeed) : null;
+
+  // Map size tiers — bigger maps = harder battles
+  // Waves 1-3: Skirmish (small), 4-7: Engagement (medium), 8-12: Assault (large), 13+: Siege (xl)
+  const SIZE_TIERS = [
+    { maxWave: 3,  grid: 24, label: 'Patrol',      enemyMult: 1.0 },
+    { maxWave: 7,  grid: 32, label: 'Sortie',      enemyMult: 1.3 },
+    { maxWave: 12, grid: 40, label: 'Operation',   enemyMult: 1.6 },
+    { maxWave: Infinity, grid: 48, label: 'Campaign', enemyMult: 2.0 }
+  ];
+  const sizeTier = SIZE_TIERS.find(t => wave <= t.maxWave) || SIZE_TIERS[SIZE_TIERS.length - 1];
+  const gridWidth = sizeTier.grid;
+  const gridHeight = sizeTier.grid;
   const mapWidth = gridWidth * CELL_SIZE;
   const mapHeight = gridHeight * CELL_SIZE;
 
-  // Generate terrain (pass seed from Game.endless if available)
-  const seed = Game.endless?.seed || null;
+  // Generate fallback terrain
   const terrain = generateEndlessTerrain(gridWidth, gridHeight, wave, seed);
 
   // Hero starts at bottom center
@@ -1269,13 +1368,38 @@ export function newEndlessBattle(loadout, wave = 1) {
   const vehicleId = loadout?.vehicle || 'abrams';
   const vehicleDef = UNITS.find(u => u.id === vehicleId);
 
-  // Default hero stats (tank-like)
+  // Default hero stats (heavy tank feel — slow, powerful)
   const heroStats = {
     hp: vehicleDef?.hp || 200,
-    speed: vehicleDef?.speed || 120,
+    speed: 70,         // Slow tank: positioning matters
     damage: vehicleDef?.damage || 40,
-    fireRate: vehicleDef?.fireRate || 1500
+    fireRate: 3000     // Deliberate shots: every hit counts
   };
+
+  // Generate PCG terrain if images are preloaded
+  let terrainCanvases = null;
+  let terrainMap = null;
+  let pcgSpawnZones = null;
+  let terrainLabel = null;
+  let terrainConfig = null;
+  if (Game.terrainImages && varied) {
+    try {
+      terrainConfig = { biome: varied.biome, season: varied.season, templateName: varied.templateName, pcgParams: { ...varied.pcgParams } };
+      const pcg = generateBattleTerrain({
+        mapWidth, mapHeight, cellSize: CELL_SIZE,
+        biome: varied.biome, season: varied.season,
+        seed: battleSeed,
+        images: Game.terrainImages,
+        pcgParams: varied.pcgParams
+      });
+      terrainCanvases = { terrainCanvas: pcg.terrainCanvas, canopyCanvas: pcg.canopyCanvas };
+      terrainMap = pcg.terrainMap;
+      pcgSpawnZones = pcg.spawnZones;
+      terrainLabel = `${sizeTier.label}: ${varied.templateName} (${varied.season}) #${battleSeed}`;
+    } catch (err) {
+      console.warn('[state] PCG terrain generation failed, using fallback:', err);
+    }
+  }
 
   return {
     // Mode identifier
@@ -1286,12 +1410,24 @@ export function newEndlessBattle(loadout, wave = 1) {
     gridWidth,
     gridHeight,
 
+    // Difficulty scaling from map size tier
+    sizeTier: sizeTier.label,
+    enemyMult: sizeTier.enemyMult,
+
     // Map size in pixels
     mapWidth,
     mapHeight,
 
-    // Terrain
+    // Terrain (fallback)
     terrain,
+
+    // PCG terrain (pre-rendered canvases)
+    terrainCanvases,
+    terrainMap,
+    pcgSpawnZones,
+    terrainLabel,
+    terrainSeed: battleSeed,
+    terrainConfig,
 
     // Camera - start centered on hero
     camera: { x: 0, y: heroY - 300, lookX: 0, lookY: 0 },
@@ -1318,8 +1454,8 @@ export function newEndlessBattle(loadout, wave = 1) {
       targetHullAngle: -Math.PI / 2
     },
 
-    // No support units in endless (solo run)
-    units: [],
+    // Test squad — AI-controlled allies
+    units: createEndlessSquad(heroX, heroY, mapWidth, mapHeight, CELL_SIZE),
 
     // Input state
     keys: { w: false, a: false, s: false, d: false },
@@ -1362,4 +1498,333 @@ function generateEndlessTerrain(width, height, wave, seed = null) {
     wave,
     seed: waveSeed
   });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FIRE RANGE — AI test bed with configurable teams
+// ═══════════════════════════════════════════════════════════════
+
+const DEFAULT_FIRE_RANGE_CONFIG = {
+  blueTeam: [
+    { unitId: 'infantry', count: 4, command: 'advance', aggression: 0.5, patience: 0.5, courage: 0.5, discipline: 0.5, initiative: 0.5, veterancy: 0, morale: 0.8, awareness: 0.5, leadership: 0, isLeader: false, tgtDistance: 0.7, tgtWeakness: 0.3, tgtThreat: 0.0, tgtValue: 0.0 },
+    { unitId: 'sherman',  count: 2, command: 'hold',    aggression: 0.3, patience: 0.7, courage: 0.6, discipline: 0.7, initiative: 0.5, veterancy: 0, morale: 0.8, awareness: 0.5, leadership: 0, isLeader: false, tgtDistance: 0.5, tgtWeakness: 0.3, tgtThreat: 0.5, tgtValue: 0.0 }
+  ],
+  redTeam: [
+    { unitId: 'infantry', count: 4, command: 'advance', aggression: 0.5, patience: 0.5, courage: 0.5, discipline: 0.5, initiative: 0.5, veterancy: 0, morale: 0.8, awareness: 0.5, leadership: 0, isLeader: false, tgtDistance: 0.7, tgtWeakness: 0.3, tgtThreat: 0.0, tgtValue: 0.0 },
+    { unitId: 'sherman',  count: 2, command: 'hold',    aggression: 0.3, patience: 0.7, courage: 0.6, discipline: 0.7, initiative: 0.5, veterancy: 0, morale: 0.8, awareness: 0.5, leadership: 0, isLeader: false, tgtDistance: 0.5, tgtWeakness: 0.3, tgtThreat: 0.5, tgtValue: 0.0 }
+  ],
+  mapSize: 'medium',
+  // Sergeant AI personalities (per team)
+  blueSergeant: { ...DEFAULT_SERGEANT },
+  redSergeant:  { ...DEFAULT_SERGEANT },
+  debug: {
+    blueInvincible: false,
+    redInvincible: false,
+    noCooldowns: false,
+    showRanges: false
+  }
+};
+
+export function newFireRangeRun() {
+  return {
+    config: JSON.parse(JSON.stringify(DEFAULT_FIRE_RANGE_CONFIG)),
+    battle: null,
+    result: null,   // 'blue_wins' | 'red_wins' | null
+    elapsed: 0,
+    scenarioName: null  // Set when loading a preset
+  };
+}
+
+// Combat stats for units in fire range (UNITS array lacks hp/speed/range)
+const FR_UNIT_STATS = {
+  infantry: { hp: 180, speed: 80,  range: 150, damage: 10, fireRate: 1000, viewRange: 200, viewCone: 140 },
+  medic:    { hp: 135, speed: 75,  range: 120, damage: 5,  fireRate: 1200, viewRange: 180, viewCone: 150 },
+  specops:  { hp: 150, speed: 90,  range: 180, damage: 18, fireRate: 700,  viewRange: 350, viewCone: 130 },
+  jeep:     { hp: 240, speed: 120, range: 170, damage: 15, fireRate: 800,  viewRange: 280, viewCone: 120 },
+  humvee:   { hp: 300, speed: 100, range: 180, damage: 20, fireRate: 900,  viewRange: 260, viewCone: 130 },
+  sherman:  { hp: 450, speed: 60,  range: 200, damage: 30, fireRate: 1500, viewRange: 250, viewCone: 100 },
+  tiger:    { hp: 600, speed: 50,  range: 220, damage: 45, fireRate: 2000, viewRange: 280, viewCone: 100 },
+  abrams:   { hp: 750, speed: 55,  range: 250, damage: 60, fireRate: 1800, viewRange: 320, viewCone: 110 },
+  howitzer: { hp: 240, speed: 30,  range: 350, damage: 80, fireRate: 3000, viewRange: 120, viewCone: 140 },
+  apache:   { hp: 360, speed: 130, range: 280, damage: 35, fireRate: 1000, viewRange: 450, viewCone: 160 }
+};
+
+const FR_MAP_SIZES = {
+  small:  { grid: 20, label: 'Small' },
+  medium: { grid: 28, label: 'Medium' },
+  large:  { grid: 36, label: 'Large' }
+};
+
+export function newFireRangeBattle(config) {
+  const CELL_SIZE = 64;
+  const sizeInfo = FR_MAP_SIZES[config.mapSize] || FR_MAP_SIZES.medium;
+  const gridWidth = sizeInfo.grid;
+  const gridHeight = sizeInfo.grid;
+  const mapWidth = gridWidth * CELL_SIZE;
+  const mapHeight = gridHeight * CELL_SIZE;
+
+  // Generate terrain (use config seed if provided, otherwise random)
+  const battleSeed = config.terrainSeed || Math.floor(Math.random() * 999999);
+  const terrain = generateEndlessTerrain(gridWidth, gridHeight, 1, null);
+  const varied = Game.terrainImages ? randomizeBattleConfig(battleSeed) : null;
+
+  let terrainCanvases = null;
+  let terrainMap = null;
+  let pcgSpawnZones = null;
+  let terrainLabel = null;
+  let terrainConfig = null;
+  if (Game.terrainImages && varied) {
+    try {
+      terrainConfig = { biome: varied.biome, season: varied.season, templateName: varied.templateName, pcgParams: { ...varied.pcgParams } };
+      const pcg = generateBattleTerrain({
+        mapWidth, mapHeight, cellSize: CELL_SIZE,
+        biome: varied.biome, season: varied.season,
+        seed: battleSeed,
+        images: Game.terrainImages,
+        pcgParams: varied.pcgParams
+      });
+      terrainCanvases = { terrainCanvas: pcg.terrainCanvas, canopyCanvas: pcg.canopyCanvas };
+      terrainMap = pcg.terrainMap;
+      pcgSpawnZones = pcg.spawnZones;
+      terrainLabel = `${sizeInfo.label}: ${varied.templateName} (${varied.season}) #${battleSeed}`;
+    } catch (err) {
+      console.warn('[fire-range] PCG terrain failed, using fallback:', err);
+    }
+  }
+
+  // Determine spawn centers from PCG zones or fall back to fixed positions
+  let blueSpawnZone, redSpawnZone;
+  if (pcgSpawnZones && pcgSpawnZones.length >= 2) {
+    // Sort by Y: lower Y = top (red), higher Y = bottom (blue)
+    const sorted = [...pcgSpawnZones].sort((a, b) => a.y - b.y);
+    redSpawnZone = sorted[0];
+    blueSpawnZone = sorted[1];
+  } else {
+    blueSpawnZone = { x: mapWidth / 2, y: mapHeight - CELL_SIZE * 4, radius: 180 };
+    redSpawnZone = { x: mapWidth / 2, y: CELL_SIZE * 4, radius: 180 };
+  }
+
+  // Short type abbreviations for readable IDs
+  const _abbr = (s) => {
+    const map = { infantry:'inf', medic:'med', specops:'spc', jeep:'jep', humvee:'hmv',
+      sherman:'shm', tiger:'tgr', abrams:'abr', howitzer:'how', apache:'apc',
+      swarmer:'swm', scout:'sct', grunt:'grt', heavy:'hvy', elite:'elt' };
+    return map[s] || s.slice(0, 3);
+  };
+  const _typeCounts = {};
+
+  // Spawn blue team (allies) in blue spawn zone
+  const blueUnits = [];
+  let blueIdx = 0;
+  for (const slot of config.blueTeam) {
+    const stats = FR_UNIT_STATS[slot.unitId];
+    if (!stats) continue;
+    const abbr = _abbr(slot.unitId);
+    for (let i = 0; i < slot.count; i++) {
+      const typeNum = (_typeCounts[abbr] = (_typeCounts[abbr] || 0) + 1) - 1;
+      const offsetX = (blueIdx - 3) * 60 + (Math.random() - 0.5) * 30;
+      const offsetY = (Math.random() - 0.5) * 80;
+      blueUnits.push({
+        id: `${abbr}.${typeNum}`,
+        team: 'ally',
+        unitId: slot.unitId,
+        x: blueSpawnZone.x + offsetX,
+        y: blueSpawnZone.y + offsetY,
+        hp: stats.hp,
+        maxHp: stats.hp,
+        damage: stats.damage,
+        fireRate: stats.fireRate,
+        speed: stats.speed,
+        range: stats.range,
+        viewRange: stats.viewRange || 200,
+        viewCone: stats.viewCone || 140,
+        lastShot: 0,
+        angle: -Math.PI / 2,
+        dead: false,
+        // Brain fields from config
+        command: slot.command || 'advance',
+        personality: {
+          aggression: slot.aggression ?? 0.5,
+          patience: slot.patience ?? 0.5,
+          courage: slot.courage ?? 0.5,
+          discipline: slot.discipline ?? 0.5,
+          initiative: slot.initiative ?? 0.5
+        },
+        targeting: {
+          distance: slot.tgtDistance ?? 0.7,
+          weakness: slot.tgtWeakness ?? 0.3,
+          threat: slot.tgtThreat ?? 0.0,
+          value: slot.tgtValue ?? 0.0
+        },
+        awareness: slot.awareness ?? 0.5,
+        leadership: slot.leadership ?? 0,
+        morale: slot.morale ?? 0.8,
+        veterancy: slot.veterancy ?? 0,
+        isHero: slot.isLeader || false,
+        isLeader: slot.isLeader || false,
+        isSelected: false,
+        _suppression: 0
+      });
+      blueIdx++;
+    }
+  }
+
+  // Spawn red team (enemies) in red spawn zone
+  // Supports unitId (same stats as blue via FR_UNIT_STATS) or enemyType (legacy ENEMIES defs)
+  const redEnemies = [];
+  let redIdx = 0;
+  const _redCounts = {};
+  for (const slot of config.redTeam) {
+    // Resolve stats: unitId path (FR_UNIT_STATS) or enemyType path (ENEMIES)
+    const usePlayerStats = slot.unitId && FR_UNIT_STATS[slot.unitId];
+    const stats = usePlayerStats ? FR_UNIT_STATS[slot.unitId] : null;
+    const enemyDef = !usePlayerStats ? ENEMIES.find(e => e.id === slot.enemyType) : null;
+    if (!stats && !enemyDef) continue;
+
+    const typeKey = slot.unitId || slot.enemyType;
+    const rAbbr = _abbr(typeKey);
+    for (let i = 0; i < slot.count; i++) {
+      const typeNum = (_redCounts[rAbbr] = (_redCounts[rAbbr] || 0) + 1) - 1;
+      const offsetX = (redIdx - 3) * 60 + (Math.random() - 0.5) * 30;
+      const offsetY = (Math.random() - 0.5) * 80;
+      const enemy = {
+        id: `${rAbbr}.${typeNum}`,
+        team: 'enemy',
+        unitId: typeKey,
+        x: redSpawnZone.x + offsetX,
+        y: redSpawnZone.y + offsetY,
+        hp: stats ? stats.hp : enemyDef.health,
+        maxHp: stats ? stats.hp : enemyDef.health,
+        damage: stats ? stats.damage : enemyDef.damage,
+        speed: stats ? stats.speed : enemyDef.speed * 50,
+        fireRate: stats ? stats.fireRate : 2000,
+        range: stats ? stats.range : (enemyDef.range || 100),
+        viewRange: stats ? stats.viewRange : (FR_UNIT_STATS[enemyDef?.unitId]?.viewRange || 200),
+        viewCone: stats ? stats.viewCone : (FR_UNIT_STATS[enemyDef?.unitId]?.viewCone || 140),
+        angle: Math.PI / 2,
+        dead: false,
+        stability: 0,
+        recentDamageFrom: {},
+        lastAttack: 0,
+        // Brain fields from config
+        command: slot.command || 'advance',
+        personality: {
+          aggression: slot.aggression ?? 0.5,
+          patience: slot.patience ?? 0.5,
+          courage: slot.courage ?? 0.5,
+          discipline: slot.discipline ?? 0.5,
+          initiative: slot.initiative ?? 0.5
+        },
+        targeting: {
+          distance: slot.tgtDistance ?? 0.7,
+          weakness: slot.tgtWeakness ?? 0.3,
+          threat: slot.tgtThreat ?? 0.0,
+          value: slot.tgtValue ?? 0.0
+        },
+        awareness: slot.awareness ?? 0.5,
+        leadership: slot.leadership ?? 0,
+        morale: slot.morale ?? 0.8,
+        veterancy: slot.veterancy ?? 0,
+        isHero: slot.isLeader || false,
+        isLeader: slot.isLeader || false,
+        _suppression: 0
+      };
+      redEnemies.push(enemy);
+      redIdx++;
+    }
+  }
+
+  // Leader promotion: if any blue unit is flagged as leader, use it as hero
+  let battleHero = null;
+  const blueLeader = blueUnits.find(u => u.isLeader);
+  if (blueLeader) {
+    blueLeader.isHero = true;
+    battleHero = blueLeader;
+  } else {
+    // Observer hero — hidden far off-map, won't be targeted
+    battleHero = {
+      x: -9999, y: -9999,
+      hp: 99999, maxHp: 99999,
+      speed: 0, damage: 0, fireRate: 99999,
+      angle: 0, hullAngle: 0, targetHullAngle: 0,
+      lastShot: 0, isHero: true, observer: true,
+      lastX: -9999, lastY: -9999,
+      velocity: 0, unitId: 'abrams',
+      animId: null, isMoving: false
+    };
+  }
+
+  // Enemy leader (future sergeant AI)
+  const enemyLeader = redEnemies.find(e => e.isLeader) || null;
+
+  return {
+    mode: 'fire_range',
+    fireRange: true,
+
+    cellSize: CELL_SIZE,
+    gridWidth, gridHeight,
+    mapWidth, mapHeight,
+
+    terrain,
+    terrainCanvases,
+    terrainMap,
+    pcgSpawnZones,
+    terrainLabel,
+    terrainSeed: battleSeed,
+    terrainConfig,
+
+    // Spawn zone assignments (for rendering + future capture mechanics)
+    blueSpawnZone,
+    redSpawnZone,
+
+    // Camera starts near blue spawn (refined in game.js drawHeroBattle)
+    camera: { x: mapWidth / 2 - 400, y: blueSpawnZone.y - 300, lookX: 0, lookY: 0 },
+
+    // Hero (promoted blue leader or off-map observer)
+    hero: battleHero,
+    enemyLeader,
+
+    // Teams
+    units: blueUnits,
+    enemies: redEnemies,
+
+    // Debug options from config
+    debug: config.debug ? { ...config.debug } : {},
+
+    // Standard battle fields
+    projectiles: [],
+    effects: [],
+    keys: { w: false, a: false, s: false, d: false },
+    mouse: { x: 0, y: 0, down: false },
+    joystickInput: null,
+    aimAngle: null,
+
+    // No wave system
+    wave: 1,
+    waveStartTime: Date.now(),
+    waveComplete: false,
+    enemiesRemaining: 0,
+    spawnQueue: [],
+    kills: 0,
+    result: null,
+    commandFeedback: null,
+
+    // Waypoints & commanders
+    _teamWaypoints: {},
+    _teamCommanders: {
+      player: blueLeader || null,
+      enemy: enemyLeader || null
+    },
+
+    // Sergeant AI (team-level commander)
+    _sergeants: {
+      blue: createSergeant('blue', config.blueSergeant || {}, blueSpawnZone, redSpawnZone),
+      red:  createSergeant('red',  config.redSergeant  || {}, redSpawnZone,  blueSpawnZone)
+    },
+
+    // Debug telemetry
+    debugOverlay: true,
+    showTerrainGrid: false,
+    _debugLog: []
+  };
 }

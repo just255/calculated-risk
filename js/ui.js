@@ -2,11 +2,12 @@
 // UI - HTML rendering functions
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, UnitType, UNITS, UNIT_COSTS, H2H_BUDGET, VEHICLE_UNITS, TYPE_CHART, UNIT_PROJECTILES, PROJECTILES, UNIT_DESCRIPTIONS, CAMPAIGN_ERAS, CAMPAIGN_MOS, SquadOrder, TargetPriority, Formation, VEHICLE_CATEGORIES, ENDLESS_VEHICLES, PART_CATEGORY_CONFIG, SYSTEM_DEFINITIONS, UNIT_PART_SLOTS, UNIT_TYPE_MAP } from './constants.js';
+import { State, SubState, HQTab, UnitType, UNITS, ENEMIES, UNIT_COSTS, H2H_BUDGET, VEHICLE_UNITS, TYPE_CHART, UNIT_PROJECTILES, PROJECTILES, UNIT_DESCRIPTIONS, CAMPAIGN_ERAS, CAMPAIGN_MOS, SquadOrder, TargetPriority, Formation, VEHICLE_CATEGORIES, ENDLESS_VEHICLES, PART_CATEGORY_CONFIG, SYSTEM_DEFINITIONS, UNIT_PART_SLOTS, UNIT_TYPE_MAP } from './constants.js';
 import { Game } from './state.js';
 import { save } from './storage.js';
 import { getSkinSelectorData, setSkinPref, clearCache as clearSkinCache } from './skins.js';
 import { getSprite, hasSprite, loadPartSprites, compositeUnitSprite, getPartImage, loadVariant, renderVariant } from './sprites.js';
+import { FR_PRESET_LIST } from './fire-range-presets.js';
 
 // Mobile detection
 const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
@@ -134,6 +135,9 @@ export function render() {
     case State.ENDLESS_BATTLE: app.innerHTML = endlessBattleHTML(); break;
     case State.ENDLESS_BETWEEN: app.innerHTML = endlessBetweenHTML(); break;
     case State.ENDLESS_RESULT: app.innerHTML = endlessResultHTML(); break;
+    // Fire Range states
+    case State.FIRE_RANGE: app.innerHTML = fireRangeConfigHTML(); break;
+    case State.FIRE_RANGE_BATTLE: app.innerHTML = fireRangeBattleHTML(); break;
   }
 }
 
@@ -159,6 +163,7 @@ function menuHTML() {
         <div class="menu-buttons">
           <button class="menu-btn" data-action="campaign">Campaign</button>
           <button class="menu-btn" data-action="endless">Endless</button>
+          <button class="menu-btn" data-action="fire-range">Fire Range</button>
           <button class="menu-btn" data-action="classic">Classic</button>
           <button class="menu-btn" data-action="versus">Head 2 Head</button>
           <button class="menu-btn" data-action="hq">Headquarters</button>
@@ -4119,6 +4124,8 @@ function endlessLoadoutHTML() {
             <option value="random" ${!e.seed ? 'selected' : ''}>Random</option>
             <option value="weekly" ${e.seed ? 'selected' : ''}>Weekly</option>
           </select>
+          <span class="header-label">WAVE</span>
+          <input type="number" class="header-wave-select" min="1" max="99" value="${e.debugWave || 1}" style="width:42px; text-align:center; background:var(--bg-secondary,#1a1a2e); color:var(--text-primary,#eee); border:1px solid var(--border-color,#333); border-radius:4px; font-size:12px; padding:2px;">
           <button class="header-deploy-btn ${!selectedVehicle ? 'disabled' : ''}" data-action="${selectedVehicle ? 'endless-start' : ''}" ${!selectedVehicle ? 'disabled' : ''}>DEPLOY ▶</button>
         </div>
       </div>
@@ -4329,6 +4336,9 @@ function endlessBattleHTML() {
           <span class="wave-display">Wave ${e.wave}</span>
           <span class="kills-display">Kills: ${e.kills}</span>
         </div>
+        <div class="hud-center">
+          <span class="fps-display"></span>
+        </div>
         <div class="hud-right">
           <span class="score-display">${e.score.toLocaleString()}</span>
         </div>
@@ -4339,6 +4349,9 @@ function endlessBattleHTML() {
       </div>
 
       <div class="endless-controls">
+        <div class="endless-minimap">
+          <canvas class="minimap-canvas" width="80" height="80"></canvas>
+        </div>
         <button class="control-btn" data-action="endless-pause">⏸</button>
       </div>
     </div>
@@ -4456,6 +4469,291 @@ function endlessResultHTML() {
         <button class="menu-btn secondary" data-action="menu">
           MAIN MENU
         </button>
+      </div>
+    </div>
+  `;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FIRE RANGE — AI Test Bed
+// ═══════════════════════════════════════════════════════════════
+
+const FR_BLUE_UNITS = ['infantry', 'medic', 'specops', 'jeep', 'humvee', 'sherman', 'tiger', 'abrams', 'howitzer', 'apache'];
+const FR_RED_TYPES = ['infantry', 'medic', 'specops', 'jeep', 'humvee', 'sherman', 'tiger', 'abrams', 'howitzer', 'apache', 'grunt', 'heavy', 'elite'];
+const FR_COMMANDS = [
+  { value: 'follow',     label: 'Follow' },
+  { value: 'advance',    label: 'Advance' },
+  { value: 'hold',       label: 'Hold' },
+  { value: 'fall_back',  label: 'Fall Back' },
+  { value: 'cover_me',   label: 'Cover Me' },
+  { value: 'focus_fire', label: 'Focus Fire' }
+];
+const FR_SLIDERS = [
+  { key: 'aggression',  label: 'AGG',  title: 'Aggression — high pushes in, low keeps distance' },
+  { key: 'patience',    label: 'PAT',  title: 'Patience — high waits for good shots, low fires ASAP' },
+  { key: 'courage',     label: 'CRG',  title: 'Courage — high stands ground, low retreats early' },
+  { key: 'discipline',  label: 'DIS',  title: 'Discipline — high follows orders, low freelances' },
+  { key: 'initiative',  label: 'INI',  title: 'Initiative — high re-evaluates often, low follows routine' },
+  { key: 'veterancy',   label: 'VET',  title: 'Veterancy — high = consistent, low = unpredictable' },
+  { key: 'morale',      label: 'MRL',  title: 'Starting morale — drops from damage, rises from kills' },
+  { key: 'awareness',   label: 'AWR',  title: 'Awareness — gates targeting intelligence, survival instinct, flank detection' }
+];
+const FR_TGT_SLIDERS = [
+  { key: 'tgtDistance', label: 'DIST', title: 'Distance weight — high = prefer closer targets' },
+  { key: 'tgtWeakness', label: 'WEAK', title: 'Weakness weight — high = prefer low-HP targets' },
+  { key: 'tgtThreat',  label: 'THRT', title: 'Threat weight — high = prefer high-damage enemies' },
+  { key: 'tgtValue',   label: 'VAL',  title: 'Value weight — high = prefer high-value (tanky) targets' }
+];
+
+function frSlotRow(slot, i, team, typeField, typeOptions) {
+  const expanded = slot._expanded ? ' expanded' : '';
+  const leaderCls = slot.isLeader ? ' active' : '';
+  const cmd = slot.command || 'advance';
+
+  const sliders = FR_SLIDERS.map(s => {
+    const val = slot[s.key] ?? (s.key === 'morale' ? 0.8 : (s.key === 'veterancy' ? 0 : 0.5));
+    return `<div class="fr-slider-item" title="${s.title}">
+      <span class="fr-slider-label">${s.label}</span>
+      <input type="range" class="fr-slider" data-field="${s.key}" data-team="${team}" data-idx="${i}" min="0" max="1" step="0.05" value="${val}">
+      <span class="fr-slider-val" data-val-for="${s.key}-${team}-${i}">${val.toFixed(2)}</span>
+    </div>`;
+  }).join('');
+
+  const tgtSliders = FR_TGT_SLIDERS.map(s => {
+    const val = slot[s.key] ?? 0;
+    return `<div class="fr-slider-item" title="${s.title}">
+      <span class="fr-slider-label">${s.label}</span>
+      <input type="range" class="fr-slider" data-field="${s.key}" data-team="${team}" data-idx="${i}" min="0" max="1" step="0.05" value="${val}">
+      <span class="fr-slider-val" data-val-for="${s.key}-${team}-${i}">${val.toFixed(2)}</span>
+    </div>`;
+  }).join('');
+
+  return `<div class="fr-slot${expanded}" data-team="${team}" data-idx="${i}">
+    <div class="fr-slot-main">
+      <select class="fr-select" data-field="${typeField}" data-team="${team}" data-idx="${i}">
+        ${typeOptions.map(u => `<option value="${u}" ${(slot[typeField] || slot.enemyType) === u ? 'selected' : ''}>${u}</option>`).join('')}
+      </select>
+      <select class="fr-select" data-field="command" data-team="${team}" data-idx="${i}">
+        ${FR_COMMANDS.map(c => `<option value="${c.value}" ${cmd === c.value ? 'selected' : ''}>${c.label}</option>`).join('')}
+      </select>
+      <input type="number" class="fr-count" data-team="${team}" data-idx="${i}" min="1" max="20" value="${slot.count}">
+      <button class="fr-leader-btn${leaderCls}" data-action="fr-leader" data-team="${team}" data-idx="${i}" title="Commander/Hero">&#9733;</button>
+      <button class="fr-expand-btn" data-action="fr-expand" data-team="${team}" data-idx="${i}">${slot._expanded ? '&#9660;' : '&#9654;'}</button>
+      <button class="fr-remove" data-action="fr-remove" data-team="${team}" data-idx="${i}">x</button>
+    </div>
+    <div class="fr-slot-detail" style="${slot._expanded ? '' : 'display:none'}">
+      <div class="fr-slider-grid">${sliders}</div>
+      <div class="fr-tgt-label">TARGETING</div>
+      <div class="fr-slider-grid">${tgtSliders}</div>
+    </div>
+  </div>`;
+}
+
+const SGT_TRAITS = [
+  { key: 'aggression',   label: 'AGG', title: 'Aggression — push vs hold' },
+  { key: 'patience',     label: 'PAT', title: 'Patience — wait to assess before acting' },
+  { key: 'courage',      label: 'CRG', title: 'Courage — tolerance for casualties before fallback' },
+  { key: 'discipline',   label: 'DIS', title: 'Discipline — tighter formations, longer regroup' },
+  { key: 'initiative',   label: 'INI', title: 'Initiative — flanking, improvisation' },
+  { key: 'adaptability', label: 'ADP', title: 'Adaptability — how often sergeant re-evaluates' }
+];
+
+function sgtSliders(sgt, team) {
+  return SGT_TRAITS.map(t => {
+    const val = sgt[t.key] ?? 0.5;
+    return `<div class="fr-slider-item" title="${t.title}">
+      <span class="fr-slider-label">${t.label}</span>
+      <input type="range" class="fr-slider fr-sgt-slider" data-sgt-trait="${t.key}" data-sgt-team="${team}" min="0" max="1" step="0.05" value="${val}">
+      <span class="fr-slider-val">${val.toFixed(2)}</span>
+    </div>`;
+  }).join('');
+}
+
+function fireRangeConfigHTML() {
+  const fr = Game.fireRange;
+  if (!fr) return '<div class="screen">Loading...</div>';
+  const cfg = fr.config;
+  const dbg = cfg.debug || {};
+
+  const blueRows = cfg.blueTeam.map((slot, i) => frSlotRow(slot, i, 'blue', 'unitId', FR_BLUE_UNITS)).join('');
+  const redRows = cfg.redTeam.map((slot, i) => frSlotRow(slot, i, 'red', 'unitId', FR_RED_TYPES)).join('');
+
+  return `
+    <div class="screen fr-config-screen">
+      <div class="fr-header">
+        <h1>FIRE RANGE</h1>
+        <p class="fr-subtitle">AI Battle Test Bed</p>
+      </div>
+
+      <div class="fr-body">
+        <div class="fr-team-panel fr-blue">
+          <h2 class="fr-team-title" style="color:#4a9eff">BLUE TEAM (Allies)</h2>
+          <div class="fr-slot-header">
+            <span>Unit</span><span>Command</span><span>#</span><span></span><span></span><span></span>
+          </div>
+          ${blueRows}
+          <button class="fr-add-btn" data-action="fr-add" data-team="blue">+ Add Unit</button>
+        </div>
+
+        <div class="fr-center-col">
+          <div class="fr-presets">
+            <span class="fr-label">Test Presets</span>
+            <select class="fr-preset-select">
+              <option value="">-- Select Scenario --</option>
+              ${FR_PRESET_LIST.map(cat => `
+                <optgroup label="${cat.category}">
+                  ${cat.presets.map(p => `<option value="${p.id}" title="${p.desc}">${p.name}</option>`).join('')}
+                </optgroup>
+              `).join('')}
+            </select>
+            <button class="fr-save-btn" data-action="fr-preset-load">Load</button>
+          </div>
+
+          <div class="fr-map-size">
+            <span class="fr-label">Map Size</span>
+            <div class="fr-size-btns">
+              ${['small', 'medium', 'large'].map(s => `
+                <button class="fr-size-btn ${cfg.mapSize === s ? 'active' : ''}"
+                        data-action="fr-map-size" data-size="${s}">${s}</button>
+              `).join('')}
+            </div>
+          </div>
+          <div class="fr-terrain-seed">
+            <span class="fr-label">Terrain Seed</span>
+            <input type="text" id="fr-terrain-seed" placeholder="random" value="${cfg.terrainSeed || ''}" style="width:80px;background:#1a1a2e;color:#ccc;border:1px solid #333;padding:2px 4px;font-size:0.7rem;border-radius:3px">
+          </div>
+
+          <div class="fr-debug-options">
+            <span class="fr-label">Debug</span>
+            <label class="fr-check"><input type="checkbox" data-action="fr-debug-toggle" data-key="blueInvincible" ${dbg.blueInvincible ? 'checked' : ''}> Blue Invincible</label>
+            <label class="fr-check"><input type="checkbox" data-action="fr-debug-toggle" data-key="redInvincible" ${dbg.redInvincible ? 'checked' : ''}> Red Invincible</label>
+            <label class="fr-check"><input type="checkbox" data-action="fr-debug-toggle" data-key="noCooldowns" ${dbg.noCooldowns ? 'checked' : ''}> No Cooldowns</label>
+            <label class="fr-check"><input type="checkbox" data-action="fr-debug-toggle" data-key="showRanges" ${dbg.showRanges ? 'checked' : ''}> Show Ranges</label>
+          </div>
+
+          <div class="fr-sergeant-panel">
+            <span class="fr-label">Sergeant AI</span>
+            <div class="fr-sgt-cols">
+              <div class="fr-sgt-col">
+                <span class="fr-sgt-team" style="color:#4a9eff">Blue Sgt</span>
+                ${sgtSliders(cfg.blueSergeant || {}, 'blue')}
+              </div>
+              <div class="fr-sgt-col">
+                <span class="fr-sgt-team" style="color:#ff4444">Red Sgt</span>
+                ${sgtSliders(cfg.redSergeant || {}, 'red')}
+              </div>
+            </div>
+          </div>
+
+          <div class="fr-save-panel">
+            <button class="fr-save-btn" data-action="fr-save">Save</button>
+            <button class="fr-save-btn" data-action="fr-load">Load</button>
+            <button class="fr-save-btn" data-action="fr-export">Export</button>
+            <button class="fr-save-btn" data-action="fr-import">Import</button>
+          </div>
+
+          <button class="menu-btn primary fr-deploy-btn" data-action="fr-deploy">DEPLOY</button>
+          <button class="menu-btn secondary" data-action="menu">Back</button>
+        </div>
+
+        <div class="fr-team-panel fr-red">
+          <h2 class="fr-team-title" style="color:#ff4444">RED TEAM (Enemies)</h2>
+          <div class="fr-slot-header">
+            <span>Type</span><span>Command</span><span>#</span><span></span><span></span><span></span>
+          </div>
+          ${redRows}
+          <button class="fr-add-btn" data-action="fr-add" data-team="red">+ Add Unit</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function fireRangeBattleHTML() {
+  const fr = Game.fireRange;
+  if (!fr || !fr.battle) return '<div class="screen">Loading...</div>';
+  const b = fr.battle;
+
+  const blueAlive = b.units ? b.units.filter(u => !u.dead).length : 0;
+  const blueTotal = b.units ? b.units.length : 0;
+  const redAlive = b.enemies ? b.enemies.filter(e => !e.dead).length : 0;
+  const redTotal = b.enemies ? b.enemies.length : 0;
+
+  return `
+    <div class="screen fr-battle-screen">
+      <div class="fr-battle-hud">
+        <div class="hud-left">
+          <span class="fr-team-count blue">${blueAlive} / ${blueTotal} Blue</span>
+          <span class="fr-sgt-phase blue">${b._sergeants?.blue?.phase ?? '—'}</span>
+        </div>
+        <div class="hud-center">
+          <span class="fr-status">${b.result ? (b.result === 'blue_wins' ? 'BLUE WINS' : b.result === 'draw' ? 'DRAW' : 'RED WINS') : 'BATTLE'}</span>
+          <span class="fps-display"></span>
+          <span class="fr-zoom-display" title="Scroll wheel to zoom, M = fit map, F = follow leader"></span>
+        </div>
+        <div class="hud-right">
+          <span class="fr-sgt-phase red">${b._sergeants?.red?.phase ?? '—'}</span>
+          <span class="fr-team-count red">${redAlive} / ${redTotal} Red</span>
+        </div>
+      </div>
+
+      <div class="fr-mid">
+        <div class="fr-mid-left">
+          <div class="fr-main-area">
+            <div class="endless-battlefield">
+              <!-- Battle canvas inserted here -->
+            </div>
+          </div>
+          <div class="fr-battle-controls">
+            <button class="control-btn" data-action="fr-config">Config</button>
+            <button class="control-btn" data-action="fr-reset">Reset</button>
+            <div class="fr-speed-bar">
+              ${[0, 0.25, 0.5, 1, 2, 4].map(s => {
+                const active = (fr.speed ?? 1) === s ? ' active' : '';
+                return `<button class="speed-btn${active}" data-action="fr-speed" data-speed="${s}">${s === 0 ? '⏸' : s === 0.25 ? '¼' : s === 0.5 ? '½' : s + 'x'}</button>`;
+              }).join('')}
+            </div>
+            <button class="control-btn ${b.debugOverlay ? 'active' : ''}" data-action="fr-toggle-overlay">Overlay</button>
+            <button class="control-btn ${b.showTerrainGrid ? 'active' : ''}" data-action="fr-toggle-terrain-grid">Map</button>
+            <button class="control-btn" data-action="fr-copy-log">Copy Log</button>
+            <button class="control-btn" data-action="fr-toggle-panel">Debug</button>
+          </div>
+        </div>
+        <div class="fr-event-sidebar">
+          <h4 style="color:#ccc;margin:0 0 4px;font-size:0.65rem;letter-spacing:1px">EVENT LOG</h4>
+          <div class="fr-event-filters">
+            ${['fire','hit','kill','target','action','panic','morale','morale_event','cover','move','stability','decision','survival','flank','spot','sound','formation','movement'].map(t => {
+              const on = !b._eventFilters || b._eventFilters[t] !== false;
+              return `<button class="fr-evt-filter${on ? ' active' : ''}" data-action="fr-event-filter" data-type="${t}">${t}</button>`;
+            }).join('')}
+          </div>
+          <div class="fr-event-log" id="fr-event-log"></div>
+        </div>
+      </div>
+
+      <div class="fr-debug-panel" id="fr-debug-panel">
+        <div class="fr-debug-body">
+          <div class="fr-debug-col-toggles">
+            ${['core','brain','fire','terrain','awareness','formation','movement'].map(g => {
+              const on = !b._hiddenColGroups?.[g];
+              return `<button class="fr-col-toggle${on ? ' active' : ''}" data-action="fr-col-group" data-group="${g}">${g}</button>`;
+            }).join('')}
+          </div>
+          <div class="fr-debug-teams">
+            <div class="fr-debug-section">
+              <h4 style="color:#4a9eff;margin:0 0 4px">BLUE TEAM</h4>
+              <table class="fr-debug-table" id="fr-blue-table">
+                <tr><th>ID</th></tr>
+              </table>
+            </div>
+            <div class="fr-debug-section">
+              <h4 style="color:#ff4444;margin:0 0 4px">RED TEAM</h4>
+              <table class="fr-debug-table" id="fr-red-table">
+                <tr><th>ID</th></tr>
+              </table>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   `;

@@ -2,110 +2,14 @@
 // RASTERIZE - Convert strokes to grid coverage
 // ═══════════════════════════════════════════════════════════════
 
-import { FEATURE_DEFS, FALLOFF, createEmptyCell } from './strokes.js';
-
-/**
- * Calculate coverage contribution from a stroke to a cell center
- * @param {object} stroke - Stroke object
- * @param {number} cellCenterX - Cell center X in world coords
- * @param {number} cellCenterY - Cell center Y in world coords
- * @returns {number} Coverage value (0-1)
- */
-function calcStrokeCoverage(stroke, cellCenterX, cellCenterY) {
-  const dist = Math.hypot(stroke.x - cellCenterX, stroke.y - cellCenterY);
-
-  if (dist >= stroke.radius) return 0;
-
-  // Normalize distance (0 = center, 1 = edge)
-  const normalizedDist = dist / stroke.radius;
-
-  // Apply falloff function
-  const falloffFn = FALLOFF[stroke.falloff] || FALLOFF.linear;
-  const falloffMult = falloffFn(normalizedDist);
-
-  return stroke.intensity * falloffMult;
-}
-
-/**
- * Compute combined speed modifier from coverage values
- * @param {object} coverage - Object with feature coverages
- * @returns {number} Speed multiplier (0-1)
- */
-function computeSpeedMod(coverage) {
-  let totalWeight = 0;
-  let weightedSpeed = 0;
-
-  for (const [type, cov] of Object.entries(coverage)) {
-    if (cov <= 0 || !FEATURE_DEFS[type]) continue;
-
-    const def = FEATURE_DEFS[type];
-    const effectiveCov = Math.min(cov, 1.0);
-
-    // Blockers override everything
-    if (def.isBlocker && cov >= def.minCoverageForEffect) {
-      return 0;
-    }
-
-    // Only apply effect if above threshold
-    if (cov >= def.minCoverageForEffect) {
-      weightedSpeed += def.speedMod * effectiveCov;
-      totalWeight += effectiveCov;
-    }
-  }
-
-  if (totalWeight === 0) return 1.0;
-
-  // Blend toward base speed based on coverage
-  const blendedSpeed = weightedSpeed / totalWeight;
-  const coverageInfluence = Math.min(totalWeight, 1.0);
-
-  return 1.0 * (1 - coverageInfluence) + blendedSpeed * coverageInfluence;
-}
-
-/**
- * Compute cover/defense bonus from coverage values
- * @param {object} coverage - Object with feature coverages
- * @returns {number} Defense bonus (0-1)
- */
-function computeCoverBonus(coverage) {
-  let maxBonus = 0;
-
-  for (const [type, cov] of Object.entries(coverage)) {
-    if (cov <= 0 || !FEATURE_DEFS[type]) continue;
-
-    const def = FEATURE_DEFS[type];
-    if (cov >= def.minCoverageForEffect) {
-      // Proportional bonus based on coverage
-      const bonus = def.coverBonus * Math.min(cov, 1.0);
-      maxBonus = Math.max(maxBonus, bonus);
-    }
-  }
-
-  return maxBonus;
-}
-
-/**
- * Compute visibility from coverage values
- * @param {object} coverage - Object with feature coverages
- * @returns {number} Visibility multiplier (0-1)
- */
-function computeVisibility(coverage) {
-  let minVis = 1.0;
-
-  for (const [type, cov] of Object.entries(coverage)) {
-    if (cov <= 0 || !FEATURE_DEFS[type]) continue;
-
-    const def = FEATURE_DEFS[type];
-    if (cov >= def.minCoverageForEffect) {
-      // Blend visibility based on coverage
-      const effectiveCov = Math.min(cov, 1.0);
-      const vis = 1.0 - (1.0 - def.visibility) * effectiveCov;
-      minVis = Math.min(minVis, vis);
-    }
-  }
-
-  return minVis;
-}
+import { createEmptyCell } from './strokes.js';
+import {
+  FEATURE_DEFS,
+  calcStrokeCoverage,
+  computeSpeedMod,
+  computeCoverBonus,
+  computeVisibility
+} from './terrain-math.js';
 
 /**
  * Rasterize all strokes to the grid cache
@@ -130,10 +34,23 @@ export function rasterize(terrainMap) {
     if (!def) continue;
 
     // Find cells that could be affected (bounding box optimization)
-    const minCol = Math.max(0, Math.floor((stroke.x - stroke.radius) / cellSize));
-    const maxCol = Math.min(gridWidth - 1, Math.floor((stroke.x + stroke.radius) / cellSize));
-    const minRow = Math.max(0, Math.floor((stroke.y - stroke.radius) / cellSize));
-    const maxRow = Math.min(gridHeight - 1, Math.floor((stroke.y + stroke.radius) / cellSize));
+    // Multi-center strokes: expand bounds to cover all centers
+    let bMinX = stroke.x - stroke.radius;
+    let bMaxX = stroke.x + stroke.radius;
+    let bMinY = stroke.y - stroke.radius;
+    let bMaxY = stroke.y + stroke.radius;
+    if (stroke.centers && stroke.centers.length > 0) {
+      for (const c of stroke.centers) {
+        bMinX = Math.min(bMinX, c.x - stroke.radius);
+        bMaxX = Math.max(bMaxX, c.x + stroke.radius);
+        bMinY = Math.min(bMinY, c.y - stroke.radius);
+        bMaxY = Math.max(bMaxY, c.y + stroke.radius);
+      }
+    }
+    const minCol = Math.max(0, Math.floor(bMinX / cellSize));
+    const maxCol = Math.min(gridWidth - 1, Math.floor(bMaxX / cellSize));
+    const minRow = Math.max(0, Math.floor(bMinY / cellSize));
+    const maxRow = Math.min(gridHeight - 1, Math.floor(bMaxY / cellSize));
 
     for (let row = minRow; row <= maxRow; row++) {
       for (let col = minCol; col <= maxCol; col++) {
@@ -160,12 +77,16 @@ export function rasterize(terrainMap) {
       const cell = grid[row][col];
 
       // Find dominant feature (highest coverage)
+      // Water takes priority — a cell with real water IS water terrain
       let maxCov = 0;
       for (const type of Object.keys(FEATURE_DEFS)) {
         if ((cell[type] || 0) > maxCov) {
           maxCov = cell[type];
           cell.dominant = type;
         }
+      }
+      if ((cell.water || 0) >= 0.3) {
+        cell.dominant = 'water';
       }
 
       // Compute gameplay values
@@ -179,6 +100,39 @@ export function rasterize(terrainMap) {
       cell.coverBonus = computeCoverBonus(coverage);
       cell.visibility = computeVisibility(coverage);
       cell.isBlocked = cell.speedMod === 0;
+    }
+  }
+
+  // Bridge override: mark cells under bridges as passable
+  if (terrainMap.bridges?.length > 0) {
+    for (const bridge of terrainMap.bridges) {
+      const { x, y, width: bw, length: bl, dirX, dirY } = bridge;
+      const halfLen = bl / 2;
+      const halfW = bw / 2;
+      // Walk along bridge, mark cells as passable
+      const steps = Math.ceil(bl / (cellSize * 0.5));
+      for (let i = 0; i <= steps; i++) {
+        const t = (i / steps) - 0.5; // -0.5 to 0.5
+        const px = x + dirX * t * bl;
+        const py = y + dirY * t * bl;
+        // Mark a strip of cells across the bridge width
+        const perpX = -dirY;
+        const perpY = dirX;
+        for (let w = -halfW; w <= halfW; w += cellSize * 0.5) {
+          const cx = px + perpX * w;
+          const cy = py + perpY * w;
+          const col = Math.floor(cx / cellSize);
+          const row = Math.floor(cy / cellSize);
+          if (row >= 0 && row < gridHeight && col >= 0 && col < gridWidth) {
+            const cell = grid[row][col];
+            cell.isBlocked = false;
+            cell.isBridge = true;
+            cell.dominant = 'open';
+            cell.speedMod = Math.max(cell.speedMod, 0.9);
+            cell.water = 0; // Clear water so getWaterDepth returns null
+          }
+        }
+      }
     }
   }
 

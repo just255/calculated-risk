@@ -82,7 +82,7 @@ export const PaintTool = {
         renderer.clearTexturePreview();
       }
       // Track if painting a scatter feature (for preview refresh on mouse up)
-      this._paintingScatterFeature = options.featureType === 'forest' || options.featureType === 'brush';
+      this._paintingScatterFeature = options.featureType === 'forest' || options.featureType === 'brush' || options.featureType === 'boulder';
 
       // Track water strokes for batched depth creation on mouseup
       this._waterStrokesForDepth = [];
@@ -103,7 +103,7 @@ export const PaintTool = {
       // For combinable features (water, groundTexture, forest, brush), use preview mode
       // even for first stroke to ensure single-stroke approach works correctly
       const canCombine = options.featureType === 'water' || options.featureType === 'groundTexture' ||
-                         options.featureType === 'forest' || options.featureType === 'brush';
+                         options.featureType === 'forest' || options.featureType === 'brush' || options.featureType === 'boulder';
       if (canCombine) {
         renderer.beginDragPaint();
         this._dragModeStarted = true;
@@ -139,7 +139,7 @@ export const PaintTool = {
 
     // Scatter preview on canvas (shows what would spawn at cursor position)
     const showPreview = state.viewSettings.showScatterPreview;
-    const isScatterFeature = options.featureType === 'forest' || options.featureType === 'brush';
+    const isScatterFeature = options.featureType === 'forest' || options.featureType === 'brush' || options.featureType === 'boulder';
     if (showPreview && inBounds && !this._isPainting && isScatterFeature) {
       this._updateScatterPreview(e.x, e.y, state, renderer);
     } else if (this._lastPreviewPos && !isScatterFeature) {
@@ -270,11 +270,28 @@ export const PaintTool = {
 
       // Process all strokes synchronously (single-stroke approach means only 1 stroke)
       for (const strokeId of strokeIds) {
+        // Boulder strokes use their own spawn rules — don't override particle/floor type
+        const stroke = terrainMap.strokes.find(s => s.id === strokeId);
+        const isBoulder = stroke?.isBoulder;
+        const childOverrides = isBoulder
+          ? {
+              floor: {
+                type: (stroke.boulderFloorTypes?.length === 1) ? stroke.boulderFloorTypes[0] : 'auto'
+              },
+              particle: {
+                type: (stroke.boulderParticleTypes?.length === 1) ? stroke.boulderParticleTypes[0] : 'auto',
+                densityMult: stroke.boulderParticleDensity ?? 1.0,
+                scale: stroke.boulderParticleScale ?? 0.25,
+                scaleVariance: stroke.boulderParticleScaleVariance ?? 0.35
+              }
+            }
+          : (toolOptions.childSpawnOverrides ?? {});
+
         const newChildren = regenerateChildrenForStroke(terrainMap, strokeId, {
           season: toolOptions.season ?? 'summer',
           biome: toolOptions.biome ?? 'temperate',
           seasonOverrides: toolOptions.seasonOverrides ?? {},
-          childSpawnOverrides: toolOptions.childSpawnOverrides ?? {}
+          childSpawnOverrides: childOverrides
         });
 
         if (newChildren.length > 0 && terrainMap.scatterItems) {
@@ -372,11 +389,28 @@ export const PaintTool = {
       const processChunk = () => {
         if (currentIndex < strokeIds.length) {
           const strokeId = strokeIds[currentIndex];
+          // Boulder strokes use their own spawn rules
+          const stroke = terrainMap.strokes.find(s => s.id === strokeId);
+          const isBoulder = stroke?.isBoulder;
+          const childOverrides = isBoulder
+            ? {
+                floor: {
+                  type: (stroke.boulderFloorTypes?.length === 1) ? stroke.boulderFloorTypes[0] : 'auto'
+                },
+                particle: {
+                  type: (stroke.boulderParticleTypes?.length === 1) ? stroke.boulderParticleTypes[0] : 'auto',
+                  densityMult: stroke.boulderParticleDensity ?? 1.0,
+                  scale: stroke.boulderParticleScale ?? 0.25,
+                  scaleVariance: stroke.boulderParticleScaleVariance ?? 0.35
+                }
+              }
+            : (toolOptions.childSpawnOverrides ?? {});
+
           const newChildren = regenerateChildrenForStroke(terrainMap, strokeId, {
             season: toolOptions.season ?? 'summer',
             biome: toolOptions.biome ?? 'temperate',
             seasonOverrides: toolOptions.seasonOverrides ?? {},
-            childSpawnOverrides: toolOptions.childSpawnOverrides ?? {}
+            childSpawnOverrides: childOverrides
           });
 
           if (newChildren.length > 0 && terrainMap.scatterItems) {
@@ -557,6 +591,32 @@ export const PaintTool = {
         this._scatterStrokeIds.push(stroke.id);
       }
     }
+    else if (options.featureType === 'boulder') {
+      const stroke = createStroke('brush', firstCenter.x, firstCenter.y, options.brushRadius, {
+        intensity: options.intensity || 1.0,
+        falloff: options.falloff,
+        centers: centers,
+        seed: options.previewSeed ?? Math.floor(Math.random() * 1000000),
+        brushTypes: options.boulderTypes ?? ['boulder-erratic', 'boulder-field', 'boulder-outcrop'],
+        brushRatios: options.boulderRatios ?? {},
+        density: options.boulderDensity ?? 0.8,
+        brushScale: options.boulderScale ?? 0.3,
+        brushScaleVariance: options.boulderScaleVariance ?? 0.3,
+        floorEnabled: options.boulderFloorEnabled ?? true,
+        particlesEnabled: options.boulderParticlesEnabled ?? true,
+        boulderParticleDensity: options.boulderParticleDensity ?? 1.0,
+        boulderParticleScale: options.boulderParticleScale ?? 0.25,
+        boulderParticleScaleVariance: options.boulderParticleScaleVariance ?? 0.35,
+        boulderFloorTypes: options.boulderFloorTypes ?? ['floor-rock'],
+        boulderParticleTypes: options.boulderParticleTypes ?? ['particle-rock'],
+        allowBrushInWater: options.boulderInWater ?? false,
+        isBoulder: true
+      });
+      state.addStroke(stroke, true, { dragPainting: true });
+      if (this._scatterStrokeIds) {
+        this._scatterStrokeIds.push(stroke.id);
+      }
+    }
   },
 
   // ═══════════════════════════════════════════════════════════════
@@ -577,7 +637,7 @@ export const PaintTool = {
     // Combined stroke will be created on mouseUp (reduces stroke count from 100s to 1)
     // This now applies to ALL feature types including forest/brush
     const canCombine = options.featureType === 'water' || options.featureType === 'groundTexture' ||
-                       options.featureType === 'forest' || options.featureType === 'brush';
+                       options.featureType === 'forest' || options.featureType === 'brush' || options.featureType === 'boulder';
     if (this._dragStrokeIds && skipRender && canCombine) {
       // Track this center for combined stroke
       if (!this._dragCenters) this._dragCenters = [];
@@ -587,8 +647,8 @@ export const PaintTool = {
       if (renderer) {
         const firstCenter = this._dragCenters[0];
 
-        // Forest/brush use scatter preview (trees/brush only - no particles/floor for performance)
-        if (options.featureType === 'forest' || options.featureType === 'brush') {
+        // Forest/brush/boulder use scatter preview (trees/brush only - no particles/floor for performance)
+        if (options.featureType === 'forest' || options.featureType === 'brush' || options.featureType === 'boulder') {
           this._updateScatterDragPreview(this._dragCenters, options, state, renderer);
         } else {
           // Water/groundTexture use texture preview
@@ -782,6 +842,25 @@ export const PaintTool = {
       stroke.maxAge = [...ageOrder].reverse().find(a => selected.includes(a)) || 'old';
     }
 
+    // If painting boulder, add boulder-specific properties
+    if (options.featureType === 'boulder') {
+      stroke.seed = options.previewSeed ?? Math.floor(Math.random() * 1000000);
+      stroke.brushTypes = options.boulderTypes ?? ['boulder-erratic', 'boulder-field', 'boulder-outcrop'];
+      stroke.brushRatios = options.boulderRatios ?? {};
+      stroke.density = options.boulderDensity ?? 0.8;
+      stroke.brushScale = options.boulderScale ?? 0.3;
+      stroke.brushScaleVariance = options.boulderScaleVariance ?? 0.3;
+      stroke.floorEnabled = options.boulderFloorEnabled ?? true;
+      stroke.particlesEnabled = options.boulderParticlesEnabled ?? true;
+      stroke.boulderParticleDensity = options.boulderParticleDensity ?? 1.0;
+      stroke.boulderParticleScale = options.boulderParticleScale ?? 0.25;
+      stroke.boulderParticleScaleVariance = options.boulderParticleScaleVariance ?? 0.35;
+      stroke.boulderFloorTypes = options.boulderFloorTypes ?? ['floor-rock'];
+      stroke.boulderParticleTypes = options.boulderParticleTypes ?? ['particle-rock'];
+      stroke.allowBrushInWater = options.boulderInWater ?? false;
+      stroke.isBoulder = true;
+    }
+
     // If painting brush/undergrowth, add brush-specific properties (like forest)
     if (options.featureType === 'brush') {
       // First click uses previewSeed to match preview, subsequent strokes get fresh seeds
@@ -836,7 +915,7 @@ export const PaintTool = {
     }
 
     // Pass dragPainting flag for forest/brush to reduce particle/floor density during drag
-    const isScatterFeature = options.featureType === 'forest' || options.featureType === 'brush';
+    const isScatterFeature = options.featureType === 'forest' || options.featureType === 'brush' || options.featureType === 'boulder';
     state.addStroke(stroke, skipRender, { dragPainting: skipRender && isScatterFeature });
 
     // Track scatter stroke ID for regenerating children on mouseUp
@@ -898,10 +977,13 @@ export const PaintTool = {
       options.deadRatio ?? 0,
       options.treeDensity, options.treeScale, options.treeSpacing,
       (options.selectedAges || []).join(','),
-      (options.brushTypes || ['bush-small']).join(','),
-      JSON.stringify(options.brushRatios || {}),
-      options.brushDensity, options.brushScale,
+      options.featureType === 'boulder' ? (options.boulderTypes || []).join(',') : (options.brushTypes || ['bush-small']).join(','),
+      options.featureType === 'boulder' ? JSON.stringify(options.boulderRatios || {}) : JSON.stringify(options.brushRatios || {}),
+      options.featureType === 'boulder' ? options.boulderDensity : options.brushDensity,
+      options.featureType === 'boulder' ? options.boulderScale : options.brushScale,
       options.floorEnabled ?? true, options.particlesEnabled ?? true,
+      (options.boulderFloorTypes || []).join(','),
+      (options.boulderParticleTypes || []).join(','),
       options.season, options.biome, options.brushRadius, seed,
       JSON.stringify(options.seasonOverrides || {}),
       JSON.stringify(options.childSpawnOverrides || {})
@@ -922,6 +1004,13 @@ export const PaintTool = {
       // Use shared forest generation function (single source of truth)
       const mockTerrain = { scatterItems: [], strokes: [] };
 
+      // Boulder tool overrides brush types/ratios/density/scale
+      const isBoulderTool = options.featureType === 'boulder';
+      const prevBrushTypes = isBoulderTool ? (options.boulderTypes ?? ['boulder-erratic', 'boulder-field', 'boulder-outcrop']) : (options.brushTypes || ['bush-small']);
+      const prevBrushRatios = isBoulderTool ? (options.boulderRatios ?? {}) : (options.brushRatios || {});
+      const prevBrushDensity = isBoulderTool ? (options.boulderDensity ?? 0.8) : (options.brushDensity ?? 1.0);
+      const prevBrushScale = isBoulderTool ? (options.boulderScale ?? 0.3) : (options.brushScale ?? 0.25);
+
       const allItems = generateForestItems(mockTerrain,
         { x, y, radius, seed },
         {
@@ -934,25 +1023,33 @@ export const PaintTool = {
           treeSpacing: options.treeSpacing ?? 1.0,
           selectedAges: options.selectedAges ?? ['young', 'transitional', 'old'],
           ageRatios: options.ageRatios ?? null,
-          brushTypes: options.brushTypes || ['bush-small'],
-          brushRatios: options.brushRatios || {},
-          brushDensity: options.brushDensity ?? 1.0,
-          brushScale: options.brushScale ?? 0.25,
+          brushTypes: prevBrushTypes,
+          brushRatios: prevBrushRatios,
+          brushDensity: prevBrushDensity,
+          brushScale: prevBrushScale,
+          brushScaleVariance: isBoulderTool ? (options.boulderScaleVariance ?? 0.3) : undefined,
           season: options.season ?? 'summer',
           biome: options.biome ?? 'temperate',
           seasonOverrides: options.seasonOverrides ?? {},
-          childSpawnOverrides: options.childSpawnOverrides ?? {},
-          // Category toggles - for brush tool, trees are disabled
-          treesEnabled: options.featureType === 'brush' ? false : (options.treesEnabled ?? true),
-          floorEnabled: options.floorEnabled ?? true,
-          particlesEnabled: options.particlesEnabled ?? true,
+          childSpawnOverrides: isBoulderTool
+            ? {
+                floor: {
+                  type: (options.boulderFloorTypes?.length === 1) ? options.boulderFloorTypes[0] : 'auto'
+                },
+                particle: {
+                  type: (options.boulderParticleTypes?.length === 1) ? options.boulderParticleTypes[0] : 'auto',
+                  densityMult: options.boulderParticleDensity ?? 1.0,
+                  scale: options.boulderParticleScale ?? 0.25,
+                  scaleVariance: options.boulderParticleScaleVariance ?? 0.35
+                }
+              }
+            : (options.childSpawnOverrides ?? {}),
+          // Category toggles - for brush/boulder tool, trees are disabled
+          treesEnabled: (options.featureType === 'brush' || options.featureType === 'boulder') ? false : (options.treesEnabled ?? true),
+          floorEnabled: isBoulderTool ? (options.boulderFloorEnabled ?? true) : (options.floorEnabled ?? true),
+          particlesEnabled: isBoulderTool ? (options.boulderParticlesEnabled ?? true) : (options.particlesEnabled ?? true),
           brushEnabled: options.brushEnabled ?? true,
-          images: {
-            tree: renderer._images.trees,
-            brush: renderer._images.brush,
-            floor: renderer._images.floor,
-            particle: renderer._images.brush
-          }
+          images: renderer.getScatterImages()
         }
       );
 
@@ -1017,6 +1114,13 @@ export const PaintTool = {
       // Use mock terrain for preview (no collision with existing items)
       const mockTerrain = { scatterItems: [], strokes: [] };
 
+      // Boulder tool overrides brush types/ratios/density/scale
+      const isBoulderTool = options.featureType === 'boulder';
+      const dragBrushTypes = isBoulderTool ? (options.boulderTypes ?? ['boulder-erratic', 'boulder-field', 'boulder-outcrop']) : (options.brushTypes || ['bush-small']);
+      const dragBrushRatios = isBoulderTool ? (options.boulderRatios ?? {}) : (options.brushRatios || {});
+      const dragBrushDensity = isBoulderTool ? (options.boulderDensity ?? 0.8) : (options.brushDensity ?? 1.0);
+      const dragBrushScale = isBoulderTool ? (options.boulderScale ?? 0.3) : (options.brushScale ?? 0.25);
+
       const items = generateForestItems(mockTerrain,
         { x: center.x, y: center.y, radius, seed: centerSeed },
         {
@@ -1029,25 +1133,33 @@ export const PaintTool = {
           treeSpacing: options.treeSpacing ?? 1.0,
           selectedAges: options.selectedAges ?? ['young', 'transitional', 'old'],
           ageRatios: options.ageRatios ?? null,
-          brushTypes: options.brushTypes || ['bush-small'],
-          brushRatios: options.brushRatios || {},
-          brushDensity: options.brushDensity ?? 1.0,
-          brushScale: options.brushScale ?? 0.25,
+          brushTypes: dragBrushTypes,
+          brushRatios: dragBrushRatios,
+          brushDensity: dragBrushDensity,
+          brushScale: dragBrushScale,
+          brushScaleVariance: isBoulderTool ? (options.boulderScaleVariance ?? 0.3) : undefined,
           season: options.season ?? 'summer',
           biome: options.biome ?? 'temperate',
           seasonOverrides: options.seasonOverrides ?? {},
-          childSpawnOverrides: options.childSpawnOverrides ?? {},
+          childSpawnOverrides: isBoulderTool
+            ? {
+                floor: {
+                  type: (options.boulderFloorTypes?.length === 1) ? options.boulderFloorTypes[0] : 'auto'
+                },
+                particle: {
+                  type: (options.boulderParticleTypes?.length === 1) ? options.boulderParticleTypes[0] : 'auto',
+                  densityMult: options.boulderParticleDensity ?? 1.0,
+                  scale: options.boulderParticleScale ?? 0.25,
+                  scaleVariance: options.boulderParticleScaleVariance ?? 0.35
+                }
+              }
+            : (options.childSpawnOverrides ?? {}),
           // Only trees/brush for performance - no particles/floor during drag
-          treesEnabled: options.featureType === 'brush' ? false : (options.treesEnabled ?? true),
+          treesEnabled: (options.featureType === 'brush' || options.featureType === 'boulder') ? false : (options.treesEnabled ?? true),
           floorEnabled: false,
           particlesEnabled: false,
           brushEnabled: options.brushEnabled ?? true,
-          images: {
-            tree: renderer._images.trees,
-            brush: renderer._images.brush,
-            floor: renderer._images.floor,
-            particle: renderer._images.brush
-          }
+          images: renderer.getScatterImages()
         }
       );
 

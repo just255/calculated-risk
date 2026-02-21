@@ -1,15 +1,1 @@
-{
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "powershell -ExecutionPolicy Bypass -Command \"$projDir = 'C--Users-just--Downloads-calculated-risk-calculated-risk'; $transcriptDir = \\\"$env:USERPROFILE\\.claude\\projects\\$projDir\\\"; $latest = Get-ChildItem $transcriptDir -Filter '*.jsonl' | Where-Object { $_.Name -match '^[0-9a-f]{8}-' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if ($latest) { & \\\"$env:USERPROFILE\\Scripts\\claude-history\\save-conversation.ps1\\\" -TranscriptPath $latest.FullName -WorkingDir 'C:\\Users\\just_\\Downloads\\calculated-risk\\calculated-risk'; & \\\"$env:USERPROFILE\\Scripts\\claude-history\\smart-commit.ps1\\\" -WorkingDir 'C:\\Users\\just_\\Downloads\\calculated-risk\\calculated-risk' -TranscriptPath $latest.FullName }\"",
-            "timeout": 120
-          }
-        ]
-      }
-    ]
-  }
-}
+{}
