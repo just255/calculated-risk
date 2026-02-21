@@ -3,7 +3,10 @@
 // Supports both legacy 2D string grids and PCG terrainMap cells
 // ═══════════════════════════════════════════════════════════════
 
-import { ensureRasterized } from './world-builder/rasterize.js';
+import { queryTerrain } from './terrain-query.js';
+
+// Pathfinding cell size for terrainMap battles (finer than the old 64px rasterize grid)
+const PATH_CELL_SIZE = 32;
 
 // Terrain movement costs for legacy grids (lower = faster/preferred)
 export const TERRAIN_COSTS = {
@@ -284,42 +287,57 @@ function reconstructPath(goalNode) {
  */
 export function buildCostFn(b, category = 'infantry') {
   const hasTM = !!b.terrainMap;
-  const cellSize = hasTM ? b.terrainMap.cellSize : (b.cellSize || 64);
-  const gridW = hasTM ? b.terrainMap.gridWidth : b.gridWidth;
-  const gridH = hasTM ? b.terrainMap.gridHeight : b.gridHeight;
 
-  if (hasTM) ensureRasterized(b.terrainMap);
+  if (hasTM) {
+    // Use 32px pathfinding grid with scatter-aware point queries
+    const cellSize = PATH_CELL_SIZE;
+    const mapW = b.terrainMap.gridWidth * b.terrainMap.cellSize; // world pixels
+    const mapH = b.terrainMap.gridHeight * b.terrainMap.cellSize;
+    const gridW = Math.ceil(mapW / cellSize);
+    const gridH = Math.ceil(mapH / cellSize);
+    const tm = b.terrainMap;
 
-  const costFn = hasTM
-    ? (row, col) => {
-        if (row < 0 || row >= gridH || col < 0 || col >= gridW) return Infinity;
-        const cell = b.terrainMap.grid[row]?.[col];
-        if (!cell || cell.isBlocked) return Infinity;
+    const costFn = (row, col) => {
+      if (row < 0 || row >= gridH || col < 0 || col >= gridW) return Infinity;
 
-        // Water depth — use fixed path costs, check vehicle passability
-        if (cell.water >= 0.1) {
-          const depth = cell.water < 0.3 ? 'shallow'
-                      : cell.water < 0.7 ? 'medium'
-                      : 'deep';
-          if (depth === 'deep' && category !== 'infantry') return Infinity;
-          if (depth === 'medium' && category !== 'infantry' && category !== 'light_vehicle') {
-            return WATER_PATH_COST.deep; // Heavy vehicles really avoid medium water too
-          }
-          return WATER_PATH_COST[depth];
+      // Query terrain at cell center
+      const wx = (col + 0.5) * cellSize;
+      const wy = (row + 0.5) * cellSize;
+      const result = queryTerrain(tm, wx, wy);
+
+      if (result.isBlocked) return Infinity;
+
+      // Water depth — use fixed path costs, check vehicle passability
+      if (result.depth) {
+        const depth = result.depth;
+        if (depth === 'deep' && category !== 'infantry') return Infinity;
+        if (depth === 'medium' && category !== 'infantry' && category !== 'light_vehicle') {
+          return WATER_PATH_COST.deep;
         }
-
-        // Inverse speedMod — slower terrain = higher cost
-        return cell.speedMod > 0 ? 1.0 / cell.speedMod : Infinity;
+        return WATER_PATH_COST[depth];
       }
-    : (row, col) => {
-        if (row < 0 || row >= gridH || col < 0 || col >= gridW) return Infinity;
-        const t = b.terrain[row]?.[col] || 'open';
-        if (t === 'water') {
-          if (category !== 'infantry') return WATER_PATH_COST.deep;
-          return WATER_PATH_COST.medium;
-        }
-        return TERRAIN_COSTS[t] ?? 1.0;
-      };
+
+      // Inverse speedMod — slower terrain = higher cost
+      return result.speedMod > 0 ? 1.0 / result.speedMod : Infinity;
+    };
+
+    return { costFn, gridWidth: gridW, gridHeight: gridH, cellSize };
+  }
+
+  // Legacy string grid
+  const cellSize = b.cellSize || 64;
+  const gridW = b.gridWidth;
+  const gridH = b.gridHeight;
+
+  const costFn = (row, col) => {
+    if (row < 0 || row >= gridH || col < 0 || col >= gridW) return Infinity;
+    const t = b.terrain[row]?.[col] || 'open';
+    if (t === 'water') {
+      if (category !== 'infantry') return WATER_PATH_COST.deep;
+      return WATER_PATH_COST.medium;
+    }
+    return TERRAIN_COSTS[t] ?? 1.0;
+  };
 
   return { costFn, gridWidth: gridW, gridHeight: gridH, cellSize };
 }

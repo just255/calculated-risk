@@ -1,20 +1,19 @@
 // ═══════════════════════════════════════════════════════════════
 // TERRAIN UTILITIES — Shared terrain queries, cover, water depth
 // Used by: ai.js, vision.js, movement-modes.js, game.js
+//
+// terrainMap battles use scatter-aware point queries (terrain-query.js)
+// Legacy string-grid battles use direct grid lookups
 // ═══════════════════════════════════════════════════════════════
 
-import { ensureRasterized } from './world-builder/rasterize.js';
+import { queryTerrain, queryBoulder } from './terrain-query.js';
 
 // ── Blocking & Speed ──────────────────────────────────────────
 
 export function isTerrainBlocked(b, x, y) {
   if (b.terrainMap) {
-    ensureRasterized(b.terrainMap);
-    const col = Math.floor(x / b.terrainMap.cellSize);
-    const row = Math.floor(y / b.terrainMap.cellSize);
-    if (row < 0 || row >= b.terrainMap.gridHeight || col < 0 || col >= b.terrainMap.gridWidth) return true;
-    const cell = b.terrainMap.grid[row]?.[col];
-    return cell ? cell.isBlocked : false;
+    const result = queryTerrain(b.terrainMap, x, y);
+    return result.isBlocked;
   }
   const col = Math.floor(x / b.cellSize);
   const row = Math.floor(y / b.cellSize);
@@ -25,12 +24,8 @@ export function isTerrainBlocked(b, x, y) {
 
 export function getTerrainSpeedMod(b, x, y) {
   if (b.terrainMap) {
-    ensureRasterized(b.terrainMap);
-    const col = Math.floor(x / b.terrainMap.cellSize);
-    const row = Math.floor(y / b.terrainMap.cellSize);
-    if (row < 0 || row >= b.terrainMap.gridHeight || col < 0 || col >= b.terrainMap.gridWidth) return 1.0;
-    const cell = b.terrainMap.grid[row]?.[col];
-    return cell ? cell.speedMod : 1.0;
+    const result = queryTerrain(b.terrainMap, x, y);
+    return result.speedMod;
   }
   const col = Math.floor(x / b.cellSize);
   const row = Math.floor(y / b.cellSize);
@@ -48,12 +43,8 @@ export function getTerrainSpeedMod(b, x, y) {
 
 export function getTerrainAt(b, x, y) {
   if (b.terrainMap) {
-    ensureRasterized(b.terrainMap);
-    const col = Math.floor(x / b.terrainMap.cellSize);
-    const row = Math.floor(y / b.terrainMap.cellSize);
-    if (row < 0 || row >= b.terrainMap.gridHeight || col < 0 || col >= b.terrainMap.gridWidth) return 'open';
-    const cell = b.terrainMap.grid[row]?.[col];
-    return cell ? (cell.dominant || 'open') : 'open';
+    const result = queryTerrain(b.terrainMap, x, y);
+    return result.dominant || 'open';
   }
   const col = Math.floor(x / b.cellSize);
   const row = Math.floor(y / b.cellSize);
@@ -81,19 +72,11 @@ export const TERRAIN_COVER_SCORE = {
 
 /**
  * Get water depth at position. Returns 'shallow' | 'medium' | 'deep' | null.
- * Uses water coverage as proxy: edge (0-0.3) = shallow, mid (0.3-0.7) = medium, center (0.7+) = deep.
  */
 export function getWaterDepth(b, x, y) {
   if (b.terrainMap) {
-    ensureRasterized(b.terrainMap);
-    const col = Math.floor(x / b.terrainMap.cellSize);
-    const row = Math.floor(y / b.terrainMap.cellSize);
-    if (row < 0 || row >= b.terrainMap.gridHeight || col < 0 || col >= b.terrainMap.gridWidth) return null;
-    const cell = b.terrainMap.grid[row]?.[col];
-    if (!cell || !cell.water || cell.water < 0.1) return null;
-    if (cell.water < 0.3) return 'shallow';
-    if (cell.water < 0.7) return 'medium';
-    return 'deep';
+    const result = queryTerrain(b.terrainMap, x, y);
+    return result.depth;
   }
   // Legacy grid — all water is medium
   const col = Math.floor(x / b.cellSize);

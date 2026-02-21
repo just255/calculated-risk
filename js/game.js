@@ -18,6 +18,7 @@ import {
   updateProjectiles
 } from './combat.js';
 import { isTerrainBlocked, getTerrainSpeedMod } from './terrain-utils.js';
+import { clearQueryCache } from './terrain-query.js';
 import { updateSergeant } from './sergeant.js';
 import {
   updateUnitAI,
@@ -753,6 +754,7 @@ function loop(t) {
 }
 
 function update(dt) {
+  clearQueryCache();
   const b = Game.battle;
   const bf = document.querySelector('.battlefield');
   const bfH = bf ? bf.offsetHeight : 400;

@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { getTerrainAt } from './terrain-utils.js';
-import { ensureRasterized } from './world-builder/rasterize.js';
+import { queryTerrain } from './terrain-query.js';
 
 // ── LOS & Visibility ──────────────────────────────────────────
 
@@ -32,28 +32,54 @@ const TERRAIN_CONCEALMENT = {
   high: 1.0
 };
 
+// Step size for accumulative LOS raycast (pixels)
+const LOS_STEP = 16;
+
 /**
- * Raycast from (x1,y1) to (x2,y2) through terrain grid.
+ * Raycast from (x1,y1) to (x2,y2) through terrain.
+ * For terrainMap: 16px step accumulative raycast using point queries.
+ * For legacy grids: cell-stepping with terrain visibility table.
  * Returns cumulative visibility (1.0 = clear, 0.0 = fully blocked).
  * Stops early if visibility drops below threshold.
  */
 export function traceLineOfSight(b, x1, y1, x2, y2) {
-  const cellSize = b.terrainMap?.cellSize || b.cellSize || 64;
   const dx = x2 - x1;
   const dy = y2 - y1;
   const dist = Math.sqrt(dx * dx + dy * dy);
-  if (dist < cellSize) return 1.0; // Same cell or adjacent, clear LOS
+
+  if (b.terrainMap) {
+    // Scatter-aware accumulative raycast at 16px intervals
+    if (dist < LOS_STEP) return 1.0;
+
+    const steps = Math.ceil(dist / LOS_STEP);
+    let visibility = 1.0;
+
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      const sx = x1 + dx * t;
+      const sy = y1 + dy * t;
+      const result = queryTerrain(b.terrainMap, sx, sy);
+      // Use the terrain's visibility value directly as a per-step multiplier
+      visibility *= result.visibility;
+      if (visibility < 0.1) return 0;
+    }
+    return visibility;
+  }
+
+  // Legacy grid path
+  const cellSize = b.cellSize || 64;
+  if (dist < cellSize) return 1.0;
 
   const steps = Math.ceil(dist / cellSize);
   let visibility = 1.0;
 
-  for (let i = 1; i < steps; i++) { // Skip start cell, check intermediate cells
+  for (let i = 1; i < steps; i++) {
     const t = i / steps;
     const sx = x1 + dx * t;
     const sy = y1 + dy * t;
     const terrain = getTerrainAt(b, sx, sy);
     visibility *= (TERRAIN_VISIBILITY[terrain] ?? 1.0);
-    if (visibility < 0.1) return 0; // Effectively blocked
+    if (visibility < 0.1) return 0;
   }
   return visibility;
 }
@@ -72,8 +98,18 @@ export function hasLineOfSight(b, x1, y1, x2, y2) {
  * Applied as multiplier to detector's effective view range.
  */
 export function getConcealment(b, unit) {
-  const terrain = getTerrainAt(b, unit.x, unit.y);
-  const terrainMod = TERRAIN_CONCEALMENT[terrain] ?? 1.0;
+  // For terrainMap: use point query cover value for concealment
+  // Higher cover = lower concealment multiplier (harder to spot)
+  let terrainMod = 1.0;
+  if (b.terrainMap) {
+    const result = queryTerrain(b.terrainMap, unit.x, unit.y);
+    // Map cover (0-0.25) to concealment (1.0-0.5)
+    // More cover = lower concealment = harder to spot
+    terrainMod = Math.max(0.2, 1.0 - result.cover * 2);
+  } else {
+    const terrain = getTerrainAt(b, unit.x, unit.y);
+    terrainMod = TERRAIN_CONCEALMENT[terrain] ?? 1.0;
+  }
 
   // State modifier: what is the unit doing?
   // Uses unit.lastShot (set by tryShoot) to detect recent firing
