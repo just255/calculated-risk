@@ -9,8 +9,7 @@ import { createTerrainMap } from './strokes.js';
 import { generateForestItems, removeScatterInRadius } from './scatter.js';
 import { renderScatterLayer } from './scatter-renderer.js';
 import { renderGroundLayer } from './ground-renderer.js';
-import { BIOME_PRESETS, SCATTER_TYPES } from './season-config.js';
-import { ensureRasterized } from './rasterize.js';
+import { BIOME_PRESETS } from './season-config.js';
 import { renderBridgeDecks, renderBridgeTrusses } from './bridge-renderer.js';
 
 // ═══════════════════════════════════════════════════════════════
@@ -429,27 +428,8 @@ export function generateBattleTerrain(config) {
     }
   }
 
-  // ── Step 4b: Mark boulder cells as impassable ──
-  ensureRasterized(terrainMap);
-  let boulderCells = 0;
-  for (const item of terrainMap.scatterItems) {
-    const cfg = SCATTER_TYPES[item.type];
-    if (!cfg || cfg.category !== 'boulder') continue;
-    const col = Math.floor(item.x / cellSize);
-    const row = Math.floor(item.y / cellSize);
-    if (row >= 0 && row < gridH && col >= 0 && col < gridW) {
-      const cell = terrainMap.grid[row][col];
-      cell.isBlocked = true;
-      cell.isBoulder = true;
-      cell.speedMod = 0;
-      cell.dominant = 'high'; // Blocks LOS like solid terrain
-      cell.coverBonus = 0.9;  // Great cover adjacent
-      boulderCells++;
-    }
-  }
-  if (boulderCells > 0) {
-    console.log(`[battle-terrain] Marked ${boulderCells} cells as boulder-blocked`);
-  }
+  // Boulder blocking is now handled by queryTerrain() via spatial hash
+  // (no grid rasterization needed for battles)
 
   // ── Step 5: Render ground canvas ──
   const t2 = performance.now();

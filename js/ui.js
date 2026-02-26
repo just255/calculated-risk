@@ -4555,7 +4555,7 @@ const SGT_TRAITS = [
   { key: 'courage',      label: 'CRG', title: 'Courage — tolerance for casualties before fallback' },
   { key: 'discipline',   label: 'DIS', title: 'Discipline — tighter formations, longer regroup' },
   { key: 'initiative',   label: 'INI', title: 'Initiative — flanking, improvisation' },
-  { key: 'adaptability', label: 'ADP', title: 'Adaptability — how often sergeant re-evaluates' }
+  { key: 'awareness', label: 'AWR', title: 'Awareness — how often sergeant re-evaluates + death response speed' }
 ];
 
 function sgtSliders(sgt, team) {
@@ -4714,7 +4714,7 @@ function fireRangeBattleHTML() {
               }).join('')}
             </div>
             <button class="control-btn ${b.debugOverlay ? 'active' : ''}" data-action="fr-toggle-overlay">Overlay</button>
-            <button class="control-btn ${b.showTerrainGrid ? 'active' : ''}" data-action="fr-toggle-terrain-grid">Map</button>
+            <button class="control-btn ${b.showTerrainGrid >= 1 ? 'active' : ''}" data-action="fr-toggle-terrain-grid">${b.showTerrainGrid === 1 ? 'Map:D' : b.showTerrainGrid === 2 ? 'Map:A*' : 'Map'}</button>
             <button class="control-btn" data-action="fr-copy-log">Copy Log</button>
             <button class="control-btn" data-action="fr-toggle-panel">Debug</button>
           </div>
@@ -4722,7 +4722,7 @@ function fireRangeBattleHTML() {
         <div class="fr-event-sidebar">
           <h4 style="color:#ccc;margin:0 0 4px;font-size:0.65rem;letter-spacing:1px">EVENT LOG</h4>
           <div class="fr-event-filters">
-            ${['fire','hit','kill','target','action','panic','morale','morale_event','cover','move','stability','decision','survival','flank','spot','sound','formation','movement'].map(t => {
+            ${['command','fire','hit','kill','target','action','panic','morale','morale_event','cover','move','stability','decision','survival','flank','spot','sound','formation','movement','sergeant'].map(t => {
               const on = !b._eventFilters || b._eventFilters[t] !== false;
               return `<button class="fr-evt-filter${on ? ' active' : ''}" data-action="fr-event-filter" data-type="${t}">${t}</button>`;
             }).join('')}

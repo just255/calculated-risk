@@ -6,6 +6,8 @@
 import { CanvasViewport } from './canvas-viewport.js';
 import { EntityRenderer } from './entity-renderer.js';
 import { renderBaseTerrainToCanvas, renderCanopyToCanvas } from './world-builder/terrain-renderer.js';
+import { queryTerrain } from './terrain-query.js';
+import { buildCostFn } from './pathfinding.js';
 
 /**
  * BattleRenderer manages the full canvas rendering pipeline for hero battle mode.
@@ -84,7 +86,8 @@ export class BattleRenderer {
   setTerrainFromCanvases(terrainCanvas, canopyCanvas, mapWidth, mapHeight) {
     this._terrainCache = terrainCanvas;
     this._canopyCache = canopyCanvas;
-    this._terrainGridCache = null;  // Invalidate grid overlay
+    this._terrainGridCache = null;   // Invalidate grid overlay
+    this._terrainGridCacheKey = null;
     this._mapWidth = mapWidth;
     this._mapHeight = mapHeight;
     this._viewport.requestRender();
@@ -98,6 +101,7 @@ export class BattleRenderer {
     this._terrainCache = null;
     this._canopyCache = null;
     this._terrainGridCache = null;
+    this._terrainGridCacheKey = null;
     this._battleState = null;
     this._entityRenderer = null;
     this._initialized = false;
@@ -162,7 +166,7 @@ export class BattleRenderer {
 
     // Layer 3: Effects (canopy on top, targeting indicator, terrain label)
     this._renderCanopy();
-    if (b.showTerrainGrid) this._renderTerrainGrid(b);
+    if (b.showTerrainGrid >= 1) this._renderTerrainGrid(b);
     this._renderTargetingOverlay(b);
     this._renderTerrainLabel(b);
     this._renderFPS();
@@ -274,17 +278,24 @@ export class BattleRenderer {
     ctx.restore();
   }
 
+  /**
+   * Render terrain debug overlay. Mode cycles: 1 = density heatmap, 2 = A* grid.
+   */
   _renderTerrainGrid(b) {
     const tm = b.terrainMap;
-    if (!tm || !tm.grid || tm.grid.length === 0) return;
+    if (!tm) return;
 
+    const mode = b.showTerrainGrid; // 1 or 2
     const ctx = this._viewport.getContext('effects');
     if (!ctx) return;
 
-    // Cache the grid overlay as an offscreen canvas (regenerate when version changes)
-    if (!this._terrainGridCache || this._terrainGridVersion !== tm.version) {
-      this._terrainGridCache = this._buildTerrainGridCanvas(tm);
-      this._terrainGridVersion = tm.version;
+    // Cache key includes mode so switching modes regenerates
+    const cacheKey = `${mode}_${tm.version || 0}`;
+    if (!this._terrainGridCache || this._terrainGridCacheKey !== cacheKey) {
+      this._terrainGridCache = mode === 1
+        ? this._buildDensityHeatmap(b)
+        : this._buildPathGrid(b);
+      this._terrainGridCacheKey = cacheKey;
     }
 
     ctx.save();
@@ -298,26 +309,39 @@ export class BattleRenderer {
     ctx.save();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    const legendItems = [
-      ['#1a6b1a', 'Forest'],
-      ['#8b7d3c', 'Brush'],
-      ['#2266cc', 'Water'],
-      ['#888888', 'Open'],
-      ['#664422', 'Boulder'],
-      ['#ff8800', 'Bridge'],
-    ];
+    const legendItems = mode === 1
+      ? [
+          ['#1a6b1a', 'Forest'],
+          ['#8b7d3c', 'Brush'],
+          ['#2266cc', 'Water'],
+          ['#888888', 'Open'],
+          ['#ff2222', 'Blocked'],
+          ['#ff8800', 'Bridge'],
+        ]
+      : [
+          ['#22cc44', 'Fast'],
+          ['#cccc22', 'Medium'],
+          ['#cc4422', 'Slow'],
+          ['#111111', 'Blocked'],
+          ['#2266cc', 'Water'],
+          ['#ff8800', 'Bridge'],
+        ];
+    const title = mode === 1 ? 'DENSITY' : 'A* GRID';
     const lx = sw - 90;
     const ly = 8;
-    const lh = legendItems.length * 14 + 8;
+    const lh = legendItems.length * 14 + 22;
 
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
     ctx.fillRect(lx - 4, ly - 4, 88, lh);
-    ctx.font = '10px monospace';
+    ctx.font = 'bold 10px monospace';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#ffcc00';
+    ctx.fillText(title, lx, ly + 7);
 
+    ctx.font = '10px monospace';
     legendItems.forEach(([color, label], i) => {
-      const iy = ly + i * 14 + 7;
+      const iy = ly + (i + 1) * 14 + 7;
       ctx.fillStyle = color;
       ctx.fillRect(lx, iy - 5, 10, 10);
       ctx.fillStyle = '#fff';
@@ -327,66 +351,120 @@ export class BattleRenderer {
     ctx.restore();
   }
 
-  _buildTerrainGridCanvas(tm) {
-    const { grid, gridWidth, gridHeight, cellSize } = tm;
+  /**
+   * Mode 1: Density heatmap — 8px grid, colored by queryTerrain() results.
+   */
+  _buildDensityHeatmap(b) {
+    const tm = b.terrainMap;
+    const mapW = tm.gridWidth * tm.cellSize;
+    const mapH = tm.gridHeight * tm.cellSize;
+    const step = 8;
+    const cols = Math.ceil(mapW / step);
+    const rows = Math.ceil(mapH / step);
+
     const canvas = document.createElement('canvas');
-    canvas.width = gridWidth * cellSize;
-    canvas.height = gridHeight * cellSize;
+    canvas.width = mapW;
+    canvas.height = mapH;
     const ctx = canvas.getContext('2d');
 
-    // Color map for dominant terrain types
-    const COLORS = {
-      forest:  '#1a6b1a',  // dark green
-      brush:   '#8b7d3c',  // olive/tan
-      water:   '#2266cc',  // blue
-      open:    '#888888',  // gray
-      high:    '#664422',  // dark brown (boulder)
-    };
-    const DEFAULT_COLOR = '#555555';
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const wx = (col + 0.5) * step;
+        const wy = (row + 0.5) * step;
+        const result = queryTerrain(tm, wx, wy);
 
-    for (let row = 0; row < gridHeight; row++) {
-      const gridRow = grid[row];
-      if (!gridRow) continue;
-      for (let col = 0; col < gridWidth; col++) {
-        const cell = gridRow[col];
-        if (!cell) continue;
+        let r, g, bl;
 
+        if (result.isBlocked) {
+          r = 255; g = 34; bl = 34; // Red — blocked
+        } else if (result.isBridge) {
+          r = 255; g = 136; bl = 0; // Orange — bridge
+        } else if (result.water >= 0.3) {
+          // Water depth gradient — deeper = darker blue
+          const d = Math.min(result.water, 1.0);
+          r = Math.round(20 * (1 - d));
+          g = Math.round(60 + 40 * (1 - d));
+          bl = Math.round(140 + 115 * d);
+        } else if (result.dominant === 'forest') {
+          // Forest — green intensity by cover
+          const c = Math.min(result.cover * 4, 1.0); // 0-1 range
+          r = Math.round(20 + 6 * (1 - c));
+          g = Math.round(60 + 47 * c);
+          bl = Math.round(20 + 6 * (1 - c));
+        } else if (result.dominant === 'brush') {
+          // Brush — olive/tan intensity by cover
+          const c = Math.min(result.cover * 10, 1.0);
+          r = Math.round(100 + 39 * c);
+          g = Math.round(100 + 25 * c);
+          bl = Math.round(50 + 10 * c);
+        } else {
+          // Open — gray
+          r = 136; g = 136; bl = 136;
+        }
+
+        ctx.fillStyle = `rgb(${r},${g},${bl})`;
+        ctx.fillRect(col * step, row * step, step, step);
+      }
+    }
+
+    return canvas;
+  }
+
+  /**
+   * Mode 2: A* pathfinding grid — 32px cells colored by movement cost.
+   */
+  _buildPathGrid(b) {
+    const { costFn, gridWidth: gridW, gridHeight: gridH, cellSize } = buildCostFn(b);
+    const mapW = gridW * cellSize;
+    const mapH = gridH * cellSize;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = mapW;
+    canvas.height = mapH;
+    const ctx = canvas.getContext('2d');
+
+    const fontSize = Math.max(7, cellSize * 0.28);
+    ctx.font = `${fontSize}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    for (let row = 0; row < gridH; row++) {
+      for (let col = 0; col < gridW; col++) {
+        const cost = costFn(row, col);
         const x = col * cellSize;
         const y = row * cellSize;
 
-        // Fill with dominant type color
-        const dom = cell.dominant || null;
-        let color = COLORS[dom] || DEFAULT_COLOR;
-
-        // Water depth gradient — deeper = darker blue
-        if (dom === 'water' && cell.water > 0) {
-          const depth = Math.min(cell.water, 1.0);
-          const r = Math.round(20 * (1 - depth));
-          const g = Math.round(60 + 40 * (1 - depth));
-          const b = Math.round(140 + 115 * depth);
-          color = `rgb(${r},${g},${b})`;
+        let r, g, bl;
+        if (cost === Infinity) {
+          r = 17; g = 17; bl = 17; // Black — blocked
+        } else if (cost >= 3.0) {
+          // Water costs (3-25) — blue gradient
+          const t = Math.min((cost - 3) / 22, 1.0);
+          r = Math.round(20 * (1 - t));
+          g = Math.round(60 + 40 * (1 - t));
+          bl = Math.round(140 + 115 * t);
+        } else {
+          // Speed-based cost (1.0 = fast green, 2.0+ = slow red)
+          const t = Math.min((cost - 1.0) / 1.0, 1.0); // 0=fast, 1=slow
+          r = Math.round(34 + 170 * t);
+          g = Math.round(204 - 170 * t);
+          bl = Math.round(68 * (1 - t));
         }
 
-        ctx.fillStyle = color;
+        ctx.fillStyle = `rgb(${r},${g},${bl})`;
         ctx.fillRect(x, y, cellSize, cellSize);
 
-        // Blocked indicator — red X
-        if (cell.isBlocked) {
-          ctx.strokeStyle = '#ff2222';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(x + 3, y + 3);
-          ctx.lineTo(x + cellSize - 3, y + cellSize - 3);
-          ctx.moveTo(x + cellSize - 3, y + 3);
-          ctx.lineTo(x + 3, y + cellSize - 3);
-          ctx.stroke();
-        }
+        // Cost label
+        if (cost !== Infinity) {
+          ctx.fillStyle = 'rgba(0,0,0,0.5)';
+          const tw = cellSize * 0.85;
+          const th = fontSize + 2;
+          const cx = x + cellSize / 2;
+          const cy = y + cellSize / 2;
+          ctx.fillRect(cx - tw / 2, cy - th / 2, tw, th);
 
-        // Bridge indicator — orange border
-        if (cell.isBridge) {
-          ctx.strokeStyle = '#ff8800';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(x + 1, y + 1, cellSize - 2, cellSize - 2);
+          ctx.fillStyle = '#fff';
+          ctx.fillText(cost.toFixed(1), cx, cy);
         }
       }
     }
@@ -395,49 +473,17 @@ export class BattleRenderer {
     ctx.globalAlpha = 0.3;
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 0.5;
-    for (let row = 0; row <= gridHeight; row++) {
+    for (let row = 0; row <= gridH; row++) {
       ctx.beginPath();
       ctx.moveTo(0, row * cellSize);
-      ctx.lineTo(gridWidth * cellSize, row * cellSize);
+      ctx.lineTo(mapW, row * cellSize);
       ctx.stroke();
     }
-    for (let col = 0; col <= gridWidth; col++) {
+    for (let col = 0; col <= gridW; col++) {
       ctx.beginPath();
       ctx.moveTo(col * cellSize, 0);
-      ctx.lineTo(col * cellSize, gridHeight * cellSize);
+      ctx.lineTo(col * cellSize, mapH);
       ctx.stroke();
-    }
-
-    // Speed + cover text in each cell
-    ctx.globalAlpha = 1.0;
-    const fontSize = Math.max(8, cellSize * 0.18);
-    ctx.font = `${fontSize}px monospace`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-
-    for (let row = 0; row < gridHeight; row++) {
-      const gridRow = grid[row];
-      if (!gridRow) continue;
-      for (let col = 0; col < gridWidth; col++) {
-        const cell = gridRow[col];
-        if (!cell) continue;
-
-        const cx = (col + 0.5) * cellSize;
-        const cy = (row + 0.5) * cellSize;
-
-        const spd = cell.speedMod !== undefined ? cell.speedMod.toFixed(1) : '?';
-        const cvr = cell.coverBonus > 0 ? `+${(cell.coverBonus * 100).toFixed(0)}%` : '';
-        const label = cvr ? `${spd}x ${cvr}` : `${spd}x`;
-
-        // Background pill for readability
-        ctx.fillStyle = 'rgba(0,0,0,0.55)';
-        const tw = cellSize * 0.85;
-        const th = fontSize + 4;
-        ctx.fillRect(cx - tw / 2, cy - th / 2, tw, th);
-
-        ctx.fillStyle = '#fff';
-        ctx.fillText(label, cx, cy);
-      }
     }
 
     return canvas;

@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { getTerrainAt } from './terrain-utils.js';
-import { queryTerrain } from './terrain-query.js';
+import { queryTerrain, isBridgeDeckBlocking } from './terrain-query.js';
 
 // ── LOS & Visibility ──────────────────────────────────────────
 
@@ -189,6 +189,11 @@ export function canDetect(detector, target, b) {
   // LOS check — can we see through the terrain between us?
   const losVisibility = traceLineOfSight(b, detector.x, detector.y, target.x, target.y);
   if (losVisibility < 0.1) {
+    return { detected: false, zone, distance: dist, accuracy: 0, concealment };
+  }
+
+  // Bridge deck blocks vision between units on different elevation levels
+  if (isBridgeDeckBlocking(b.terrainMap?.bridges, detector.x, detector.y, target.x, target.y)) {
     return { detected: false, zone, distance: dist, accuracy: 0, concealment };
   }
 

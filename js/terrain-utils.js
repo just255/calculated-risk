@@ -139,9 +139,25 @@ export function findNearbyCoverPos(b, unit, searchRadius, friendlies) {
   const row = Math.floor(unit.y / cellSize);
   const r = searchRadius ?? 3;
 
+  // Threat direction: away from current target or last attacker
+  const target = unit._currentTarget;
+  let threatX = null, threatY = null;
+  if (target && !target.dead) {
+    threatX = target.x; threatY = target.y;
+  }
+
+  // Ally centroid: prefer cover behind friendlies (between unit and allies)
+  let allyX = 0, allyY = 0, allyCount = 0;
+  if (friendlies) {
+    for (const f of friendlies) {
+      if (f === unit || f.dead) continue;
+      allyX += f.x; allyY += f.y; allyCount++;
+    }
+  }
+  if (allyCount > 0) { allyX /= allyCount; allyY /= allyCount; }
+
   let bestPos = null;
   let bestScore = -Infinity;
-  let bestDistSq = Infinity;
 
   for (let dr = -r; dr <= r; dr++) {
     for (let dc = -r; dc <= r; dc++) {
@@ -152,27 +168,85 @@ export function findNearbyCoverPos(b, unit, searchRadius, friendlies) {
       const t = getTerrainAt(b, cx, cy);
       const coverScore = TERRAIN_COVER_SCORE[t] || 0;
       if (coverScore >= 15) {
-        const dSq = (cx - unit.x) ** 2 + (cy - unit.y) ** 2;
+        let score = coverScore;
+        const dist = Math.hypot(cx - unit.x, cy - unit.y);
+
+        // Closer is better (normalize by search area)
+        const maxDist = r * cellSize;
+        score += (1 - dist / maxDist) * 10;
+
+        // Prefer cover AWAY from threat
+        if (threatX !== null) {
+          const threatDist = Math.hypot(cx - threatX, cy - threatY);
+          const unitThreatDist = Math.hypot(unit.x - threatX, unit.y - threatY);
+          // Positive when cover is farther from threat than unit currently is
+          score += Math.min(15, (threatDist - unitThreatDist) / cellSize * 5);
+        }
+
+        // Prefer cover TOWARD allies (behind friendlies relative to threat)
+        if (allyCount > 0) {
+          const allyDist = Math.hypot(cx - allyX, cy - allyY);
+          const unitAllyDist = Math.hypot(unit.x - allyX, unit.y - allyY);
+          // Positive when cover is closer to ally centroid
+          score += Math.min(10, (unitAllyDist - allyDist) / cellSize * 5);
+        }
 
         // Crowding penalty: prefer cover not already occupied by friendlies
-        let crowdPenalty = 0;
         if (friendlies) {
           for (const f of friendlies) {
             if (f === unit || f.dead) continue;
             const fdist = Math.hypot(cx - f.x, cy - f.y);
-            if (fdist < cellSize * 1.5) crowdPenalty += 15;
+            if (fdist < cellSize * 1.5) score -= 15;
           }
         }
 
-        const effectiveScore = coverScore - crowdPenalty;
-        if (effectiveScore > bestScore || (effectiveScore === bestScore && dSq < bestDistSq)) {
+        if (score > bestScore) {
           bestPos = { x: cx, y: cy };
-          bestScore = effectiveScore;
-          bestDistSq = dSq;
+          bestScore = score;
         }
       }
     }
   }
 
   return bestPos;
+}
+
+// ── Spawn Validation ──────────────────────────────────────────
+
+/**
+ * Find a valid spawn position within a zone, avoiding water and blocked terrain.
+ * Tries the requested offset first, then spirals outward using golden angle.
+ * @param {{ x: number, y: number, radius: number }} zone - Spawn zone center + radius
+ * @param {number} offsetX - Desired X offset from zone center
+ * @param {number} offsetY - Desired Y offset from zone center
+ * @param {object} [terrainMap] - TerrainMap for scatter-aware queries (null = skip check)
+ * @returns {{ x: number, y: number }}
+ */
+export function findValidSpawnPos(zone, offsetX, offsetY, terrainMap) {
+  const x = zone.x + offsetX;
+  const y = zone.y + offsetY;
+
+  if (!terrainMap) return { x, y };
+
+  const result = queryTerrain(terrainMap, x, y);
+  if (!result.isBlocked && !result.depth) return { x, y };
+
+  // Spiral search within the zone for dry, unblocked land
+  const maxAttempts = 20;
+  for (let i = 1; i <= maxAttempts; i++) {
+    const angle = i * 2.399; // Golden angle for even spread
+    const dist = 20 + i * 12;
+    const sx = zone.x + Math.cos(angle) * dist;
+    const sy = zone.y + Math.sin(angle) * dist;
+
+    // Stay within zone radius
+    const dx = sx - zone.x;
+    const dy = sy - zone.y;
+    if (dx * dx + dy * dy > zone.radius * zone.radius) continue;
+
+    const r = queryTerrain(terrainMap, sx, sy);
+    if (!r.isBlocked && !r.depth) return { x: sx, y: sy };
+  }
+
+  return { x, y };
 }

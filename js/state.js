@@ -7,6 +7,7 @@ import { WorldBuilder } from './world-builder/index.js';
 import { generateBattleTerrain, randomizeBattleConfig } from './world-builder/battle-terrain.js';
 import { hashString } from './world-builder/rng.js';
 import { createSergeant, DEFAULT_SERGEANT } from './sergeant.js';
+import { findValidSpawnPos } from './terrain-utils.js';
 
 export const Game = {
   state: State.MENU,
@@ -1624,12 +1625,13 @@ export function newFireRangeBattle(config) {
       const typeNum = (_typeCounts[abbr] = (_typeCounts[abbr] || 0) + 1) - 1;
       const offsetX = (blueIdx - 3) * 60 + (Math.random() - 0.5) * 30;
       const offsetY = (Math.random() - 0.5) * 80;
+      const spawnPos = findValidSpawnPos(blueSpawnZone, offsetX, offsetY, terrainMap);
       blueUnits.push({
         id: `${abbr}.${typeNum}`,
         team: 'ally',
         unitId: slot.unitId,
-        x: blueSpawnZone.x + offsetX,
-        y: blueSpawnZone.y + offsetY,
+        x: spawnPos.x,
+        y: spawnPos.y,
         hp: stats.hp,
         maxHp: stats.hp,
         damage: stats.damage,
@@ -1687,12 +1689,13 @@ export function newFireRangeBattle(config) {
       const typeNum = (_redCounts[rAbbr] = (_redCounts[rAbbr] || 0) + 1) - 1;
       const offsetX = (redIdx - 3) * 60 + (Math.random() - 0.5) * 30;
       const offsetY = (Math.random() - 0.5) * 80;
+      const spawnPos = findValidSpawnPos(redSpawnZone, offsetX, offsetY, terrainMap);
       const enemy = {
         id: `${rAbbr}.${typeNum}`,
         team: 'enemy',
         unitId: typeKey,
-        x: redSpawnZone.x + offsetX,
-        y: redSpawnZone.y + offsetY,
+        x: spawnPos.x,
+        y: spawnPos.y,
         hp: stats ? stats.hp : enemyDef.health,
         maxHp: stats ? stats.hp : enemyDef.health,
         damage: stats ? stats.damage : enemyDef.damage,
@@ -1734,9 +1737,15 @@ export function newFireRangeBattle(config) {
     }
   }
 
-  // Leader promotion: if any blue unit is flagged as leader, use it as hero
+  // Auto-assign leader by highest leadership stat if none flagged
+  let blueLeader = blueUnits.find(u => u.isLeader);
+  if (!blueLeader && blueUnits.length > 0) {
+    blueLeader = blueUnits.reduce((best, u) => (u.leadership ?? 0) > (best.leadership ?? 0) ? u : best, blueUnits[0]);
+    blueLeader.isLeader = true;
+  }
+
+  // Leader promotion: if blue leader exists, use as hero
   let battleHero = null;
-  const blueLeader = blueUnits.find(u => u.isLeader);
   if (blueLeader) {
     blueLeader.isHero = true;
     battleHero = blueLeader;
@@ -1754,8 +1763,12 @@ export function newFireRangeBattle(config) {
     };
   }
 
-  // Enemy leader (future sergeant AI)
-  const enemyLeader = redEnemies.find(e => e.isLeader) || null;
+  // Auto-assign enemy leader by highest leadership stat if none flagged
+  let enemyLeader = redEnemies.find(e => e.isLeader);
+  if (!enemyLeader && redEnemies.length > 0) {
+    enemyLeader = redEnemies.reduce((best, e) => (e.leadership ?? 0) > (best.leadership ?? 0) ? e : best, redEnemies[0]);
+    enemyLeader.isLeader = true;
+  }
 
   return {
     mode: 'fire_range',
@@ -1824,7 +1837,7 @@ export function newFireRangeBattle(config) {
 
     // Debug telemetry
     debugOverlay: true,
-    showTerrainGrid: false,
+    showTerrainGrid: 0,
     _debugLog: []
   };
 }

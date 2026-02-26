@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { queryTerrain } from './terrain-query.js';
+import { WATER_DEPTH_SPEED } from './terrain-utils.js';
 
 // Pathfinding cell size for terrainMap battles (finer than the old 64px rasterize grid)
 const PATH_CELL_SIZE = 32;
@@ -16,17 +17,13 @@ export const TERRAIN_COSTS = {
   pillbox: 1.5,
   brush: 1.3,
   forest: 1.8,
-  water: 3.0,
+  water: 2.0,
   high: Infinity
 };
 
-// A* costs for water by depth — higher than speed penalties to strongly
-// discourage routing through water when a dry path exists
-export const WATER_PATH_COST = {
-  shallow: 3.0,   // Wade-able, small detour preferred
-  medium:  8.0,   // Significant penalty, will route around
-  deep:   25.0    // Almost always avoid (infantry); Infinity for vehicles
-};
+// Small overhead multiplier so A* slightly prefers dry ground over wading
+// at equal distance, without making detours worthwhile
+const WATER_COST_OVERHEAD = 1.15;
 
 // Cover/defensive value (higher = better cover)
 export const COVER_VALUES = {
@@ -41,8 +38,9 @@ export const COVER_VALUES = {
 };
 
 // Cells with cost >= this threshold block line-of-sight for path smoothing.
-// Prevents smoothed paths from cutting through water that A* deliberately avoided.
-const SMOOTH_BLOCK_COST = 5.0;
+// Deep water for infantry costs ~3.8 — this prevents smoothing through it
+// while allowing shortcuts through shallow (~1.2) and medium (~1.6-2.0).
+const SMOOTH_BLOCK_COST = 3.0;
 
 // ═══════════════════════════════════════════════════════════════
 // BINARY HEAP - Efficient priority queue for A*
@@ -307,14 +305,17 @@ export function buildCostFn(b, category = 'infantry') {
 
       if (result.isBlocked) return Infinity;
 
-      // Water depth — use fixed path costs, check vehicle passability
+      // Note: bridge railings are enforced in real-time movement (ai.js),
+      // not in A* — the 32px cell resolution is too coarse for the 12px railing zone
+      // and would falsely block valid bridge paths.
+
+      // Water depth — use actual per-category speed mods so A* cost
+      // reflects real movement speed rather than flat avoidance penalties
       if (result.depth) {
-        const depth = result.depth;
-        if (depth === 'deep' && category !== 'infantry') return Infinity;
-        if (depth === 'medium' && category !== 'infantry' && category !== 'light_vehicle') {
-          return WATER_PATH_COST.deep;
-        }
-        return WATER_PATH_COST[depth];
+        const mods = WATER_DEPTH_SPEED[result.depth];
+        const speedMod = mods?.[category] ?? 0.7;
+        if (speedMod === 0) return Infinity;
+        return (1.0 / speedMod) * WATER_COST_OVERHEAD;
       }
 
       // Inverse speedMod — slower terrain = higher cost
@@ -333,8 +334,11 @@ export function buildCostFn(b, category = 'infantry') {
     if (row < 0 || row >= gridH || col < 0 || col >= gridW) return Infinity;
     const t = b.terrain[row]?.[col] || 'open';
     if (t === 'water') {
-      if (category !== 'infantry') return WATER_PATH_COST.deep;
-      return WATER_PATH_COST.medium;
+      // Legacy grids: all water is "medium" depth
+      const mods = WATER_DEPTH_SPEED.medium;
+      const speedMod = mods?.[category] ?? 0.7;
+      if (speedMod === 0) return Infinity;
+      return (1.0 / speedMod) * WATER_COST_OVERHEAD;
     }
     return TERRAIN_COSTS[t] ?? 1.0;
   };
@@ -574,4 +578,70 @@ function hasLineOfSight(from, to, terrain, gridHeight, gridWidth, costFn) {
   }
 
   return true;
+}
+
+// ── Navigation Waypoint Resolution ──────────────────────────
+
+const NAV_PATH_THRESHOLD = 128;  // Use A* for distances > 128px
+const NAV_RETARGET_DIST = 64;    // Recompute path when target moves > 64px
+
+/**
+ * Resolve the next movement waypoint for a unit using cached A* paths.
+ * Long-distance targets are routed through A* waypoints.
+ * Short-distance targets are returned as-is (direct steering).
+ *
+ * Path state stored on unit: _navPath, _navIndex, _navTarget
+ *
+ * @param {object} b - Battle state (needs b.terrainMap for PCG maps)
+ * @param {object} unit - The moving unit (path state cached here)
+ * @param {number} targetX - Desired destination X
+ * @param {number} targetY - Desired destination Y
+ * @param {string} category - Unit category for passability ('infantry', 'light_vehicle', etc.)
+ * @returns {{ x: number, y: number }} - Next position to steer toward
+ */
+export function resolveNavWaypoint(b, unit, targetX, targetY, category) {
+  // Only use A* on PCG terrainMap battles
+  if (!b.terrainMap) {
+    return { x: targetX, y: targetY };
+  }
+
+  const navDist = Math.hypot(targetX - unit.x, targetY - unit.y);
+
+  if (navDist < NAV_PATH_THRESHOLD) {
+    // Close enough — clear cached path, go direct
+    unit._navPath = null;
+    unit._navTarget = null;
+    return { x: targetX, y: targetY };
+  }
+
+  // Check if we need a new path
+  const needsPath = !unit._navPath
+    || !unit._navTarget
+    || Math.hypot(targetX - unit._navTarget.x, targetY - unit._navTarget.y) > NAV_RETARGET_DIST;
+
+  if (needsPath) {
+    const path = findPathWorld(b, unit.x, unit.y, targetX, targetY, { category });
+    if (path && path.length > 1) {
+      unit._navPath = path;
+      unit._navIndex = 0;
+      unit._navTarget = { x: targetX, y: targetY };
+    } else {
+      unit._navPath = null;
+      unit._navTarget = null;
+      return { x: targetX, y: targetY };
+    }
+  }
+
+  // Advance past reached waypoints
+  while (unit._navIndex < unit._navPath.length - 1) {
+    const wp = unit._navPath[unit._navIndex];
+    if (Math.hypot(wp.x - unit.x, wp.y - unit.y) < 20) {
+      unit._navIndex++;
+    } else {
+      break;
+    }
+  }
+
+  const wp = unit._navPath[unit._navIndex];
+  return { x: wp.x, y: wp.y };
 }

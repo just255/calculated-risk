@@ -32,14 +32,14 @@ export const DEFAULT_SERGEANT = {
   courage:      0.5,  // 0 = retreats early, 1 = fights to the last
   discipline:   0.5,  // 0 = loose control, 1 = tight formations
   initiative:   0.5,  // 0 = follows doctrine, 1 = improvises (flanking, etc.)
-  adaptability: 0.5   // 0 = slow to react, 1 = re-evaluates frequently
+  awareness:    0.5   // 0 = slow to react, 1 = re-evaluates frequently
 };
 
 // ── Evaluation interval ──────────────────────────────────────
 
-// Base 2s, adaptability scales from 3s (low) to 1s (high)
+// awareness scales from 3s (low) to 1s (high)
 function evalInterval(sgt) {
-  return 3.0 - (sgt.personality.adaptability * 2.0);
+  return 3.0 - ((sgt.personality.awareness ?? 0.5) * 2.0);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -76,6 +76,11 @@ export function createSergeant(teamKey, personality, spawnZone, enemySpawnZone) 
     // Last issued state — prevent command thrashing
     _lastCommand: null,
     _lastFormation: null,
+
+    // Emergency re-eval: set to a timestamp to force early re-eval
+    _emergencyReeval: 0,
+    // Track alive count for automatic death detection
+    _lastAliveCount: 0,
 
     // Situational awareness (refreshed each eval)
     sitrep: null
@@ -165,10 +170,22 @@ export function updateSergeant(b, sgt, friendlies, hostiles, now) {
   const alive = friendlies.filter(u => !u.dead);
   if (alive.length === 0) return;
 
-  // Throttle evaluation
+  // Detect unit deaths → schedule emergency re-eval
+  // Re-eval delay: (1 - awareness) × 3 seconds. awareness=1.0 → instant. awareness=0.0 → 3s delay.
+  if (alive.length < sgt._lastAliveCount && !sgt._emergencyReeval) {
+    const awareness = sgt.personality.awareness ?? 0.5;
+    const delay = (1 - awareness) * 3000;
+    sgt._emergencyReeval = now + delay;
+  }
+  sgt._lastAliveCount = alive.length;
+
+  // Throttle evaluation — emergency re-eval bypasses normal interval
   const interval = evalInterval(sgt) * 1000;
-  if (now - sgt.lastEval < interval) return;
+  const normalReady = now - sgt.lastEval >= interval;
+  const emergencyReady = sgt._emergencyReeval > 0 && now >= sgt._emergencyReeval;
+  if (!normalReady && !emergencyReady) return;
   sgt.lastEval = now;
+  sgt._emergencyReeval = 0; // Clear emergency flag
 
   // Build situational report
   const sitrep = buildSitrep(b, sgt, friendlies, hostiles);
@@ -430,7 +447,7 @@ function executeRegroup(b, sgt, sitrep, alive, teamKey, phaseChanged) {
   setFormation(sgt, alive, Formation.WEDGE);
   setWaypoint(b, teamKey, sgt.rallyPoint);
 
-  logPhase(b, sgt, sitrep, 'regroup', `elapsed:${Math.round((performance.now() - sgt.phaseStartTime) / 1000)}s`);
+  logPhase(b, sgt, sitrep, 'regroup', `elapsed:${Math.round((Date.now() - sgt.phaseStartTime) / 1000)}s`);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -562,7 +579,7 @@ function logPhase(b, sgt, sitrep, action, detail) {
   if (!leader) return;
 
   b._debugLog.push({
-    t: performance.now(),
+    t: Date.now(),
     who: `sgt-${sgt.teamKey}`,
     team: sgt.teamKey,
     type: 'sergeant',

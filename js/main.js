@@ -1390,9 +1390,12 @@ document.getElementById('app').addEventListener('click', e => {
     else if (a === 'fr-toggle-terrain-grid') {
       const b = Game.fireRange?.battle;
       if (b) {
-        b.showTerrainGrid = !b.showTerrainGrid;
+        // Cycle: 0 (off) → 1 (density) → 2 (A* grid) → 0
+        b.showTerrainGrid = ((b.showTerrainGrid || 0) + 1) % 3;
         const btn = action;
-        btn.classList.toggle('active', b.showTerrainGrid);
+        btn.classList.toggle('active', b.showTerrainGrid >= 1);
+        const labels = ['Map', 'Map:D', 'Map:A*'];
+        btn.textContent = labels[b.showTerrainGrid];
       }
     }
     else if (a === 'fr-toggle-panel') {

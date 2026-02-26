@@ -258,8 +258,8 @@ export const FR_PRESETS = {
       slot({ unitId: 'infantry', count: 3, discipline: 0.6 }),
       slot({ unitId: 'sherman', count: 1, discipline: 0.6 })
     ],
-    blueSergeant: { aggression: 0.9, patience: 0.1, courage: 0.8, discipline: 0.5, initiative: 0.5, adaptability: 0.5 },
-    redSergeant:  { aggression: 0.1, patience: 0.9, courage: 0.5, discipline: 0.8, initiative: 0.3, adaptability: 0.5 },
+    blueSergeant: { aggression: 0.9, patience: 0.1, courage: 0.8, discipline: 0.5, initiative: 0.5, awareness: 0.5 },
+    redSergeant:  { aggression: 0.1, patience: 0.9, courage: 0.5, discipline: 0.8, initiative: 0.3, awareness: 0.5 },
     mapSize: 'large', debug: DBG_OFF
   },
 
@@ -272,8 +272,8 @@ export const FR_PRESETS = {
       slot({ unitId: 'infantry', count: 4, discipline: 0.7 }),
       slot({ unitId: 'sherman', count: 1, discipline: 0.7 })
     ],
-    blueSergeant: { aggression: 0.6, patience: 0.4, courage: 0.6, discipline: 0.5, initiative: 0.9, adaptability: 0.7 },
-    redSergeant:  { aggression: 0.3, patience: 0.7, courage: 0.6, discipline: 0.9, initiative: 0.1, adaptability: 0.3 },
+    blueSergeant: { aggression: 0.6, patience: 0.4, courage: 0.6, discipline: 0.5, initiative: 0.9, awareness: 0.7 },
+    redSergeant:  { aggression: 0.3, patience: 0.7, courage: 0.6, discipline: 0.9, initiative: 0.1, awareness: 0.3 },
     mapSize: 'large', debug: DBG_OFF
   },
 
@@ -284,8 +284,8 @@ export const FR_PRESETS = {
     redTeam: [
       slot({ unitId: 'infantry', count: 4, courage: 0.7, morale: 0.8 })
     ],
-    blueSergeant: { aggression: 0.5, patience: 0.5, courage: 0.9, discipline: 0.5, initiative: 0.5, adaptability: 0.5 },
-    redSergeant:  { aggression: 0.5, patience: 0.5, courage: 0.1, discipline: 0.5, initiative: 0.5, adaptability: 0.5 },
+    blueSergeant: { aggression: 0.5, patience: 0.5, courage: 0.9, discipline: 0.5, initiative: 0.5, awareness: 0.5 },
+    redSergeant:  { aggression: 0.5, patience: 0.5, courage: 0.1, discipline: 0.5, initiative: 0.5, awareness: 0.5 },
     mapSize: 'medium', debug: DBG_OFF
   },
 
@@ -298,8 +298,8 @@ export const FR_PRESETS = {
       slot({ unitId: 'infantry', count: 3, discipline: 0.5 }),
       slot({ unitId: 'sherman', count: 2, discipline: 0.5 })
     ],
-    blueSergeant: { aggression: 0.5, patience: 0.5, courage: 0.5, discipline: 0.5, initiative: 0.5, adaptability: 0.9 },
-    redSergeant:  { aggression: 0.5, patience: 0.5, courage: 0.5, discipline: 0.5, initiative: 0.5, adaptability: 0.1 },
+    blueSergeant: { aggression: 0.5, patience: 0.5, courage: 0.5, discipline: 0.5, initiative: 0.5, awareness: 0.9 },
+    redSergeant:  { aggression: 0.5, patience: 0.5, courage: 0.5, discipline: 0.5, initiative: 0.5, awareness: 0.1 },
     mapSize: 'medium', debug: DBG_OFF
   }
 };
@@ -345,6 +345,6 @@ export const FR_PRESET_LIST = [
     { id: 'sgt-aggressive-vs-cautious', name: 'Aggressive vs Cautious', desc: 'Reckless push sergeant vs patient hold sergeant' },
     { id: 'sgt-flanker-vs-line',        name: 'Flanker vs Line',        desc: 'High initiative flanker vs rigid line defense' },
     { id: 'sgt-brave-vs-coward',        name: 'Brave vs Coward',        desc: 'Courageous sergeant vs one who retreats early' },
-    { id: 'sgt-adaptive-vs-rigid',      name: 'Adaptive vs Rigid',      desc: 'Fast re-eval (1s) vs slow (3s) — adaptability test' }
+    { id: 'sgt-adaptive-vs-rigid',      name: 'Adaptive vs Rigid',      desc: 'Fast re-eval (1s) vs slow (3s) — awareness test' }
   ]}
 ];

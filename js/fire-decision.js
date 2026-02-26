@@ -1,6 +1,10 @@
 // ═══════════════════════════════════════════════════════════════
 // FIRE DECISION PIPELINE — Shared by enemies AND ally units
-// Determines WHEN to fire and HOW accurate the shot is.
+// Determines WHEN to fire, HOW accurate the shot is, and damage falloff.
+//
+// Range source: unit.range (set at spawn from UNIT_COMBAT_STATS or enemy def)
+// Hard cutoff: range × 1.1 — nothing fires beyond this
+// Damage falloff: steep drop beyond ~60% of range
 // ═══════════════════════════════════════════════════════════════
 
 // Zero-in time (seconds to reach full stability) per AI type key
@@ -17,22 +21,6 @@ const ZERO_IN_TIME = {
   sherman: 1.2,
   tiger: 1.0,
   abrams: 0.8
-};
-
-// Effective range per AI type (pixels)
-const EFFECTIVE_RANGE = {
-  BASIC: 200,
-  RUSHER: 100,
-  HUNTER: 300,
-  CAUTIOUS: 400,
-  FLANKER: 200,
-  SWARMER: 60,
-  // Ally units (keyed by unitId)
-  infantry: 150,
-  jeep: 180,
-  sherman: 250,
-  tiger: 300,
-  abrams: 350
 };
 
 /**
@@ -60,15 +48,36 @@ export function updateStability(unit, dtSec, typeKey) {
 }
 
 /**
+ * Compute damage falloff multiplier based on distance vs unit's range.
+ * Full damage up to 60% of range, steep drop beyond that.
+ *
+ * @param {number} dist - Distance to target (pixels)
+ * @param {number} range - Unit's weapon range (pixels)
+ * @returns {number} Damage multiplier (0-1)
+ */
+export function getDamageFalloff(dist, range) {
+  if (range <= 0) return 1.0;
+  const ratio = dist / range;
+  if (ratio <= 0.6) return 1.0;                    // Full damage up to 60% range
+  if (ratio >= 1.1) return 0.0;                    // No damage beyond hard cutoff
+  // Steep falloff from 60% to 110%: 1.0 → 0.1
+  const t = (ratio - 0.6) / 0.5;                   // 0 at 60%, 1 at 110%
+  return Math.max(0.1, 1.0 - t * t * 0.9);         // Quadratic drop to 0.1
+}
+
+/**
  * Extensible fire-decision pipeline.
  * Returns whether the unit should fire this frame and the accuracy of the shot.
  *
- * @param {object} unit - Firing entity { x, y, stability, lastAttack, fireRate, ... }
+ * Range source: unit.range (single source of truth, set at spawn)
+ * Hard cutoff: range × 1.1 — nothing fires beyond this
+ *
+ * @param {object} unit - Firing entity { x, y, range, stability, lastAttack, fireRate, ... }
  * @param {object} target - Target entity { x, y, speed?, velocity? }
  * @param {object} b - Battle state (for LOS checks, etc.)
  * @param {number} now - Current timestamp (ms)
  * @param {object} opts - Optional overrides { heroVelocity }
- * @returns {{ canFire: boolean, accuracy: number }}
+ * @returns {{ canFire: boolean, accuracy: number, damageMod: number }}
  */
 export function shouldFire(unit, target, b, now, opts = {}) {
   let accuracy = 1.0;
@@ -78,7 +87,7 @@ export function shouldFire(unit, target, b, now, opts = {}) {
   const fireRate = unit.fireRate || 2000;
   const lastAttack = unit.lastAttack || unit.lastShot || 0;
   if (now - lastAttack < fireRate) {
-    return { canFire: false, accuracy: 0 };
+    return { canFire: false, accuracy: 0, damageMod: 0 };
   }
 
   // 2. STABILITY — moving units are inaccurate
@@ -87,23 +96,25 @@ export function shouldFire(unit, target, b, now, opts = {}) {
   accuracy *= stabilityWeight;
   factors.push({ name: 'stability', value: stabilityWeight });
 
-  // 3. RANGE — further away = less accurate
+  // 3. RANGE — unit.range is the single source of truth
   const dx = target.x - unit.x;
   const dy = target.y - unit.y;
   const dist = Math.sqrt(dx * dx + dy * dy);
+  const range = unit.range || 150;
 
-  // Get effective range for this unit type
-  const typeKey = unit.aiTypeKey || unit.unitId || 'BASIC';
-  const effectiveRange = EFFECTIVE_RANGE[typeKey] || 250;
-
-  if (dist > effectiveRange * 1.5) {
-    return { canFire: false, accuracy: 0 }; // Way out of range, don't fire
+  // Hard cutoff: nothing fires beyond range × 1.1
+  if (dist > range * 1.1) {
+    return { canFire: false, accuracy: 0, damageMod: 0 };
   }
 
-  const rangeRatio = Math.min(1.0, dist / effectiveRange);
+  // Accuracy falloff (mild — tune later)
+  const rangeRatio = Math.min(1.0, dist / range);
   const rangeWeight = 1.0 - rangeRatio * 0.4; // 1.0 at close range, 0.6 at max range
   accuracy *= rangeWeight;
   factors.push({ name: 'range', value: rangeWeight });
+
+  // Damage falloff (steep beyond 60% of range)
+  const damageMod = getDamageFalloff(dist, range);
 
   // 4. TARGET SPEED — faster target = lower accuracy
   const heroVelocity = opts.heroVelocity || 0;
@@ -118,8 +129,8 @@ export function shouldFire(unit, target, b, now, opts = {}) {
   // 5. FIRE PROBABILITY — low-accuracy units sometimes skip firing entirely
   // At very low accuracy (<0.3), have a chance to not fire at all (suppression feel)
   if (accuracy < 0.3 && Math.random() > accuracy * 2) {
-    return { canFire: false, accuracy, factors };
+    return { canFire: false, accuracy, damageMod, factors };
   }
 
-  return { canFire: true, accuracy, factors };
+  return { canFire: true, accuracy, damageMod, factors };
 }

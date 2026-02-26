@@ -18,7 +18,7 @@ import {
   updateProjectiles
 } from './combat.js';
 import { isTerrainBlocked, getTerrainSpeedMod } from './terrain-utils.js';
-import { clearQueryCache } from './terrain-query.js';
+import { clearQueryCache, getBridgeCoverMult, isBridgeDeckBlocking, queryTerrain } from './terrain-query.js';
 import { updateSergeant } from './sergeant.js';
 import {
   updateUnitAI,
@@ -2164,6 +2164,8 @@ function updateEndlessBattle(dt) {
     b.projectiles.push({
       x: hero.x,
       y: hero.y,
+      originX: hero.x,
+      originY: hero.y,
       vx: Math.cos(hero.angle) * projSpeed,
       vy: Math.sin(hero.angle) * projSpeed,
       damage: hero.damage,
@@ -2273,6 +2275,9 @@ function updateEndlessBattle(dt) {
         const dx = p.x - e.x;
         const dy = p.y - e.y;
         if (dx * dx + dy * dy < 400) {  // ~20px radius
+          // Bridge deck blocks shots between different elevation levels
+          if (isBridgeDeckBlocking(b.terrainMap?.bridges, p.originX ?? p.x, p.originY ?? p.y, e.x, e.y)) return;
+
           // Apply modifier damage reduction (armored, shielded)
           let dmg = p.damage;
           if (e.modifier === 'armored') {
@@ -2288,6 +2293,10 @@ function updateEndlessBattle(dt) {
               dmg = Math.round(dmg * 0.3); // 70% frontal reduction
             }
           }
+
+          // Bridge truss cover — directional damage reduction
+          const bridgeMult1 = getBridgeCoverMult(b.terrainMap?.bridges, e.x, e.y, p.vx, p.vy);
+          if (bridgeMult1 < 1) dmg = Math.round(dmg * bridgeMult1);
 
           e.hp -= dmg;
           p.dead = true;
@@ -2657,7 +2666,7 @@ export function formatFireRangeLog(b) {
   if (b.units) {
     for (const u of b.units) {
       const d = u._dbg || {};
-      lines.push(`  ${u.id} [${u.unitId}] | hp:${u.hp}/${u.maxHp} | pos:(${Math.round(u.x)},${Math.round(u.y)}) | state:${d.state||'-'} | mMode:${d.movementMode||'-'} | sup:${d.suppression??0} | target:${d.targetId||'-'} | dist:${d.targetDist||'-'} | stab:${d.stability??'-'} | behavior:${d.behavior||'-'} | range:${u.range||'?'} | fireRate:${u.fireRate||'?'} | dmg:${u.damage||'?'} | spd:${u.speed||'?'} | terrain:${d.terrain||'-'} | cover:${d.cover??0}${d.inCover?' [IN COVER]':''} | vr:${d.viewRange??'?'} | spt:${d.spotted??0} | awr:${d.awareness??'-'} | cvBias:${d.coverBias??'-'} | fmt:${d.formation||'-'}${d.isLead?' [LEAD]':''} slot:${d.formationSlot??'-'} dev:${d.slotDev??'-'} slotXY:${d.slotX!=null?d.slotX+','+d.slotY:'-'} wMul:${d.waitMult??'-'}${u.dead?' | DEAD':''}`);
+      lines.push(`  ${u.id} [${u.unitId}] | hp:${u.hp}/${u.maxHp} | pos:(${Math.round(u.x)},${Math.round(u.y)}) | state:${d.state||'-'} | mMode:${d.movementMode||'-'} | sup:${d.suppression??0} | target:${d.targetId||'-'} | dist:${d.targetDist||'-'} | stab:${d.stability??'-'} | behavior:${d.behavior||'-'} | range:${u.range||'?'} | fireRate:${u.fireRate||'?'} | dmg:${u.damage||'?'} | spd:${u.speed||'?'} | terrain:${d.terrain||'-'} | cover:${d.cover??0}${d.inCover?' [IN COVER]':''} | vr:${d.viewRange??'?'} | spt:${d.spotted??0} | awr:${d.awareness??'-'} | cvBias:${d.coverBias??'-'} | fmt:${d.formation||'-'}${d.isLead?' [LEAD]':''} slot:${d.formationSlot??'-'} dev:${d.slotDev??'-'} slotXY:${d.slotX!=null?d.slotX+','+d.slotY:'-'}${u.dead?' | DEAD':''}`);
     }
   }
   lines.push('');
@@ -2666,10 +2675,102 @@ export function formatFireRangeLog(b) {
   if (b.enemies) {
     for (const e of b.enemies) {
       const d = e._dbg || {};
-      lines.push(`  ${e.id} [${e.unitId||'?'}] | hp:${e.hp}/${e.maxHp} | pos:(${Math.round(e.x)},${Math.round(e.y)}) | state:${d.state||'-'} | mMode:${d.movementMode||'-'} | sup:${d.suppression??0} | target:${d.targetId||'-'} | dist:${d.targetDist||'-'} | stab:${d.stability??'-'} | type:${d.typeKey||'-'} | range:${e.range||'?'} | fireRate:${e.fireRate||'?'} | dmg:${e.damage||'?'} | spd:${e.speed||'?'} | terrain:${d.terrain||'-'} | cover:${d.cover??0}${d.inCover?' [IN COVER]':''} | vr:${d.viewRange??'?'} | spt:${d.spotted??0} | awr:${d.awareness??'-'} | cvBias:${d.coverBias??'-'} | fmt:${d.formation||'-'}${d.isLead?' [LEAD]':''} slot:${d.formationSlot??'-'} dev:${d.slotDev??'-'} slotXY:${d.slotX!=null?d.slotX+','+d.slotY:'-'} wMul:${d.waitMult??'-'}${e.dead?' | DEAD':''}${e.modifier?' | mod:'+e.modifier:''}`);
+      lines.push(`  ${e.id} [${e.unitId||'?'}] | hp:${e.hp}/${e.maxHp} | pos:(${Math.round(e.x)},${Math.round(e.y)}) | state:${d.state||'-'} | mMode:${d.movementMode||'-'} | sup:${d.suppression??0} | target:${d.targetId||'-'} | dist:${d.targetDist||'-'} | stab:${d.stability??'-'} | type:${d.typeKey||'-'} | range:${e.range||'?'} | fireRate:${e.fireRate||'?'} | dmg:${e.damage||'?'} | spd:${e.speed||'?'} | terrain:${d.terrain||'-'} | cover:${d.cover??0}${d.inCover?' [IN COVER]':''} | vr:${d.viewRange??'?'} | spt:${d.spotted??0} | awr:${d.awareness??'-'} | cvBias:${d.coverBias??'-'} | fmt:${d.formation||'-'}${d.isLead?' [LEAD]':''} slot:${d.formationSlot??'-'} dev:${d.slotDev??'-'} slotXY:${d.slotX!=null?d.slotX+','+d.slotY:'-'}${e.dead?' | DEAD':''}${e.modifier?' | mod:'+e.modifier:''}`);
     }
   }
   lines.push('');
+
+  // ── Terrain diagnostics ──────────────────────────────────────
+  const tm = b.terrainMap;
+  if (tm) {
+    lines.push('TERRAIN MAP:');
+    lines.push(`  mapSize: ${b.mapWidth || '?'}x${b.mapHeight || '?'}`);
+    lines.push(`  strokes: ${tm.strokes?.length || 0}`);
+    lines.push(`  scatterItems: ${tm.scatterItems?.length || 0}`);
+
+    // Spawn zones
+    if (b.blueSpawnZone) {
+      const z = b.blueSpawnZone;
+      lines.push(`  blueSpawn: (${Math.round(z.x)},${Math.round(z.y)}) r=${Math.round(z.radius)}`);
+    }
+    if (b.redSpawnZone) {
+      const z = b.redSpawnZone;
+      lines.push(`  redSpawn: (${Math.round(z.x)},${Math.round(z.y)}) r=${Math.round(z.radius)}`);
+    }
+
+    // Bridges
+    if (tm.bridges?.length > 0) {
+      for (const br of tm.bridges) {
+        lines.push(`  bridge: center=(${Math.round(br.x)},${Math.round(br.y)}) w=${Math.round(br.width)} len=${Math.round(br.length)} dir=(${br.dirX?.toFixed(2)},${br.dirY?.toFixed(2)}) deck=${br.deckTexture||'?'}`);
+        lines.push(`    start=(${Math.round(br.startX)},${Math.round(br.startY)}) end=(${Math.round(br.endX)},${Math.round(br.endY)})`);
+      }
+    }
+
+    // Water strokes summary
+    const waterStrokes = tm.strokes?.filter(s => s.type === 'water') || [];
+    if (waterStrokes.length > 0) {
+      for (const ws of waterStrokes) {
+        const pts = ws.points;
+        if (pts?.length > 0) {
+          const first = pts[0], last = pts[pts.length - 1];
+          lines.push(`  water: ${pts.length} pts from (${Math.round(first.x)},${Math.round(first.y)}) to (${Math.round(last.x)},${Math.round(last.y)}) w=${Math.round(ws.width || 0)}`);
+        }
+      }
+    }
+
+    // Sample terrain queries along a grid for spatial awareness
+    lines.push('  terrain samples (8x8 grid):');
+    const mw = b.mapWidth || 1792, mh = b.mapHeight || 1792;
+    const sampleRow = [];
+    for (let gy = 0; gy < 8; gy++) {
+      const row = [];
+      for (let gx = 0; gx < 8; gx++) {
+        const sx = (gx + 0.5) * (mw / 8);
+        const sy = (gy + 0.5) * (mh / 8);
+        const r = queryTerrain(tm, sx, sy);
+        let ch = '.'; // open
+        if (r.isBlocked) ch = '#';
+        else if (r.isBridge) ch = '=';
+        else if (r.depth === 'deep') ch = 'D';
+        else if (r.depth === 'medium') ch = 'M';
+        else if (r.depth === 'shallow') ch = '~';
+        else if (r.dominant === 'forest') ch = 'T';
+        else if (r.dominant === 'brush') ch = 'b';
+        else if (r.water > 0.1) ch = 'w';
+        row.push(ch);
+      }
+      sampleRow.push('    ' + row.join(' '));
+    }
+    lines.push(sampleRow.join('\n'));
+
+    // Detailed samples around each bridge for navigation analysis
+    if (tm.bridges?.length > 0) {
+      for (const br of tm.bridges) {
+        lines.push(`  bridge nav samples around (${Math.round(br.x)},${Math.round(br.y)}):`);
+        for (let dy = -2; dy <= 2; dy++) {
+          const row = [];
+          for (let dx = -4; dx <= 4; dx++) {
+            const sx = br.x + dx * 32;
+            const sy = br.y + dy * 32;
+            const r = queryTerrain(tm, sx, sy);
+            let ch = '.';
+            if (r.isBlocked) ch = '#';
+            else if (r.isBridge) ch = '=';
+            else if (r.depth === 'deep') ch = 'D';
+            else if (r.depth === 'medium') ch = 'M';
+            else if (r.depth === 'shallow') ch = '~';
+            else if (r.dominant === 'forest') ch = 'T';
+            else if (r.dominant === 'brush') ch = 'b';
+            else if (r.water > 0.1) ch = 'w';
+            row.push(ch);
+          }
+          lines.push(`    ${row.join(' ')}  y=${Math.round(br.y + dy * 32)}`);
+        }
+      }
+    }
+
+    lines.push('');
+  }
 
   const logLen = b._debugLog?.length || 0;
   lines.push(`EVENT LOG (${logLen} events):`);
@@ -2787,6 +2888,8 @@ function updateFireRangeBattle(dt) {
         const dx = p.x - e.x;
         const dy = p.y - e.y;
         if (dx * dx + dy * dy < 400) {
+          // Bridge deck blocks shots between different elevation levels
+          if (isBridgeDeckBlocking(b.terrainMap?.bridges, p.originX ?? p.x, p.originY ?? p.y, e.x, e.y)) return;
           let dmg = p.damage;
           // Tier-based damage scaling (infantry < light < medium < heavy)
           const defTier = getArmorTier(e);
@@ -2800,6 +2903,10 @@ function updateFireRangeBattle(dt) {
             while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
             if (Math.abs(angleDiff) > Math.PI / 2) dmg = Math.round(dmg * 0.3);
           }
+          // Bridge truss cover — directional damage reduction
+          const bridgeMult2 = getBridgeCoverMult(b.terrainMap?.bridges, e.x, e.y, p.vx, p.vy);
+          if (bridgeMult2 < 1) dmg = Math.round(dmg * bridgeMult2);
+
           e.hp -= dmg;
           if (e.hp < 0) e.hp = 0;
           p.dead = true;
@@ -2816,10 +2923,21 @@ function updateFireRangeBattle(dt) {
             // Killer gets morale boost
             const killer = b.units?.find(u => u.id === p.sourceId);
             if (killer && !killer.dead) applyMoraleEvent(killer, MoraleEvent.LANDED_KILL, 0.5);
-            // Commander death: clear enemy team waypoint
-            if (e.isLeader && b._teamWaypoints) {
-              delete b._teamWaypoints.enemy;
-              if (b._debugLog) b._debugLog.push({ t: now, who: e.id, team: 'red', type: 'movement', x: Math.round(e.x), y: Math.round(e.y), action: 'commander died', detail: 'waypoint cleared' });
+            // Commander death: promote highest-leadership alive unit to leader
+            if (e.isLeader) {
+              e.isLeader = false;
+              const candidates = b.enemies.filter(u => !u.dead && u !== e);
+              const successor = candidates.length > 0
+                ? candidates.reduce((best, u) => (u.leadership ?? 0) > (best.leadership ?? 0) ? u : best, candidates[0])
+                : null;
+              if (successor) {
+                successor.isLeader = true;
+                b._teamCommanders.enemy = successor;
+                if (b._debugLog) b._debugLog.push({ t: now, who: e.id, team: 'red', type: 'movement', x: Math.round(e.x), y: Math.round(e.y), action: 'commander died', detail: `promoted ${successor.id} (ldr:${(successor.leadership ?? 0).toFixed(1)})` });
+              } else {
+                b._teamCommanders.enemy = null;
+                if (b._debugLog) b._debugLog.push({ t: now, who: e.id, team: 'red', type: 'movement', x: Math.round(e.x), y: Math.round(e.y), action: 'commander died', detail: 'no successor' });
+              }
             }
             // Nearby enemies of dead unit lose morale + gain suppression
             for (const ally of b.enemies) {
@@ -2845,9 +2963,15 @@ function updateFireRangeBattle(dt) {
           const udx = p.x - unit.x;
           const udy = p.y - unit.y;
           if (udx * udx + udy * udy < 400) {
+            // Bridge deck blocks shots between different elevation levels
+            if (isBridgeDeckBlocking(b.terrainMap?.bridges, p.originX ?? p.x, p.originY ?? p.y, unit.x, unit.y)) continue;
             // Tier-based damage scaling
             const defTier = getArmorTier(unit);
-            const tierDmg = Math.round(p.damage * getTierDamageMultiplier(p.attackerTier ?? 0, defTier));
+            let tierDmg = Math.round(p.damage * getTierDamageMultiplier(p.attackerTier ?? 0, defTier));
+            // Bridge truss cover — directional damage reduction
+            const bridgeMult3 = getBridgeCoverMult(b.terrainMap?.bridges, unit.x, unit.y, p.vx, p.vy);
+            if (bridgeMult3 < 1) tierDmg = Math.round(tierDmg * bridgeMult3);
+
             unit.hp -= tierDmg;
             p.dead = true;
             unit._shockTimer = 2; // Awareness shock from taking damage
@@ -2862,10 +2986,21 @@ function updateFireRangeBattle(dt) {
               // Killer gets morale boost
               const killer = b.enemies?.find(en => en.id === p.sourceId);
               if (killer && !killer.dead) applyMoraleEvent(killer, MoraleEvent.LANDED_KILL, 0.5);
-              // Commander death: clear player team waypoint
-              if (unit.isLeader && b._teamWaypoints) {
-                delete b._teamWaypoints.player;
-                if (b._debugLog) b._debugLog.push({ t: now, who: unit.id, team: 'blue', type: 'movement', x: Math.round(unit.x), y: Math.round(unit.y), action: 'commander died', detail: 'waypoint cleared' });
+              // Commander death: promote highest-leadership alive unit to leader
+              if (unit.isLeader) {
+                unit.isLeader = false;
+                const candidates = b.units.filter(u => !u.dead && u !== unit);
+                const successor = candidates.length > 0
+                  ? candidates.reduce((best, u) => (u.leadership ?? 0) > (best.leadership ?? 0) ? u : best, candidates[0])
+                  : null;
+                if (successor) {
+                  successor.isLeader = true;
+                  b._teamCommanders.player = successor;
+                  if (b._debugLog) b._debugLog.push({ t: now, who: unit.id, team: 'blue', type: 'movement', x: Math.round(unit.x), y: Math.round(unit.y), action: 'commander died', detail: `promoted ${successor.id} (ldr:${(successor.leadership ?? 0).toFixed(1)})` });
+                } else {
+                  b._teamCommanders.player = null;
+                  if (b._debugLog) b._debugLog.push({ t: now, who: unit.id, team: 'blue', type: 'movement', x: Math.round(unit.x), y: Math.round(unit.y), action: 'commander died', detail: 'no successor' });
+                }
               }
               // Nearby blue allies of dead unit lose morale + gain suppression
               for (const ally of b.units) {
@@ -3047,7 +3182,7 @@ const DEBUG_COL_GROUPS = {
     { key: 'lead',     hdr: 'Lead',  fn: (u, d) => d.isLead ? 'Y' : '' },
     { key: 'sdev',     hdr: 'SDev',  fn: (u, d) => d.slotDev ?? '-' },
     { key: 'slotxy',   hdr: 'SlotXY', fn: (u, d) => d.slotX != null ? `${d.slotX},${d.slotY}` : '-' },
-    { key: 'wmul',     hdr: 'Wait',  fn: (u, d) => d.waitMult != null ? d.waitMult : '' },
+    // waitMult removed — formations are now a steering nudge, no leader throttle
     { key: 'fang',     hdr: 'FAng',  fn: (u, d) => d.fmtAngle != null ? `${d.fmtAngle}°` : '' }
   ],
   movement: [
@@ -3056,7 +3191,7 @@ const DEBUG_COL_GROUPS = {
       if (!m) return '-';
       // Short abbreviation for display
       const abbr = { panic_flee: 'PNC', urgent_cover: 'UCvr', survival_action: 'Surv',
-        formation_move: 'Fmt', tactical_bound: 'Bnd', command_execute: 'Cmd', regroup: 'Rgrp' };
+        tactical_bound: 'Bnd', command_execute: 'Cmd', regroup: 'Rgrp' };
       return abbr[m] || m;
     }},
     { key: 'sup',      hdr: 'Sup',   fn: (u, d) => d.suppression ?? 0 }
@@ -3885,6 +4020,8 @@ function updateCampaignBattle(dt) {
     b.projectiles.push({
       x: hero.x,
       y: hero.y,
+      originX: hero.x,
+      originY: hero.y,
       vx: Math.cos(hero.angle) * projSpeed,
       vy: Math.sin(hero.angle) * projSpeed,
       damage: hero.damage,

@@ -596,18 +596,18 @@ export const UNIT_PROJECTILES = {
 // viewRange (pixels): how far the crew can see (independent of fire range)
 // viewCone (degrees): forward vision cone angle (peripheral/rear zones computed from this)
 export const UNIT_COMBAT_STATS = {
-  infantry:  { range: 100, speed: 30, isAir: false, viewRange: 200, viewCone: 140 },
-  medic:     { range: 80,  speed: 25, isAir: false, viewRange: 180, viewCone: 150 },
-  specops:   { range: 150, speed: 35, isAir: false, viewRange: 350, viewCone: 130 },
+  infantry:  { range: 150, speed: 30, isAir: false, viewRange: 200, viewCone: 140 },
+  medic:     { range: 120, speed: 25, isAir: false, viewRange: 180, viewCone: 150 },
+  specops:   { range: 180, speed: 35, isAir: false, viewRange: 350, viewCone: 130 },
   stinger:   { range: 200, speed: 30, isAir: false, viewRange: 220, viewCone: 140 },
-  jeep:      { range: 100, speed: 60, isAir: false, viewRange: 280, viewCone: 120 },
-  humvee:    { range: 120, speed: 50, isAir: false, viewRange: 260, viewCone: 130 },
-  sherman:   { range: 150, speed: 35, isAir: false, viewRange: 250, viewCone: 100 },
-  tiger:     { range: 160, speed: 25, isAir: false, viewRange: 280, viewCone: 100 },
-  abrams:    { range: 180, speed: 40, isAir: false, viewRange: 320, viewCone: 110 },
-  howitzer:  { range: 300, speed: 20, isAir: false, viewRange: 120, viewCone: 140 },
+  jeep:      { range: 170, speed: 60, isAir: false, viewRange: 280, viewCone: 120 },
+  humvee:    { range: 180, speed: 50, isAir: false, viewRange: 260, viewCone: 130 },
+  sherman:   { range: 200, speed: 35, isAir: false, viewRange: 250, viewCone: 100 },
+  tiger:     { range: 220, speed: 25, isAir: false, viewRange: 280, viewCone: 100 },
+  abrams:    { range: 250, speed: 40, isAir: false, viewRange: 320, viewCone: 110 },
+  howitzer:  { range: 350, speed: 20, isAir: false, viewRange: 120, viewCone: 140 },
   drone:     { range: 180, speed: 70, isAir: true,  viewRange: 400, viewCone: 160 },
-  apache:    { range: 200, speed: 50, isAir: true,  viewRange: 450, viewCone: 160 }
+  apache:    { range: 280, speed: 50, isAir: true,  viewRange: 450, viewCone: 160 }
 };
 
 // Unit descriptions for details panel

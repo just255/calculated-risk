@@ -15,7 +15,6 @@ export const MovementMode = {
   PANIC_FLEE:      'panic_flee',
   URGENT_COVER:    'urgent_cover',
   SURVIVAL_ACTION: 'survival_action',
-  FORMATION_MOVE:  'formation_move',
   TACTICAL_BOUND:  'tactical_bound',
   COMMAND_EXECUTE:  'command_execute',
   REGROUP:         'regroup'
@@ -32,9 +31,10 @@ export function computeThreatSpeed(unit, ctx) {
 
   const { courage, aggression } = ctx.personality;
 
-  // Sprinting to cover — actually faster
+  // Rushing to cover — no speed bonus, just normal speed
+  // Speed comes from unit stats only, not adrenaline
   if (unit._movementMode === 'urgent_cover') {
-    return 1.3 + courage * 0.1;
+    return 1.0;
   }
 
   // No enemies spotted — full speed
@@ -109,6 +109,10 @@ export function buildMovementContext(b, unit, target, targetDist, hostiles, frie
     nearestCover = findNearbyCoverPos(b, unit, searchRadius, friendlies);
   }
 
+  // Unit capabilities (inline — avoids circular dep on ai.js CATEGORY_SKILLS)
+  const uid = unit.unitId || 'infantry';
+  const canUseCover = (uid === 'infantry' || uid === 'medic' || uid === 'specops');
+
   // Friendlies nearby
   let friendliesNearby = 0;
   let nearestAllyDist = Infinity;
@@ -135,6 +139,7 @@ export function buildMovementContext(b, unit, target, targetDist, hostiles, frie
     personality: { courage, aggression, discipline, patience, awareness },
     coverBias: unit._coverBias ?? 0.3,
     inCover: coverScore >= 15,
+    canUseCover,
     inWater, waterDepth
   };
 }
@@ -142,9 +147,10 @@ export function buildMovementContext(b, unit, target, targetDist, hostiles, frie
 // ── Mode Scoring Functions ────────────────────────────────────
 
 /**
- * Score how urgently the unit needs to sprint to cover.
- * High when: under fire + can't see shooter + low HP + suppressed
- * Low when: courageous + aggressive
+ * Score how urgently the unit needs to rush to cover.
+ * High when: under fire + can't see shooter + low HP + suppressed + defensive command
+ * Low when: courageous + aggressive + offensive command
+ * Command-aware: defensive commands boost cover, offensive commands reduce it.
  */
 function scoreUrgentCover(unit, ctx) {
   let score = 0;
@@ -163,16 +169,28 @@ function scoreUrgentCover(unit, ctx) {
   score -= courage * 20;
   score -= aggression * 10;
 
+  // Command modifier — defensive posture values cover, offensive values engagement
+  const cmd = ctx.command;
+  if (cmd === 'hold' || cmd === 'fall_back' || cmd === 'cover_me') {
+    score += 15;
+  } else if (cmd === 'advance' || cmd === 'focus_fire') {
+    score -= 20;
+  }
+
+  // Vehicles/tanks can't use cover (they use hull-down/concealment instead)
+  // Only allow UCvr rush-to-cover for infantry units
+  if (!ctx.canUseCover && !ctx.inCover) {
+    score = Math.min(score, 0);
+  }
+
   // Requires cover to exist nearby
   if (!ctx.nearestCover && !ctx.inCover) score = Math.min(score, 0);
 
   // Already in cover? Less urgent
   if (ctx.inCover) score -= 25;
 
-  // In water — exposed, no cover, get out
-  if (ctx.inWater) {
-    score += ctx.waterDepth === 'deep' ? 45 : ctx.waterDepth === 'medium' ? 35 : 20;
-  }
+  // Water: UCvr doesn't know how to exit water — it seeks cover.
+  // Let the command executor handle water (moveBrainUnit has water avoidance steering).
 
   return Math.max(0, score);
 }
@@ -197,34 +215,6 @@ function scoreSurvival(unit, ctx) {
 
   // Disciplined units in formation resist breaking for survival
   if (ctx.inFormation && ctx.personality.discipline > 0.6) score -= 10;
-
-  return Math.max(0, score);
-}
-
-/**
- * Score whether the unit should maintain formation.
- * High when: in active formation + disciplined + stable situation
- * Low when: under blind fire + suppressed + critically wounded
- */
-function scoreFormation(unit, ctx) {
-  if (!ctx.inFormation || !ctx.formationIntact) return 0;
-
-  let score = 50;
-
-  score += ctx.personality.discipline * 20;
-
-  // Blind fire breaks formation for most units
-  if (ctx.underFire && !ctx.canSeeShooter) score -= 30;
-
-  // Critical HP
-  const criticalThreshold = 0.15 + ctx.personality.courage * 0.15;
-  if (ctx.hpPercent < criticalThreshold) score -= 40;
-
-  // Suppression erodes formation discipline
-  score -= ctx.suppressionLevel * 20;
-
-  // In water — break formation to get out
-  if (ctx.inWater) score -= 25;
 
   return Math.max(0, score);
 }
@@ -310,13 +300,68 @@ function scoreRegroup(unit, ctx) {
 export function resolveMovementMode(unit, ctx) {
   // Panic always wins — bypass scoring
   if (unit._panicking) {
+    unit._coverTarget = null; // Panic breaks cover commitment
+    unit._coverHolding = false;
     return { mode: MovementMode.PANIC_FLEE, score: 100 };
+  }
+
+  // Urgent cover latch — once committed to a cover position, finish the rush.
+  // Clear latch when: arrived, threat resolved, or stuck too long.
+  if (unit._coverTarget) {
+    const atCover = distanceBetween(unit, unit._coverTarget) < 10;
+    // Threat resolved: not under fire AND low suppression.
+    // Don't require zero spotted enemies — seeing enemies from safety isn't urgent.
+    const threatResolved = !ctx.underFire && ctx.suppressionLevel < 0.1;
+    // Stuck detection: if unit hasn't made progress toward cover for 3s, abandon
+    const stuckOnCover = (unit._coverStuckTime || 0) > 3;
+    if (atCover) {
+      // Arrived at cover — transition to cover hold (fire from cover until safe)
+      unit._coverTarget = null;
+      unit._coverHolding = true;
+      unit._coverStuckTime = 0;
+    } else if (threatResolved || stuckOnCover) {
+      unit._coverTarget = null;
+      unit._coverStuckTime = 0;
+      // If stuck-abandoned, cooldown before trying a new cover target
+      if (stuckOnCover) {
+        unit._coverFailedUntil = Date.now() + 5000;
+      }
+    } else {
+      // Still committed — urgent_cover wins, but compute other scores for logging
+      const scores = {
+        [MovementMode.URGENT_COVER]:    scoreUrgentCover(unit, ctx),
+        [MovementMode.SURVIVAL_ACTION]: scoreSurvival(unit, ctx),
+        [MovementMode.TACTICAL_BOUND]:  scoreTacticalBound(unit, ctx),
+        [MovementMode.COMMAND_EXECUTE]: scoreCommand(unit, ctx),
+        [MovementMode.REGROUP]:         scoreRegroup(unit, ctx)
+      };
+      scores[MovementMode.URGENT_COVER] = Math.max(scores[MovementMode.URGENT_COVER], 80);
+      return { mode: MovementMode.URGENT_COVER, score: 80, scores };
+    }
+  }
+
+  // Cover hold — unit arrived at cover, holds and fires until threat subsides
+  if (unit._coverHolding) {
+    const safeToMove = !ctx.underFire && ctx.suppressionLevel < 0.15;
+    if (safeToMove) {
+      unit._coverHolding = false;
+    } else {
+      // Stay in cover — execute command as "hold" from current position
+      const scores = {
+        [MovementMode.URGENT_COVER]:    scoreUrgentCover(unit, ctx),
+        [MovementMode.SURVIVAL_ACTION]: scoreSurvival(unit, ctx),
+        [MovementMode.TACTICAL_BOUND]:  scoreTacticalBound(unit, ctx),
+        [MovementMode.COMMAND_EXECUTE]: scoreCommand(unit, ctx),
+        [MovementMode.REGROUP]:         scoreRegroup(unit, ctx)
+      };
+      scores[MovementMode.COMMAND_EXECUTE] = Math.max(scores[MovementMode.COMMAND_EXECUTE], 60);
+      return { mode: MovementMode.COMMAND_EXECUTE, score: 60, scores };
+    }
   }
 
   const scores = {
     [MovementMode.URGENT_COVER]:    scoreUrgentCover(unit, ctx),
     [MovementMode.SURVIVAL_ACTION]: scoreSurvival(unit, ctx),
-    [MovementMode.FORMATION_MOVE]:  scoreFormation(unit, ctx),
     [MovementMode.TACTICAL_BOUND]:  scoreTacticalBound(unit, ctx),
     [MovementMode.COMMAND_EXECUTE]: scoreCommand(unit, ctx),
     [MovementMode.REGROUP]:         scoreRegroup(unit, ctx)

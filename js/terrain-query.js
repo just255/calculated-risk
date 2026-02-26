@@ -217,6 +217,147 @@ export function queryBridge(bridges, x, y) {
   return null;
 }
 
+// ── Bridge railing (movement-only barrier) ───────────────────
+
+// Railing zone: thin strip straddling bridge long edges.
+// Blocks unit movement but NOT projectiles or LOS.
+const RAIL_INNER = 4;   // pixels inside the deck edge
+const RAIL_OUTER = 8;   // pixels outside the deck edge
+
+/**
+ * Test if a point is on a bridge railing (blocks movement, not projectiles).
+ * Railings run along the long sides but NOT across the short ends.
+ */
+export function queryBridgeRailing(bridges, x, y) {
+  if (!bridges || bridges.length === 0) return false;
+
+  for (const bridge of bridges) {
+    const { x: bx, y: by, width, length, dirX, dirY } = bridge;
+    const halfLen = length / 2;
+    const halfW = width / 2;
+
+    const dx = x - bx;
+    const dy = y - by;
+    const projAlong = dx * dirX + dy * dirY;
+    const projPerp = dx * (-dirY) + dy * dirX;
+    const absPerp = Math.abs(projPerp);
+
+    // Must be within bridge length (not past the ends)
+    if (Math.abs(projAlong) > halfLen) continue;
+
+    // Railing zone straddles the edge: (halfW - inner) to (halfW + outer)
+    if (absPerp >= halfW - RAIL_INNER && absPerp <= halfW + RAIL_OUTER) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// ── Bridge cover (directional damage reduction) ─────────────
+
+/**
+ * Get damage multiplier for a projectile hitting a target on a bridge.
+ * Trusses provide cover from shots coming perpendicular to the bridge.
+ * Shots along the bridge (through the ends) get no reduction.
+ *
+ * @param {Array} bridges - Bridge objects
+ * @param {number} targetX - Target world X
+ * @param {number} targetY - Target world Y
+ * @param {number} projVX - Projectile velocity X
+ * @param {number} projVY - Projectile velocity Y
+ * @returns {number} Damage multiplier (1.0 = full damage, 0.5 = half from truss cover)
+ */
+export function getBridgeCoverMult(bridges, targetX, targetY, projVX, projVY) {
+  if (!bridges || bridges.length === 0) return 1.0;
+
+  for (const bridge of bridges) {
+    const { x: bx, y: by, width, length, dirX, dirY } = bridge;
+    const halfLen = length / 2;
+    const halfW = width / 2;
+
+    // Check if target is on this bridge
+    const dx = targetX - bx;
+    const dy = targetY - by;
+    const projAlong = dx * dirX + dy * dirY;
+    const projPerp = dx * (-dirY) + dy * dirX;
+    if (Math.abs(projAlong) > halfLen || Math.abs(projPerp) > halfW) continue;
+
+    // Target is on this bridge — check projectile angle vs bridge direction
+    const pLen = Math.sqrt(projVX * projVX + projVY * projVY);
+    if (pLen < 0.01) return 1.0;
+
+    // Dot product of projectile direction with bridge perpendicular axis
+    // |dot| = 1 means shot is perfectly perpendicular (max truss cover)
+    // |dot| = 0 means shot is along the bridge (no cover)
+    const perpDot = Math.abs((projVX * (-dirY) + projVY * dirX) / pLen);
+
+    // Cover scales with how perpendicular the shot is
+    // perpDot 0.5-1.0 → 30-50% damage reduction
+    if (perpDot > 0.3) {
+      const coverFactor = 0.3 + 0.2 * ((perpDot - 0.3) / 0.7); // 0.3 to 0.5
+      return 1.0 - coverFactor;
+    }
+
+    return 1.0; // Shot along the bridge — no cover
+  }
+
+  return 1.0; // Not on a bridge
+}
+
+// ── Bridge deck blocking (elevation separation) ─────────────
+
+// Shadow margin: how far past the bridge edges the "under bridge" zone extends.
+// Units this close to the bridge footprint are considered sheltered from above.
+const BRIDGE_SHADOW_MARGIN = 40;
+
+/**
+ * Test if a bridge deck blocks a projectile between two points.
+ * The deck separates "on top" from "below". If one point is on the bridge
+ * and the other is in the bridge's shadow (footprint + margin) but NOT on
+ * the deck, the shot is blocked by the bridge floor.
+ *
+ * @param {Array} bridges - Bridge objects
+ * @param {number} shooterX - Shooter world X
+ * @param {number} shooterY - Shooter world Y
+ * @param {number} targetX - Target world X
+ * @param {number} targetY - Target world Y
+ * @returns {boolean} True if a bridge deck blocks the shot
+ */
+export function isBridgeDeckBlocking(bridges, shooterX, shooterY, targetX, targetY) {
+  if (!bridges || bridges.length === 0) return false;
+
+  for (const bridge of bridges) {
+    const { x: bx, y: by, width, length, dirX, dirY } = bridge;
+    const halfLen = length / 2;
+    const halfW = width / 2;
+
+    // Check shooter against bridge
+    const sdx = shooterX - bx, sdy = shooterY - by;
+    const sAlong = sdx * dirX + sdy * dirY;
+    const sPerp = sdx * (-dirY) + sdy * dirX;
+    const shooterOnDeck = Math.abs(sAlong) <= halfLen && Math.abs(sPerp) <= halfW;
+
+    // Check target against bridge (expanded footprint = shadow zone)
+    const tdx = targetX - bx, tdy = targetY - by;
+    const tAlong = tdx * dirX + tdy * dirY;
+    const tPerp = tdx * (-dirY) + tdy * dirX;
+    const targetOnDeck = Math.abs(tAlong) <= halfLen && Math.abs(tPerp) <= halfW;
+    const targetInShadow = Math.abs(tAlong) <= halfLen + BRIDGE_SHADOW_MARGIN
+                        && Math.abs(tPerp) <= halfW + BRIDGE_SHADOW_MARGIN;
+
+    // Shooter on bridge, target in shadow below → blocked
+    if (shooterOnDeck && !targetOnDeck && targetInShadow) return true;
+
+    // Target on bridge, shooter in shadow below → also blocked
+    const shooterInShadow = Math.abs(sAlong) <= halfLen + BRIDGE_SHADOW_MARGIN
+                         && Math.abs(sPerp) <= halfW + BRIDGE_SHADOW_MARGIN;
+    if (targetOnDeck && !shooterOnDeck && shooterInShadow) return true;
+  }
+
+  return false;
+}
+
 // ── Boulder collision ────────────────────────────────────────
 
 /**
