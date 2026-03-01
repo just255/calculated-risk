@@ -445,10 +445,17 @@ export function generateBattleTerrain(config) {
   const viewport = { x: 0, y: 0, width: mapWidth, height: mapHeight };
   const scatterOpts = { skipFilters: true, skipAnimation: true };
 
-  // Render bridge decks (on top of water, below scatter)
   const terrainCtx = terrainCanvas.getContext('2d');
+
+  // Bridge decks rendered to separate canvas (between under-bridge entities and normal entities)
+  let bridgeDeckCanvas = null;
   if (terrainMap.bridges?.length > 0) {
-    renderBridgeDecks(terrainCtx, terrainMap.bridges, images.ground);
+    bridgeDeckCanvas = document.createElement('canvas');
+    bridgeDeckCanvas.width = mapWidth;
+    bridgeDeckCanvas.height = mapHeight;
+    const bridgeDeckCtx = bridgeDeckCanvas.getContext('2d');
+    bridgeDeckCtx.imageSmoothingEnabled = false;
+    renderBridgeDecks(bridgeDeckCtx, terrainMap.bridges, images.ground);
   }
 
   // Render brush, boulders, particles onto terrain canvas (below entities)
@@ -482,6 +489,7 @@ export function generateBattleTerrain(config) {
   return {
     terrainCanvas,
     canopyCanvas,
+    bridgeDeckCanvas,
     terrainMap,
     spawnZones
   };

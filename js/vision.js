@@ -193,7 +193,7 @@ export function canDetect(detector, target, b) {
   }
 
   // Bridge deck blocks vision between units on different elevation levels
-  if (isBridgeDeckBlocking(b.terrainMap?.bridges, detector.x, detector.y, target.x, target.y)) {
+  if (isBridgeDeckBlocking(b.terrainMap?.bridges, detector.x, detector.y, target.x, target.y, detector._bridgeElevation, target._bridgeElevation)) {
     return { detected: false, zone, distance: dist, accuracy: 0, concealment };
   }
 
@@ -287,7 +287,7 @@ export function buildSpottedList(unit, hostiles, b, now) {
   const prevIds = new Set(prevSpotted.map(e => e.enemy?.id));
   const freshMap = new Map(); // enemyId → spotted entry
   const log = b?._debugLog;
-  const logTeam = unit._team || (unit.isEnemy ? 'red' : 'blue');
+  const logTeam = unit.team || 'blue';
 
   // Scan all hostiles through vision
   for (const enemy of hostiles) {

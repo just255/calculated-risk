@@ -24,6 +24,153 @@ export const Phase = {
   REGROUP:  'regroup'
 };
 
+// ── Personality-driven speech callouts ────────────────────────
+// Three flavors: aggressive (high aggression/courage), disciplined
+// (high discipline), and casual (everyone else).
+// Custom callouts can override via sgt.callouts = { phase: {...}, command: {...} }
+
+const PHASE_CALLOUTS = {
+  march: {
+    aggressive: ['Move it!', 'Double time!', 'Hustle up!', 'Let\'s hunt!', 'Get moving, now!', 'Time to fight!'],
+    disciplined: ['Forward march!', 'Advance to objective.', 'Proceed to waypoint.', 'Moving out.', 'Column advance.', 'On the march.'],
+    casual: ['Let\'s go!', 'Move out!', 'On the move!', 'Here we go.', 'Alright, push up.', 'We\'re oscar mike.']
+  },
+  contact: {
+    aggressive: ['There they are!', 'I see \'em! Let\'s go!', 'Fresh meat!', 'Finally!', 'About time!', 'Targets!'],
+    disciplined: ['Contact front.', 'Hostiles spotted.', 'Enemy visual confirmed.', 'Tango bearing ahead.', 'Multiple contacts.', 'Eyes on.'],
+    casual: ['Contact!', 'Eyes up!', 'Heads up!', 'We\'ve got company!', 'Enemy spotted!', 'I see them!']
+  },
+  engage: {
+    aggressive: ['Light \'em up!', 'Waste \'em!', 'Tear \'em apart!', 'Smoke \'em!', 'Let \'em have it!', 'Kill \'em all!'],
+    disciplined: ['Weapons free.', 'Engage at will.', 'Open fire.', 'Commence firing.', 'All units, engage.', 'Fire on my mark. Mark.'],
+    casual: ['Open fire!', 'Engage!', 'Fire at will!', 'Send it!', 'Take \'em out!', 'Here we go!']
+  },
+  press: {
+    aggressive: ['No mercy!', 'Crush them!', 'They\'re running!', 'Finish them!', 'Don\'t let any escape!', 'Run them down!'],
+    disciplined: ['Press the advantage.', 'Maintain pressure.', 'Continue advance.', 'Pursue and destroy.', 'Keep formation, push.', 'Exploit the gap.'],
+    casual: ['Keep pushing!', 'They\'re breaking!', 'Don\'t let up!', 'We\'ve got \'em!', 'Stay on them!', 'Almost there!']
+  },
+  fallback: {
+    aggressive: ['This ain\'t over!', 'We\'ll be back!', 'Pull back, damn it!', 'Regroup and hit \'em again!', 'Not like this!', 'Fall back!'],
+    disciplined: ['Tactical withdrawal.', 'Break contact.', 'Disengage and withdraw.', 'Orderly retreat.', 'Fall back to rally point.', 'Retrograde movement.'],
+    casual: ['Fall back!', 'Get out of there!', 'Pull back!', 'Too hot! Move!', 'We need to move!', 'Bug out!']
+  },
+  regroup: {
+    aggressive: ['Get it together!', 'On me, now!', 'We\'re going again!', 'Shake it off!', 'Round two!', 'Reform and reload!'],
+    disciplined: ['Rally point here.', 'Consolidate positions.', 'Reform formation.', 'Regroup and reassess.', 'All units, rally.', 'Hold and reorganize.'],
+    casual: ['Regroup!', 'Rally on me!', 'Form up!', 'Everyone here!', 'Tighten up!', 'Hold here a sec.']
+  }
+};
+
+const COMMAND_CALLOUTS = {
+  follow: {
+    aggressive: ['Keep up!', 'With me, let\'s go!', 'Stay on my ass!', 'Move with me!'],
+    disciplined: ['Form on me.', 'Follow my lead.', 'Maintain formation.', 'On me.'],
+    casual: ['On me!', 'Stay close!', 'Follow me!', 'With me!']
+  },
+  advance: {
+    aggressive: ['Go go go!', 'Push up!', 'Charge!', 'Move it, move it!'],
+    disciplined: ['Advance.', 'Move to next position.', 'Push forward.', 'Proceed.'],
+    casual: ['Move up!', 'Let\'s push!', 'Forward!', 'Advance!']
+  },
+  hold: {
+    aggressive: ['Nobody moves!', 'Stand your ground!', 'Not one step back!', 'Hold the line!'],
+    disciplined: ['Hold position.', 'Stand fast.', 'Maintain position.', 'All halt.'],
+    casual: ['Hold here!', 'Dig in!', 'Stay put!', 'Don\'t move!']
+  },
+  fall_back: {
+    aggressive: ['Get back, now!', 'Move your ass!', 'Out, out, out!', 'Run!'],
+    disciplined: ['Withdraw to cover.', 'Fall back by bounds.', 'Retrograde.', 'Disengage.'],
+    casual: ['Fall back!', 'Pull back!', 'Get back!', 'Retreat!']
+  },
+  cover_me: {
+    aggressive: ['Lay it on \'em!', 'Suppress those bastards!', 'Pin them down!', 'Blast \'em!'],
+    disciplined: ['Provide covering fire.', 'Suppressive fire.', 'Cover my movement.', 'Fire support.'],
+    casual: ['Cover me!', 'Covering fire!', 'Keep their heads down!', 'Suppress them!']
+  },
+  focus_fire: {
+    aggressive: ['Kill that one!', 'All guns, that target!', 'Burn it down!', 'Focus! Now!'],
+    disciplined: ['Concentrate fire on target.', 'All units, priority target.', 'Converge fire.', 'Designating target.'],
+    casual: ['Focus fire!', 'Hit that one!', 'Everyone on that target!', 'Take it out!']
+  },
+  flank_left: {
+    aggressive: ['Swing left, hit \'em hard!', 'Go left, now!', 'Left hook!', 'Flank and destroy!'],
+    disciplined: ['Maneuver left.', 'Left flank, execute.', 'Envelop from the left.', 'Left echelon.'],
+    casual: ['Flank left!', 'Go left!', 'Hook left!', 'Left side, move!']
+  },
+  flank_right: {
+    aggressive: ['Swing right, hit \'em hard!', 'Go right, now!', 'Right hook!', 'Flank and destroy!'],
+    disciplined: ['Maneuver right.', 'Right flank, execute.', 'Envelop from the right.', 'Right echelon.'],
+    casual: ['Flank right!', 'Go right!', 'Hook right!', 'Right side, move!']
+  }
+};
+
+const BUBBLE_DURATION = 2500; // ms
+
+/**
+ * Pick a callout flavor based on sergeant personality traits.
+ * High aggression+courage → aggressive, high discipline → disciplined, else casual.
+ * @param {object} flavorPool - { aggressive: [...], disciplined: [...], casual: [...] }
+ * @param {object} personality - Sergeant personality traits
+ * @returns {string} Random callout text from the chosen flavor
+ */
+function pickCallout(flavorPool, personality) {
+  if (!flavorPool) return null;
+
+  // If it's a flat array (custom callouts), pick directly
+  if (Array.isArray(flavorPool)) {
+    return flavorPool[Math.floor(Math.random() * flavorPool.length)];
+  }
+
+  const p = personality || {};
+  const agg = p.aggression ?? 0.5;
+  const courage = p.courage ?? 0.5;
+  const disc = p.discipline ?? 0.5;
+
+  // Aggressive: high aggression OR high courage+aggression combo
+  // Disciplined: high discipline AND not dominated by aggression
+  // Casual: everything else
+  let flavor;
+  if (agg > 0.65 || (agg > 0.5 && courage > 0.65)) {
+    flavor = 'aggressive';
+  } else if (disc > 0.65) {
+    flavor = 'disciplined';
+  } else {
+    flavor = 'casual';
+  }
+
+  const pool = flavorPool[flavor] || flavorPool.casual || [];
+  if (pool.length === 0) return null;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+/**
+ * Attach a speech bubble to the sergeant's unit.
+ * @param {object} b - Battle object (has ._squads)
+ * @param {object} sgt - Sergeant state
+ * @param {string} text - What the sergeant says
+ */
+function emitBubble(b, sgt, text) {
+  // Find the sergeant's unit via squad
+  const squad = b._squads?.find(sq => sq.sergeant === sgt);
+  const sgtUnitId = squad?.sergeantUnitId;
+  if (!sgtUnitId) return;
+
+  const allUnits = [...(b.units || []), ...(b.enemies || [])];
+  const sgtUnit = allUnits.find(u => u.id === sgtUnitId);
+  if (!sgtUnit || sgtUnit.dead) return;
+  const now = Date.now();
+  sgtUnit._speechBubble = { text, t: now };
+
+  // Log to event log so replay can reconstruct bubbles
+  if (b._debugLog) {
+    b._debugLog.push({
+      t: now, who: sgtUnitId, team: sgt.teamKey,
+      type: 'speech', action: text, detail: `sgt-${sgt.teamKey}`
+    });
+  }
+}
+
 // ── Default sergeant personality ─────────────────────────────
 
 export const DEFAULT_SERGEANT = {
@@ -52,9 +199,10 @@ function evalInterval(sgt) {
  * @param {Object} personality - Sergeant personality traits
  * @param {Object} spawnZone - { x, y, radius } — rally point
  * @param {Object} enemySpawnZone - { x, y, radius } — objective
+ * @param {number} [squadId] - Optional squad ID this sergeant belongs to
  * @returns {Object} Sergeant state
  */
-export function createSergeant(teamKey, personality, spawnZone, enemySpawnZone) {
+export function createSergeant(teamKey, personality, spawnZone, enemySpawnZone, squadId) {
   return {
     teamKey,
     personality: { ...DEFAULT_SERGEANT, ...personality },
@@ -83,7 +231,8 @@ export function createSergeant(teamKey, personality, spawnZone, enemySpawnZone) 
     _lastAliveCount: 0,
 
     // Situational awareness (refreshed each eval)
-    sitrep: null
+    sitrep: null,
+    squadId: squadId ?? null
   };
 }
 
@@ -141,12 +290,15 @@ function buildSitrep(b, sgt, friendlies, hostiles) {
   // Under fire? Any unit has active shock timer (set on receiving damage)
   const underFire = alive.some(u => (u._shockTimer ?? 0) > 0);
 
+  // Max weapon range across alive units
+  const maxRange = alive.reduce((mx, u) => Math.max(mx, u.range ?? 400), 0);
+
   return {
     alive, enemyAlive, aliveCount, enemyAliveCount,
     total, enemyTotal, casualties, casualtyRate,
     enemyCasualties, enemyCasualtyRate,
     forceRatio, distToEnemy, spotted, underFire,
-    avgMorale, avgSuppression,
+    avgMorale, avgSuppression, maxRange,
     center: { x: cx, y: cy },
     enemyCenter: { x: ecx, y: ecy }
   };
@@ -197,47 +349,49 @@ export function updateSergeant(b, sgt, friendlies, hostiles, now) {
   switch (sgt.phase) {
     case Phase.MARCH:
       if (sitrep.spotted || sitrep.underFire) {
-        transition(sgt, Phase.CONTACT, now);
+        transition(sgt, Phase.CONTACT, now, b);
       }
       break;
 
     case Phase.CONTACT:
       // Give the sergeant a moment to assess (patience-driven)
       if (now - sgt.contactTime > contactDelay(sgt)) {
-        if (sitrep.distToEnemy < 300) {
-          transition(sgt, Phase.ENGAGE, now);
+        // Engage when enemy is within weapon range (or we're taking fire)
+        const engageRange = sitrep.maxRange * 1.2;
+        if (sitrep.distToEnemy < engageRange || sitrep.underFire) {
+          transition(sgt, Phase.ENGAGE, now, b);
         } else if (!sitrep.spotted && !sitrep.underFire) {
           // Lost contact — resume march
-          transition(sgt, Phase.MARCH, now);
+          transition(sgt, Phase.MARCH, now, b);
         }
       }
       break;
 
     case Phase.ENGAGE:
       if (shouldFallback(sgt, sitrep)) {
-        transition(sgt, Phase.FALLBACK, now);
+        transition(sgt, Phase.FALLBACK, now, b);
       } else if (shouldPress(sgt, sitrep)) {
-        transition(sgt, Phase.PRESS, now);
-      } else if (!sitrep.spotted && !sitrep.underFire && sitrep.distToEnemy > 500) {
-        transition(sgt, Phase.MARCH, now);
+        transition(sgt, Phase.PRESS, now, b);
+      } else if (!sitrep.spotted && !sitrep.underFire && sitrep.distToEnemy > sitrep.maxRange * 1.5) {
+        transition(sgt, Phase.MARCH, now, b);
       }
       break;
 
     case Phase.PRESS:
       if (shouldFallback(sgt, sitrep)) {
-        transition(sgt, Phase.FALLBACK, now);
+        transition(sgt, Phase.FALLBACK, now, b);
       } else if (sitrep.enemyAliveCount === 0) {
-        transition(sgt, Phase.MARCH, now);
+        transition(sgt, Phase.MARCH, now, b);
       }
       break;
 
     case Phase.FALLBACK:
       // Retreat until near rally point, then regroup
       if (distTo(sitrep.center, sgt.rallyPoint) < 150) {
-        transition(sgt, Phase.REGROUP, now);
+        transition(sgt, Phase.REGROUP, now, b);
       } else if (sitrep.forceRatio > 1.5 && sitrep.avgMorale > 0.6) {
         // Recovered advantage — re-engage
-        transition(sgt, Phase.ENGAGE, now);
+        transition(sgt, Phase.ENGAGE, now, b);
       }
       break;
 
@@ -245,7 +399,7 @@ export function updateSergeant(b, sgt, friendlies, hostiles, now) {
       // Brief pause to reform, then re-engage
       if (now - sgt.phaseStartTime > regroupDuration(sgt)) {
         if (sitrep.enemyAliveCount > 0) {
-          transition(sgt, Phase.MARCH, now);
+          transition(sgt, Phase.MARCH, now, b);
         }
       }
       break;
@@ -258,13 +412,22 @@ export function updateSergeant(b, sgt, friendlies, hostiles, now) {
 
 // ── Phase transition helper ──────────────────────────────────
 
-function transition(sgt, newPhase, now) {
+function transition(sgt, newPhase, now, b) {
   sgt.prevPhase = sgt.phase;
   sgt.phase = newPhase;
   sgt.phaseStartTime = now;
   if (newPhase === Phase.CONTACT) sgt.contactTime = now;
   // Clear path when changing phases — will be recomputed
   sgt.path = null;
+
+  // Emit speech bubble for phase transition
+  // Custom per-sergeant callouts override defaults
+  if (b) {
+    const custom = sgt.callouts?.phase?.[newPhase];
+    const defaults = PHASE_CALLOUTS[newPhase];
+    const text = pickCallout(custom || defaults, sgt.personality);
+    if (text) emitBubble(b, sgt, text);
+  }
   sgt.pathIndex = 0;
   sgt.pathGoal = null;
 }
@@ -319,7 +482,7 @@ function distTo(a, b) {
 
 function executePhase(b, sgt, sitrep, alive, now, phaseChanged) {
   const p = sgt.personality;
-  const teamKey = sgt.teamKey === 'blue' ? 'player' : 'enemy';
+  const teamKey = sgt.teamKey; // 'blue' or 'red'
 
   switch (sgt.phase) {
     case Phase.MARCH:
@@ -378,8 +541,13 @@ function executeContact(b, sgt, sitrep, alive, teamKey, phaseChanged) {
     setCommand(b, sgt, alive, Command.ADVANCE);
     setFormation(sgt, alive, flankWp.side === 'left' ? Formation.ECHELON_L : Formation.ECHELON_R);
     setWaypoint(b, teamKey, flankWp);
+  } else if (sitrep.distToEnemy > sitrep.maxRange) {
+    // Out of effective range — cautiously advance to engagement distance
+    setCommand(b, sgt, alive, Command.ADVANCE);
+    setFormation(sgt, alive, Formation.LINE);
+    setWaypoint(b, teamKey, sitrep.enemyCenter);
   } else {
-    // Cautious: hold position and engage from here
+    // In range — hold position and engage from here
     setCommand(b, sgt, alive, Command.HOLD);
     setFormation(sgt, alive, Formation.LINE);
     setWaypoint(b, teamKey, sitrep.center);
@@ -404,8 +572,13 @@ function executeEngage(b, sgt, sitrep, alive, teamKey, phaseChanged) {
     setCommand(b, sgt, alive, Command.ADVANCE);
     setFormation(sgt, alive, Formation.WEDGE);
     setWaypoint(b, teamKey, sitrep.enemyCenter);
+  } else if (sitrep.distToEnemy > sitrep.maxRange) {
+    // Out of effective range — close to firing distance
+    setCommand(b, sgt, alive, Command.ADVANCE);
+    setFormation(sgt, alive, Formation.LINE);
+    setWaypoint(b, teamKey, sitrep.enemyCenter);
   } else {
-    // Disciplined engagement — hold and fire
+    // In range — disciplined engagement, hold and fire
     setCommand(b, sgt, alive, Command.HOLD);
     setFormation(sgt, alive, Formation.LINE);
     setWaypoint(b, teamKey, sitrep.center);
@@ -458,6 +631,35 @@ function setCommand(b, sgt, alive, command) {
   if (command === sgt._lastCommand) return;
   sgt._lastCommand = command;
   issueCommand(alive, command);
+
+  // Emit command callout (only if not already showing a phase transition bubble)
+  // Check custom callouts first, fall back to defaults
+  const custom = sgt.callouts?.command?.[command];
+  const defaults = COMMAND_CALLOUTS[command];
+  const text = pickCallout(custom || defaults, sgt.personality);
+  if (text) {
+    // Find sergeant unit and check if there's already a recent bubble from a phase transition
+    const squad = b._squads?.find(sq => sq.sergeant === sgt);
+    const sgtUnitId = squad?.sergeantUnitId;
+    if (sgtUnitId) {
+      const allUnits = [...(b.units || []), ...(b.enemies || [])];
+      const sgtUnit = allUnits.find(u => u.id === sgtUnitId);
+      if (sgtUnit && !sgtUnit.dead) {
+        const existing = sgtUnit._speechBubble;
+        // Don't overwrite a bubble that was set < 500ms ago (phase callouts take priority)
+        const now = Date.now();
+        if (!existing || now - existing.t > 500) {
+          sgtUnit._speechBubble = { text, t: now };
+          if (b._debugLog) {
+            b._debugLog.push({
+              t: now, who: sgtUnitId, team: sgt.teamKey,
+              type: 'speech', action: text, detail: `sgt-${sgt.teamKey}`
+            });
+          }
+        }
+      }
+    }
+  }
 }
 
 function setFormation(sgt, alive, formation) {

@@ -92,7 +92,7 @@ export function shouldFire(unit, target, b, now, opts = {}) {
 
   // 2. STABILITY — moving units are inaccurate
   const stability = unit.stability ?? 0.5;
-  const stabilityWeight = 0.3 + stability * 0.7; // Range: 0.3 – 1.0
+  const stabilityWeight = 0.5 + stability * 0.5; // Range: 0.5 – 1.0
   accuracy *= stabilityWeight;
   factors.push({ name: 'stability', value: stabilityWeight });
 
@@ -107,9 +107,9 @@ export function shouldFire(unit, target, b, now, opts = {}) {
     return { canFire: false, accuracy: 0, damageMod: 0 };
   }
 
-  // Accuracy falloff (mild — tune later)
+  // Accuracy falloff — mild at close range, moderate at max
   const rangeRatio = Math.min(1.0, dist / range);
-  const rangeWeight = 1.0 - rangeRatio * 0.4; // 1.0 at close range, 0.6 at max range
+  const rangeWeight = 1.0 - rangeRatio * 0.25; // 1.0 at close range, 0.75 at max range
   accuracy *= rangeWeight;
   factors.push({ name: 'range', value: rangeWeight });
 

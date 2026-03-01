@@ -84,7 +84,10 @@
       "WebFetch(domain:infantrydrills.com)",
       "WebFetch(domain:www.steelbeasts.com)",
       "WebFetch(domain:www.globalsecurity.org)",
-      "WebFetch(domain:www.benning.army.mil)"
+      "WebFetch(domain:www.benning.army.mil)",
+      "Bash(powershell.exe:*)",
+      "Bash(gh auth:*)",
+      "Bash(cd \"C:/Users/just_/Downloads/calculated-risk/calculated-risk\" && gh repo create calculated-risk --public --source=. --push 2>&1)"
     ]
   }
 }

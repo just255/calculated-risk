@@ -61,20 +61,41 @@ export function load() {
 
 function stripExpanded(config) {
   const c = JSON.parse(JSON.stringify(config));
+  // Handle new squad structure
+  for (const squad of [...(c.blueSquads || []), ...(c.redSquads || [])]) {
+    for (const slot of (squad.units || [])) {
+      delete slot._expanded;
+    }
+  }
+  // Handle legacy flat team arrays (backwards compat)
   for (const slot of [...(c.blueTeam || []), ...(c.redTeam || [])]) {
     delete slot._expanded;
   }
   return c;
 }
 
-// Migrate old red team configs: enemyType → unitId
+// Migrate old configs: enemyType → unitId, flat teams → squads
 export function migrateFRConfig(config) {
-  if (!config || !config.redTeam) return config;
-  for (const slot of config.redTeam) {
-    if (slot.enemyType && !slot.unitId) {
-      slot.unitId = slot.enemyType;
-      delete slot.enemyType;
+  if (!config) return config;
+  // Migrate old red team enemyType → unitId
+  if (config.redTeam) {
+    for (const slot of config.redTeam) {
+      if (slot.enemyType && !slot.unitId) {
+        slot.unitId = slot.enemyType;
+        delete slot.enemyType;
+      }
     }
+  }
+  // Migrate flat team arrays to squad structure
+  if (config.blueTeam && !config.blueSquads) {
+    config.blueSquads = [{ name: 'Alpha', sergeant: config.blueSergeant || {}, formation: 'line', units: config.blueTeam }];
+    delete config.blueTeam;
+    delete config.blueSergeant;
+  }
+  if (config.redTeam && !config.redSquads) {
+    config.redSquads = [{ name: 'Alpha', sergeant: config.redSergeant || {}, formation: 'line', units: config.redTeam }];
+    delete config.redTeam;
+    delete config.redSergeant;
   }
   return config;
 }

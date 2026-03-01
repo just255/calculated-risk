@@ -2,22 +2,38 @@
 // MAIN - Entry point, event handlers, initialization
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, UNITS, PROJECTILES, UNIT_PROJECTILES, SquadOrder, ENDLESS_VEHICLES } from './constants.js';
+import { State, SubState, HQTab, UNITS, PROJECTILES, UNIT_PROJECTILES, SquadOrder, ENDLESS_VEHICLES, Team } from './constants.js';
 import { Game, newBattlePlan, newCampaign, createAdvancingScenario, createFrontlineScenario, newZoneBattle, newEndlessRun, newFireRangeRun } from './state.js';
 import { initAudio, sound } from './audio.js';
 import { save, load, saveFRConfig, loadFRConfig, saveFRNamedConfig, loadFRNamedConfigs, deleteFRNamedConfig, migrateFRConfig } from './storage.js';
 import { goto, deploy, switchUnit, stopLoop, stopFireRangeLoop, formatFireRangeLog, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, campaignMouseDown, campaignMouseUp, campaignSetAimAngle, campaignClearAimAngle, campaignSetJoystick, campaignClearJoystick, endlessKeyDown, endlessKeyUp, endlessMouseMove, endlessMouseDown, endlessMouseUp, fireRangeKeyDown, fireRangeKeyUp, fireRangeWheel } from './game.js';
 import { FR_PRESETS } from './fire-range-presets.js';
-import { render, setSubState, fetchAvailableVehicles, fetchUnitVariants, fetchVariantData, getUnitVariants } from './ui.js';
+import { render, setSubState, fetchAvailableVehicles, fetchUnitVariants, fetchVariantData, getUnitVariants, fireRangeResultsHTML, replayTheaterHTML } from './ui.js';
+import { ReplayPlayer } from './replay-player.js';
+import { cameraKeyDown, cameraKeyUp, cameraZoom, cameraPanStart, cameraPanMove, cameraPanEnd } from './camera.js';
 import { initController, getControllerInput, updateButtonStates, setControllerCallbacks, isControllerConnected } from './controller.js';
 import { initGestures, setResetJoysticksCallback } from './gestures.js';
+import { EntityRenderer } from './entity-renderer.js';
 import { moveJoystick, shootJoystick, getNearJoystickAnchor, setJoystickAnchor, getClosestJoystickSide, getDragThreshold } from './joystick.js';
 import * as sprites from './sprites.js';
 const { initSprites } = sprites;
 import { loadTerrainImages } from './world-builder/battle-terrain.js';
+import { initInsigniaTab, handleInsigniaClick, handleInsigniaInput, handleInsigniaKeyDown, handleInsigniaKeyUp } from './insignia-events.js';
 
 // Expose sprites module for console testing
 window.sprites = sprites;
+
+// ═══════════════════════════════════════════════════════════════
+// REPLAY PLAYER STATE
+// ═══════════════════════════════════════════════════════════════
+let replayPlayer = null;
+
+function formatReplayTime(ms) {
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
 
 // ═══════════════════════════════════════════════════════════════
 // SQUAD COMMAND HELPERS
@@ -427,21 +443,26 @@ document.getElementById('app').addEventListener('click', e => {
     return;
   }
 
+  // Insignia editor click events (HQ tab) — must be before generic data-action handler
+  if (Game.state === State.HQ && Game.hqTab === HQTab.INSIGNIA) {
+    if (handleInsigniaClick(e.target, e)) return;
+  }
+
   // Actions
   const action = e.target.closest('[data-action]');
   if (action) {
     const a = action.dataset.action;
     if (a === 'campaign') { initAudio(); goto(State.CAMPAIGN_ERA_SELECT); }
-    else if (a === 'endless') { Game.endless = newEndlessRun(); initAudio(); fetchUnitVariants().then(() => { goto(State.ENDLESS_LOADOUT); render(); }); }
+    else if (a === 'endless') { Game.endless = newEndlessRun(); Game.endless._record = Game.settings?.autoRecord !== false; initAudio(); fetchUnitVariants().then(() => { goto(State.ENDLESS_LOADOUT); render(); }); }
     else if (a === 'classic') { Game.settings.mode = 'classic'; initAudio(); goto(State.COUNTDOWN); }
     else if (a === 'versus') { Game.settings.mode = 'versus'; initAudio(); goto(State.H2H_DESIGN); }
     else if (a === 'play') { initAudio(); goto(State.COUNTDOWN); }
     else if (a === 'settings') goto(State.SETTINGS);
     else if (a === 'stats') goto(State.STATS);
-    else if (a === 'hq') goto(State.HQ);
+    else if (a === 'hq') { goto(State.HQ); if (Game.hqTab === HQTab.INSIGNIA) setTimeout(() => initInsigniaTab(), 0); }
     else if (a === 'sprite-editor') window.open('/sprite-editor.html', '_blank');
     else if (a === 'terrain-editor') window.open('/terrain-editor.html', '_blank');
-    else if (a === 'menu') { stopLoop(); Game.h2h = null; Game.h2hDefenseSlot = undefined; Game.h2hWaveLane = undefined; Game.fireRange = null; goto(State.MENU); }
+    else if (a === 'menu') { stopLoop(); Game.h2h = null; Game.h2hDefenseSlot = undefined; Game.h2hWaveLane = undefined; Game.fireRange = null; if (replayPlayer) { replayPlayer.destroy(); replayPlayer = null; } goto(State.MENU); }
     else if (a === 'pause') goto(State.PAUSED);
     else if (a === 'resume') goto(State.BATTLE);
     else if (a === 'quit') { stopLoop(); goto(State.MENU); }
@@ -509,7 +530,7 @@ document.getElementById('app').addEventListener('click', e => {
       const selection = Game.vehicleSelect || { vehicle: 'abrams', variant: 'default' };
 
       // Initialize campaign if needed
-      if (!Game.campaign) Game.campaign = newCampaign();
+      if (!Game.campaign) { Game.campaign = newCampaign(); Game.campaign._record = Game.settings?.autoRecord !== false; }
       Game.campaign.era = 1;
       Game.campaign.mos = 'infantry';
 
@@ -1168,6 +1189,7 @@ document.getElementById('app').addEventListener('click', e => {
     }
     else if (a === 'endless-retry') {
       Game.endless = newEndlessRun();
+      Game.endless._record = Game.settings?.autoRecord !== false;
       fetchUnitVariants().then(() => { goto(State.ENDLESS_LOADOUT); render(); });
     }
     // Fire Range actions
@@ -1175,7 +1197,7 @@ document.getElementById('app').addEventListener('click', e => {
       Game.fireRange = newFireRangeRun();
       // Restore last config if available
       const lastCfg = loadFRConfig();
-      if (lastCfg && lastCfg.blueTeam && lastCfg.redTeam) {
+      if (lastCfg && ((lastCfg.blueTeam && lastCfg.redTeam) || (lastCfg.blueSquads && lastCfg.redSquads))) {
         Game.fireRange.config = lastCfg;
       }
       initAudio();
@@ -1204,6 +1226,29 @@ document.getElementById('app').addEventListener('click', e => {
         stopFireRangeLoop(); // Destroy BattleRenderer BEFORE nulling battle
         Game.fireRange.battle = null;
         goto(State.FIRE_RANGE);
+      }
+    }
+    else if (a === 'fr-results-dismiss') {
+      if (Game.fireRange?.battle) Game.fireRange.battle._showResults = false;
+      const el = document.getElementById('fr-results-container');
+      if (el) el.remove();
+    }
+    else if (a === 'fr-toggle-report') {
+      const el = document.getElementById('fr-results-container');
+      if (el) {
+        // Already showing — hide it
+        el.remove();
+        if (Game.fireRange?.battle) Game.fireRange.battle._showResults = false;
+      } else {
+        // Show it — generate live stats from current battle state
+        const b = Game.fireRange?.battle;
+        if (b) {
+          b._showResults = true;
+          const div = document.createElement('div');
+          div.id = 'fr-results-container';
+          div.innerHTML = fireRangeResultsHTML(b);
+          document.getElementById('app').appendChild(div);
+        }
       }
     }
     else if (a === 'fr-reset') {
@@ -1236,21 +1281,24 @@ document.getElementById('app').addEventListener('click', e => {
     else if (a === 'fr-add') {
       if (Game.fireRange) {
         const team = action.dataset.team;
-        if (team === 'blue') {
-          Game.fireRange.config.blueTeam.push({ unitId: 'infantry', count: 2, command: 'advance', aggression: 0.5, patience: 0.5, courage: 0.5, discipline: 0.5, initiative: 0.5, veterancy: 0, morale: 0.8, awareness: 0.5, isLeader: false, tgtDistance: 0.7, tgtWeakness: 0.3, tgtThreat: 0.0, tgtValue: 0.0 });
-        } else {
-          Game.fireRange.config.redTeam.push({ unitId: 'infantry', count: 4, command: 'advance', aggression: 0.5, patience: 0.5, courage: 0.5, discipline: 0.5, initiative: 0.5, veterancy: 0, morale: 0.8, awareness: 0.5, isLeader: false, tgtDistance: 0.7, tgtWeakness: 0.3, tgtThreat: 0.0, tgtValue: 0.0 });
+        const si = parseInt(action.dataset.squad || '0', 10);
+        const squads = team === Team.BLUE ? (Game.fireRange.config.blueSquads || []) : (Game.fireRange.config.redSquads || []);
+        if (squads[si]) {
+          squads[si].units.push({ unitId: 'infantry', count: 2, command: 'advance', aggression: 0.5, patience: 0.5, courage: 0.5, discipline: 0.5, initiative: 0.5, veterancy: 0, morale: 0.8, awareness: 0.5, leadership: 0, isLeader: false, tgtDistance: 0.7, tgtWeakness: 0.3, tgtThreat: 0.0, tgtValue: 0.0 });
+          render();
         }
-        render();
       }
     }
     else if (a === 'fr-remove') {
       if (Game.fireRange) {
         const team = action.dataset.team;
         const idx = parseInt(action.dataset.idx, 10);
-        if (team === 'blue') Game.fireRange.config.blueTeam.splice(idx, 1);
-        else Game.fireRange.config.redTeam.splice(idx, 1);
-        render();
+        const si = parseInt(action.dataset.squad || '0', 10);
+        const squads = team === Team.BLUE ? (Game.fireRange.config.blueSquads || []) : (Game.fireRange.config.redSquads || []);
+        if (squads[si]) {
+          squads[si].units.splice(idx, 1);
+          render();
+        }
       }
     }
     // Expand/collapse slot detail
@@ -1258,9 +1306,10 @@ document.getElementById('app').addEventListener('click', e => {
       if (Game.fireRange) {
         const team = action.dataset.team;
         const idx = parseInt(action.dataset.idx, 10);
-        const arr = team === 'blue' ? Game.fireRange.config.blueTeam : Game.fireRange.config.redTeam;
-        if (arr[idx]) {
-          arr[idx]._expanded = !arr[idx]._expanded;
+        const si = parseInt(action.dataset.squad || '0', 10);
+        const squads = team === Team.BLUE ? (Game.fireRange.config.blueSquads || []) : (Game.fireRange.config.redSquads || []);
+        if (squads[si] && squads[si].units[idx]) {
+          squads[si].units[idx]._expanded = !squads[si].units[idx]._expanded;
           render();
         }
       }
@@ -1270,13 +1319,53 @@ document.getElementById('app').addEventListener('click', e => {
       if (Game.fireRange) {
         const team = action.dataset.team;
         const idx = parseInt(action.dataset.idx, 10);
-        const arr = team === 'blue' ? Game.fireRange.config.blueTeam : Game.fireRange.config.redTeam;
-        if (arr[idx]) {
-          const wasLeader = arr[idx].isLeader;
-          // Clear all leaders on this team
-          for (const slot of arr) slot.isLeader = false;
-          // Toggle: if it was the leader, it's now off; otherwise set it
-          arr[idx].isLeader = !wasLeader;
+        const si = parseInt(action.dataset.squad || '0', 10);
+        const squads = team === Team.BLUE ? (Game.fireRange.config.blueSquads || []) : (Game.fireRange.config.redSquads || []);
+        if (squads[si] && squads[si].units[idx]) {
+          const wasLeader = squads[si].units[idx].isLeader;
+          for (const sq of squads) for (const slot of sq.units) slot.isLeader = false;
+          squads[si].units[idx].isLeader = !wasLeader;
+          render();
+        }
+      }
+    }
+    // Add new squad
+    else if (a === 'fr-squad-add') {
+      if (Game.fireRange) {
+        const team = action.dataset.team;
+        const SQUAD_NAMES = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot'];
+        const squads = team === Team.BLUE ? Game.fireRange.config.blueSquads : Game.fireRange.config.redSquads;
+        if (squads && squads.length < 6) {
+          squads.push({
+            name: SQUAD_NAMES[squads.length] || `Squad ${squads.length + 1}`,
+            sergeant: { aggression: 0.5, patience: 0.5, courage: 0.5, discipline: 0.5, initiative: 0.5, awareness: 0.5 },
+            formation: 'line',
+            units: [{ unitId: 'infantry', count: 3, command: 'advance', aggression: 0.5, patience: 0.5, courage: 0.5, discipline: 0.5, initiative: 0.5, veterancy: 0, morale: 0.8, awareness: 0.5, leadership: 0, isLeader: false, tgtDistance: 0.7, tgtWeakness: 0.3, tgtThreat: 0.0, tgtValue: 0.0 }]
+          });
+          render();
+        }
+      }
+    }
+    // Remove squad
+    else if (a === 'fr-squad-remove') {
+      if (Game.fireRange) {
+        const team = action.dataset.team;
+        const si = parseInt(action.dataset.squad, 10);
+        const squads = team === Team.BLUE ? Game.fireRange.config.blueSquads : Game.fireRange.config.redSquads;
+        if (squads && squads.length > 1 && squads[si]) {
+          squads.splice(si, 1);
+          render();
+        }
+      }
+    }
+    // Expand/collapse squad
+    else if (a === 'fr-squad-toggle') {
+      if (Game.fireRange) {
+        const team = action.dataset.team;
+        const si = parseInt(action.dataset.squad, 10);
+        const squads = team === Team.BLUE ? Game.fireRange.config.blueSquads : Game.fireRange.config.redSquads;
+        if (squads && squads[si]) {
+          squads[si]._expanded = squads[si]._expanded === false ? true : false;
           render();
         }
       }
@@ -1291,13 +1380,34 @@ document.getElementById('app').addEventListener('click', e => {
         }
       }
     }
+    // Record toggle on fire range config
+    else if (a === 'fr-record-toggle') {
+      if (Game.fireRange) {
+        const checked = action.closest('label')?.querySelector('input')?.checked;
+        Game.fireRange.config.record = checked;
+      }
+    }
+    // Record toggle on campaign planning
+    else if (a === 'campaign-record-toggle') {
+      if (Game.campaign) {
+        const checked = action.closest('label')?.querySelector('input')?.checked;
+        Game.campaign._record = checked;
+      }
+    }
+    // Record toggle on endless loadout
+    else if (a === 'toggle-endless-record') {
+      if (Game.endless) {
+        Game.endless._record = !Game.endless._record;
+        render();
+      }
+    }
     // Load test preset
     else if (a === 'fr-preset-load') {
       if (Game.fireRange) {
         const sel = document.querySelector('.fr-preset-select');
         const id = sel?.value;
         if (id && FR_PRESETS[id]) {
-          Game.fireRange.config = JSON.parse(JSON.stringify(FR_PRESETS[id]));
+          Game.fireRange.config = migrateFRConfig(JSON.parse(JSON.stringify(FR_PRESETS[id])));
           Game.fireRange.scenarioName = id;
           render();
         }
@@ -1363,7 +1473,7 @@ document.getElementById('app').addEventListener('click', e => {
           reader.onload = () => {
             try {
               const imported = JSON.parse(reader.result);
-              if (imported.blueTeam && imported.redTeam) {
+              if ((imported.blueTeam && imported.redTeam) || (imported.blueSquads && imported.redSquads)) {
                 Game.fireRange.config = migrateFRConfig(imported);
                 render();
               } else {
@@ -1446,6 +1556,125 @@ document.getElementById('app').addEventListener('click', e => {
         panel.classList.toggle('collapsed');
       }
     }
+    // ── Replay Theater actions ──
+    else if (a === 'replay-theater') {
+      initAudio();
+      goto(State.REPLAY_THEATER);
+      // Fetch replay list and render
+      fetch('/api/replays').then(r => r.json()).then(list => {
+        const app = document.getElementById('app');
+        app.innerHTML = replayTheaterHTML(list.replays || list);
+      }).catch(() => {
+        const app = document.getElementById('app');
+        app.innerHTML = replayTheaterHTML([]);
+      });
+    }
+    else if (a === 'replay-back') {
+      goto(State.MENU);
+    }
+    else if (a === 'replay-watch') {
+      const name = action.dataset.name;
+      if (!name) return;
+      fetch(`/api/replays/${encodeURIComponent(name)}`).then(r => r.json()).then(async replayData => {
+        replayPlayer = new ReplayPlayer();
+        await replayPlayer.load(replayData);
+        goto(State.REPLAY_PLAYBACK);
+        const container = document.getElementById('replay-battlefield');
+        if (container) {
+          replayPlayer.initRenderer(container);
+          // Set up time update callback
+          replayPlayer.onTimeUpdate((currentMs, durationMs) => {
+            const scrubber = document.getElementById('replay-scrubber');
+            const timeEl = document.getElementById('replay-time');
+            if (scrubber && durationMs > 0) {
+              scrubber.value = Math.round((currentMs / durationMs) * 1000);
+            }
+            if (timeEl) {
+              const cur = formatReplayTime(currentMs);
+              const dur = formatReplayTime(durationMs);
+              timeEl.textContent = `${cur} / ${dur}`;
+            }
+            // Update play/pause button text
+            const playBtn = document.getElementById('replay-play-btn');
+            if (playBtn) playBtn.textContent = replayPlayer.playing ? 'Pause' : 'Play';
+          });
+          replayPlayer.onEnd(() => {
+            const playBtn = document.getElementById('replay-play-btn');
+            if (playBtn) playBtn.textContent = 'Play';
+          });
+          replayPlayer.play();
+        }
+      }).catch(err => {
+        console.error('Failed to load replay:', err);
+      });
+    }
+    else if (a === 'replay-delete') {
+      const name = action.dataset.name;
+      if (!name) return;
+      fetch(`/api/replays/${encodeURIComponent(name)}`, { method: 'DELETE' }).then(() => {
+        // Refresh the list
+        return fetch('/api/replays').then(r => r.json());
+      }).then(list => {
+        const app = document.getElementById('app');
+        app.innerHTML = replayTheaterHTML(list.replays || list);
+      }).catch(err => {
+        console.error('Failed to delete replay:', err);
+      });
+    }
+    else if (a === 'replay-play-pause') {
+      if (replayPlayer) {
+        if (replayPlayer.playing) {
+          replayPlayer.pause();
+          action.textContent = 'Play';
+        } else {
+          replayPlayer.play();
+          action.textContent = 'Pause';
+        }
+      }
+    }
+    else if (a === 'replay-step-fwd') {
+      if (replayPlayer) { replayPlayer.pause(); replayPlayer.stepForward(); }
+    }
+    else if (a === 'replay-step-back') {
+      if (replayPlayer) { replayPlayer.pause(); replayPlayer.stepBackward(); }
+    }
+    else if (a === 'replay-skip-start') {
+      if (replayPlayer) { replayPlayer.seekTo(0); }
+    }
+    else if (a === 'replay-skip-end') {
+      if (replayPlayer) { replayPlayer.seekTo(replayPlayer.getDuration()); }
+    }
+    else if (a === 'replay-speed') {
+      if (replayPlayer) {
+        const spd = parseFloat(action.dataset.speed);
+        replayPlayer.setSpeed(spd);
+        // Update active state on speed buttons
+        const bar = action.closest('.replay-speeds');
+        if (bar) {
+          bar.querySelectorAll('button[data-action="replay-speed"]').forEach(btn => {
+            btn.classList.toggle('active', parseFloat(btn.dataset.speed) === spd);
+          });
+        }
+      }
+    }
+    else if (a === 'replay-toggle-overlay') {
+      if (replayPlayer?.battle) {
+        replayPlayer.battle.debugOverlay = !replayPlayer.battle.debugOverlay;
+        action.classList.toggle('active', replayPlayer.battle.debugOverlay);
+      }
+    }
+    else if (a === 'replay-exit') {
+      if (replayPlayer) { replayPlayer.destroy(); replayPlayer = null; }
+      goto(State.REPLAY_THEATER);
+      // Re-fetch and render list
+      fetch('/api/replays').then(r => r.json()).then(list => {
+        const app = document.getElementById('app');
+        app.innerHTML = replayTheaterHTML(list.replays || list);
+      }).catch(() => {
+        const app = document.getElementById('app');
+        app.innerHTML = replayTheaterHTML([]);
+      });
+    }
     return;
   }
 
@@ -1492,6 +1721,10 @@ document.getElementById('app').addEventListener('click', e => {
     Game.hqTab = hqTab.dataset.hqTab;
     Game.hqSelectedUnit = null;  // Clear unit selection when switching tabs
     render();
+    // Initialize insignia editor when tab opens
+    if (Game.hqTab === HQTab.INSIGNIA) {
+      setTimeout(() => initInsigniaTab(), 0);
+    }
     return;
   }
 
@@ -1754,6 +1987,11 @@ document.getElementById('app').addEventListener('click', e => {
 
 // Change events (for dropdowns)
 document.getElementById('app').addEventListener('change', e => {
+  // Insignia editor checkboxes (flipX, flipY, fillEnabled)
+  if (Game.state === State.HQ && Game.hqTab === HQTab.INSIGNIA) {
+    if (handleInsigniaInput(e.target)) return;
+  }
+
   // Priority dropdown in radio panel
   if (e.target.closest('.priority-dropdown') && Game.state === State.CAMPAIGN_BATTLE) {
     const b = Game.campaign?.heroBattle;
@@ -1790,28 +2028,36 @@ document.getElementById('app').addEventListener('change', e => {
     return;
   }
 
-  // Fire Range config selects and count inputs
+  // Fire Range config selects, count inputs, and formation selects
   if (Game.state === State.FIRE_RANGE && Game.fireRange) {
     const cfg = Game.fireRange.config;
+    const fmtSel = e.target.closest('.fr-squad-formation');
+    if (fmtSel) {
+      const team = fmtSel.dataset.team;
+      const si = parseInt(fmtSel.dataset.squad, 10);
+      const squads = team === Team.BLUE ? cfg.blueSquads : cfg.redSquads;
+      if (squads && squads[si]) squads[si].formation = fmtSel.value;
+    }
     const sel = e.target.closest('.fr-select');
     const cnt = e.target.closest('.fr-count');
     if (sel) {
       const team = sel.dataset.team;
       const idx = parseInt(sel.dataset.idx, 10);
+      const si = parseInt(sel.dataset.squad || '0', 10);
       const field = sel.dataset.field;
-      if (team === 'blue' && cfg.blueTeam[idx]) cfg.blueTeam[idx][field] = sel.value;
-      else if (team === 'red' && cfg.redTeam[idx]) {
-        cfg.redTeam[idx][field] = sel.value;
-        // Migrate: if setting unitId, clear old enemyType key
-        if (field === 'unitId') delete cfg.redTeam[idx].enemyType;
+      const squads = team === Team.BLUE ? cfg.blueSquads : cfg.redSquads;
+      if (squads && squads[si] && squads[si].units[idx]) {
+        squads[si].units[idx][field] = sel.value;
+        if (field === 'unitId') delete squads[si].units[idx].enemyType;
       }
     }
     if (cnt) {
       const team = cnt.dataset.team;
       const idx = parseInt(cnt.dataset.idx, 10);
+      const si = parseInt(cnt.dataset.squad || '0', 10);
       const val = Math.max(1, Math.min(20, parseInt(cnt.value, 10) || 1));
-      if (team === 'blue' && cfg.blueTeam[idx]) cfg.blueTeam[idx].count = val;
-      else if (team === 'red' && cfg.redTeam[idx]) cfg.redTeam[idx].count = val;
+      const squads = team === Team.BLUE ? cfg.blueSquads : cfg.redSquads;
+      if (squads && squads[si] && squads[si].units[idx]) squads[si].units[idx].count = val;
     }
     return;
   }
@@ -1819,19 +2065,45 @@ document.getElementById('app').addEventListener('change', e => {
 
 // Input events (for range sliders and fire range counts)
 document.getElementById('app').addEventListener('input', e => {
+  // Replay scrubber
+  if (e.target.id === 'replay-scrubber' && replayPlayer) {
+    const pct = parseInt(e.target.value, 10) / 1000;
+    const targetMs = pct * replayPlayer.getDuration();
+    replayPlayer.seekTo(targetMs);
+    return;
+  }
+  // Insignia editor sliders / toggles / color pickers
+  if (Game.state === State.HQ && Game.hqTab === HQTab.INSIGNIA) {
+    if (handleInsigniaInput(e.target)) return;
+  }
+
+  // Insignia tuner sliders (debug panel)
+  if (e.target.dataset?.action === 'fr-insignia') {
+    const key = e.target.dataset.key;
+    const val = parseFloat(e.target.value);
+    if (key && !isNaN(val)) {
+      EntityRenderer.insigniaParams[key] = val;
+      const valSpan = document.querySelector(`[data-insignia-val="${key}"]`);
+      if (valSpan) valSpan.textContent = val;
+    }
+    return;
+  }
+
   // Fire Range slider + count inputs
   if (Game.state === State.FIRE_RANGE && Game.fireRange) {
     const cfg = Game.fireRange.config;
-    // Personality / veterancy / morale sliders
     // Sergeant trait sliders
     const sgtSlider = e.target.closest('.fr-sgt-slider');
     if (sgtSlider) {
       const team = sgtSlider.dataset.sgtTeam;
       const trait = sgtSlider.dataset.sgtTrait;
       const val = parseFloat(sgtSlider.value);
-      const sgtKey = team === 'blue' ? 'blueSergeant' : 'redSergeant';
-      if (!cfg[sgtKey]) cfg[sgtKey] = {};
-      cfg[sgtKey][trait] = val;
+      const si = parseInt(sgtSlider.dataset.squad || '0', 10);
+      const squads = team === Team.BLUE ? cfg.blueSquads : cfg.redSquads;
+      if (squads && squads[si]) {
+        if (!squads[si].sergeant) squads[si].sergeant = {};
+        squads[si].sergeant[trait] = val;
+      }
       const valSpan = sgtSlider.parentElement.querySelector('.fr-slider-val');
       if (valSpan) valSpan.textContent = val.toFixed(2);
       return;
@@ -1841,12 +2113,12 @@ document.getElementById('app').addEventListener('input', e => {
     if (slider) {
       const team = slider.dataset.team;
       const idx = parseInt(slider.dataset.idx, 10);
+      const si = parseInt(slider.dataset.squad || '0', 10);
       const field = slider.dataset.field;
       const val = parseFloat(slider.value);
-      const arr = team === 'blue' ? cfg.blueTeam : cfg.redTeam;
-      if (arr[idx]) {
-        arr[idx][field] = val;
-        // Update value label
+      const squads = team === Team.BLUE ? cfg.blueSquads : cfg.redSquads;
+      if (squads && squads[si] && squads[si].units[idx]) {
+        squads[si].units[idx][field] = val;
         const valSpan = slider.parentElement.querySelector('.fr-slider-val');
         if (valSpan) valSpan.textContent = val.toFixed(2);
       }
@@ -1857,9 +2129,10 @@ document.getElementById('app').addEventListener('input', e => {
     if (cnt) {
       const team = cnt.dataset.team;
       const idx = parseInt(cnt.dataset.idx, 10);
+      const si = parseInt(cnt.dataset.squad || '0', 10);
       const val = Math.max(1, Math.min(20, parseInt(cnt.value, 10) || 1));
-      if (team === 'blue' && cfg.blueTeam[idx]) cfg.blueTeam[idx].count = val;
-      else if (team === 'red' && cfg.redTeam[idx]) cfg.redTeam[idx].count = val;
+      const squads = team === Team.BLUE ? cfg.blueSquads : cfg.redSquads;
+      if (squads && squads[si] && squads[si].units[idx]) squads[si].units[idx].count = val;
       return;
     }
   }
@@ -1883,6 +2156,10 @@ document.getElementById('app').addEventListener('input', e => {
 
 // Keyboard events for campaign battle
 document.addEventListener('keydown', e => {
+  // Insignia editor keyboard shortcuts (Ctrl+C/V/A/D, Delete)
+  if (Game.state === State.HQ && Game.hqTab === HQTab.INSIGNIA) {
+    if (handleInsigniaKeyDown(e)) return;
+  }
   if (Game.state === State.CAMPAIGN_BATTLE) {
     campaignKeyDown(e.key);
   }
@@ -1894,9 +2171,16 @@ document.addEventListener('keydown', e => {
   if (Game.state === State.FIRE_RANGE_BATTLE) {
     fireRangeKeyDown(e.key);
   }
+  // Replay playback camera
+  if (Game.state === State.REPLAY_PLAYBACK && replayPlayer?.battle) {
+    cameraKeyDown(replayPlayer.battle, e.key);
+  }
 });
 
 document.addEventListener('keyup', e => {
+  if (Game.state === State.HQ && Game.hqTab === HQTab.INSIGNIA) {
+    handleInsigniaKeyUp(e);
+  }
   if (Game.state === State.CAMPAIGN_BATTLE) {
     campaignKeyUp(e.key);
   }
@@ -1907,6 +2191,10 @@ document.addEventListener('keyup', e => {
   // Fire Range keyboard
   if (Game.state === State.FIRE_RANGE_BATTLE) {
     fireRangeKeyUp(e.key);
+  }
+  // Replay playback
+  if (Game.state === State.REPLAY_PLAYBACK && replayPlayer?.battle) {
+    cameraKeyUp(replayPlayer.battle, e.key);
   }
 });
 
@@ -1954,7 +2242,7 @@ document.addEventListener('mouseup', e => {
   }
 });
 
-// Mouse wheel zoom for fire range
+// Mouse wheel zoom for fire range and replay
 document.addEventListener('wheel', e => {
   if (Game.state === State.FIRE_RANGE_BATTLE) {
     const bf = document.querySelector('.endless-battlefield');
@@ -1963,7 +2251,44 @@ document.addEventListener('wheel', e => {
       fireRangeWheel(e.deltaY);
     }
   }
+  if (Game.state === State.REPLAY_PLAYBACK && replayPlayer?.battle) {
+    const bf = document.getElementById('replay-battlefield');
+    if (bf && bf.contains(e.target)) {
+      e.preventDefault();
+      cameraZoom(replayPlayer.battle, e.deltaY);
+    }
+  }
 }, { passive: false });
+
+// Middle-mouse drag pan for all battle modes + replay
+function getBattleForPan() {
+  if (Game.state === State.FIRE_RANGE_BATTLE) return Game.fireRange?.battle;
+  if (Game.state === State.CAMPAIGN_BATTLE)   return Game.campaign?.heroBattle;
+  if (Game.state === State.ENDLESS_BATTLE)    return Game.endless?.battle;
+  if (Game.state === State.REPLAY_PLAYBACK)   return replayPlayer?.battle;
+  return null;
+}
+
+document.addEventListener('mousedown', e => {
+  if (e.button !== 1) return; // middle mouse only
+  const b = getBattleForPan();
+  if (!b) return;
+  e.preventDefault();
+  cameraPanStart(b, e.clientX, e.clientY);
+});
+
+document.addEventListener('mousemove', e => {
+  const b = getBattleForPan();
+  if (!b || !b.camera._dragPan) return;
+  cameraPanMove(b, e.clientX, e.clientY);
+});
+
+document.addEventListener('mouseup', e => {
+  if (e.button !== 1) return;
+  const b = getBattleForPan();
+  if (!b) return;
+  cameraPanEnd(b);
+});
 
 // ═══════════════════════════════════════════════════════════════
 // MOBILE TOUCH CONTROLS

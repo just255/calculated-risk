@@ -39,14 +39,43 @@ export const State = {
   ENDLESS_RESULT: 'endless_result',        // Run complete: death or extraction
   // Fire Range (AI test bed)
   FIRE_RANGE: 'fire_range',               // Config screen: pick units, behaviors
-  FIRE_RANGE_BATTLE: 'fire_range_battle'   // Active AI battle (observer mode)
+  FIRE_RANGE_BATTLE: 'fire_range_battle',  // Active AI battle (observer mode)
+  // Replay Theater
+  REPLAY_THEATER: 'replay_theater',
+  REPLAY_PLAYBACK: 'replay_playback'
+};
+
+// Team identifiers — used on unit.team, waypoint keys, commander keys, logs
+export const Team = {
+  BLUE: 'blue',
+  RED: 'red'
+};
+
+// Projectile owner — used on p.owner for hit routing in game.js
+export const Owner = {
+  PLAYER: 'player',
+  ALLY: 'ally',
+  ENEMY: 'enemy'
 };
 
 export const HQTab = {
   LINEUP: 'lineup',
   UNITS: 'units',
-  UPGRADES: 'upgrades'
+  UPGRADES: 'upgrades',
+  INSIGNIA: 'insignia'
 };
+
+export const RANK_NAMES = ['PVT', 'PV2', 'PFC', 'SPC', 'CPL', 'SGT'];
+export const RANK_LABELS = ['Private', 'Private 2nd Class', 'Private First Class', 'Specialist', 'Corporal', 'Sergeant'];
+
+export const INSIGNIA_SHAPE_TYPES = [
+  { type: 'chevron', label: 'Chevron', icon: 'V' },
+  { type: 'arc', label: 'Arc', icon: '⌒' },
+  { type: 'diamond', label: 'Diamond', icon: '◇' },
+  { type: 'line', label: 'Line', icon: '—' },
+  { type: 'circle', label: 'Circle', icon: '○' },
+  { type: 'path', label: 'Path', icon: '✏' }
+];
 
 // ═══════════════════════════════════════════════════════════════
 // SQUAD SYSTEM
@@ -596,18 +625,18 @@ export const UNIT_PROJECTILES = {
 // viewRange (pixels): how far the crew can see (independent of fire range)
 // viewCone (degrees): forward vision cone angle (peripheral/rear zones computed from this)
 export const UNIT_COMBAT_STATS = {
-  infantry:  { range: 150, speed: 30, isAir: false, viewRange: 200, viewCone: 140 },
-  medic:     { range: 120, speed: 25, isAir: false, viewRange: 180, viewCone: 150 },
-  specops:   { range: 180, speed: 35, isAir: false, viewRange: 350, viewCone: 130 },
-  stinger:   { range: 200, speed: 30, isAir: false, viewRange: 220, viewCone: 140 },
-  jeep:      { range: 170, speed: 60, isAir: false, viewRange: 280, viewCone: 120 },
-  humvee:    { range: 180, speed: 50, isAir: false, viewRange: 260, viewCone: 130 },
-  sherman:   { range: 200, speed: 35, isAir: false, viewRange: 250, viewCone: 100 },
-  tiger:     { range: 220, speed: 25, isAir: false, viewRange: 280, viewCone: 100 },
-  abrams:    { range: 250, speed: 40, isAir: false, viewRange: 320, viewCone: 110 },
-  howitzer:  { range: 350, speed: 20, isAir: false, viewRange: 120, viewCone: 140 },
-  drone:     { range: 180, speed: 70, isAir: true,  viewRange: 400, viewCone: 160 },
-  apache:    { range: 280, speed: 50, isAir: true,  viewRange: 450, viewCone: 160 }
+  infantry:  { range: 400, speed: 30, isAir: false, viewRange: 700, viewCone: 140 },
+  medic:     { range: 300, speed: 25, isAir: false, viewRange: 600, viewCone: 150 },
+  specops:   { range: 500, speed: 35, isAir: false, viewRange: 900, viewCone: 130 },
+  stinger:   { range: 550, speed: 30, isAir: false, viewRange: 750, viewCone: 140 },
+  jeep:      { range: 450, speed: 60, isAir: false, viewRange: 800, viewCone: 120 },
+  humvee:    { range: 500, speed: 50, isAir: false, viewRange: 800, viewCone: 130 },
+  sherman:   { range: 550, speed: 35, isAir: false, viewRange: 850, viewCone: 100 },
+  tiger:     { range: 600, speed: 25, isAir: false, viewRange: 900, viewCone: 100 },
+  abrams:    { range: 700, speed: 40, isAir: false, viewRange: 950, viewCone: 110 },
+  howitzer:  { range: 900, speed: 20, isAir: false, viewRange: 500, viewCone: 140 },
+  drone:     { range: 500, speed: 70, isAir: true,  viewRange: 1000, viewCone: 160 },
+  apache:    { range: 700, speed: 50, isAir: true,  viewRange: 1100, viewCone: 160 }
 };
 
 // Unit descriptions for details panel
@@ -1253,11 +1282,11 @@ export const UNITS = [
 ];
 
 export const ENEMIES = [
-  { id: 'swarmer', unitId: 'infantry', health: 15, speed: 2.2, damage: 5, scrap: 2, partsChance: 0, range: 40, isAir: false, types: ['infantry'] },
-  { id: 'scout', unitId: 'jeep', health: 30, speed: 1.8, damage: 10, scrap: 5, partsChance: 0, range: 80, isAir: false, types: ['recon'] },
-  { id: 'grunt', unitId: 'infantry', health: 60, speed: 1.3, damage: 15, scrap: 10, partsChance: 0.1, range: 100, isAir: false, types: ['infantry'] },
-  { id: 'heavy', unitId: 'sherman', health: 120, speed: 0.9, damage: 25, scrap: 20, partsChance: 0.25, range: 120, isAir: false, types: ['armor'] },
-  { id: 'elite', unitId: 'tiger', health: 200, speed: 1.1, damage: 40, scrap: 50, partsChance: 0.5, range: 150, isAir: false, types: ['armor', 'anti_armor'] }
+  { id: 'swarmer', unitId: 'infantry', health: 15, speed: 2.2, damage: 5, scrap: 2, partsChance: 0, range: 150, isAir: false, types: ['infantry'] },
+  { id: 'scout', unitId: 'jeep', health: 30, speed: 1.8, damage: 10, scrap: 5, partsChance: 0, range: 300, isAir: false, types: ['recon'] },
+  { id: 'grunt', unitId: 'infantry', health: 60, speed: 1.3, damage: 15, scrap: 10, partsChance: 0.1, range: 350, isAir: false, types: ['infantry'] },
+  { id: 'heavy', unitId: 'sherman', health: 120, speed: 0.9, damage: 25, scrap: 20, partsChance: 0.25, range: 450, isAir: false, types: ['armor'] },
+  { id: 'elite', unitId: 'tiger', health: 200, speed: 1.1, damage: 40, scrap: 50, partsChance: 0.5, range: 550, isAir: false, types: ['armor', 'anti_armor'] }
 ];
 
 // Terrain SVG definitions for battle rendering (must match ui.js planning SVGs)

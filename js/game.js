@@ -2,12 +2,12 @@
 // GAME - Battle logic, game loop, update, draw
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, UNITS, ENEMIES, getTypeMultiplier, UNIT_COSTS, H2H_BUDGET, PROJECTILES, UNIT_PROJECTILES, UNIT_COMBAT_STATS, getTerrainSVG, getStanceModifier, getEnemyStance, ZoneOwner, ScenarioType, SHADOW_CONFIG } from './constants.js';
+import { State, SubState, HQTab, UNITS, ENEMIES, getTypeMultiplier, UNIT_COSTS, H2H_BUDGET, PROJECTILES, UNIT_PROJECTILES, UNIT_COMBAT_STATS, getTerrainSVG, getStanceModifier, getEnemyStance, ZoneOwner, ScenarioType, SHADOW_CONFIG, Team, Owner } from './constants.js';
 import { renderBaseTerrainToCanvas, renderCanopyToCanvas } from './world-builder/terrain-renderer.js';
 import { Game, newBattle, newH2H, newCampaign, newCampaignBattle, newEndlessBattle, newFireRangeRun, newFireRangeBattle } from './state.js';
 import { sound } from './audio.js';
 import { save } from './storage.js';
-import { render, setSubState, getCustomizedSvg, getCustomizedSvgFrames, getEntitySvg, getEntitySvgFrames, drawCommandUI, getUnitVisual, getUnitShadow } from './ui.js';
+import { render, setSubState, getCustomizedSvg, getCustomizedSvgFrames, getEntitySvg, getEntitySvgFrames, drawCommandUI, getUnitVisual, getUnitShadow, fireRangeResultsHTML } from './ui.js';
 import * as sprites from './sprites.js';
 import { BattleRenderer } from './battle-renderer.js';
 import {
@@ -19,10 +19,8 @@ import {
 } from './combat.js';
 import { isTerrainBlocked, getTerrainSpeedMod } from './terrain-utils.js';
 import { clearQueryCache, getBridgeCoverMult, isBridgeDeckBlocking, queryTerrain } from './terrain-query.js';
-import { updateSergeant } from './sergeant.js';
+// updateSergeant now called via ai-pipeline.js runBattleAI()
 import {
-  updateUnitAI,
-  updateEnemyAI,
   issueCommand,
   AIState,
   AIBehavior,
@@ -39,8 +37,6 @@ import {
   ENTITY_RADIUS,
   issueFrontLineCommand,
   assignSmartPositions,
-  shareTeamIntel,
-  updateFormation,
   applySuppression,
   getArmorTier,
   getTierDamageMultiplier
@@ -56,7 +52,10 @@ import {
   parseTankInputExtended,
   applyTankMovementExtended
 } from './movement.js';
-import { rollModifier, applyModifier, updateModifierEffects, getModifiedDamage } from './elite-modifiers.js';
+import { rollModifier, applyModifier, getModifiedDamage } from './elite-modifiers.js';
+import { runBattleAI, spawnSquad, applyBrainDefaults, scaleBrainByWave, BRAIN_PRESETS } from './ai-pipeline.js';
+import { createRecorder, recordFrame, finalizeRecording, isRecording, saveReplay } from './replay-recorder.js';
+import { updateFireRangeCamera, updateHeroCamera, cameraKeyDown, cameraKeyUp, cameraZoom } from './camera.js';
 
 // Get effective unit stats with upgrades applied
 function getUnitStats(unitIdx) {
@@ -389,6 +388,7 @@ export function goto(newState, data = {}) {
     case State.CAMPAIGN_ERA_SELECT:
       if (!Game.campaign) {
         Game.campaign = newCampaign();
+        Game.campaign._record = Game.settings?.autoRecord !== false;
       }
       render();
       break;
@@ -436,7 +436,8 @@ export function goto(newState, data = {}) {
               b.battleRenderer.setTerrainFromCanvases(
                 b.terrainCanvases.terrainCanvas,
                 b.terrainCanvases.canopyCanvas,
-                b.mapWidth, b.mapHeight
+                b.mapWidth, b.mapHeight,
+                b.terrainCanvases.bridgeDeckCanvas
               );
             } else {
               b.battleRenderer.setTerrain(b.terrain, b.cellSize);
@@ -445,6 +446,10 @@ export function goto(newState, data = {}) {
         }, 0);
       } else {
         setTimeout(() => setupCampaignCanvas(), 0);
+      }
+      // Record if enabled
+      if (Game.campaign._record) {
+        createRecorder(Game.campaign.heroBattle, 'campaign');
       }
       startCampaignLoop();
       break;
@@ -490,13 +495,18 @@ export function goto(newState, data = {}) {
               b.battleRenderer.setTerrainFromCanvases(
                 b.terrainCanvases.terrainCanvas,
                 b.terrainCanvases.canopyCanvas,
-                b.mapWidth, b.mapHeight
+                b.mapWidth, b.mapHeight,
+                b.terrainCanvases.bridgeDeckCanvas
               );
             } else {
               b.battleRenderer.setTerrain(b.terrain, b.cellSize);
             }
           }
         }, 0);
+      }
+      // Record if enabled
+      if (Game.endless._record) {
+        createRecorder(Game.endless.battle, 'endless');
       }
       startEndlessLoop();
       break;
@@ -551,7 +561,8 @@ export function goto(newState, data = {}) {
               b.battleRenderer.setTerrainFromCanvases(
                 b.terrainCanvases.terrainCanvas,
                 b.terrainCanvases.canopyCanvas,
-                b.mapWidth, b.mapHeight
+                b.mapWidth, b.mapHeight,
+                b.terrainCanvases.bridgeDeckCanvas
               );
             } else {
               b.battleRenderer.setTerrain(b.terrain, b.cellSize);
@@ -559,6 +570,12 @@ export function goto(newState, data = {}) {
           }
         }, 0);
       }
+      // Record if enabled (per-battle toggle or settings default)
+      if (Game.fireRange.config.record !== false && Game.settings?.autoRecord !== false
+          || Game.fireRange.config.record === true) {
+        createRecorder(Game.fireRange.battle);
+      }
+
       startFireRangeLoop();
       break;
 
@@ -883,7 +900,7 @@ function update(dt) {
           damage: stats.damage,
           attackerTypes: stats.types,
           direction: -1,
-          owner: 'player'
+          owner: Owner.PLAYER
         });
         b.projectiles.push(proj);
 
@@ -934,7 +951,7 @@ function update(dt) {
         damage: eDef.damage,
         attackerTypes: eDef.types,
         direction: 1,
-        owner: 'enemy'
+        owner: Owner.ENEMY
       });
       b.projectiles.push(proj);
       sound('shoot');
@@ -963,7 +980,7 @@ function update(dt) {
   const playerHpBefore = new Map(playerUnitsAsTargets.map(u => [u, u.hp]));
 
   // Update player projectiles (hitting enemies) - using shared module
-  const playerProjs = b.projectiles.filter(p => p.owner === 'player');
+  const playerProjs = b.projectiles.filter(p => p.owner === Owner.PLAYER);
   const playerProjResult = updateProjectiles(
     playerProjs,
     b.enemies,
@@ -973,7 +990,7 @@ function update(dt) {
   );
 
   // Update enemy projectiles (hitting player units) - using shared module
-  const enemyProjs = b.projectiles.filter(p => p.owner === 'enemy');
+  const enemyProjs = b.projectiles.filter(p => p.owner === Owner.ENEMY);
   const enemyProjResult = updateProjectiles(
     enemyProjs,
     playerUnitsAsTargets,
@@ -1728,7 +1745,7 @@ function updateH2H(dt) {
         damage: stats.damage,
         attackerTypes: stats.types,
         direction: -1,
-        owner: 'player'
+        owner: Owner.PLAYER
       }));
       sound('shoot');
     }
@@ -1793,7 +1810,7 @@ function updateH2H(dt) {
         damage: defStats.damage,
         attackerTypes: defStats.types,
         direction: -1,
-        owner: 'player'
+        owner: Owner.PLAYER
       }));
       sound('shoot');
     }
@@ -1834,7 +1851,7 @@ function updateH2H(dt) {
     p.y += p.direction * projDef.speed * dtSec;
 
     // Check for impact based on projectile owner
-    const targetList = p.owner === 'player' ? aiAttackers : playerAttackers;
+    const targetList = p.owner === Owner.PLAYER ? aiAttackers : playerAttackers;
     const target = targetList.find(a => a.lane === p.lane && !a.dead && Math.abs(a.y - p.y) < 25);
 
     if (target) {
@@ -2169,7 +2186,7 @@ function updateEndlessBattle(dt) {
       vx: Math.cos(hero.angle) * projSpeed,
       vy: Math.sin(hero.angle) * projSpeed,
       damage: hero.damage,
-      owner: 'player',
+      owner: Owner.PLAYER,
       type: 'bullet'
     });
 
@@ -2221,33 +2238,31 @@ function updateEndlessBattle(dt) {
       b.enemies.push(enemy);
       b.enemiesRemaining = Math.max(0, b.enemiesRemaining - 1);
     }
+    // Add queued enemies to a squad
+    if (readyToSpawn.length > 0) {
+      const wave = Game.endless?.wave || 1;
+      const queueZone = { x: b.mapWidth / 2, y: b.cellSize * 3, radius: b.mapWidth / 3 };
+      spawnSquad(b, 'red', readyToSpawn, queueZone, {
+        preset: scaleBrainByWave(BRAIN_PRESETS.endlessEnemy, wave)
+      });
+    }
     b.spawnQueue = stillWaiting;
   }
 
-  // --- UPDATE MODIFIER EFFECTS (commander aura, berserker rage) ---
-  updateModifierEffects(b.enemies, dtSec);
+  // --- UNIFIED AI PIPELINE ---
+  runBattleAI(b, now, dtSec);
 
-  // --- UPDATE ENEMIES (modular AI) ---
-  b.enemies.forEach(e => {
-    if (e.dead) return;
-    updateEnemyAI(b, e, hero, b.units, now, dtSec);
+  // --- RECORD REPLAY FRAME ---
+  if (b._recorder) recordFrame(b, now);
 
-    // Check hero defeat after each enemy update
-    if (hero.hp <= 0) {
-      hero.hp = 0;
-      b.result = 'defeat';
-      Game.endless.result = 'death';
-      Game.endless.exitWave = Game.endless.wave;
-      goto(State.ENDLESS_RESULT);
-    }
-  });
-
-  // --- UPDATE ALLY UNITS ---
-  if (b.units && b.units.length > 0) {
-    b.units.forEach(unit => {
-      if (unit.dead) return;
-      updateUnitAI(b, unit, hero, b.enemies, now, dtSec);
-    });
+  // --- CHECK HERO DEFEAT ---
+  if (hero.hp <= 0) {
+    hero.hp = 0;
+    b.result = 'defeat';
+    Game.endless.result = 'death';
+    Game.endless.exitWave = Game.endless.wave;
+    saveReplay(b);
+    goto(State.ENDLESS_RESULT);
   }
 
   // --- UPDATE PROJECTILES ---
@@ -2268,7 +2283,7 @@ function updateEndlessBattle(dt) {
     }
 
     // Check collision
-    if (p.owner === 'player' || p.owner === 'ally') {
+    if (p.owner === Owner.PLAYER || p.owner === Owner.ALLY) {
       // Player/ally projectiles hit enemies
       b.enemies.forEach(e => {
         if (e.dead || p.dead) return;
@@ -2276,7 +2291,7 @@ function updateEndlessBattle(dt) {
         const dy = p.y - e.y;
         if (dx * dx + dy * dy < 400) {  // ~20px radius
           // Bridge deck blocks shots between different elevation levels
-          if (isBridgeDeckBlocking(b.terrainMap?.bridges, p.originX ?? p.x, p.originY ?? p.y, e.x, e.y)) return;
+          if (isBridgeDeckBlocking(b.terrainMap?.bridges, p.originX ?? p.x, p.originY ?? p.y, e.x, e.y, p._bridgeElevation, e._bridgeElevation)) return;
 
           // Apply modifier damage reduction (armored, shielded)
           let dmg = p.damage;
@@ -2310,7 +2325,7 @@ function updateEndlessBattle(dt) {
           }
         }
       });
-    } else if (p.owner === 'enemy') {
+    } else if (p.owner === Owner.ENEMY) {
       // Enemy projectiles hit hero
       const hdx = p.x - hero.x;
       const hdy = p.y - hero.y;
@@ -2502,6 +2517,7 @@ function spawnEndlessWave(b) {
 
   let totalEnemies = 0;
   let enemyIndex = 0;
+  const enemiesBeforeSpawn = b.enemies.length;
 
   for (const template of templates) {
     // Pick a random spawn edge for this template's groups
@@ -2551,6 +2567,15 @@ function spawnEndlessWave(b) {
   }
 
   b.enemiesRemaining = totalEnemies - b.enemies.length; // Remaining in queue
+
+  // Create squad for immediately spawned enemies (queue enemies get squaded when they spawn)
+  const immediateEnemies = b.enemies.slice(enemiesBeforeSpawn);
+  if (immediateEnemies.length > 0) {
+    const waveSpawnZone = { x: b.mapWidth / 2, y: b.cellSize * 3, radius: b.mapWidth / 3 };
+    spawnSquad(b, 'red', immediateEnemies, waveSpawnZone, {
+      preset: scaleBrainByWave(BRAIN_PRESETS.endlessEnemy, wave)
+    });
+  }
 }
 
 // Draw endless battle - uses shared hero battle rendering
@@ -2588,23 +2613,13 @@ function drawEndlessBattle() {
 export function endlessKeyDown(key) {
   const b = Game.endless?.battle;
   if (!b) return;
-
-  const k = key.toLowerCase();
-  if (k === 'w' || k === 'arrowup') b.keys.w = true;
-  if (k === 'a' || k === 'arrowleft') b.keys.a = true;
-  if (k === 's' || k === 'arrowdown') b.keys.s = true;
-  if (k === 'd' || k === 'arrowright') b.keys.d = true;
+  cameraKeyDown(b, key);
 }
 
 export function endlessKeyUp(key) {
   const b = Game.endless?.battle;
   if (!b) return;
-
-  const k = key.toLowerCase();
-  if (k === 'w' || k === 'arrowup') b.keys.w = false;
-  if (k === 'a' || k === 'arrowleft') b.keys.a = false;
-  if (k === 's' || k === 'arrowdown') b.keys.s = false;
-  if (k === 'd' || k === 'arrowright') b.keys.d = false;
+  cameraKeyUp(b, key);
 }
 
 export function endlessMouseMove(x, y) {
@@ -2659,6 +2674,7 @@ export function formatFireRangeLog(b) {
   const lines = ['=== FIRE RANGE SNAPSHOT ==='];
   lines.push(`Result: ${b.result || 'in progress'}`);
   lines.push(`Map: ${b.gridWidth}x${b.gridHeight} cells, cellSize=${b.cellSize}`);
+  if (b.terrainSeed != null) lines.push(`Seed: ${b.terrainSeed}`);
   if (Game.fireRange?.scenarioName) lines.push(`Scenario: ${Game.fireRange.scenarioName}`);
   lines.push('');
 
@@ -2828,43 +2844,17 @@ function updateFireRangeBattle(dt) {
   const now = Date.now();
   const hero = b.hero;
 
-  // --- UPDATE MODIFIER EFFECTS ---
-  updateModifierEffects(b.enemies, dtSec);
-
   // --- DEBUG: NO COOLDOWNS ---
   if (b.debug?.noCooldowns) {
     if (b.units) for (const u of b.units) { u.lastShot = 0; u.lastAttack = 0; }
     if (b.enemies) for (const e of b.enemies) { e.lastShot = 0; e.lastAttack = 0; }
   }
 
-  // --- UPDATE SERGEANTS (before formations — sets commands/waypoints/formations) ---
-  if (b._sergeants) {
-    b._now = now;
-    updateSergeant(b, b._sergeants.red,  b.enemies, b.units || [], now);
-    if (b.units) updateSergeant(b, b._sergeants.blue, b.units, b.enemies, now);
-  }
+  // --- UNIFIED AI PIPELINE ---
+  runBattleAI(b, now, dtSec);
 
-  // --- UPDATE FORMATIONS (before brains so units know their slots) ---
-  updateFormation(b, b.enemies, b.units || [], now);
-  if (b.units) updateFormation(b, b.units, b.enemies, now);
-
-  // --- UPDATE ENEMIES (modular AI) ---
-  b.enemies.forEach(e => {
-    if (e.dead) return;
-    updateEnemyAI(b, e, hero, b.units, now, dtSec);
-  });
-
-  // --- UPDATE ALLY UNITS ---
-  if (b.units && b.units.length > 0) {
-    b.units.forEach(unit => {
-      if (unit.dead) return;
-      updateUnitAI(b, unit, hero, b.enemies, now, dtSec);
-    });
-  }
-
-  // --- SHARE SPOTTED INTEL between team members ---
-  shareTeamIntel(b.enemies, now);
-  if (b.units) shareTeamIntel(b.units, now);
+  // --- RECORD REPLAY FRAME ---
+  if (b._recorder) recordFrame(b, now);
 
   // --- UPDATE PROJECTILES ---
   b.projectiles.forEach(p => {
@@ -2882,14 +2872,14 @@ function updateFireRangeBattle(dt) {
       return;
     }
 
-    if (p.owner === 'player' || p.owner === 'ally') {
+    if (p.owner === Owner.PLAYER || p.owner === Owner.ALLY) {
       b.enemies.forEach(e => {
         if (e.dead || p.dead) return;
         const dx = p.x - e.x;
         const dy = p.y - e.y;
         if (dx * dx + dy * dy < 400) {
           // Bridge deck blocks shots between different elevation levels
-          if (isBridgeDeckBlocking(b.terrainMap?.bridges, p.originX ?? p.x, p.originY ?? p.y, e.x, e.y)) return;
+          if (isBridgeDeckBlocking(b.terrainMap?.bridges, p.originX ?? p.x, p.originY ?? p.y, e.x, e.y, p._bridgeElevation, e._bridgeElevation)) return;
           let dmg = p.damage;
           // Tier-based damage scaling (infantry < light < medium < heavy)
           const defTier = getArmorTier(e);
@@ -2919,7 +2909,7 @@ function updateFireRangeBattle(dt) {
           }
           if (e.hp <= 0) {
             e.dead = true; b.kills++;
-            if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: 'blue', type: 'kill', x: Math.round(e.x), y: Math.round(e.y), action: 'kill', target: e.id, dmg, detail: `hp:0/${e.maxHp}` });
+            if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: Team.BLUE, type: 'kill', x: Math.round(e.x), y: Math.round(e.y), action: 'kill', target: e.id, dmg, detail: `hp:0/${e.maxHp}` });
             // Killer gets morale boost
             const killer = b.units?.find(u => u.id === p.sourceId);
             if (killer && !killer.dead) applyMoraleEvent(killer, MoraleEvent.LANDED_KILL, 0.5);
@@ -2932,11 +2922,11 @@ function updateFireRangeBattle(dt) {
                 : null;
               if (successor) {
                 successor.isLeader = true;
-                b._teamCommanders.enemy = successor;
-                if (b._debugLog) b._debugLog.push({ t: now, who: e.id, team: 'red', type: 'movement', x: Math.round(e.x), y: Math.round(e.y), action: 'commander died', detail: `promoted ${successor.id} (ldr:${(successor.leadership ?? 0).toFixed(1)})` });
+                b._teamCommanders[Team.RED] = successor;
+                if (b._debugLog) b._debugLog.push({ t: now, who: e.id, team: Team.RED, type: 'movement', x: Math.round(e.x), y: Math.round(e.y), action: 'commander died', detail: `promoted ${successor.id} (ldr:${(successor.leadership ?? 0).toFixed(1)})` });
               } else {
-                b._teamCommanders.enemy = null;
-                if (b._debugLog) b._debugLog.push({ t: now, who: e.id, team: 'red', type: 'movement', x: Math.round(e.x), y: Math.round(e.y), action: 'commander died', detail: 'no successor' });
+                b._teamCommanders[Team.RED] = null;
+                if (b._debugLog) b._debugLog.push({ t: now, who: e.id, team: Team.RED, type: 'movement', x: Math.round(e.x), y: Math.round(e.y), action: 'commander died', detail: 'no successor' });
               }
             }
             // Nearby enemies of dead unit lose morale + gain suppression
@@ -2951,11 +2941,11 @@ function updateFireRangeBattle(dt) {
               }
             }
           } else {
-            if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: 'blue', type: 'hit', x: Math.round(e.x), y: Math.round(e.y), action: 'hit', target: e.id, dmg, detail: `hp:${e.hp}/${e.maxHp}` });
+            if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: Team.BLUE, type: 'hit', x: Math.round(e.x), y: Math.round(e.y), action: 'hit', target: e.id, dmg, detail: `hp:${e.hp}/${e.maxHp}` });
           }
         }
       });
-    } else if (p.owner === 'enemy') {
+    } else if (p.owner === Owner.ENEMY) {
       // Enemy projectiles hit ally units only (no hero in fire range)
       if (b.units) {
         for (const unit of b.units) {
@@ -2964,7 +2954,7 @@ function updateFireRangeBattle(dt) {
           const udy = p.y - unit.y;
           if (udx * udx + udy * udy < 400) {
             // Bridge deck blocks shots between different elevation levels
-            if (isBridgeDeckBlocking(b.terrainMap?.bridges, p.originX ?? p.x, p.originY ?? p.y, unit.x, unit.y)) continue;
+            if (isBridgeDeckBlocking(b.terrainMap?.bridges, p.originX ?? p.x, p.originY ?? p.y, unit.x, unit.y, p._bridgeElevation, unit._bridgeElevation)) continue;
             // Tier-based damage scaling
             const defTier = getArmorTier(unit);
             let tierDmg = Math.round(p.damage * getTierDamageMultiplier(p.attackerTier ?? 0, defTier));
@@ -2982,7 +2972,7 @@ function updateFireRangeBattle(dt) {
             }
             if (unit.hp <= 0) {
               unit.hp = 0; unit.dead = true;
-              if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: 'red', type: 'kill', x: Math.round(unit.x), y: Math.round(unit.y), action: 'kill', target: unit.id, dmg: tierDmg, detail: `hp:0/${unit.maxHp}` });
+              if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: Team.RED, type: 'kill', x: Math.round(unit.x), y: Math.round(unit.y), action: 'kill', target: unit.id, dmg: tierDmg, detail: `hp:0/${unit.maxHp}` });
               // Killer gets morale boost
               const killer = b.enemies?.find(en => en.id === p.sourceId);
               if (killer && !killer.dead) applyMoraleEvent(killer, MoraleEvent.LANDED_KILL, 0.5);
@@ -2995,11 +2985,11 @@ function updateFireRangeBattle(dt) {
                   : null;
                 if (successor) {
                   successor.isLeader = true;
-                  b._teamCommanders.player = successor;
-                  if (b._debugLog) b._debugLog.push({ t: now, who: unit.id, team: 'blue', type: 'movement', x: Math.round(unit.x), y: Math.round(unit.y), action: 'commander died', detail: `promoted ${successor.id} (ldr:${(successor.leadership ?? 0).toFixed(1)})` });
+                  b._teamCommanders[Team.BLUE] = successor;
+                  if (b._debugLog) b._debugLog.push({ t: now, who: unit.id, team: Team.BLUE, type: 'movement', x: Math.round(unit.x), y: Math.round(unit.y), action: 'commander died', detail: `promoted ${successor.id} (ldr:${(successor.leadership ?? 0).toFixed(1)})` });
                 } else {
-                  b._teamCommanders.player = null;
-                  if (b._debugLog) b._debugLog.push({ t: now, who: unit.id, team: 'blue', type: 'movement', x: Math.round(unit.x), y: Math.round(unit.y), action: 'commander died', detail: 'no successor' });
+                  b._teamCommanders[Team.BLUE] = null;
+                  if (b._debugLog) b._debugLog.push({ t: now, who: unit.id, team: Team.BLUE, type: 'movement', x: Math.round(unit.x), y: Math.round(unit.y), action: 'commander died', detail: 'no successor' });
                 }
               }
               // Nearby blue allies of dead unit lose morale + gain suppression
@@ -3014,7 +3004,7 @@ function updateFireRangeBattle(dt) {
                 }
               }
             } else {
-              if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: 'red', type: 'hit', x: Math.round(unit.x), y: Math.round(unit.y), action: 'hit', target: unit.id, dmg: tierDmg, detail: `hp:${unit.hp}/${unit.maxHp}` });
+              if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: Team.RED, type: 'hit', x: Math.round(unit.x), y: Math.round(unit.y), action: 'hit', target: unit.id, dmg: tierDmg, detail: `hp:${unit.hp}/${unit.maxHp}` });
             }
           }
         }
@@ -3028,7 +3018,7 @@ function updateFireRangeBattle(dt) {
     if (!p._suppressedIds) p._suppressedIds = new Set();
     const nearMissRadSq = 900; // 30px^2
     // Allied projectiles suppress enemies, enemy projectiles suppress allies
-    const nearTargets = (p.owner === 'player' || p.owner === 'ally') ? b.enemies : (b.units || []);
+    const nearTargets = (p.owner === Owner.PLAYER || p.owner === Owner.ALLY) ? b.enemies : (b.units || []);
     for (const u of nearTargets) {
       if (u.dead || p._suppressedIds.has(u.id)) continue;
       const dx = p.x - u.x, dy = p.y - u.y;
@@ -3069,6 +3059,23 @@ function updateFireRangeBattle(dt) {
   } else if (blueAlive === 0 && redAlive === 0) {
     b.result = 'draw';
     fr.result = 'draw';
+  }
+
+  // Save replay
+  if (b.result) saveReplay(b);
+
+  // Show results modal when battle first ends
+  if (b.result && !b._resultShown) {
+    b._resultShown = true;
+    b._showResults = true;
+    // Inject overlay into DOM since the template isn't re-rendered
+    const app = document.getElementById('app');
+    if (app) {
+      const div = document.createElement('div');
+      div.id = 'fr-results-container';
+      div.innerHTML = fireRangeResultsHTML(b);
+      app.appendChild(div);
+    }
   }
 
   // Auto-save log when battle ends
@@ -3128,8 +3135,15 @@ function drawFireRangeBattle() {
     zoomEl.textContent = uz !== 1 ? `${Math.round(uz * 100)}%` : '';
   }
 
-  // Update debug panel (throttled to 4 fps for DOM perf)
+  // Update live report overlay (throttled to 1 fps)
   const now = performance.now();
+  if (b._showResults && now - (b._lastReportUpdate || 0) > 1000) {
+    b._lastReportUpdate = now;
+    const el = document.getElementById('fr-results-container');
+    if (el) el.innerHTML = fireRangeResultsHTML(b);
+  }
+
+  // Update debug panel (throttled to 4 fps for DOM perf)
   if (now - _lastDebugPanelUpdate > 250) {
     _lastDebugPanelUpdate = now;
     _updateDebugPanel(b);
@@ -3242,7 +3256,7 @@ function _updateDebugPanel(b) {
     const events = filtered.slice(-40);
     let html = '';
     for (const ev of events) {
-      const color = ev.team === 'blue' ? '#4a9eff' : ev.team === 'red' ? '#ff4444' : '#888';
+      const color = ev.team === Team.BLUE ? '#4a9eff' : ev.team === Team.RED ? '#ff4444' : '#888';
       const tag = ev.type ? `<span class="fr-log-tag fr-log-${ev.type}">${ev.type}</span> ` : '';
       html += `<div class="fr-log-entry">${tag}<span style="color:${color}">${ev.who}</span> ${ev.action} <span style="color:#aaa">${ev.target || ''}</span>${ev.dmg ? ` (${ev.dmg} dmg)` : ''}${ev.acc ? ` acc:${ev.acc}` : ''}${ev.detail ? ` <span style="color:#555">${ev.detail}</span>` : ''}</div>`;
     }
@@ -3255,86 +3269,19 @@ function _updateDebugPanel(b) {
 export function fireRangeKeyDown(key) {
   const b = Game.fireRange?.battle;
   if (!b) return;
-  const k = key.toLowerCase();
-  if (k === 'w' || k === 'arrowup') b.keys.w = true;
-  if (k === 'a' || k === 'arrowleft') b.keys.a = true;
-  if (k === 's' || k === 'arrowdown') b.keys.s = true;
-  if (k === 'd' || k === 'arrowright') b.keys.d = true;
-
-  // Zoom controls
-  if (k === '=' || k === '+' || k === 'numpadadd') {
-    fireRangeZoom(-1); // zoom in
-  }
-  if (k === '-' || k === 'numpadsubtract') {
-    fireRangeZoom(1); // zoom out
-  }
-  // M = fit whole map
-  if (k === 'm') {
-    fireRangeFitMap();
-  }
-  // F = re-center on leader (exit manual pan)
-  if (k === 'f') {
-    b.camera._manualPan = false;
-  }
+  cameraKeyDown(b, key);
 }
 
 export function fireRangeKeyUp(key) {
   const b = Game.fireRange?.battle;
   if (!b) return;
-  const k = key.toLowerCase();
-  if (k === 'w' || k === 'arrowup') b.keys.w = false;
-  if (k === 'a' || k === 'arrowleft') b.keys.a = false;
-  if (k === 's' || k === 'arrowdown') b.keys.s = false;
-  if (k === 'd' || k === 'arrowright') b.keys.d = false;
+  cameraKeyUp(b, key);
 }
 
-/**
- * Handle mouse wheel zoom in fire range.
- * @param {number} deltaY - Wheel delta (positive = scroll down = zoom out)
- */
 export function fireRangeWheel(deltaY) {
-  fireRangeZoom(deltaY);
-}
-
-function fireRangeZoom(deltaY) {
   const b = Game.fireRange?.battle;
   if (!b) return;
-  const step = deltaY > 0 ? -0.1 : 0.1; // scroll down = zoom out
-  const current = b.camera.userZoom || 1;
-  b.camera.userZoom = Math.max(0.15, Math.min(3, current + step));
-}
-
-function fireRangeFitMap() {
-  const b = Game.fireRange?.battle;
-  if (!b) return;
-  const bf = document.querySelector('.endless-battlefield');
-  if (!bf) return;
-
-  const screenW = bf.offsetWidth;
-  const screenH = bf.offsetHeight;
-  const TACTICAL_RADIUS = 600;
-  const baseZoom = Math.min(screenW, screenH) / (TACTICAL_RADIUS * 2);
-
-  // Calculate zoom to fit entire map
-  const fitZoomX = screenW / (b.mapWidth * baseZoom);
-  const fitZoomY = screenH / (b.mapHeight * baseZoom);
-  const fitZoom = Math.min(fitZoomX, fitZoomY);
-
-  // Toggle: if already near fit-map zoom, reset to 1.0
-  const current = b.camera.userZoom || 1;
-  if (Math.abs(current - fitZoom) < 0.05) {
-    b.camera.userZoom = 1;
-    b.camera._manualPan = false;
-  } else {
-    b.camera.userZoom = fitZoom;
-    // Center camera on map
-    const zoom = baseZoom * fitZoom;
-    const viewW = screenW / zoom;
-    const viewH = screenH / zoom;
-    b.camera.x = (b.mapWidth - viewW) / 2;
-    b.camera.y = (b.mapHeight - viewH) / 2;
-    b.camera._manualPan = true;
-  }
+  cameraZoom(b, deltaY);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -3611,6 +3558,7 @@ function checkZoneVictory(b) {
 
   if (allCaptured && b.scenario.victoryCondition === 'capture_all') {
     b.result = 'victory';
+    saveReplay(b);
     goto(State.CAMPAIGN_RESULT);
   }
 }
@@ -3919,6 +3867,7 @@ function updateCampaignBattle(dt) {
   b.timer -= dtSec;
   if (b.timer <= 0 && b.objective === 'survive') {
     b.result = 'victory';
+    saveReplay(b);
     goto(State.CAMPAIGN_RESULT);
     return;
   }
@@ -4025,7 +3974,7 @@ function updateCampaignBattle(dt) {
       vx: Math.cos(hero.angle) * projSpeed,
       vy: Math.sin(hero.angle) * projSpeed,
       damage: hero.damage,
-      owner: 'player',
+      owner: Owner.PLAYER,
       type: 'bullet'
     });
 
@@ -4084,22 +4033,19 @@ function updateCampaignBattle(dt) {
     }
   }
 
-  // --- UPDATE ENEMIES (using modular AI) ---
-  b.enemies.forEach(e => {
-    updateEnemyAI(b, e, hero, b.units, now, dtSec);
+  // --- UNIFIED AI PIPELINE ---
+  runBattleAI(b, now, dtSec);
 
-    // Check if hero is defeated
-    if (hero.hp <= 0) {
-      hero.hp = 0;
-      b.result = 'defeat';
-      goto(State.CAMPAIGN_RESULT);
-    }
-  });
+  // --- RECORD REPLAY FRAME ---
+  if (b._recorder) recordFrame(b, now);
 
-  // --- UPDATE ALLY UNITS (using modular AI) ---
-  b.units.forEach(unit => {
-    updateUnitAI(b, unit, hero, b.enemies, now, dtSec);
-  });
+  // --- CHECK HERO DEFEAT ---
+  if (hero.hp <= 0) {
+    hero.hp = 0;
+    b.result = 'defeat';
+    saveReplay(b);
+    goto(State.CAMPAIGN_RESULT);
+  }
 
   // --- UPDATE PROJECTILES ---
   b.projectiles.forEach(p => {
@@ -4119,7 +4065,7 @@ function updateCampaignBattle(dt) {
     }
 
     // Check hit on enemies (player and ally projectiles)
-    if (p.owner === 'player' || p.owner === 'ally') {
+    if (p.owner === Owner.PLAYER || p.owner === Owner.ALLY) {
       for (const e of b.enemies) {
         if (e.dead) continue;
         const dx = e.x - p.x;
@@ -4136,7 +4082,7 @@ function updateCampaignBattle(dt) {
             if (sourceUnit) {
               attackerStance = sourceUnit.stance || 'autonomous';
             }
-          } else if (p.owner === 'player') {
+          } else if (p.owner === Owner.PLAYER) {
             // Hero uses aggressive stance by default
             attackerStance = 'aggressive';
           }
@@ -4152,7 +4098,7 @@ function updateCampaignBattle(dt) {
           p.hit = true;
 
           // Record damage for aggro system
-          if (p.owner === 'player') {
+          if (p.owner === Owner.PLAYER) {
             recordDamage(e, 'hero', finalDamage);
           } else if (p.owner === 'ally' && p.sourceId) {
             recordDamage(e, p.sourceId, finalDamage);
@@ -4239,6 +4185,13 @@ function spawnCampaignWave(b) {
   }
 
   b.wave++;
+
+  // Create a new squad for this wave's enemies
+  const waveEnemies = b.enemies.slice(-count);
+  const spawnZone = { x: b.mapWidth / 2, y: 2 * b.cellSize, radius: b.mapWidth / 3 };
+  spawnSquad(b, 'red', waveEnemies, spawnZone, {
+    preset: scaleBrainByWave(BRAIN_PRESETS.campaignEnemy, b.wave)
+  });
 }
 
 function drawCampaignBattle() {
@@ -4288,61 +4241,10 @@ function drawHeroBattle(bf, b) {
   const screenW = bf.offsetWidth;
   const screenH = bf.offsetHeight;
 
-  const TACTICAL_RADIUS = b.fireRange ? 600 : 450;
-  const baseZoom = Math.min(screenW, screenH) / (TACTICAL_RADIUS * 2);
-  // Apply user zoom multiplier (scroll wheel / keyboard)
-  const userZoom = b.camera.userZoom || 1;
-  const zoom = baseZoom * userZoom;
-  const viewW = screenW / zoom;
-  const viewH = screenH / zoom;
-
-  if (b.fireRange) {
-    // Fire Range: smooth follow on blue leader (or free pan with WASD)
-    const leader = b.units?.find(u => !u.dead && u._formationSlot === 0)
-                || b.units?.find(u => !u.dead)
-                || { x: b.mapWidth / 2, y: b.mapHeight / 2 };
-
-    // WASD camera pan override
-    const panSpeed = 400 / zoom; // pixels/sec in world space, faster when zoomed out
-    const dtSec = 1 / 60; // approximate frame dt
-    let panX = 0, panY = 0;
-    if (b.keys.a) panX -= panSpeed * dtSec;
-    if (b.keys.d) panX += panSpeed * dtSec;
-    if (b.keys.w) panY -= panSpeed * dtSec;
-    if (b.keys.s) panY += panSpeed * dtSec;
-
-    if (panX !== 0 || panY !== 0) {
-      // Manual pan mode — move camera directly
-      b.camera.x += panX;
-      b.camera.y += panY;
-      b.camera._manualPan = true;
-    } else if (!b.camera._manualPan) {
-      // Auto-follow blue leader
-      const targetX = leader.x - viewW / 2;
-      const targetY = leader.y - viewH / 2;
-      const clampX = Math.max(0, Math.min(b.mapWidth - viewW, targetX));
-      const clampY = Math.max(0, Math.min(b.mapHeight - viewH, targetY));
-      b.camera.x += (clampX - b.camera.x) * 0.08;
-      b.camera.y += (clampY - b.camera.y) * 0.08;
-    }
-
-    // Clamp camera within map bounds (center if view is larger than map)
-    if (viewW >= b.mapWidth) {
-      b.camera.x = (b.mapWidth - viewW) / 2; // center horizontally
-    } else {
-      b.camera.x = Math.max(0, Math.min(b.mapWidth - viewW, b.camera.x));
-    }
-    if (viewH >= b.mapHeight) {
-      b.camera.y = (b.mapHeight - viewH) / 2; // center vertically
-    } else {
-      b.camera.y = Math.max(0, Math.min(b.mapHeight - viewH, b.camera.y));
-    }
-  } else {
-    // Hero modes: center on hero
-    b.camera.x = Math.max(0, Math.min(b.mapWidth - viewW, b.hero.x - viewW / 2));
-    b.camera.y = Math.max(0, Math.min(b.mapHeight - viewH, b.hero.y - viewH * 0.65));
-  }
-  b.camera.zoom = zoom;
+  // Shared camera update (fire range auto-follow vs hero-center)
+  const zoom = b.fireRange
+    ? updateFireRangeCamera(b, screenW, screenH)
+    : updateHeroCamera(b, screenW, screenH);
 
   // ── Canvas rendering path (BattleRenderer) ──
   if (USE_CANVAS_BATTLE && b.battleRenderer) {
@@ -4496,7 +4398,7 @@ function drawHeroBattle(bf, b) {
     el.style.top = `${p.y - b.camera.y - 4}px`;
     el.style.width = '8px';
     el.style.height = '8px';
-    el.style.backgroundColor = p.owner === 'player' ? '#ffcc00' : '#ff6666';
+    el.style.backgroundColor = p.owner === Owner.PLAYER ? '#ffcc00' : '#ff6666';
     el.style.borderRadius = '50%';
     el.style.boxShadow = '0 0 10px #ffcc00';
     bf.appendChild(el);
@@ -4617,13 +4519,8 @@ export function campaignKeyDown(key) {
   const b = Game.campaign?.heroBattle;
   if (!b) return;
 
-  const k = key.toLowerCase();
-
-  // Movement keys
-  if (k === 'w' || k === 'arrowup') b.keys.w = true;
-  if (k === 'a' || k === 'arrowleft') b.keys.a = true;
-  if (k === 's' || k === 'arrowdown') b.keys.s = true;
-  if (k === 'd' || k === 'arrowright') b.keys.d = true;
+  // Movement + camera keys
+  cameraKeyDown(b, key);
 
   // Tactical command keys (1-5)
   for (const [cmdKey, cmd] of Object.entries(TacticalCommand)) {
@@ -4674,12 +4571,7 @@ export function campaignKeyDown(key) {
 export function campaignKeyUp(key) {
   const b = Game.campaign?.heroBattle;
   if (!b) return;
-
-  const k = key.toLowerCase();
-  if (k === 'w' || k === 'arrowup') b.keys.w = false;
-  if (k === 'a' || k === 'arrowleft') b.keys.a = false;
-  if (k === 's' || k === 'arrowdown') b.keys.s = false;
-  if (k === 'd' || k === 'arrowright') b.keys.d = false;
+  cameraKeyUp(b, key);
 }
 
 export function campaignMouseMove(x, y) {

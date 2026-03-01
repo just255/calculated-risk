@@ -26,8 +26,9 @@ export class BattleRenderer {
     this._entityRenderer = new EntityRenderer();
 
     // Cached pre-rendered layers (rendered once from battle terrain data)
-    this._terrainCache = null; // Canvas element from renderBaseTerrainToCanvas
-    this._canopyCache = null;  // Canvas element from renderCanopyToCanvas
+    this._terrainCache = null;      // Canvas element from renderBaseTerrainToCanvas
+    this._canopyCache = null;       // Canvas element from renderCanopyToCanvas
+    this._bridgeDeckCache = null;   // Canvas element for bridge deck overlay (for under-bridge rendering)
     this._mapWidth = 0;
     this._mapHeight = 0;
 
@@ -82,10 +83,12 @@ export class BattleRenderer {
    * @param {HTMLCanvasElement} canopyCanvas - Pre-rendered canopy layer
    * @param {number} mapWidth - Map width in pixels
    * @param {number} mapHeight - Map height in pixels
+   * @param {HTMLCanvasElement} [bridgeDeckCanvas] - Optional bridge deck overlay for under-bridge rendering
    */
-  setTerrainFromCanvases(terrainCanvas, canopyCanvas, mapWidth, mapHeight) {
+  setTerrainFromCanvases(terrainCanvas, canopyCanvas, mapWidth, mapHeight, bridgeDeckCanvas) {
     this._terrainCache = terrainCanvas;
     this._canopyCache = canopyCanvas;
+    this._bridgeDeckCache = bridgeDeckCanvas || null;
     this._terrainGridCache = null;   // Invalidate grid overlay
     this._terrainGridCacheKey = null;
     this._mapWidth = mapWidth;
@@ -100,6 +103,7 @@ export class BattleRenderer {
     this._viewport.destroy();
     this._terrainCache = null;
     this._canopyCache = null;
+    this._bridgeDeckCache = null;
     this._terrainGridCache = null;
     this._terrainGridCacheKey = null;
     this._battleState = null;
@@ -166,6 +170,13 @@ export class BattleRenderer {
 
     // Layer 3: Effects (canopy on top, targeting indicator, terrain label)
     this._renderCanopy();
+
+    // Speech bubbles — drawn on effects layer so they appear above canopy
+    const effectsCtx = this._viewport.getContext('effects');
+    if (effectsCtx) {
+      this._entityRenderer.renderSpeechBubbles(effectsCtx, b, Date.now());
+    }
+
     if (b.showTerrainGrid >= 1) this._renderTerrainGrid(b);
     this._renderTargetingOverlay(b);
     this._renderTerrainLabel(b);
@@ -190,7 +201,39 @@ export class BattleRenderer {
       this._entityRenderer.renderSpawnZones(ctx, b);
     }
 
-    this._entityRenderer.renderAll(ctx, b, now);
+    if (this._bridgeDeckCache) {
+      // 3-pass rendering for under-bridge support:
+      // Pass 1: Under-bridge entities (dimmed by shadow)
+      this._entityRenderer.renderFiltered(ctx, b, now,
+        e => e._bridgeElevation === 'under'
+      );
+
+      // Shadow overlay on bridge footprints for under-bridge visual
+      ctx.save();
+      ctx.globalAlpha = 0.3;
+      ctx.fillStyle = '#000';
+      if (b.terrainMap?.bridges) {
+        for (const br of b.terrainMap.bridges) {
+          ctx.save();
+          ctx.translate(br.x, br.y);
+          ctx.rotate(Math.atan2(br.dirY, br.dirX));
+          ctx.fillRect(-br.length / 2, -br.width / 2, br.length, br.width);
+          ctx.restore();
+        }
+      }
+      ctx.restore();
+
+      // Draw bridge deck overlay
+      ctx.drawImage(this._bridgeDeckCache, 0, 0);
+
+      // Pass 2: All non-under-bridge entities (on top of deck)
+      this._entityRenderer.renderFiltered(ctx, b, now,
+        e => e._bridgeElevation !== 'under'
+      );
+    } else {
+      // Standard single-pass rendering (no bridges)
+      this._entityRenderer.renderAll(ctx, b, now);
+    }
 
     // Debug overlays (fire range telemetry)
     if (b.debugOverlay) {

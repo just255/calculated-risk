@@ -3,7 +3,7 @@
 // Supports both legacy 2D string grids and PCG terrainMap cells
 // ═══════════════════════════════════════════════════════════════
 
-import { queryTerrain } from './terrain-query.js';
+import { queryTerrain, queryBridgeRailing } from './terrain-query.js';
 import { WATER_DEPTH_SPEED } from './terrain-utils.js';
 
 // Pathfinding cell size for terrainMap battles (finer than the old 64px rasterize grid)
@@ -305,9 +305,8 @@ export function buildCostFn(b, category = 'infantry') {
 
       if (result.isBlocked) return Infinity;
 
-      // Note: bridge railings are enforced in real-time movement (ai.js),
-      // not in A* — the 32px cell resolution is too coarse for the 12px railing zone
-      // and would falsely block valid bridge paths.
+      // Bridge railing — high cost so A* routes fully on or fully off the bridge
+      if (tm.bridges && queryBridgeRailing(tm.bridges, wx, wy)) return 10.0;
 
       // Water depth — use actual per-category speed mods so A* cost
       // reflects real movement speed rather than flat avoidance penalties
@@ -625,7 +624,22 @@ export function resolveNavWaypoint(b, unit, targetX, targetY, category) {
       unit._navPath = path;
       unit._navIndex = 0;
       unit._navTarget = { x: targetX, y: targetY };
+      unit._navFailCount = 0;
     } else {
+      // Log pathfinding failure (throttled to once per 5s per unit)
+      const now = Date.now();
+      if (!unit._lastNavFailLog || now - unit._lastNavFailLog > 5000) {
+        unit._lastNavFailLog = now;
+        unit._navFailCount = (unit._navFailCount || 0) + 1;
+        if (b._debugLog) {
+          const logTeam = unit.team;
+          b._debugLog.push({
+            t: now, who: unit.id, team: logTeam, type: 'nav_fail',
+            x: Math.round(unit.x), y: Math.round(unit.y),
+            detail: `no path to (${Math.round(targetX)},${Math.round(targetY)}) dist:${Math.round(navDist)} cat:${category} fails:${unit._navFailCount}`
+          });
+        }
+      }
       unit._navPath = null;
       unit._navTarget = null;
       return { x: targetX, y: targetY };

@@ -5,6 +5,8 @@
 // ═══════════════════════════════════════════════════════════════
 
 import * as sprites from './sprites.js';
+import { Owner } from './constants.js';
+import { getCachedInsignia, cacheInsigniaSet } from './insignia-renderer.js';
 
 // Entity sizes (matching current DOM div sizes)
 const HERO_SIZE = 40;
@@ -17,6 +19,16 @@ const PULSE_PERIOD = 1000; // ms for selection pulse
 const TARGET_PULSE_PERIOD = 800; // ms for concentrate-target pulse
 
 export class EntityRenderer {
+
+  // Tunable insignia parameters — live-editable via debug panel
+  static insigniaParams = {
+    chevW: 6,       // Half-width of chevron (full width = 12)
+    chevH: 7,       // Height of each chevron (~square, slightly taller)
+    gap: 4,         // Vertical spacing between chevrons
+    bow: 0.35,      // Inward curve as fraction of chevW
+    lineWidth: 1.5, // Stroke width
+    yOffset: 0      // Vertical offset from unit center
+  };
 
   /**
    * Render the hero (animated sprite or colored fallback).
@@ -54,6 +66,14 @@ export class EntityRenderer {
    * @param {number} now - performance.now() for animation timing
    */
   renderUnit(ctx, unit, isSelected, now) {
+    if (unit.dead) {
+      this._renderDead(ctx, unit.x, unit.y, unit.angle, UNIT_SIZE, unit.animId, now, unit);
+      return;
+    }
+
+    // Persistent gold outline for sergeants
+    this._drawSergeantOutline(ctx, unit.x, unit.y, UNIT_SIZE / 2, unit);
+
     const hasAnim = unit.animId && sprites.hasAnimatedUnit(unit.animId);
 
     if (hasAnim) {
@@ -91,6 +111,10 @@ export class EntityRenderer {
 
       ctx.restore();
     }
+
+    // Rank chevrons (pop-in + fade) and promotion highlight
+    this._drawRankChevrons(ctx, unit.x, unit.y, unit, now);
+    this._drawPromotionHighlight(ctx, unit.x, unit.y, UNIT_SIZE / 2, unit, now);
   }
 
   /**
@@ -101,9 +125,16 @@ export class EntityRenderer {
    * @param {number} now - performance.now() for animation timing
    */
   renderEnemy(ctx, enemy, isConcentrateTarget, now) {
-    if (enemy.dead) return;
+    if (enemy.dead) {
+      this._renderDead(ctx, enemy.x, enemy.y, enemy.angle, ENEMY_SIZE, enemy.animId, now, enemy);
+      return;
+    }
 
     const r = ENEMY_SIZE / 2;
+
+    // Persistent gold outline for sergeants
+    this._drawSergeantOutline(ctx, enemy.x, enemy.y, r, enemy);
+
     const hasAnim = enemy.animId && sprites.hasAnimatedUnit(enemy.animId);
 
     if (hasAnim) {
@@ -173,6 +204,10 @@ export class EntityRenderer {
     if (enemy.hp < enemy.maxHp) {
       this._drawHealthBar(ctx, enemy.x, enemy.y - r - 6, enemy.hp / enemy.maxHp, false);
     }
+
+    // Rank chevrons (pop-in + fade) and promotion highlight
+    this._drawRankChevrons(ctx, enemy.x, enemy.y, enemy, now);
+    this._drawPromotionHighlight(ctx, enemy.x, enemy.y, ENEMY_SIZE / 2, enemy, now);
   }
 
   /**
@@ -182,7 +217,7 @@ export class EntityRenderer {
    */
   renderProjectile(ctx, proj) {
     const r = PROJ_SIZE / 2;
-    const isPlayer = proj.owner === 'player';
+    const isPlayer = proj.owner === Owner.PLAYER;
 
     ctx.save();
     ctx.beginPath();
@@ -196,6 +231,44 @@ export class EntityRenderer {
     ctx.fill();
     ctx.shadowBlur = 0;
     ctx.restore();
+  }
+
+  /**
+   * Render only entities that pass a filter function.
+   * Same draw order as renderAll but skips non-matching entities.
+   * @param {CanvasRenderingContext2D} ctx - Context with world transform applied
+   * @param {object} b - Battle state
+   * @param {number} now - performance.now()
+   * @param {function} filterFn - (entity) => boolean, only render if true
+   */
+  renderFiltered(ctx, b, now, filterFn) {
+    const selectedUnitId = b.squad?.selectedUnitId;
+    const concentrateTargetId = b.squad?.concentrateTarget;
+
+    if (b.units) {
+      for (const unit of b.units) {
+        if (!filterFn(unit)) continue;
+        this.renderUnit(ctx, unit, unit.id === selectedUnitId, now);
+      }
+    }
+
+    if (b.hero && !b.hero.observer && filterFn(b.hero)) {
+      this.renderHero(ctx, b.hero, now);
+    }
+
+    if (b.enemies) {
+      for (const enemy of b.enemies) {
+        if (!filterFn(enemy)) continue;
+        this.renderEnemy(ctx, enemy, enemy.id === concentrateTargetId, now);
+      }
+    }
+
+    if (b.projectiles) {
+      for (const proj of b.projectiles) {
+        if (!filterFn(proj)) continue;
+        this.renderProjectile(ctx, proj);
+      }
+    }
   }
 
   /**
@@ -305,6 +378,246 @@ export class EntityRenderer {
     ctx.restore();
   }
 
+  /**
+   * Render a dead unit as a greyed-out ghost at its last position.
+   * Fades from full color to grey ghost over DEATH_FADE_MS.
+   */
+  _renderDead(ctx, x, y, angle, size, animId, now, unit) {
+    // Stamp death time on first render after death
+    if (!unit._deathTime) unit._deathTime = now;
+
+    const DEATH_FADE_MS = 1500;
+    const elapsed = now - unit._deathTime;
+    const t = Math.min(1, elapsed / DEATH_FADE_MS); // 0 → 1 over fade duration
+
+    // Lerp from full opacity to ghost opacity, full color to greyscale
+    const alpha = 1 - t * 0.75;           // 1.0 → 0.25
+    const grey = Math.round(t * 100);     // 0% → 100% greyscale
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.filter = `grayscale(${grey}%)`;
+
+    const hasAnim = animId && sprites.hasAnimatedUnit(animId);
+    if (hasAnim) {
+      const rotation = (angle * 180 / Math.PI) + 90;
+      sprites.renderAnimatedUnit(ctx, animId, x, y, rotation, size / UNIT_SIZE * 0.5, now);
+    } else {
+      const half = size / 2;
+      ctx.translate(x, y);
+      ctx.rotate(angle + Math.PI / 2);
+      this._roundedRect(ctx, -half, -half, size, size, 5);
+      ctx.fillStyle = '#666';
+      ctx.fill();
+      ctx.strokeStyle = '#444';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
+  /**
+   * Draw military rank insignia.
+   * SGT (5) pulses continuously. All others pop in briefly on promotion then fade.
+   * In debug mode, all ranks always visible.
+   * Ranks: 0=PVT (none), 1=PV2, 2=PFC, 3=SPC, 4=CPL, 5=SGT
+   * @param {boolean} [forceShow] - If true, always render (debug mode)
+   */
+  _drawRankChevrons(ctx, x, y, unit, now, forceShow) {
+    const rank = unit._rank;
+    if (rank == null || rank <= 0) return;
+
+    let alpha;
+    if (rank === 5) {
+      // Sergeant: persistent pulse
+      alpha = 0.4 + 0.3 * Math.sin(now * Math.PI * 2 / 2000);
+    } else if (forceShow) {
+      // Debug mode: always visible at steady opacity
+      alpha = 0.6;
+    } else {
+      // Others: pop in on promotion, then fade out
+      if (!unit._rankStampTime) unit._rankStampTime = now;
+      const SHOW = 2000;
+      const FADE = 1000;
+      const elapsed = now - unit._rankStampTime;
+      if (elapsed > SHOW + FADE) return; // Hidden
+      alpha = elapsed > SHOW ? (1 - (elapsed - SHOW) / FADE) * 0.7 : 0.7;
+    }
+
+    // Try custom insignia set first (cached OffscreenCanvas)
+    const setId = unit._insigniaSetId;
+    if (setId) {
+      const cached = getCachedInsignia(setId, rank);
+      if (cached) {
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        // Draw cached canvas centered on unit. Cache is 48x48 logical at 2x res.
+        const size = 24; // Draw at 24x24 (half of 48 cache size)
+        ctx.drawImage(cached, x - size / 2, y - size / 2, size, size);
+        ctx.restore();
+        return;
+      }
+    }
+
+    // Fallback: hardcoded insignia rendering
+    const p = EntityRenderer.insigniaParams;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(x, y + p.yOffset);
+
+    ctx.strokeStyle = '#ffd700';
+    ctx.lineWidth = p.lineWidth;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    if (rank === 3) {
+      // Specialist — flipped PFC with eagle
+      this._drawSpecialistInsignia(ctx);
+    } else {
+      // Chevron-based ranks
+      const chevCount = rank === 1 ? 1 : rank === 2 ? 1 : rank === 4 ? 2 : rank === 5 ? 3 : 0;
+      const hasRocker = rank === 2; // PFC gets a rocker above
+
+      const p = EntityRenderer.insigniaParams;
+      const chevW = p.chevW;
+      const chevH = p.chevH;
+      const gap = p.gap;
+      const bow = chevW * p.bow;
+
+      // Stack chevrons bottom-up (widest at bottom)
+      const totalH = (chevCount - 1) * gap;
+      const baseY = totalH / 2;
+
+      for (let i = 0; i < chevCount; i++) {
+        const ci = chevCount - 1 - i;
+        const cy = baseY - ci * gap;
+        const scale = 1 - ci * 0.12;
+        const w = chevW * scale;
+
+        this._drawSingleChevron(ctx, 0, cy - chevH / 2, w, chevH, bow * scale);
+      }
+
+      // PFC rocker — convex-up arc above the top chevron
+      if (hasRocker) {
+        const topApexY = baseY - (chevCount - 1) * gap - chevH / 2;
+        const rockerY = topApexY - 3;
+        const rockerW = chevW * 0.85;
+        ctx.beginPath();
+        ctx.moveTo(-rockerW, rockerY);
+        ctx.quadraticCurveTo(0, rockerY - 4, rockerW, rockerY);
+        ctx.stroke();
+      }
+    }
+
+    ctx.restore();
+  }
+
+  /**
+   * Draw a single curved chevron pointing UP.
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {number} cx - Center X
+   * @param {number} apexY - Y of the apex (top point)
+   * @param {number} halfW - Half-width at the arm tips
+   * @param {number} h - Height from apex to arm tips
+   * @param {number} bow - Outward curve displacement
+   */
+  _drawSingleChevron(ctx, cx, apexY, halfW, h, bow) {
+    const tipY = apexY + h; // Arms spread down from apex
+
+    ctx.beginPath();
+    // Left arm: from left tip UP to apex (with inward bow)
+    ctx.moveTo(cx - halfW, tipY);
+    ctx.quadraticCurveTo(cx - halfW * 0.5 + bow, apexY + h * 0.45, cx, apexY);
+    // Right arm: from apex DOWN to right tip (with inward bow)
+    ctx.quadraticCurveTo(cx + halfW * 0.5 - bow, apexY + h * 0.45, cx + halfW, tipY);
+    ctx.stroke();
+  }
+
+  /**
+   * Draw Specialist (E-4) insignia — flipped PFC (chevron down + rocker above), filled, with eagle.
+   */
+  _drawSpecialistInsignia(ctx) {
+    const halfW = 6;
+    const chevH = 6;
+    const bow = halfW * 0.10;
+    const rockerGap = 3.5;
+
+    // Shape: rocker arc on top, downward-pointing chevron on bottom
+    ctx.beginPath();
+    // Left tip (mid-left)
+    ctx.moveTo(-halfW, 0);
+    // Rocker arc across the top (concave-down)
+    ctx.quadraticCurveTo(0, -rockerGap, halfW, 0);
+    // Right arm curves down to apex (bottom center)
+    ctx.quadraticCurveTo(halfW * 0.5 + bow, chevH * 0.55, 0, chevH / 2 + 1);
+    // Left arm curves back up to left tip
+    ctx.quadraticCurveTo(-halfW * 0.5 - bow, chevH * 0.55, -halfW, 0);
+    ctx.closePath();
+
+    ctx.fillStyle = '#ffd700';
+    const prevAlpha = ctx.globalAlpha;
+    ctx.globalAlpha = prevAlpha * 0.5;
+    ctx.fill();
+    ctx.globalAlpha = prevAlpha;
+    ctx.stroke();
+
+    // Tiny eagle wings inside
+    ctx.beginPath();
+    ctx.moveTo(-3, 0.5);
+    ctx.quadraticCurveTo(-1.5, -1.5, 0, 0);
+    ctx.quadraticCurveTo(1.5, -1.5, 3, 0.5);
+    ctx.stroke();
+  }
+
+  /**
+   * Draw a gold glow ring when a unit gets promoted (sergeant succession).
+   * Expands outward and fades over 1.5s.
+   */
+  /**
+   * Draw a subtle persistent gold outline around the sergeant (rank 3).
+   */
+  _drawSergeantOutline(ctx, x, y, radius, unit) {
+    if ((unit._rank ?? 0) < 5) return; // Only sergeants (rank 5 = SGT)
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, radius + 3, 0, Math.PI * 2);
+    ctx.strokeStyle = '#ffd700';
+    ctx.lineWidth = 1.5;
+    ctx.globalAlpha = 0.4;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  _drawPromotionHighlight(ctx, x, y, radius, unit, now) {
+    if (!unit._promotionTime) return;
+
+    const DURATION = 1500;
+    const elapsed = now - unit._promotionTime;
+    if (elapsed > DURATION) {
+      unit._promotionTime = null;
+      return;
+    }
+
+    const t = elapsed / DURATION;
+    const alpha = 1 - t;
+    const ringRadius = radius + 4 + t * 12; // Expands outward
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, ringRadius, 0, Math.PI * 2);
+    ctx.strokeStyle = '#ffd700';
+    ctx.lineWidth = 2.5 * (1 - t * 0.5);
+    ctx.globalAlpha = alpha * 0.8;
+    ctx.shadowColor = '#ffd700';
+    ctx.shadowBlur = 12 * alpha;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+
   _drawHealthBar(ctx, x, y, ratio, isPlayer) {
     const w = 28;
     const h = 4;
@@ -364,6 +677,13 @@ export class EntityRenderer {
         if (enemy.dead) continue;
         this._drawUnitDebug(ctx, enemy, b, '#ff4444', false);
       }
+    }
+
+    // Show all rank insignia in debug mode
+    const allUnits = [...(b.units || []), ...(b.enemies || [])];
+    for (const u of allUnits) {
+      if (u.dead) continue;
+      this._drawRankChevrons(ctx, u.x, u.y, u, now, true);
     }
 
     ctx.restore();
@@ -491,6 +811,86 @@ export class EntityRenderer {
     }
     ctx.setLineDash([]);
     ctx.restore();
+  }
+
+  /**
+   * Render speech bubbles above sergeant units.
+   * Bubbles auto-fade after BUBBLE_DURATION (2.5s).
+   * @param {CanvasRenderingContext2D} ctx - Context with world transform applied
+   * @param {object} b - Battle state
+   * @param {number} now - Date.now()
+   */
+  renderSpeechBubbles(ctx, b, now) {
+    const BUBBLE_DURATION = 2500;
+    const allUnits = [...(b.units || []), ...(b.enemies || [])];
+
+    for (const unit of allUnits) {
+      const bubble = unit._speechBubble;
+      if (!bubble || unit.dead) continue;
+
+      const age = now - bubble.t;
+      if (age < 0 || age > BUBBLE_DURATION) continue;
+
+      // Fade out in the last 500ms
+      const alpha = age > BUBBLE_DURATION - 500
+        ? (BUBBLE_DURATION - age) / 500
+        : 1;
+
+      const x = unit.x;
+      const y = unit.y;
+      const r = 20;
+      const text = bubble.text;
+
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.font = 'bold 11px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+
+      const textW = ctx.measureText(text).width;
+      const padX = 8;
+      const padY = 4;
+      const bw = textW + padX * 2;
+      const bh = 16 + padY * 2;
+      const bx = x - bw / 2;
+      const by = y - r - bh - 8;
+
+      // Team color for bubble
+      const isBlue = (b.units || []).includes(unit);
+      const bgColor = isBlue ? 'rgba(30, 58, 95, 0.9)' : 'rgba(95, 30, 30, 0.9)';
+      const borderColor = isBlue ? '#4a9eff' : '#ff4444';
+      const textColor = '#ffffff';
+
+      // Bubble background with rounded corners
+      const cr = 6;
+      ctx.beginPath();
+      ctx.moveTo(bx + cr, by);
+      ctx.lineTo(bx + bw - cr, by);
+      ctx.quadraticCurveTo(bx + bw, by, bx + bw, by + cr);
+      ctx.lineTo(bx + bw, by + bh - cr);
+      ctx.quadraticCurveTo(bx + bw, by + bh, bx + bw - cr, by + bh);
+      // Small triangle pointer
+      ctx.lineTo(x + 6, by + bh);
+      ctx.lineTo(x, by + bh + 6);
+      ctx.lineTo(x - 6, by + bh);
+      ctx.lineTo(bx + cr, by + bh);
+      ctx.quadraticCurveTo(bx, by + bh, bx, by + bh - cr);
+      ctx.lineTo(bx, by + cr);
+      ctx.quadraticCurveTo(bx, by, bx + cr, by);
+      ctx.closePath();
+
+      ctx.fillStyle = bgColor;
+      ctx.fill();
+      ctx.strokeStyle = borderColor;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // Text
+      ctx.fillStyle = textColor;
+      ctx.fillText(text, x, by + bh - padY);
+
+      ctx.restore();
+    }
   }
 
   _findEntityById(b, id) {

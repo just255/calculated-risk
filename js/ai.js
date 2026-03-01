@@ -5,14 +5,14 @@
 // Shared brain for allies AND enemies.
 // ═══════════════════════════════════════════════════════════════
 
-import { UNITS, UNIT_PROJECTILES, UNIT_COMBAT_STATS, Formation, FORMATION_OFFSETS } from './constants.js';
-import { updateStability, shouldFire } from './fire-decision.js';
+import { UNITS, UNIT_PROJECTILES, UNIT_COMBAT_STATS, Formation, FORMATION_OFFSETS, Team, Owner } from './constants.js';
+import { updateStability, shouldFire, getDamageFalloff } from './fire-decision.js';
 import {
   isTerrainBlocked, getTerrainSpeedMod, getTerrainAt, isInCover,
   TERRAIN_COVER_SCORE, getWaterDepth, isTerrainPassable,
   getWaterSpeedMod, distanceBetween, findNearbyCoverPos
 } from './terrain-utils.js';
-import { queryBridge, queryBridgeRailing, isBridgeDeckBlocking } from './terrain-query.js';
+import { queryBridge, queryBridgeRailing, queryBridgeEntry, isBridgeDeckBlocking } from './terrain-query.js';
 import { findPathWorld, resolveNavWaypoint } from './pathfinding.js';
 import {
   traceLineOfSight, hasLineOfSight, getConcealment, canDetect,
@@ -35,7 +35,9 @@ export const Command = {
   HOLD:       'hold',        // Stay where you are, defend position
   FALL_BACK:  'fall_back',   // Pull back toward safety
   COVER_ME:   'cover_me',    // Suppress enemies in leader's direction
-  FOCUS_FIRE: 'focus_fire'   // Everyone targets the same enemy
+  FOCUS_FIRE: 'focus_fire',  // Everyone targets the same enemy
+  FLANK_LEFT:  'flank_left',   // Move squad to attack from the left
+  FLANK_RIGHT: 'flank_right'   // Move squad to attack from the right
 };
 
 // Command registry — extensible. Add new commands here.
@@ -68,6 +70,16 @@ export const COMMAND_REGISTRY = {
   [Command.FOCUS_FIRE]: {
     label: 'Focus Fire',
     allowsMovement: false,
+    requiresLeader: false
+  },
+  [Command.FLANK_LEFT]: {
+    label: 'Flank Left',
+    allowsMovement: true,
+    requiresLeader: false
+  },
+  [Command.FLANK_RIGHT]: {
+    label: 'Flank Right',
+    allowsMovement: true,
     requiresLeader: false
   }
 };
@@ -281,7 +293,7 @@ export function applyMoraleEvent(unit, event, intensity = 0.5) {
 
   // Log morale event to battle debug log if available
   if (unit._battle?._debugLog && Math.abs(delta) > 0.02) {
-    const logTeam = unit.team === 'enemy' ? 'red' : 'blue';
+    const logTeam = unit.team;
     unit._battle._debugLog.push({
       t: Date.now(), who: unit.id, team: logTeam, type: 'morale_event',
       x: Math.round(unit.x || 0), y: Math.round(unit.y || 0),
@@ -661,7 +673,7 @@ function selectBrainTarget(b, unit, hostiles, leader, command) {
     for (const s of spotted) {
       if (s.enemy && !s.enemy.dead && s.enemy.hp > 0) {
         // Bridge deck blocks targeting between different elevation levels
-        if (isBridgeDeckBlocking(bridges, unit.x, unit.y, s.enemy.x, s.enemy.y)) {
+        if (isBridgeDeckBlocking(bridges, unit.x, unit.y, s.enemy.x, s.enemy.y, unit._bridgeElevation, s.enemy._bridgeElevation)) {
           bridgeBlocked.push(s.enemy);
         } else {
           alive.push(s.enemy);
@@ -799,7 +811,7 @@ function selectBrainTarget(b, unit, hostiles, leader, command) {
   if (chosen && b._debugLog) {
     const prevTarget = unit._dbg?.targetId;
     if (chosen.id !== prevTarget) {
-      const logTeam = unit.team === 'enemy' ? 'red' : 'blue';
+      const logTeam = unit.team;
       const f = bestEntry.factors;
       const wStr = `w[d:${wDist.toFixed(1)} w:${wWeak.toFixed(1)} t:${wThreat.toFixed(1)} v:${wValue.toFixed(1)}]`;
       const fStr = `f[d:${f.dist.toFixed(2)} w:${f.weak.toFixed(2)} t:${f.threat.toFixed(2)} v:${f.value.toFixed(2)}]`;
@@ -847,7 +859,8 @@ function moveBrainUnit(b, unit, targetX, targetY, dtSec, allUnits, speedMult = 1
   const suppressionMod = 1 - (unit._suppression ?? 0) * 0.4;
   // Threat-based speed (personality-modulated)
   const threatMod = unit._moveCtx ? computeThreatSpeed(unit, unit._moveCtx) : 1.0;
-  const finalSpeed = speed * terrainMod * waterMod * suppressionMod * threatMod;
+  // Minimum 10% speed so units can always escape bad terrain (deep water, etc.)
+  const finalSpeed = Math.max(speed * terrainMod * waterMod * suppressionMod * threatMod, speed * 0.1);
 
   let dirX = dx / dist;
   let dirY = dy / dist;
@@ -885,17 +898,41 @@ function moveBrainUnit(b, unit, targetX, targetY, dtSec, allUnits, speedMult = 1
   const newY = unit.y + dirY * finalSpeed * dtSec;
 
   // Axis-independent terrain blocking + water passability
-  if (!isTerrainBlocked(b, newX, unit.y) && isTerrainPassable(b, newX, unit.y, category))
-    unit.x = newX;
-  if (!isTerrainBlocked(b, unit.x, newY) && isTerrainPassable(b, unit.x, newY, category))
-    unit.y = newY;
+  const xBlocked = isTerrainBlocked(b, newX, unit.y);
+  const xImpass = !isTerrainPassable(b, newX, unit.y, category);
+  const yBlocked = isTerrainBlocked(b, unit.x, newY);
+  const yImpass = !isTerrainPassable(b, unit.x, newY, category);
+  if (!xBlocked && !xImpass) unit.x = newX;
+  if (!yBlocked && !yImpass) unit.y = newY;
+
+  // Log when both axes are blocked (throttled to once per 5s)
+  if ((xBlocked || xImpass) && (yBlocked || yImpass)) {
+    const now = Date.now();
+    if (!unit._lastMoveBlockLog || now - unit._lastMoveBlockLog > 5000) {
+      unit._lastMoveBlockLog = now;
+      if (b._debugLog) {
+        const logTeam = unit.team;
+        b._debugLog.push({
+          t: now, who: unit.id, team: logTeam, type: 'move_blocked',
+          x: Math.round(unit.x), y: Math.round(unit.y),
+          detail: `x:${xBlocked ? 'blocked' : xImpass ? 'impass' : 'ok'} y:${yBlocked ? 'blocked' : yImpass ? 'impass' : 'ok'} target:(${Math.round(targetX)},${Math.round(targetY)}) cat:${category}`
+        });
+      }
+    }
+  }
+
+  // Bridge elevation tracking — determine if unit is on/under/off bridge
+  const bridges = b.terrainMap?.bridges;
+  unit._bridgeElevation = queryBridgeEntry(
+    bridges, unit._prevX ?? unit.x, unit._prevY ?? unit.y,
+    unit.x, unit.y, unit._bridgeElevation
+  );
 
   // Bridge railing — only enforced when unit is ON the bridge deck.
-  // Prevents walking off the edge, but doesn't block approach from outside.
-  const bridges = b.terrainMap?.bridges;
-  if (bridges && queryBridge(bridges, unit._prevX ?? unit.x, unit._prevY ?? unit.y)) {
-    // Was on bridge — if new position is in the railing zone, revert that axis
-    if (queryBridgeRailing(bridges, unit.x, unit.y)) {
+  // Under-bridge units pass freely through the railing zone.
+  if (unit._bridgeElevation === 'on') {
+    const prevBridge = bridges && queryBridge(bridges, unit._prevX ?? unit.x, unit._prevY ?? unit.y);
+    if (prevBridge && queryBridgeRailing(bridges, unit.x, unit.y)) {
       // Try reverting X only
       if (!queryBridgeRailing(bridges, unit._prevX ?? unit.x, unit.y)) {
         unit.x = unit._prevX ?? unit.x;
@@ -904,10 +941,26 @@ function moveBrainUnit(b, unit, targetX, targetY, dtSec, allUnits, speedMult = 1
       else if (!queryBridgeRailing(bridges, unit.x, unit._prevY ?? unit.y)) {
         unit.y = unit._prevY ?? unit.y;
       }
-      // Both fail — revert both
+      // Both fail — nudge toward bridge centerline to escape railing
       else {
-        unit.x = unit._prevX ?? unit.x;
-        unit.y = unit._prevY ?? unit.y;
+        const prevX = unit._prevX ?? unit.x;
+        const prevY = unit._prevY ?? unit.y;
+        unit.x = prevX;
+        unit.y = prevY;
+        const bDx = prevX - prevBridge.x;
+        const bDy = prevY - prevBridge.y;
+        const perpX = -prevBridge.dirY;
+        const perpY = prevBridge.dirX;
+        const projPerp = bDx * perpX + bDy * perpY;
+        const nudgeStr = finalSpeed * dtSec * 0.5;
+        const nudgeX = -Math.sign(projPerp) * perpX * nudgeStr;
+        const nudgeY = -Math.sign(projPerp) * perpY * nudgeStr;
+        const tryX = prevX + nudgeX;
+        const tryY = prevY + nudgeY;
+        if (!queryBridgeRailing(bridges, tryX, tryY) && queryBridge(bridges, tryX, tryY)) {
+          unit.x = tryX;
+          unit.y = tryY;
+        }
       }
     }
   }
@@ -1146,7 +1199,7 @@ function boundingAdvance(b, unit, objX, objY, dtSec, friendlies, now) {
 
       // Log arrival at cover
       if (b._debugLog) {
-        const logTeam = unit.team === 'enemy' ? 'red' : 'blue';
+        const logTeam = unit.team;
         b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'cover',
           x: Math.round(unit.x), y: Math.round(unit.y),
           action: 'bound reached', detail: `bias:${coverBias.toFixed(2)} pause:${Math.round((500 + patience * 1500) * coverBias)}ms` });
@@ -1176,7 +1229,7 @@ function boundingAdvance(b, unit, objX, objY, dtSec, friendlies, now) {
     unit._actionVerb = 'bounding_advance';
 
     if (b._debugLog) {
-      const logTeam = unit.team === 'enemy' ? 'red' : 'blue';
+      const logTeam = unit.team;
       b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'cover',
         x: Math.round(unit.x), y: Math.round(unit.y),
         action: 'bound selected', target: `(${Math.round(nextBound.x)},${Math.round(nextBound.y)})`,
@@ -1394,7 +1447,7 @@ export function updateFormation(b, friendlies, hostiles, now) {
   }
 
   // Formation stress — personality-driven breaking
-  const teamKey = alive[0].team === 'enemy' ? 'red' : 'blue';
+  const teamKey = alive[0].team;
   if (!b._formationStress) b._formationStress = {};
   let stress = b._formationStress[teamKey] ?? 0;
 
@@ -1662,7 +1715,7 @@ function resolveRetreatObjective(b, unit) {
 
   // Personality score: high = aggressive retreat (push forward, dig in at enemy base)
   const pushScore = aggression * 0.5 + courage * 0.5;
-  const isBlue = unit.team !== 'enemy';
+  const isBlue = unit.team === Team.BLUE;
   let obj;
 
   if (pushScore > 0.6) {
@@ -1702,7 +1755,7 @@ function executePanicFlee(b, unit, ctx, speed, dtSec, friendlies) {
   // Compute flee destination (cached once per panic episode)
   if (!unit._panicFleeTarget) {
     const awareness = unit._awareness ?? 0.5;
-    const isBlue = unit.team !== 'enemy';
+    const isBlue = unit.team === Team.BLUE;
     const ownZone = isBlue ? b.blueSpawnZone : b.redSpawnZone;
 
     // Smart direction: toward nearest ally cluster or own spawn
@@ -1862,19 +1915,19 @@ function executeTacticalBound(b, unit, ctx, range, speed, now, dtSec, friendlies
     objY = ctx.target.y;
   } else {
     // No target — advance toward sergeant waypoint or enemy base
-    const teamKey = unit.team === 'enemy' ? 'enemy' : 'player';
+    const teamKey = unit.team;
     const wp = b._teamWaypoints?.[teamKey];
     if (wp) {
       objX = wp.x; objY = wp.y;
     } else {
-      const enemyZone = unit.team === 'enemy' ? b.blueSpawnZone : b.redSpawnZone;
+      const enemyZone = unit.team === Team.RED ? b.blueSpawnZone : b.redSpawnZone;
       if (enemyZone) {
         objX = enemyZone.x; objY = enemyZone.y;
       } else {
         const mapW = b.mapWidth || 2000;
         const mapH = b.mapHeight || 2000;
         objX = mapW / 2;
-        objY = unit.team === 'enemy' ? mapH - 128 : 128;
+        objY = unit.team === Team.RED ? mapH - 128 : 128;
       }
     }
   }
@@ -1944,9 +1997,9 @@ function executeRegroupMode(b, unit, ctx, range, now, dtSec, friendlies) {
     moveBrainUnit(b, unit, ctx.nearestAlly.x, ctx.nearestAlly.y, dtSec, friendlies, 0.9);
   } else {
     // No ally nearby — fall back to sergeant waypoint or own spawn
-    const teamKey = unit.team === 'enemy' ? 'enemy' : 'player';
+    const teamKey = unit.team;
     const wp = b._teamWaypoints?.[teamKey];
-    const isBlue = unit.team !== 'enemy';
+    const isBlue = unit.team === Team.BLUE;
     const ownZone = isBlue ? b.blueSpawnZone : b.redSpawnZone;
 
     if (wp) {
@@ -1998,50 +2051,47 @@ function executeHold(b, unit, target, targetDist, range, now, dtSec, friendlies)
       unit._actionVerb = 'firing';
     }
 
-    if (targetDist <= range * 1.1) {
-      // In weapon reach — fire from position (handled above)
-    } else if (targetDist <= engageDist) {
-      // Target closeable — move to engagement distance, fire
+    // Check actual damage effectiveness, not just raw range
+    const falloff = getDamageFalloff(targetDist, range);
+
+    if (falloff >= 0.5) {
+      // In effective range — hold and fire (doing meaningful damage)
+    } else if (falloff > 0) {
+      // In weapon reach but ineffective (falloff < 0.5) — advance to effective range
       const d = targetDist || 1;
-      const desiredDist = range * 0.9;
+      const desiredDist = range * 0.7; // target 70% of range where falloff = 1.0
+      const moveX = target.x + ((unit.x - target.x) / d) * desiredDist;
+      const moveY = target.y + ((unit.y - target.y) / d) * desiredDist;
+      moveBrainUnit(b, unit, moveX, moveY, dtSec, friendlies);
+      unit._actionVerb = 'closing_to_fire';
+    } else if (targetDist <= engageDist) {
+      // Out of range but closeable — move to engagement distance
+      const d = targetDist || 1;
+      const desiredDist = range * 0.7;
       const moveX = target.x + ((unit.x - target.x) / d) * desiredDist;
       const moveY = target.y + ((unit.y - target.y) / d) * desiredDist;
       moveBrainUnit(b, unit, moveX, moveY, dtSec, friendlies);
       unit._actionVerb = 'closing_to_fire';
     } else {
-      // Target far — goal-based push-up commitment
+      // Target beyond engagement distance — push up to weapon range
       const courage = p.courage ?? 0.5;
 
       if (unit._pushingUp) {
-        // Already committed to pushing up — continue until goal achieved or cancelled
-        if (targetDist <= range * 1.1) {
-          // Goal achieved — in weapon range
+        if (falloff >= 0.5) {
+          // Goal achieved — in effective range
           unit._pushingUp = false;
         } else if (!target || target.dead) {
-          // Target lost
           unit._pushingUp = false;
         } else if ((unit._shockTimer ?? 0) > 0 && courage < 0.4) {
-          // Taking fire and not brave enough to continue
           unit._pushingUp = false;
         } else {
-          // Still pushing — move toward target, fire if in range
           moveBrainUnit(b, unit, target.x, target.y, dtSec, friendlies);
           unit._actionVerb = 'pushing_up';
         }
       } else {
-        // Not yet committed — check if squad is engaged and personality warrants it
-        const squadEngaged = friendlies.some(f =>
-          f !== unit && !f.dead && f._currentTarget === target &&
-          distanceBetween(unit, f) < 200
-        );
-
-        if (squadEngaged && aggression > discipline) {
-          // Aggressive: commit to push up to weapon reach to help squad
-          unit._pushingUp = true;
-          moveBrainUnit(b, unit, target.x, target.y, dtSec, friendlies);
-          unit._actionVerb = 'pushing_up';
-        }
-        // Otherwise: face target, hold position (default behavior)
+        unit._pushingUp = true;
+        moveBrainUnit(b, unit, target.x, target.y, dtSec, friendlies);
+        unit._actionVerb = 'pushing_up';
       }
     }
   } else {
@@ -2087,20 +2137,20 @@ function executeAdvance(b, unit, target, targetDist, range, speed, now, dtSec, f
 
   if (!target) {
     // No target — advance toward sergeant waypoint or enemy base
-    const teamKey = unit.team === 'enemy' ? 'enemy' : 'player';
+    const teamKey = unit.team;
     const wp = b._teamWaypoints?.[teamKey];
     let cx, cy;
     if (wp) {
       cx = wp.x; cy = wp.y;
     } else {
-      const enemyZone = unit.team === 'enemy' ? b.blueSpawnZone : b.redSpawnZone;
+      const enemyZone = unit.team === Team.RED ? b.blueSpawnZone : b.redSpawnZone;
       if (enemyZone) {
         cx = enemyZone.x; cy = enemyZone.y;
       } else {
         const mapW = b.mapWidth || 1600;
         const mapH = b.mapHeight || 1600;
         cx = mapW / 2;
-        cy = unit.team === 'enemy' ? mapH - 128 : 128;
+        cy = unit.team === Team.RED ? mapH - 128 : 128;
       }
     }
     unit.angle = Math.atan2(cy - unit.y, cx - unit.x);
@@ -2163,7 +2213,7 @@ function executeAdvance(b, unit, target, targetDist, range, speed, now, dtSec, f
         if (flankPos) {
           unit._flankTarget = { x: flankPos.x, y: flankPos.y };
           if (b._debugLog) {
-            const logTeam = unit.team === 'enemy' ? 'red' : 'blue';
+            const logTeam = unit.team;
             b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'flank',
               x: Math.round(unit.x), y: Math.round(unit.y),
               action: 'flanking', target: `(${Math.round(flankPos.x)},${Math.round(flankPos.y)})`,
@@ -2282,7 +2332,7 @@ function executeFallBack(b, unit, target, targetDist, range, speed, now, dtSec, 
   const category = inferCategory(unit);
 
   // Resolve rally point: sergeant waypoint > own spawn fallback
-  const teamKey = unit.team === 'enemy' ? 'enemy' : 'player';
+  const teamKey = unit.team;
   const wp = b._teamWaypoints?.[teamKey];
   let rallyX, rallyY;
 
@@ -2291,7 +2341,7 @@ function executeFallBack(b, unit, target, targetDist, range, speed, now, dtSec, 
     rallyY = wp.y;
   } else {
     // Fallback: pull back toward own spawn zone
-    const isBlue = unit.team !== 'enemy';
+    const isBlue = unit.team === Team.BLUE;
     const ownZone = isBlue ? b.blueSpawnZone : b.redSpawnZone;
     if (ownZone) {
       rallyX = ownZone.x; rallyY = ownZone.y;
@@ -2549,7 +2599,7 @@ function findFlankPosition(b, unit, target, range) {
   const mapW = b.mapWidth || 2000;
   const mapH = b.mapHeight || 2000;
   const targetFacing = target.angle || 0;
-  const engageRange = Math.min(range * 0.8, 250); // Don't go too far
+  const engageRange = range * 0.8; // Flank at 80% of weapon range
   let best = null;
   let bestScore = -Infinity;
 
@@ -2743,9 +2793,9 @@ function executeFallBackToAllies(b, unit, target, range, now, dtSec, friendlies)
     moveBrainUnit(b, unit, nearestAlly.x, nearestAlly.y, dtSec, friendlies);
   } else if (!nearestAlly) {
     // No ally — fall back to waypoint or own spawn
-    const teamKey = unit.team === 'enemy' ? 'enemy' : 'player';
+    const teamKey = unit.team;
     const wp = b._teamWaypoints?.[teamKey];
-    const isBlue = unit.team !== 'enemy';
+    const isBlue = unit.team === Team.BLUE;
     const ownZone = isBlue ? b.blueSpawnZone : b.redSpawnZone;
     const dest = wp || ownZone;
     if (dest) {
@@ -2776,9 +2826,9 @@ function executeDisengage(b, unit, target, dtSec, friendlies) {
     moveBrainUnit(b, unit, retreatX, retreatY, dtSec, friendlies);
   } else {
     // No target — move to waypoint or own spawn
-    const teamKey = unit.team === 'enemy' ? 'enemy' : 'player';
+    const teamKey = unit.team;
     const wp = b._teamWaypoints?.[teamKey];
-    const isBlue = unit.team !== 'enemy';
+    const isBlue = unit.team === Team.BLUE;
     const ownZone = isBlue ? b.blueSpawnZone : b.redSpawnZone;
     const dest = wp || ownZone;
     if (dest) {
@@ -2816,7 +2866,7 @@ function executeBreakLOS(b, unit, target, range, now, dtSec, friendlies) {
     if (pos) {
       unit._losBreakTarget = { x: pos.x, y: pos.y };
       if (b._debugLog) {
-        const logTeam = unit.team === 'enemy' ? 'red' : 'blue';
+        const logTeam = unit.team;
         b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'survival',
           x: Math.round(unit.x), y: Math.round(unit.y),
           action: 'break_los', target: `(${Math.round(pos.x)},${Math.round(pos.y)})`,
@@ -2911,9 +2961,9 @@ function executeCharge(b, unit, target, targetDist, range, now, dtSec, friendlie
     }
   } else {
     // Target died or no target — charge toward objective (waypoint or enemy spawn)
-    const teamKey = unit.team === 'enemy' ? 'enemy' : 'player';
+    const teamKey = unit.team;
     const wp = b._teamWaypoints?.[teamKey];
-    const isBlue = unit.team !== 'enemy';
+    const isBlue = unit.team === Team.BLUE;
     const enemyZone = isBlue ? b.redSpawnZone : b.blueSpawnZone;
     const dest = wp || enemyZone;
     if (dest) {
@@ -2963,7 +3013,7 @@ function checkFlankThreats(b, unit, hostiles, now) {
       flankerFound = true;
 
       if (b._debugLog) {
-        const logTeam = unit.team === 'enemy' ? 'red' : 'blue';
+        const logTeam = unit.team;
         b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'flank',
           x: Math.round(unit.x), y: Math.round(unit.y),
           action: `flanked by ${e.id}`,
@@ -3030,7 +3080,7 @@ function awarenessCoverCheck(b, unit, friendlies, now, dtSec) {
   if (coverPos) {
     unit._proactiveCoverTarget = coverPos;
     if (b._debugLog) {
-      const logTeam = unit.team === 'enemy' ? 'red' : 'blue';
+      const logTeam = unit.team;
       b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'decision',
         x: Math.round(unit.x), y: Math.round(unit.y),
         action: 'cover seek',
@@ -3148,7 +3198,7 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
       if (survival.inDanger) {
         unit._survivalAction = survival.action;
         if (b._debugLog) {
-          const logTeam = team === 'enemy' ? 'red' : 'blue';
+          const logTeam = team;
           b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'survival',
             x: Math.round(unit.x), y: Math.round(unit.y),
             action: survival.action,
@@ -3157,7 +3207,7 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
       } else {
         // Danger passed — clear survival state
         if (unit._survivalAction && b._debugLog) {
-          const logTeam = team === 'enemy' ? 'red' : 'blue';
+          const logTeam = team;
           b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'survival',
             x: Math.round(unit.x), y: Math.round(unit.y),
             action: 'survival_clear',
@@ -3192,7 +3242,7 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
 
   // Log mode changes with full score breakdown
   if (b._debugLog && unit._prevMovementMode !== modeResult.mode) {
-    const logTeam = team === 'enemy' ? 'red' : 'blue';
+    const logTeam = team;
     // Build compact score summary: UCvr:35 Surv:0 Bnd:12 Cmd:40 Rgrp:5
     const scoreStr = modeResult.scores ? Object.entries(modeResult.scores)
       .map(([k, v]) => {
@@ -3235,9 +3285,9 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
     }
     if (unit._stuckTime >= 2 && now - (unit._lastStuckLog || 0) > 2000) {
       unit._lastStuckLog = now;
-      const logTeam2 = team === 'enemy' ? 'red' : 'blue';
+      const logTeam2 = team;
       const ldr = unit._formationLeader;
-      const wp = b._teamWaypoints?.[unit.team === 'enemy' ? 'enemy' : 'player'];
+      const wp = b._teamWaypoints?.[unit.team];
       const scores = modeResult?.scores || {};
       const scoreStr = Object.entries(scores)
         .map(([k, v]) => {
@@ -3275,7 +3325,7 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
   const inCover = unitTerrain === 'trench' || unitTerrain === 'pillbox';
   const prevDbg = unit._dbg || {};
   const log = b._debugLog;
-  const logTeam = team === 'enemy' ? 'red' : 'blue';
+  const logTeam = team;
 
   if (log) {
     const ux = Math.round(unit.x), uy = Math.round(unit.y);
@@ -3488,7 +3538,7 @@ export const TacticalCommand = {
 
 export function updateUnitAI(b, unit, hero, enemies, now, dtSec) {
   if (unit.dead) return;
-  updateBrain(b, unit, hero, enemies, b.units || [], now, dtSec, 'player');
+  updateBrain(b, unit, hero, enemies, b.units || [], now, dtSec, Team.BLUE);
 }
 
 export function updateEnemyAI(b, enemy, hero, allies, now, dtSec) {
@@ -3503,7 +3553,7 @@ export function updateEnemyAI(b, enemy, hero, allies, now, dtSec) {
       if (!a.dead) hostiles.push(a);
     }
   }
-  updateBrain(b, enemy, null, hostiles, b.enemies || [], now, dtSec, 'enemy');
+  updateBrain(b, enemy, null, hostiles, b.enemies || [], now, dtSec, Team.RED);
 }
 
 /**
@@ -3688,7 +3738,7 @@ export function moveToward(b, unit, targetX, targetY, dtSec, orderSpeedMod = 1.0
 
 export function tryShoot(b, unit, targetX, targetY, now, targetEntity) {
   // Bridge deck blocks shots between different elevation levels
-  if (isBridgeDeckBlocking(b.terrainMap?.bridges, unit.x, unit.y, targetX, targetY)) {
+  if (isBridgeDeckBlocking(b.terrainMap?.bridges, unit.x, unit.y, targetX, targetY, unit._bridgeElevation, targetEntity?._bridgeElevation)) {
     return false;
   }
 
@@ -3711,7 +3761,7 @@ export function tryShoot(b, unit, targetX, targetY, now, targetEntity) {
   // Suppression reduces accuracy (max 30% penalty)
   const suppressionAccPenalty = 1 - (unit._suppression ?? 0) * 0.3;
   const accuracy = fireDecision.accuracy * suppressionAccPenalty;
-  const maxSpread = Math.PI / 6;
+  const maxSpread = Math.PI / 12;
   const spread = (1.0 - accuracy) * maxSpread;
   const angle = baseAngle + (Math.random() - 0.5) * 2 * spread;
 
@@ -3727,10 +3777,11 @@ export function tryShoot(b, unit, targetX, targetY, now, targetEntity) {
     vx: Math.cos(angle) * projSpeed,
     vy: Math.sin(angle) * projSpeed,
     damage: finalDamage,
-    owner: unit.team || (unit.isHero ? 'player' : 'player'),
+    owner: unit.team === Team.RED ? Owner.ENEMY : Owner.PLAYER,
     sourceId: unit.id,
     attackerTier: getArmorTier(unit),
-    type: projType
+    type: projType,
+    _bridgeElevation: unit._bridgeElevation || null
   });
 
   if (b._debugLog) {
@@ -3740,7 +3791,7 @@ export function tryShoot(b, unit, targetX, targetY, now, targetEntity) {
     b._debugLog.push({
       t: now,
       who: unit.id,
-      team: unit.team === 'enemy' ? 'red' : 'blue',
+      team: unit.team,
       type: 'fire',
       x: Math.round(unit.x), y: Math.round(unit.y),
       action: 'fire',

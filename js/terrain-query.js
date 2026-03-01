@@ -254,6 +254,66 @@ export function queryBridgeRailing(bridges, x, y) {
   return false;
 }
 
+// ── Bridge elevation entry detection ─────────────────────────
+
+/**
+ * Determine bridge elevation for a unit moving from (prevX,prevY) to (x,y).
+ * - Entering from bridge ends → 'on' (walked onto deck)
+ * - Entering from bridge sides → 'under' (walked beneath)
+ * - Already had elevation and still in zone → keep current
+ * - Left bridge zone → null
+ *
+ * @param {Array} bridges
+ * @param {number} prevX - Previous X
+ * @param {number} prevY - Previous Y
+ * @param {number} x - Current X
+ * @param {number} y - Current Y
+ * @param {string|null} currentElev - Current elevation ('on', 'under', or null)
+ * @returns {string|null} 'on', 'under', or null
+ */
+export function queryBridgeEntry(bridges, prevX, prevY, x, y, currentElev) {
+  if (!bridges || bridges.length === 0) return null;
+
+  for (const bridge of bridges) {
+    const { x: bx, y: by, width, length, dirX, dirY } = bridge;
+    const halfLen = length / 2;
+    const halfW = width / 2;
+
+    // Check if current position is in bridge zone (deck rect)
+    const dx = x - bx, dy = y - by;
+    const projAlong = dx * dirX + dy * dirY;
+    const projPerp = dx * (-dirY) + dy * dirX;
+    const inBridgeZone = Math.abs(projAlong) <= halfLen && Math.abs(projPerp) <= halfW;
+
+    if (!inBridgeZone) continue;
+
+    // In bridge zone — check if we already had an elevation on this bridge
+    if (currentElev) return currentElev;
+
+    // New entry — check where we came from
+    const pdx = prevX - bx, pdy = prevY - by;
+    const prevAlong = pdx * dirX + pdy * dirY;
+    const prevPerp = pdx * (-dirY) + pdy * dirX;
+    const wasInZone = Math.abs(prevAlong) <= halfLen && Math.abs(prevPerp) <= halfW;
+
+    if (wasInZone) {
+      // Was already inside (e.g. spawned on bridge) — default to 'on'
+      return 'on';
+    }
+
+    // Determine entry direction from previous position
+    // If prev was past the ends (along axis exceeded halfLen), entered from end → 'on'
+    // If prev was past the sides (perp axis exceeded halfW), entered from side → 'under'
+    if (Math.abs(prevAlong) > halfLen) {
+      return 'on';
+    }
+    return 'under';
+  }
+
+  // Not in any bridge zone
+  return null;
+}
+
 // ── Bridge cover (directional damage reduction) ─────────────
 
 /**
@@ -317,15 +377,28 @@ const BRIDGE_SHADOW_MARGIN = 40;
  * and the other is in the bridge's shadow (footprint + margin) but NOT on
  * the deck, the shot is blocked by the bridge floor.
  *
+ * When explicit elevation is provided ('on'/'under'), uses that directly.
+ *
  * @param {Array} bridges - Bridge objects
  * @param {number} shooterX - Shooter world X
  * @param {number} shooterY - Shooter world Y
  * @param {number} targetX - Target world X
  * @param {number} targetY - Target world Y
+ * @param {string|null} [shooterElev] - Shooter bridge elevation ('on'/'under'/null)
+ * @param {string|null} [targetElev] - Target bridge elevation ('on'/'under'/null)
  * @returns {boolean} True if a bridge deck blocks the shot
  */
-export function isBridgeDeckBlocking(bridges, shooterX, shooterY, targetX, targetY) {
+export function isBridgeDeckBlocking(bridges, shooterX, shooterY, targetX, targetY, shooterElev, targetElev) {
   if (!bridges || bridges.length === 0) return false;
+
+  // Fast path: explicit elevation on both — different elevations = blocked
+  if (shooterElev && targetElev) {
+    return shooterElev !== targetElev;
+  }
+  // One is 'on' and other has no elevation (not in bridge zone) — use spatial check
+  // One is 'under' and other has no elevation — not blocked (both at ground level)
+  if (shooterElev === 'under' && !targetElev) return false;
+  if (targetElev === 'under' && !shooterElev) return false;
 
   for (const bridge of bridges) {
     const { x: bx, y: by, width, length, dirX, dirY } = bridge;
@@ -336,22 +409,23 @@ export function isBridgeDeckBlocking(bridges, shooterX, shooterY, targetX, targe
     const sdx = shooterX - bx, sdy = shooterY - by;
     const sAlong = sdx * dirX + sdy * dirY;
     const sPerp = sdx * (-dirY) + sdy * dirX;
-    const shooterOnDeck = Math.abs(sAlong) <= halfLen && Math.abs(sPerp) <= halfW;
+    const shooterOnDeck = shooterElev === 'on' || (Math.abs(sAlong) <= halfLen && Math.abs(sPerp) <= halfW);
 
     // Check target against bridge (expanded footprint = shadow zone)
     const tdx = targetX - bx, tdy = targetY - by;
     const tAlong = tdx * dirX + tdy * dirY;
     const tPerp = tdx * (-dirY) + tdy * dirX;
-    const targetOnDeck = Math.abs(tAlong) <= halfLen && Math.abs(tPerp) <= halfW;
-    const targetInShadow = Math.abs(tAlong) <= halfLen + BRIDGE_SHADOW_MARGIN
-                        && Math.abs(tPerp) <= halfW + BRIDGE_SHADOW_MARGIN;
+    const targetOnDeck = targetElev === 'on' || (Math.abs(tAlong) <= halfLen && Math.abs(tPerp) <= halfW);
+    // Shadow only extends along the bridge (underneath), not to the sides (open air)
+    const targetInShadow = targetElev === 'under' || (Math.abs(tAlong) <= halfLen + BRIDGE_SHADOW_MARGIN
+                        && Math.abs(tPerp) <= halfW);
 
     // Shooter on bridge, target in shadow below → blocked
     if (shooterOnDeck && !targetOnDeck && targetInShadow) return true;
 
     // Target on bridge, shooter in shadow below → also blocked
-    const shooterInShadow = Math.abs(sAlong) <= halfLen + BRIDGE_SHADOW_MARGIN
-                         && Math.abs(sPerp) <= halfW + BRIDGE_SHADOW_MARGIN;
+    const shooterInShadow = shooterElev === 'under' || (Math.abs(sAlong) <= halfLen + BRIDGE_SHADOW_MARGIN
+                         && Math.abs(sPerp) <= halfW);
     if (targetOnDeck && !shooterOnDeck && shooterInShadow) return true;
   }
 

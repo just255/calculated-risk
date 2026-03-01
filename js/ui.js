@@ -2,12 +2,13 @@
 // UI - HTML rendering functions
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, UnitType, UNITS, ENEMIES, UNIT_COSTS, H2H_BUDGET, VEHICLE_UNITS, TYPE_CHART, UNIT_PROJECTILES, PROJECTILES, UNIT_DESCRIPTIONS, CAMPAIGN_ERAS, CAMPAIGN_MOS, SquadOrder, TargetPriority, Formation, VEHICLE_CATEGORIES, ENDLESS_VEHICLES, PART_CATEGORY_CONFIG, SYSTEM_DEFINITIONS, UNIT_PART_SLOTS, UNIT_TYPE_MAP } from './constants.js';
+import { State, SubState, HQTab, UnitType, UNITS, ENEMIES, UNIT_COSTS, H2H_BUDGET, VEHICLE_UNITS, TYPE_CHART, UNIT_PROJECTILES, PROJECTILES, UNIT_DESCRIPTIONS, CAMPAIGN_ERAS, CAMPAIGN_MOS, SquadOrder, TargetPriority, Formation, VEHICLE_CATEGORIES, ENDLESS_VEHICLES, PART_CATEGORY_CONFIG, SYSTEM_DEFINITIONS, UNIT_PART_SLOTS, UNIT_TYPE_MAP, Team, RANK_NAMES, INSIGNIA_SHAPE_TYPES } from './constants.js';
 import { Game } from './state.js';
 import { save } from './storage.js';
 import { getSkinSelectorData, setSkinPref, clearCache as clearSkinCache } from './skins.js';
 import { getSprite, hasSprite, loadPartSprites, compositeUnitSprite, getPartImage, loadVariant, renderVariant } from './sprites.js';
 import { FR_PRESET_LIST } from './fire-range-presets.js';
+import { EntityRenderer } from './entity-renderer.js';
 
 // Mobile detection
 const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
@@ -138,6 +139,9 @@ export function render() {
     // Fire Range states
     case State.FIRE_RANGE: app.innerHTML = fireRangeConfigHTML(); break;
     case State.FIRE_RANGE_BATTLE: app.innerHTML = fireRangeBattleHTML(); break;
+    // Replay states
+    case State.REPLAY_THEATER: break; // rendered by main.js after fetching replays
+    case State.REPLAY_PLAYBACK: app.innerHTML = replayPlaybackHTML(); break;
   }
 }
 
@@ -164,6 +168,7 @@ function menuHTML() {
           <button class="menu-btn" data-action="campaign">Campaign</button>
           <button class="menu-btn" data-action="endless">Endless</button>
           <button class="menu-btn" data-action="fire-range">Fire Range</button>
+          <button class="menu-btn" data-action="replay-theater">Replay Theater</button>
           <button class="menu-btn" data-action="classic">Classic</button>
           <button class="menu-btn" data-action="versus">Head 2 Head</button>
           <button class="menu-btn" data-action="hq">Headquarters</button>
@@ -224,6 +229,12 @@ function settingsHTML() {
             <input type="range" min="150" max="500" step="50" value="${c.gestureTapInterval || 300}"
                    data-control="gestureTapInterval" class="control-slider">
           </div>
+        </div>
+      </div>
+      <div class="setting-group">
+        <div class="checkbox-row">
+          <label>Record Battles (default)</label>
+          <div class="toggle ${s.autoRecord !== false ? 'active' : ''}" data-toggle="autoRecord"></div>
         </div>
       </div>
       <div class="setting-group">
@@ -473,11 +484,13 @@ function headquartersHTML() {
         <button class="hq-tab ${tab===HQTab.LINEUP?'active':''}" data-hq-tab="${HQTab.LINEUP}">LINEUP</button>
         <button class="hq-tab ${tab===HQTab.UNITS?'active':''}" data-hq-tab="${HQTab.UNITS}">UNITS</button>
         <button class="hq-tab ${tab===HQTab.UPGRADES?'active':''}" data-hq-tab="${HQTab.UPGRADES}">UPGRADES</button>
+        <button class="hq-tab ${tab===HQTab.INSIGNIA?'active':''}" data-hq-tab="${HQTab.INSIGNIA}">INSIGNIA</button>
       </div>
       <div class="hq-content">
         ${tab === HQTab.LINEUP ? lineupTabHTML() : ''}
         ${tab === HQTab.UNITS ? unitsTabHTML() : ''}
         ${tab === HQTab.UPGRADES ? upgradesTabHTML() : ''}
+        ${tab === HQTab.INSIGNIA ? insigniaTabHTML() : ''}
       </div>
     </div>
   `;
@@ -804,6 +817,193 @@ function upgradesTabHTML() {
       `}
     </div>
   `;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// INSIGNIA EDITOR TAB
+// ═══════════════════════════════════════════════════════════════
+
+function insigniaTabHTML() {
+  const ed = Game.insigniaEditor || {};
+  const currentRank = ed.currentRank ?? 1;
+  const selectedIdx = ed.selectedShapeIdx ?? -1;
+  const selectedIndices = ed.selectedIndices || [];
+  const propsTab = ed._propsTab || 'transform';
+  const shapes = ed.currentSet?.ranks?.[currentRank]?.shapes || [];
+  const sel = selectedIdx >= 0 && selectedIdx < shapes.length ? shapes[selectedIdx] : null;
+
+  const SHAPE_ICONS = { chevron: 'V', arc: '\u2312', diamond: '\u25c7', line: '\u2014', circle: '\u25cb', path: '\u270e' };
+
+  return `
+    <div class="insignia-tab">
+      <!-- Top 2/3: Shapes | Canvas | Layers -->
+      <div class="insignia-top">
+        <!-- Left: Shape palette -->
+        <div class="insignia-palette">
+          <h4>Shapes</h4>
+          ${INSIGNIA_SHAPE_TYPES.map(s => `
+            <button data-action="insignia-add-shape" data-type="${s.type}" title="${s.label}">
+              <span class="palette-icon">${s.icon}</span>
+              <span class="palette-label">${s.label}</span>
+            </button>
+          `).join('')}
+          ${ed.pathToolActive ? `
+            <button data-action="insignia-finish-path" class="path-done" title="Finish path">\u2713 Done</button>
+            <button data-action="insignia-cancel-path" class="path-cancel" title="Cancel path">\u2717 Cancel</button>
+          ` : ''}
+          <div class="insignia-file-actions">
+            <input type="text" id="insignia-set-name" placeholder="Name..." value="${ed.currentSet?.name || 'Untitled'}">
+            <button data-action="insignia-save" title="Save">Save</button>
+            <button data-action="insignia-load" title="Load">Load</button>
+            <button data-action="insignia-delete" class="danger" title="Delete">\u2717</button>
+          </div>
+        </div>
+
+        <!-- Center: Rank strip + Canvas -->
+        <div class="insignia-center">
+          <div class="insignia-rank-strip">
+            ${RANK_NAMES.map((name, i) => `
+              <div class="insignia-rank-item${i === currentRank ? ' active' : ''}"
+                data-action="insignia-select-rank" data-rank="${i}">
+                <canvas width="36" height="36" class="insignia-rank-thumb" data-rank="${i}"></canvas>
+                <span class="rank-label">${name}</span>
+              </div>
+            `).join('')}
+          </div>
+          <div class="insignia-canvas-wrap">
+            <canvas id="insignia-canvas" width="400" height="400"></canvas>
+          </div>
+        </div>
+
+        <!-- Right: Layers -->
+        <div class="insignia-layers">
+          <h4>Layers</h4>
+          ${shapes.length === 0 ? '<p class="insignia-empty">No shapes</p>' : ''}
+          ${shapes.map((s, i) => `
+            <div class="insignia-layer-item${selectedIndices.includes(i) ? ' selected' : ''}" data-action="insignia-select-shape" data-idx="${i}">
+              <span class="layer-icon">${SHAPE_ICONS[s.type] || '?'}</span>
+              <span class="layer-label">${s.type} #${i}</span>
+              <button data-action="insignia-shape-up" data-idx="${i}" title="Move up">\u25b2</button>
+              <button data-action="insignia-shape-down" data-idx="${i}" title="Move down">\u25bc</button>
+              <button data-action="insignia-shape-dup" data-idx="${i}" title="Duplicate">\u29c9</button>
+              <button data-action="insignia-shape-del" data-idx="${i}" title="Delete">\u00d7</button>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+
+      <!-- Bottom 1/3: All properties (no tabs) -->
+      <div class="insignia-props">
+        ${sel ? `
+          <div class="insignia-props-sections">
+            <div class="insignia-props-col">
+              <h4>Transform</h4>
+              ${insigniaPropsHTML(sel, selectedIdx, 'transform')}
+            </div>
+            <div class="insignia-props-col">
+              <h4>${sel.type.charAt(0).toUpperCase() + sel.type.slice(1)}</h4>
+              ${insigniaPropsHTML(sel, selectedIdx, 'shape')}
+            </div>
+            <div class="insignia-props-col">
+              <h4>Style</h4>
+              ${insigniaPropsHTML(sel, selectedIdx, 'style')}
+            </div>
+            <div class="insignia-props-col insignia-props-col-actions">
+              <button class="btn-dup" data-action="insignia-shape-dup" data-idx="${selectedIdx}">Duplicate</button>
+              <button class="btn-del" data-action="insignia-shape-del" data-idx="${selectedIdx}">\u2717 Del</button>
+            </div>
+          </div>
+        ` : '<p class="insignia-empty">Select a shape to edit properties</p>'}
+      </div>
+    </div>
+  `;
+}
+
+export function insigniaPropsHTML(shape, idx, tab) {
+  const sliderRow = (label, key, min, max, step, val) => `
+    <label>${label}
+      <input type="range" min="${min}" max="${max}" step="${step}" value="${val}"
+        data-action="insignia-prop" data-key="${key}" data-idx="${idx}">
+      <span class="prop-val">${typeof val === 'number' ? (Number.isInteger(val) ? val : val.toFixed(2)) : val}</span>
+    </label>`;
+
+  const colorRow = (label, key, val) => `
+    <label>${label}
+      <input type="color" value="${val}" data-action="insignia-color" data-key="${key}" data-idx="${idx}">
+    </label>`;
+
+  const checkRow = (label, key, checked) => `
+    <label>${label} <input type="checkbox" ${checked ? 'checked' : ''} data-action="insignia-toggle" data-key="${key}" data-idx="${idx}"></label>`;
+
+  if (tab === 'transform') {
+    return `
+      ${sliderRow('X', 'x', -30, 30, 0.5, shape.x)}
+      ${sliderRow('Y', 'y', -30, 30, 0.5, shape.y)}
+      ${sliderRow('Scale X', 'scaleX', 0.1, 3, 0.05, shape.scaleX)}
+      ${sliderRow('Scale Y', 'scaleY', 0.1, 3, 0.05, shape.scaleY)}
+      ${sliderRow('Rotation', 'rotation', -180, 180, 1, shape.rotation)}
+      <div style="display:flex;gap:12px;margin-top:4px;">
+        ${checkRow('Flip H', 'flipX', shape.flipX)}
+        ${checkRow('Flip V', 'flipY', shape.flipY)}
+      </div>`;
+  }
+
+  if (tab === 'shape') {
+    switch (shape.type) {
+      case 'chevron':
+        return `
+          ${sliderRow('Width', 'halfW', 1, 20, 0.5, shape.halfW)}
+          ${sliderRow('Height', 'height', 1, 25, 0.5, shape.height)}
+          ${sliderRow('Bow', 'bow', 0, 1, 0.05, shape.bow)}
+          ${checkRow('Vertical Ends', 'verticalEnds', shape.verticalEnds)}`;
+      case 'arc':
+        return `
+          ${sliderRow('Width', 'halfW', 1, 20, 0.5, shape.halfW)}
+          ${sliderRow('Arc Height', 'arcHeight', 0.5, 15, 0.5, shape.arcHeight)}
+          ${checkRow('Vertical Ends', 'verticalEnds', shape.verticalEnds)}`;
+      case 'diamond':
+        return `
+          ${sliderRow('Width', 'width', 1, 25, 0.5, shape.width)}
+          ${sliderRow('Height', 'height', 1, 25, 0.5, shape.height)}`;
+      case 'line':
+        return `
+          ${sliderRow('Length', 'length', 1, 30, 0.5, shape.length)}`;
+      case 'circle':
+        return `
+          ${sliderRow('Radius', 'radius', 0.5, 15, 0.5, shape.radius)}`;
+      case 'path':
+        return `<p class="insignia-empty">${(shape.points?.length || 0)} points</p>`;
+      default:
+        return `<p class="insignia-empty">Unknown type</p>`;
+    }
+  }
+
+  if (tab === 'style') {
+    const cap = shape.lineCap || 'butt';
+    const join = shape.lineJoin || 'miter';
+    const capStyle = shape.capStyle || 'none';
+    const hasOpenEnds = ['chevron', 'arc', 'line', 'path'].includes(shape.type) && !shape.closed && !shape.verticalEnds;
+    const selectRow = (label, key, options, val) => `
+      <label>${label}
+        <select data-action="insignia-select" data-key="${key}" data-idx="${idx}">
+          ${options.map(o => `<option value="${o}" ${o === val ? 'selected' : ''}>${o}</option>`).join('')}
+        </select>
+      </label>`;
+    return `
+      ${colorRow('Stroke', 'strokeColor', shape.strokeColor)}
+      ${sliderRow('Stroke W', 'strokeWidth', 0.25, 4, 0.25, shape.strokeWidth)}
+      ${selectRow('Line Cap', 'lineCap', ['butt', 'round', 'square'], cap)}
+      ${selectRow('Line Join', 'lineJoin', ['miter', 'round', 'bevel'], join)}
+      ${hasOpenEnds ? `<h4>Endpoint Caps</h4>
+      ${selectRow('Cap Shape', 'capStyle', ['none', 'miter', 'angle', 'arrow', 'diamond', 'serif', 'dot'], capStyle)}
+      ${capStyle !== 'none' ? sliderRow('Cap Size', 'capSize', 0.3, 4, 0.1, shape.capSize ?? 1) : ''}
+      ${capStyle !== 'none' ? sliderRow('Cap Rotate', 'capRotation', -180, 180, 1, shape.capRotation ?? 0) : ''}` : ''}
+      ${checkRow('Fill', 'fillEnabled', shape.fillEnabled)}
+      ${shape.fillEnabled ? colorRow('Fill Color', 'fillColor', shape.fillColor) : ''}
+      ${shape.fillEnabled ? sliderRow('Fill Opacity', 'fillOpacity', 0, 1, 0.05, shape.fillOpacity) : ''}`;
+  }
+
+  return '';
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -3769,6 +3969,7 @@ function campaignPlanningHTML() {
               <span class="hq-btn-value">Set</span>
             </button>
           </div>
+          <label class="fr-check" style="margin-bottom:8px"><input type="checkbox" data-action="campaign-record-toggle" ${Game.settings?.autoRecord !== false ? 'checked' : ''}> Record</label>
           <button class="deploy-btn-v2" data-action="plan-deploy">DEPLOY →</button>
         </div>
 
@@ -4118,6 +4319,10 @@ function endlessLoadoutHTML() {
           </div>
           <div class="header-option-check ${hasEquipmentInsurance ? 'checked' : ''} ${!selectedVehicle ? 'disabled' : ''}" data-action="${selectedVehicle ? 'toggle-equipment-insurance' : ''}" title="Equipment Insurance ${equipmentInsuranceCost}⬡">
             <span class="check-icon">✓</span><span>Equip</span>
+          </div>
+          <span class="header-label">REC</span>
+          <div class="header-option-check ${Game.settings?.autoRecord !== false ? 'checked' : ''}" data-action="toggle-endless-record" title="Record battle replay">
+            <span class="check-icon">✓</span><span>Rec</span>
           </div>
           <span class="header-label">MODE</span>
           <select class="header-mode-select">
@@ -4481,12 +4686,14 @@ function endlessResultHTML() {
 const FR_BLUE_UNITS = ['infantry', 'medic', 'specops', 'jeep', 'humvee', 'sherman', 'tiger', 'abrams', 'howitzer', 'apache'];
 const FR_RED_TYPES = ['infantry', 'medic', 'specops', 'jeep', 'humvee', 'sherman', 'tiger', 'abrams', 'howitzer', 'apache', 'grunt', 'heavy', 'elite'];
 const FR_COMMANDS = [
-  { value: 'follow',     label: 'Follow' },
-  { value: 'advance',    label: 'Advance' },
-  { value: 'hold',       label: 'Hold' },
-  { value: 'fall_back',  label: 'Fall Back' },
-  { value: 'cover_me',   label: 'Cover Me' },
-  { value: 'focus_fire', label: 'Focus Fire' }
+  { value: 'follow',      label: 'Follow' },
+  { value: 'advance',     label: 'Advance' },
+  { value: 'hold',        label: 'Hold' },
+  { value: 'fall_back',   label: 'Fall Back' },
+  { value: 'cover_me',    label: 'Cover Me' },
+  { value: 'focus_fire',  label: 'Focus Fire' },
+  { value: 'flank_left',  label: 'Flank L' },
+  { value: 'flank_right', label: 'Flank R' }
 ];
 const FR_SLIDERS = [
   { key: 'aggression',  label: 'AGG',  title: 'Aggression — high pushes in, low keeps distance' },
@@ -4504,8 +4711,17 @@ const FR_TGT_SLIDERS = [
   { key: 'tgtThreat',  label: 'THRT', title: 'Threat weight — high = prefer high-damage enemies' },
   { key: 'tgtValue',   label: 'VAL',  title: 'Value weight — high = prefer high-value (tanky) targets' }
 ];
+const FR_FORMATIONS = [
+  { value: 'line',      label: 'Line' },
+  { value: 'wedge',     label: 'Wedge' },
+  { value: 'column',    label: 'Column' },
+  { value: 'spread',    label: 'Spread' },
+  { value: 'staggered', label: 'Staggered' },
+  { value: 'echelon_l', label: 'Echelon L' },
+  { value: 'echelon_r', label: 'Echelon R' }
+];
 
-function frSlotRow(slot, i, team, typeField, typeOptions) {
+function frSlotRow(slot, i, team, typeField, typeOptions, squadIdx) {
   const expanded = slot._expanded ? ' expanded' : '';
   const leaderCls = slot.isLeader ? ' active' : '';
   const cmd = slot.command || 'advance';
@@ -4514,8 +4730,8 @@ function frSlotRow(slot, i, team, typeField, typeOptions) {
     const val = slot[s.key] ?? (s.key === 'morale' ? 0.8 : (s.key === 'veterancy' ? 0 : 0.5));
     return `<div class="fr-slider-item" title="${s.title}">
       <span class="fr-slider-label">${s.label}</span>
-      <input type="range" class="fr-slider" data-field="${s.key}" data-team="${team}" data-idx="${i}" min="0" max="1" step="0.05" value="${val}">
-      <span class="fr-slider-val" data-val-for="${s.key}-${team}-${i}">${val.toFixed(2)}</span>
+      <input type="range" class="fr-slider" data-field="${s.key}" data-team="${team}" data-idx="${i}" data-squad="${squadIdx}" min="0" max="1" step="0.05" value="${val}">
+      <span class="fr-slider-val" data-val-for="${s.key}-${team}-${squadIdx}-${i}">${val.toFixed(2)}</span>
     </div>`;
   }).join('');
 
@@ -4523,23 +4739,23 @@ function frSlotRow(slot, i, team, typeField, typeOptions) {
     const val = slot[s.key] ?? 0;
     return `<div class="fr-slider-item" title="${s.title}">
       <span class="fr-slider-label">${s.label}</span>
-      <input type="range" class="fr-slider" data-field="${s.key}" data-team="${team}" data-idx="${i}" min="0" max="1" step="0.05" value="${val}">
-      <span class="fr-slider-val" data-val-for="${s.key}-${team}-${i}">${val.toFixed(2)}</span>
+      <input type="range" class="fr-slider" data-field="${s.key}" data-team="${team}" data-idx="${i}" data-squad="${squadIdx}" min="0" max="1" step="0.05" value="${val}">
+      <span class="fr-slider-val" data-val-for="${s.key}-${team}-${squadIdx}-${i}">${val.toFixed(2)}</span>
     </div>`;
   }).join('');
 
-  return `<div class="fr-slot${expanded}" data-team="${team}" data-idx="${i}">
+  return `<div class="fr-slot${expanded}" data-team="${team}" data-idx="${i}" data-squad="${squadIdx}">
     <div class="fr-slot-main">
-      <select class="fr-select" data-field="${typeField}" data-team="${team}" data-idx="${i}">
+      <select class="fr-select" data-field="${typeField}" data-team="${team}" data-idx="${i}" data-squad="${squadIdx}">
         ${typeOptions.map(u => `<option value="${u}" ${(slot[typeField] || slot.enemyType) === u ? 'selected' : ''}>${u}</option>`).join('')}
       </select>
-      <select class="fr-select" data-field="command" data-team="${team}" data-idx="${i}">
+      <select class="fr-select" data-field="command" data-team="${team}" data-idx="${i}" data-squad="${squadIdx}">
         ${FR_COMMANDS.map(c => `<option value="${c.value}" ${cmd === c.value ? 'selected' : ''}>${c.label}</option>`).join('')}
       </select>
-      <input type="number" class="fr-count" data-team="${team}" data-idx="${i}" min="1" max="20" value="${slot.count}">
-      <button class="fr-leader-btn${leaderCls}" data-action="fr-leader" data-team="${team}" data-idx="${i}" title="Commander/Hero">&#9733;</button>
-      <button class="fr-expand-btn" data-action="fr-expand" data-team="${team}" data-idx="${i}">${slot._expanded ? '&#9660;' : '&#9654;'}</button>
-      <button class="fr-remove" data-action="fr-remove" data-team="${team}" data-idx="${i}">x</button>
+      <input type="number" class="fr-count" data-team="${team}" data-idx="${i}" data-squad="${squadIdx}" min="1" max="20" value="${slot.count}">
+      <button class="fr-leader-btn${leaderCls}" data-action="fr-leader" data-team="${team}" data-idx="${i}" data-squad="${squadIdx}" title="Commander/Hero">&#9733;</button>
+      <button class="fr-expand-btn" data-action="fr-expand" data-team="${team}" data-idx="${i}" data-squad="${squadIdx}">${slot._expanded ? '&#9660;' : '&#9654;'}</button>
+      <button class="fr-remove" data-action="fr-remove" data-team="${team}" data-idx="${i}" data-squad="${squadIdx}">x</button>
     </div>
     <div class="fr-slot-detail" style="${slot._expanded ? '' : 'display:none'}">
       <div class="fr-slider-grid">${sliders}</div>
@@ -4558,15 +4774,90 @@ const SGT_TRAITS = [
   { key: 'awareness', label: 'AWR', title: 'Awareness — how often sergeant re-evaluates + death response speed' }
 ];
 
-function sgtSliders(sgt, team) {
+function sgtSliders(sgt, team, squadIdx) {
+  const sqAttr = squadIdx !== undefined ? ` data-squad="${squadIdx}"` : '';
   return SGT_TRAITS.map(t => {
     const val = sgt[t.key] ?? 0.5;
     return `<div class="fr-slider-item" title="${t.title}">
       <span class="fr-slider-label">${t.label}</span>
-      <input type="range" class="fr-slider fr-sgt-slider" data-sgt-trait="${t.key}" data-sgt-team="${team}" min="0" max="1" step="0.05" value="${val}">
+      <input type="range" class="fr-slider fr-sgt-slider" data-sgt-trait="${t.key}" data-sgt-team="${team}"${sqAttr} min="0" max="1" step="0.05" value="${val}">
       <span class="fr-slider-val">${val.toFixed(2)}</span>
     </div>`;
   }).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════
+// REPLAY THEATER
+// ═══════════════════════════════════════════════════════════════
+
+export function replayTheaterHTML(replays) {
+  // replays = array of { name, seed, result, duration, recordedAt, terrainLabel, unitDefs }
+  let cards = '';
+  if (!replays || replays.length === 0) {
+    cards = '<div class="replay-empty">No replays saved yet. Enable recording and play a battle to save one.</div>';
+  } else {
+    for (const r of replays) {
+      const resultColor = r.result === 'blue_wins' ? '#4a9eff' : r.result === 'red_wins' ? '#ff4444' : r.result === 'victory' ? '#4a9eff' : r.result === 'defeat' ? '#ff4444' : '#888';
+      const resultText = r.result === 'blue_wins' ? 'Blue Wins' : r.result === 'red_wins' ? 'Red Wins' : r.result === 'victory' ? 'Victory' : r.result === 'defeat' ? 'Defeat' : r.result || 'Unknown';
+      const modeLabel = r.mode === 'fire_range' ? 'Fire Range' : r.mode === 'campaign' ? 'Campaign' : r.mode === 'endless' ? 'Endless' : r.mode || 'Fire Range';
+      const duration = r.duration ? `${Math.floor(r.duration / 60)}m ${Math.floor(r.duration % 60)}s` : '?';
+      const date = r.recordedAt ? new Date(r.recordedAt).toLocaleString() : '?';
+      const unitCount = r.unitDefs ? r.unitDefs.length : '?';
+      cards += `<div class="replay-card">
+        <div class="replay-card-header">
+          <span class="replay-result" style="color:${resultColor}">${resultText}</span>
+          <span class="replay-mode">${modeLabel}</span>
+          <span class="replay-seed">Seed: ${r.seed || '?'}</span>
+        </div>
+        <div class="replay-card-body">
+          <span>${r.terrainLabel || 'Unknown Terrain'}</span>
+          <span>${duration}</span>
+          <span>${unitCount} units</span>
+        </div>
+        <div class="replay-card-footer">
+          <span class="replay-date">${date}</span>
+          <button class="replay-watch-btn" data-action="replay-watch" data-name="${r.name}">Watch</button>
+          <button class="replay-delete-btn" data-action="replay-delete" data-name="${r.name}">Delete</button>
+        </div>
+      </div>`;
+    }
+  }
+  return `<div class="replay-theater">
+    <h1>REPLAY THEATER</h1>
+    <div class="replay-list">${cards}</div>
+    <button class="replay-back-btn" data-action="replay-back">Back</button>
+  </div>`;
+}
+
+export function replayPlaybackHTML() {
+  return `<div class="replay-playback">
+    <div class="endless-battlefield" id="replay-battlefield"></div>
+    <div class="replay-controls">
+      <div class="replay-buttons">
+        <button data-action="replay-skip-start" title="Skip to start">|&lt;</button>
+        <button data-action="replay-step-back" title="Step back">&lt;</button>
+        <button data-action="replay-play-pause" title="Play/Pause" id="replay-play-btn">Play</button>
+        <button data-action="replay-step-fwd" title="Step forward">&gt;</button>
+        <button data-action="replay-skip-end" title="Skip to end">&gt;|</button>
+        <span class="replay-time" id="replay-time">0:00 / 0:00</span>
+      </div>
+      <div class="replay-timeline">
+        <input type="range" id="replay-scrubber" min="0" max="1000" value="0" step="1">
+      </div>
+      <div class="replay-speeds">
+        <button data-action="replay-speed" data-speed="0.25">&frac14;x</button>
+        <button data-action="replay-speed" data-speed="0.5">&frac12;x</button>
+        <button data-action="replay-speed" data-speed="1" class="active">1x</button>
+        <button data-action="replay-speed" data-speed="2">2x</button>
+        <button data-action="replay-speed" data-speed="4">4x</button>
+        <button data-action="replay-toggle-overlay">Overlay</button>
+        <button data-action="replay-exit" class="replay-exit-btn">Exit</button>
+      </div>
+    </div>
+    <div class="fr-event-sidebar" id="replay-event-sidebar">
+      <div class="fr-event-log" id="replay-event-log"></div>
+    </div>
+  </div>`;
 }
 
 function fireRangeConfigHTML() {
@@ -4575,8 +4866,47 @@ function fireRangeConfigHTML() {
   const cfg = fr.config;
   const dbg = cfg.debug || {};
 
-  const blueRows = cfg.blueTeam.map((slot, i) => frSlotRow(slot, i, 'blue', 'unitId', FR_BLUE_UNITS)).join('');
-  const redRows = cfg.redTeam.map((slot, i) => frSlotRow(slot, i, 'red', 'unitId', FR_RED_TYPES)).join('');
+  // Backwards compat: wrap flat arrays into squads
+  const blueSquads = cfg.blueSquads || [{ name: 'Alpha', sergeant: cfg.blueSergeant || {}, formation: 'line', units: cfg.blueTeam || [] }];
+  const redSquads = cfg.redSquads || [{ name: 'Alpha', sergeant: cfg.redSergeant || {}, formation: 'line', units: cfg.redTeam || [] }];
+
+  const SQUAD_NAMES = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot'];
+
+  function teamPanel(team, squads, color, label, typeField, typeOptions) {
+    const teamKey = team;
+    return `
+      <div class="fr-team-panel fr-${teamKey}">
+        <h2 class="fr-team-title" style="color:${color}">${label}</h2>
+        ${squads.map((sq, si) => {
+          const sqName = sq.name || SQUAD_NAMES[si] || ('Squad ' + (si + 1));
+          const isExpanded = sq._expanded !== false;
+          const rows = sq.units.map((slot, i) => frSlotRow(slot, i, team, typeField, typeOptions, si)).join('');
+          return `
+            <div class="fr-squad" data-team="${team}" data-squad="${si}">
+              <div class="fr-squad-header" data-action="fr-squad-toggle" data-team="${team}" data-squad="${si}">
+                <span class="fr-squad-name">${sqName}</span>
+                <select class="fr-squad-formation" data-action="fr-squad-formation" data-team="${team}" data-squad="${si}" onclick="event.stopPropagation()">
+                  ${FR_FORMATIONS.map(f => `<option value="${f.value}" ${(sq.formation || 'line') === f.value ? 'selected' : ''}>${f.label}</option>`).join('')}
+                </select>
+                <button class="fr-remove fr-squad-remove" data-action="fr-squad-remove" data-team="${team}" data-squad="${si}" onclick="event.stopPropagation()" title="Remove squad"${squads.length <= 1 ? ' disabled' : ''}>x</button>
+                <span class="fr-squad-chevron">${isExpanded ? '\u25BC' : '\u25B6'}</span>
+              </div>
+              <div class="fr-squad-body" style="${isExpanded ? '' : 'display:none'}">
+                <div class="fr-sgt-inline">
+                  <span class="fr-label">Sergeant</span>
+                  ${sgtSliders(sq.sergeant || {}, team, si)}
+                </div>
+                <div class="fr-slot-header">
+                  <span>Unit</span><span>Cmd</span><span>#</span><span></span><span></span><span></span>
+                </div>
+                ${rows}
+                <button class="fr-add-btn" data-action="fr-add" data-team="${team}" data-squad="${si}">+ Add Unit</button>
+              </div>
+            </div>`;
+        }).join('')}
+        <button class="fr-add-btn fr-add-squad-btn" data-action="fr-squad-add" data-team="${team}">+ Add Squad</button>
+      </div>`;
+  }
 
   return `
     <div class="screen fr-config-screen">
@@ -4586,14 +4916,7 @@ function fireRangeConfigHTML() {
       </div>
 
       <div class="fr-body">
-        <div class="fr-team-panel fr-blue">
-          <h2 class="fr-team-title" style="color:#4a9eff">BLUE TEAM (Allies)</h2>
-          <div class="fr-slot-header">
-            <span>Unit</span><span>Command</span><span>#</span><span></span><span></span><span></span>
-          </div>
-          ${blueRows}
-          <button class="fr-add-btn" data-action="fr-add" data-team="blue">+ Add Unit</button>
-        </div>
+        ${teamPanel(Team.BLUE, blueSquads, '#4a9eff', 'BLUE TEAM (Allies)', 'unitId', FR_BLUE_UNITS)}
 
         <div class="fr-center-col">
           <div class="fr-presets">
@@ -4629,20 +4952,7 @@ function fireRangeConfigHTML() {
             <label class="fr-check"><input type="checkbox" data-action="fr-debug-toggle" data-key="redInvincible" ${dbg.redInvincible ? 'checked' : ''}> Red Invincible</label>
             <label class="fr-check"><input type="checkbox" data-action="fr-debug-toggle" data-key="noCooldowns" ${dbg.noCooldowns ? 'checked' : ''}> No Cooldowns</label>
             <label class="fr-check"><input type="checkbox" data-action="fr-debug-toggle" data-key="showRanges" ${dbg.showRanges ? 'checked' : ''}> Show Ranges</label>
-          </div>
-
-          <div class="fr-sergeant-panel">
-            <span class="fr-label">Sergeant AI</span>
-            <div class="fr-sgt-cols">
-              <div class="fr-sgt-col">
-                <span class="fr-sgt-team" style="color:#4a9eff">Blue Sgt</span>
-                ${sgtSliders(cfg.blueSergeant || {}, 'blue')}
-              </div>
-              <div class="fr-sgt-col">
-                <span class="fr-sgt-team" style="color:#ff4444">Red Sgt</span>
-                ${sgtSliders(cfg.redSergeant || {}, 'red')}
-              </div>
-            </div>
+            <label class="fr-check"><input type="checkbox" data-action="fr-record-toggle" ${cfg.record !== false && Game.settings?.autoRecord !== false ? 'checked' : ''}> Record</label>
           </div>
 
           <div class="fr-save-panel">
@@ -4656,14 +4966,7 @@ function fireRangeConfigHTML() {
           <button class="menu-btn secondary" data-action="menu">Back</button>
         </div>
 
-        <div class="fr-team-panel fr-red">
-          <h2 class="fr-team-title" style="color:#ff4444">RED TEAM (Enemies)</h2>
-          <div class="fr-slot-header">
-            <span>Type</span><span>Command</span><span>#</span><span></span><span></span><span></span>
-          </div>
-          ${redRows}
-          <button class="fr-add-btn" data-action="fr-add" data-team="red">+ Add Unit</button>
-        </div>
+        ${teamPanel(Team.RED, redSquads, '#ff4444', 'RED TEAM (Enemies)', 'unitId', FR_RED_TYPES)}
       </div>
     </div>
   `;
@@ -4716,6 +5019,7 @@ function fireRangeBattleHTML() {
             <button class="control-btn ${b.debugOverlay ? 'active' : ''}" data-action="fr-toggle-overlay">Overlay</button>
             <button class="control-btn ${b.showTerrainGrid >= 1 ? 'active' : ''}" data-action="fr-toggle-terrain-grid">${b.showTerrainGrid === 1 ? 'Map:D' : b.showTerrainGrid === 2 ? 'Map:A*' : 'Map'}</button>
             <button class="control-btn" data-action="fr-copy-log">Copy Log</button>
+            <button class="control-btn" data-action="fr-toggle-report">Report</button>
             <button class="control-btn" data-action="fr-toggle-panel">Debug</button>
           </div>
         </div>
@@ -4733,6 +5037,19 @@ function fireRangeBattleHTML() {
 
       <div class="fr-debug-panel" id="fr-debug-panel">
         <div class="fr-debug-body">
+          <div class="fr-insignia-tuner" style="margin-bottom:8px;padding:6px;background:rgba(0,0,0,0.3);border-radius:4px;">
+            <b style="font-size:10px;color:#ffd700;">INSIGNIA</b>
+            ${['chevW|W|1|12', 'chevH|H|2|20', 'gap|Gap|1|12', 'bow|Bow|0.05|1', 'lineWidth|Ln|0.5|4', 'yOffset|Y|-20|20'].map(s => {
+              const [key, label, min, max] = s.split('|');
+              const val = EntityRenderer.insigniaParams[key];
+              return `<label style="font-size:9px;color:#ccc;margin:0 4px;">${label}
+                <input type="range" min="${min}" max="${max}" step="${key === 'bow' ? '0.05' : key === 'lineWidth' ? '0.25' : '1'}"
+                  value="${val}" data-action="fr-insignia" data-key="${key}"
+                  style="width:50px;vertical-align:middle;">
+                <span data-insignia-val="${key}" style="font-size:9px;color:#ffd700;">${val}</span>
+              </label>`;
+            }).join('')}
+          </div>
           <div class="fr-debug-col-toggles">
             ${['core','brain','fire','terrain','awareness','formation','movement'].map(g => {
               const on = !b._hiddenColGroups?.[g];
@@ -4757,6 +5074,138 @@ function fireRangeBattleHTML() {
       </div>
     </div>
   `;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FIRE RANGE RESULTS
+// ═══════════════════════════════════════════════════════════════
+
+function computeBattleStats(b) {
+  const log = b._debugLog || [];
+  const unitMap = {};
+
+  // Build unit lookup from both teams
+  for (const u of (b.units || [])) {
+    unitMap[u.id] = { id: u.id, team: Team.BLUE, kills: 0, damage: 0, shots: 0, hits: 0, alive: !u.dead };
+  }
+  for (const e of (b.enemies || [])) {
+    unitMap[e.id] = { id: e.id, team: Team.RED, kills: 0, damage: 0, shots: 0, hits: 0, alive: !e.dead };
+  }
+
+  let firstT = Infinity, lastT = 0;
+  for (const evt of log) {
+    if (evt.t > lastT) lastT = evt.t;
+    if (evt.t < firstT) firstT = evt.t;
+    const who = unitMap[evt.who];
+    if (!who) continue;
+
+    if (evt.type === 'fire') {
+      who.shots++;
+    } else if (evt.type === 'hit') {
+      who.hits++;
+      who.damage += (evt.dmg || 0);
+    } else if (evt.type === 'kill') {
+      who.kills++;
+    }
+  }
+
+  const units = Object.values(unitMap);
+  const blue = { kills: 0, damage: 0, shots: 0, hits: 0, survivors: 0, total: 0 };
+  const red = { kills: 0, damage: 0, shots: 0, hits: 0, survivors: 0, total: 0 };
+
+  for (const u of units) {
+    u.accuracy = u.shots > 0 ? Math.round((u.hits / u.shots) * 100) : 0;
+    const team = u.team === Team.BLUE ? blue : red;
+    team.kills += u.kills;
+    team.damage += u.damage;
+    team.shots += u.shots;
+    team.hits += u.hits;
+    team.total++;
+    if (u.alive) team.survivors++;
+  }
+
+  blue.accuracy = blue.shots > 0 ? Math.round((blue.hits / blue.shots) * 100) : 0;
+  red.accuracy = red.shots > 0 ? Math.round((red.hits / red.shots) * 100) : 0;
+
+  // Sort by kills (desc), then damage (desc)
+  units.sort((a, b) => b.kills - a.kills || b.damage - a.damage);
+
+  const mvp = units.length > 0 ? units[0] : null;
+
+  const startT = b._battleStartTime || (firstT < Infinity ? firstT : lastT);
+  return { duration: (lastT - startT) / 1000, blue, red, units, mvp };
+}
+
+export function fireRangeResultsHTML(b) {
+  const s = computeBattleStats(b);
+  const isLive = !b.result;
+  const resultClass = isLive ? 'live' : b.result === 'blue_wins' ? 'blue-wins' : b.result === 'red_wins' ? 'red-wins' : 'draw';
+  const resultText = isLive ? 'BATTLE REPORT' : b.result === 'blue_wins' ? 'BLUE WINS' : b.result === 'red_wins' ? 'RED WINS' : 'DRAW';
+  const mins = Math.floor(s.duration / 60);
+  const secs = Math.floor(s.duration % 60);
+  const durStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+
+  const teamBox = (label, cls, t) => `
+    <div class="fr-team-box ${cls}">
+      <h3>${label}</h3>
+      <div class="fr-tstat">Survivors: <span>${t.survivors} / ${t.total}</span></div>
+      <div class="fr-tstat">Kills: <span>${t.kills}</span></div>
+      <div class="fr-tstat">Damage: <span>${t.damage}</span></div>
+      <div class="fr-tstat">Accuracy: <span>${t.accuracy}%</span></div>
+    </div>`;
+
+  // Split units by team for grouped table display
+  const blueUnits = s.units.filter(u => u.team === Team.BLUE);
+  const redUnits = s.units.filter(u => u.team === Team.RED);
+
+  const unitRow = (u) => {
+    const isMvp = s.mvp && u.id === s.mvp.id && u.kills > 0;
+    const teamCls = u.team === Team.BLUE ? 'blue-row' : 'red-row';
+    const deadCls = u.alive ? '' : ' dead-row';
+    const mvpCls = isMvp ? ' fr-mvp-row' : '';
+    const badge = isMvp ? '<span class="fr-mvp-badge">MVP</span>' : '';
+    const status = u.alive ? 'Alive' : '\u2620 KIA';
+    return `<tr class="${teamCls}${deadCls}${mvpCls}">
+      <td>${u.id}${badge}</td>
+      <td>${u.kills}</td>
+      <td>${u.damage}</td>
+      <td>${u.shots}</td>
+      <td>${u.hits}</td>
+      <td>${u.accuracy}%</td>
+      <td>${status}</td>
+    </tr>`;
+  };
+
+  const headerRow = '<tr><th>Unit</th><th>Kills</th><th>Dmg</th><th>Shots</th><th>Hits</th><th>Acc</th><th>Status</th></tr>';
+  const blueRows = blueUnits.map(unitRow).join('');
+  const redRows = redUnits.map(unitRow).join('');
+
+  const buttons = isLive
+    ? `<button class="menu-btn secondary" data-action="fr-results-dismiss">Close</button>`
+    : `<button class="menu-btn" data-action="fr-reset">Rematch</button>
+       <button class="menu-btn secondary" data-action="fr-config">Config</button>
+       <button class="menu-btn secondary" data-action="fr-results-dismiss">Dismiss</button>`;
+
+  return `
+    <div class="fr-results-overlay ${resultClass}">
+      <h2>${resultText}</h2>
+      <div class="fr-duration">${isLive ? 'Elapsed' : 'Battle Duration'}: ${durStr}</div>
+      <div class="fr-team-summary">
+        ${teamBox('BLUE', 'blue', s.blue)}
+        ${teamBox('RED', 'red', s.red)}
+      </div>
+      <div class="fr-results-tables">
+        <div class="fr-results-team-table">
+          <h4 class="fr-table-header blue">BLUE TEAM</h4>
+          <table class="fr-results-table">${headerRow}${blueRows}</table>
+        </div>
+        <div class="fr-results-team-table">
+          <h4 class="fr-table-header red">RED TEAM</h4>
+          <table class="fr-results-table">${headerRow}${redRows}</table>
+        </div>
+      </div>
+      <div class="fr-results-buttons">${buttons}</div>
+    </div>`;
 }
 
 // ═══════════════════════════════════════════════════════════════

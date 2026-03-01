@@ -175,6 +175,168 @@ app.get('/api/debug/fire-range/logs/:name', (req, res) => {
   }
 });
 
+// ===== INSIGNIA API =====
+const INSIGNIA_DIR = path.join(__dirname, 'data', 'insignia');
+
+// POST /api/insignia - Save an insignia set
+app.post('/api/insignia', (req, res) => {
+  try {
+    ensureDir(INSIGNIA_DIR);
+    const set = req.body;
+    if (!set || !set.id) {
+      return res.status(400).json({ success: false, error: 'Missing set id' });
+    }
+    const safeId = String(set.id).replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 100);
+    const filePath = path.join(INSIGNIA_DIR, safeId + '.json');
+    fs.writeFileSync(filePath, JSON.stringify(set));
+    console.log(`Insignia set saved: ${safeId}`);
+    res.json({ success: true, id: safeId });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/insignia - List all insignia sets (metadata only)
+app.get('/api/insignia', (req, res) => {
+  try {
+    ensureDir(INSIGNIA_DIR);
+    const files = fs.readdirSync(INSIGNIA_DIR).filter(f => f.endsWith('.json'));
+    const sets = [];
+    for (const file of files) {
+      try {
+        const raw = fs.readFileSync(path.join(INSIGNIA_DIR, file), 'utf8');
+        const data = JSON.parse(raw);
+        sets.push({ id: data.id, name: data.name, createdAt: data.createdAt, updatedAt: data.updatedAt });
+      } catch (e) {
+        console.warn(`Skipping unparseable insignia set: ${file}`);
+      }
+    }
+    sets.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    res.json(sets);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/insignia/:id - Load a specific insignia set
+app.get('/api/insignia/:id', (req, res) => {
+  try {
+    const safeId = String(req.params.id).replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 100);
+    const filePath = path.join(INSIGNIA_DIR, safeId + '.json');
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, error: 'Set not found' });
+    }
+    const raw = fs.readFileSync(filePath, 'utf8');
+    res.json(JSON.parse(raw));
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /api/insignia/:id - Delete an insignia set
+app.delete('/api/insignia/:id', (req, res) => {
+  try {
+    const safeId = String(req.params.id).replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 100);
+    const filePath = path.join(INSIGNIA_DIR, safeId + '.json');
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, error: 'Set not found' });
+    }
+    fs.unlinkSync(filePath);
+    console.log(`Insignia set deleted: ${safeId}`);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ===== REPLAY API =====
+const REPLAYS_DIR = path.join(__dirname, 'data', 'replays');
+
+// POST /api/replays - Save a replay
+app.post('/api/replays', (req, res) => {
+  try {
+    ensureDir(REPLAYS_DIR);
+    const replay = req.body;
+    const seed = String(replay.seed || 'unknown').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
+    const recordedAt = replay.recordedAt ? new Date(replay.recordedAt) : new Date();
+    const pad = (n, len = 2) => String(n).padStart(len, '0');
+    const ts = `${recordedAt.getFullYear()}${pad(recordedAt.getMonth() + 1)}${pad(recordedAt.getDate())}-${pad(recordedAt.getHours())}${pad(recordedAt.getMinutes())}${pad(recordedAt.getSeconds())}`;
+    const filename = `${ts}-${seed}.json`;
+    const filePath = path.join(REPLAYS_DIR, filename);
+    fs.writeFileSync(filePath, JSON.stringify(replay));
+    console.log(`Replay saved: ${filename} (${JSON.stringify(replay).length} bytes)`);
+    res.json({ success: true, name: filename });
+  } catch (err) {
+    console.error('Failed to save replay:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/replays - List all replays (metadata only, no frames/events)
+app.get('/api/replays', (req, res) => {
+  try {
+    ensureDir(REPLAYS_DIR);
+    const files = fs.readdirSync(REPLAYS_DIR).filter(f => f.endsWith('.json'));
+    const replays = [];
+    for (const file of files) {
+      try {
+        const raw = fs.readFileSync(path.join(REPLAYS_DIR, file), 'utf8');
+        const data = JSON.parse(raw);
+        replays.push({
+          name: file,
+          mode: data.mode || 'fire_range',
+          seed: data.seed,
+          result: data.result,
+          duration: data.duration,
+          recordedAt: data.recordedAt,
+          terrainLabel: data.terrainLabel,
+          mapWidth: data.mapWidth,
+          mapHeight: data.mapHeight,
+          unitDefs: data.unitDefs,
+          stats: data.stats || null
+        });
+      } catch (e) {
+        // Skip files that can't be parsed
+        console.warn(`Skipping unparseable replay: ${file}`);
+      }
+    }
+    replays.sort((a, b) => new Date(b.recordedAt || 0) - new Date(a.recordedAt || 0));
+    res.json({ replays });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/replays/:name - Load a specific replay (full data)
+app.get('/api/replays/:name', (req, res) => {
+  try {
+    const safeName = String(req.params.name).replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 100);
+    const filePath = path.join(REPLAYS_DIR, safeName);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, error: 'Replay not found' });
+    }
+    res.type('application/json').send(fs.readFileSync(filePath, 'utf8'));
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /api/replays/:name - Delete a replay
+app.delete('/api/replays/:name', (req, res) => {
+  try {
+    const safeName = String(req.params.name).replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 100);
+    const filePath = path.join(REPLAYS_DIR, safeName);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, error: 'Replay not found' });
+    }
+    fs.unlinkSync(filePath);
+    console.log(`Replay deleted: ${safeName}`);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Shared object definitions
 const gameObjects = {
   units: [
