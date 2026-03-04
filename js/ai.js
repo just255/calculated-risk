@@ -12,7 +12,7 @@ import {
   TERRAIN_COVER_SCORE, getWaterDepth, isTerrainPassable,
   getWaterSpeedMod, distanceBetween, findNearbyCoverPos
 } from './terrain-utils.js';
-import { queryBridge, queryBridgeRailing, queryBridgeEntry, isBridgeDeckBlocking } from './terrain-query.js';
+import { queryBridge, queryBridgeRailing, queryBridgeEntry, queryBoulder, isBridgeDeckBlocking } from './terrain-query.js';
 import { findPathWorld, resolveNavWaypoint } from './pathfinding.js';
 import {
   traceLineOfSight, hasLineOfSight, getConcealment, canDetect,
@@ -22,6 +22,7 @@ import {
   MovementMode, buildMovementContext, resolveMovementMode,
   computeThreatSpeed
 } from './movement-modes.js';
+
 
 // ═══════════════════════════════════════════════════════════════
 // LAYER 1: COMMANDS
@@ -902,11 +903,56 @@ function moveBrainUnit(b, unit, targetX, targetY, dtSec, allUnits, speedMult = 1
   const xImpass = !isTerrainPassable(b, newX, unit.y, category);
   const yBlocked = isTerrainBlocked(b, unit.x, newY);
   const yImpass = !isTerrainPassable(b, unit.x, newY, category);
-  if (!xBlocked && !xImpass) unit.x = newX;
-  if (!yBlocked && !yImpass) unit.y = newY;
+  let xOk = !xBlocked && !xImpass;
+  let yOk = !yBlocked && !yImpass;
+
+  // Escape clause: if current position is ALREADY impassable (not hard-blocked),
+  // allow movement so the unit can escape rather than being permanently trapped.
+  // Only applies to soft impassability (deep water), not hard terrain blocks.
+  if (!xOk && !yOk && !isTerrainBlocked(b, unit.x, unit.y)) {
+    const currentlyTrapped = !isTerrainPassable(b, unit.x, unit.y, category);
+    if (currentlyTrapped) {
+      // Allow movement at reduced speed — unit is wading out of deep water
+      xOk = !xBlocked;
+      yOk = !yBlocked;
+    }
+  }
+
+  if (xOk) unit.x = newX;
+  if (yOk) unit.y = newY;
+
+  // Both blocked — try perpendicular slide, then reverse, to escape
+  if (!xOk && !yOk) {
+    const slide = finalSpeed * dtSec * 0.5;
+    let escaped = false;
+    // Try perpendicular directions first
+    const perpX = -dirY;
+    const perpY = dirX;
+    for (const sign of [1, -1]) {
+      const sx = unit.x + perpX * slide * sign;
+      const sy = unit.y + perpY * slide * sign;
+      const sxOk = !isTerrainBlocked(b, sx, unit.y) && isTerrainPassable(b, sx, unit.y, category);
+      const syOk = !isTerrainBlocked(b, unit.x, sy) && isTerrainPassable(b, unit.x, sy, category);
+      if (sxOk || syOk) {
+        if (sxOk) unit.x = sx;
+        if (syOk) unit.y = sy;
+        escaped = true;
+        break;
+      }
+    }
+    // Fallback: reverse direction (back away from obstacle)
+    if (!escaped) {
+      const rx = unit.x - dirX * slide;
+      const ry = unit.y - dirY * slide;
+      const rxOk = !isTerrainBlocked(b, rx, unit.y) && isTerrainPassable(b, rx, unit.y, category);
+      const ryOk = !isTerrainBlocked(b, unit.x, ry) && isTerrainPassable(b, unit.x, ry, category);
+      if (rxOk) unit.x = rx;
+      if (ryOk) unit.y = ry;
+    }
+  }
 
   // Log when both axes are blocked (throttled to once per 5s)
-  if ((xBlocked || xImpass) && (yBlocked || yImpass)) {
+  if (!xOk && !yOk) {
     const now = Date.now();
     if (!unit._lastMoveBlockLog || now - unit._lastMoveBlockLog > 5000) {
       unit._lastMoveBlockLog = now;
@@ -1552,8 +1598,14 @@ export function updateFormation(b, friendlies, hostiles, now) {
       ? Math.atan2(nearestThreat.y - leader.y, nearestThreat.x - leader.x)
       : leader.angle || 0;
   } else {
-    // Face direction of movement (leader's angle)
-    formationAngle = leader.angle || 0;
+    // Face direction of movement — use waypoint direction (already updated by sergeant this
+    // frame) instead of leader's facing angle, which may still point at the previous waypoint
+    const wp = b._teamWaypoints?.[teamKey];
+    if (wp) {
+      formationAngle = Math.atan2(wp.y - leader.y, wp.x - leader.x);
+    } else {
+      formationAngle = leader.angle || 0;
+    }
   }
 
   // Discipline affects spacing (high = tight, low = loose)
@@ -2648,26 +2700,74 @@ function findFlankPosition(b, unit, target, range) {
 
 // ── Survival Assessment ─────────────────────────────────────
 
-function assessSurvival(unit, target) {
+function assessSurvival(unit, target, hostiles, friendlies, b) {
   if (!target || target.dead) return { survivalRatio: Infinity, inDanger: false, action: null };
 
+  const awareness = unit._awareness ?? 0.5;
+
+  // My DPS against current target
   const myDmg = unit.damage || 10;
   const myFireRate = (unit.fireRate || 2000) / 1000;
   const myAccuracy = Math.max(0.3, unit.stability || 0.5);
   const myDPS = (myDmg / myFireRate) * myAccuracy;
-  const myTTK = myDPS > 0 ? (target.hp || 60) / myDPS : Infinity;
 
-  const theirDmg = target.damage || 10;
-  const theirFireRate = (target.fireRate || 2000) / 1000;
-  const theirDPS = (theirDmg / theirFireRate) * 0.5; // assume average enemy accuracy
-  const theirTTK = theirDPS > 0 ? (unit.hp || 60) / theirDPS : Infinity;
+  // Incoming threat: count nearby enemies that could be targeting me
+  // Awareness gates how many threats we perceive (low awareness = tunnel vision)
+  const threatRange = (unit.range || 400) * 1.5;
+  let incomingDPS = 0;
+  let threatCount = 0;
+  if (hostiles) {
+    for (const h of hostiles) {
+      if (h.dead) continue;
+      const d = distanceBetween(unit, h);
+      if (d > threatRange) continue;
+      threatCount++;
+      if (threatCount > Math.ceil(awareness * 5)) break;
+      const hDmg = h.damage || 10;
+      const hRate = (h.fireRate || 2000) / 1000;
+      incomingDPS += (hDmg / hRate) * 0.5;
+    }
+  }
+  // Fallback: single-target model if no threats scanned
+  if (incomingDPS === 0) {
+    const theirDmg = target.damage || 10;
+    const theirRate = (target.fireRate || 2000) / 1000;
+    incomingDPS = (theirDmg / theirRate) * 0.5;
+  }
+
+  // Ally support: nearby allies reduce effective risk
+  // Awareness determines how much we "trust" allies to help
+  let allyDPS = 0;
+  if (friendlies && awareness > 0.3) {
+    const cohesionRange = 200;
+    for (const a of friendlies) {
+      if (a === unit || a.dead) continue;
+      if (distanceBetween(unit, a) > cohesionRange) continue;
+      const aDmg = a.damage || 10;
+      const aRate = (a.fireRate || 2000) / 1000;
+      allyDPS += (aDmg / aRate) * 0.3 * awareness;
+    }
+  }
+
+  // Cover reduces effective incoming DPS
+  let coverReduction = 0;
+  if (b) {
+    const terrain = getTerrainAt(b, unit.x, unit.y);
+    const coverScore = TERRAIN_COVER_SCORE[terrain] ?? 0;
+    coverReduction = Math.min(coverScore / 100, 0.4); // up to 40% in pillbox
+  }
+
+  const effectiveIncoming = incomingDPS * (1 - coverReduction);
+  const effectiveMyDPS = myDPS + allyDPS;
+
+  const theirTTK = effectiveIncoming > 0 ? (unit.hp || 60) / effectiveIncoming : Infinity;
+  const myTTK = effectiveMyDPS > 0 ? (target.hp || 60) / effectiveMyDPS : Infinity;
 
   // survivalRatio < 1 means I die first
   const survivalRatio = myTTK > 0 ? theirTTK / myTTK : 0;
 
   // Danger threshold scaled by courage and awareness
   const courage = unit.personality?.courage ?? 0.5;
-  const awareness = unit._awareness ?? 0.5;
   const dangerThreshold = (0.3 + courage * 0.5) * awareness;
 
   const inDanger = survivalRatio < dangerThreshold;
@@ -2713,6 +2813,49 @@ function assessSurvival(unit, target) {
 }
 
 /**
+ * Clear all survival-related state on a unit.
+ */
+function clearSurvivalState(unit) {
+  unit._survivalAction = null;
+  unit._survivalCommitment = null;
+  unit._isProne = false;
+  unit._isHullDown = false;
+  unit._survivalCoverTarget = null;
+  unit._repositionDir = null;
+  unit._losBreakTarget = null;
+  unit._losBreakArrived = false;
+  unit._repositionTarget = null;
+}
+
+/**
+ * Check if a survival action has been completed.
+ * Used for commitment tracking — units finish what they started.
+ */
+function isSurvivalComplete(unit) {
+  const c = unit._survivalCommitment;
+  if (!c) return true;
+  switch (c.action) {
+    case 'go_prone':
+      return !!unit._isProne;
+    case 'hull_down':
+      return !!unit._isHullDown;
+    case 'rush_to_cover':
+    case 'break_los':
+    case 'reposition':
+      if (c.targetPos) {
+        return Math.hypot(unit.x - c.targetPos.x, unit.y - c.targetPos.y) < 30;
+      }
+      return false;
+    case 'fall_back_to_allies':
+      return !!unit._losBreakArrived;
+    case 'charge':
+      return unit._currentTarget && distanceBetween(unit, unit._currentTarget) < (unit.range || 150);
+    default:
+      return true;
+  }
+}
+
+/**
  * Execute a survival action. Returns true if action was taken (command overridden).
  */
 function executeSurvivalAction(b, unit, target, targetDist, range, survival, now, dtSec, friendlies) {
@@ -2751,6 +2894,9 @@ function executeRushToCover(b, unit, target, targetDist, range, now, dtSec, frie
 
   if (!unit._survivalCoverTarget) {
     unit._survivalCoverTarget = findNearbyCoverPos(b, unit);
+    if (unit._survivalCoverTarget && unit._survivalCommitment) {
+      unit._survivalCommitment.targetPos = { x: unit._survivalCoverTarget.x, y: unit._survivalCoverTarget.y };
+    }
   }
 
   if (unit._survivalCoverTarget) {
@@ -2865,6 +3011,9 @@ function executeBreakLOS(b, unit, target, range, now, dtSec, friendlies) {
     const pos = findLOSBreakPosition(b, unit, target);
     if (pos) {
       unit._losBreakTarget = { x: pos.x, y: pos.y };
+      if (unit._survivalCommitment) {
+        unit._survivalCommitment.targetPos = { x: pos.x, y: pos.y };
+      }
       if (b._debugLog) {
         const logTeam = unit.team;
         b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'survival',
@@ -2916,6 +3065,9 @@ function executeReposition(b, unit, target, range, now, dtSec, friendlies) {
           x: unit.x + (-dy / dist) * 150 * unit._repositionDir,
           y: unit.y + (dx / dist) * 150 * unit._repositionDir
         };
+      }
+      if (unit._repositionTarget && unit._survivalCommitment) {
+        unit._survivalCommitment.targetPos = { x: unit._repositionTarget.x, y: unit._repositionTarget.y };
       }
     }
 
@@ -3192,46 +3344,78 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
     const survivalInterval = 800 - (unit._awareness ?? 0.5) * 300;
     if (now - (unit._lastSurvivalCheck || 0) > survivalInterval) {
       unit._lastSurvivalCheck = now;
-      const survival = assessSurvival(unit, target);
+      const survival = assessSurvival(unit, target, hostiles, friendlies, b);
       unit._lastSurvival = survival;
       // Log survival state changes
       if (survival.inDanger) {
-        unit._survivalAction = survival.action;
+        // Create commitment on first danger detection
+        if (!unit._survivalCommitment) {
+          unit._survivalCommitment = {
+            action: survival.action,
+            startTime: now,
+            startPos: { x: unit.x, y: unit.y },
+            targetPos: null,
+            completed: false
+          };
+        }
+        unit._survivalAction = unit._survivalCommitment.action;
         if (b._debugLog) {
           const logTeam = team;
           b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'survival',
             x: Math.round(unit.x), y: Math.round(unit.y),
-            action: survival.action,
+            action: unit._survivalAction,
             detail: `ratio:${survival.survivalRatio.toFixed(2)} myTTK:${survival.myTTK.toFixed(1)}s theirTTK:${survival.theirTTK.toFixed(1)}s` });
         }
       } else {
-        // Danger passed — clear survival state
-        if (unit._survivalAction && b._debugLog) {
-          const logTeam = team;
-          b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'survival',
-            x: Math.round(unit.x), y: Math.round(unit.y),
-            action: 'survival_clear',
-            detail: `ratio:${survival.survivalRatio.toFixed(2)} danger passed` });
+        // Danger passed — check commitment before clearing
+        const commitment = unit._survivalCommitment;
+        if (commitment && !commitment.completed) {
+          commitment.completed = isSurvivalComplete(unit);
+
+          if (!commitment.completed) {
+            // Discipline determines whether we finish or abandon
+            const discipline = unit.personality?.discipline ?? 0.5;
+            const abandonThreshold = 0.3 + discipline * 0.5; // 0.3-0.8
+            const elapsed = now - commitment.startTime;
+            const progressBonus = Math.min(elapsed / 5000, 0.3);
+
+            if (Math.random() > abandonThreshold + progressBonus) {
+              // Abandon — low discipline gives up
+              if (b._debugLog) {
+                b._debugLog.push({ t: now, who: unit.id, team, type: 'survival',
+                  x: Math.round(unit.x), y: Math.round(unit.y),
+                  action: 'survival_abandon',
+                  detail: `disc:${discipline.toFixed(2)} elapsed:${(elapsed / 1000).toFixed(1)}s` });
+              }
+              clearSurvivalState(unit);
+            } else {
+              // Stay committed — keep doing current action
+              unit._survivalAction = commitment.action;
+            }
+          } else {
+            // Action completed — clear normally
+            if (b._debugLog) {
+              b._debugLog.push({ t: now, who: unit.id, team, type: 'survival',
+                x: Math.round(unit.x), y: Math.round(unit.y),
+                action: 'survival_complete',
+                detail: `action:${commitment.action} elapsed:${((now - commitment.startTime) / 1000).toFixed(1)}s` });
+            }
+            clearSurvivalState(unit);
+          }
+        } else {
+          // No active commitment or already completed — clear
+          if (unit._survivalAction && b._debugLog) {
+            b._debugLog.push({ t: now, who: unit.id, team, type: 'survival',
+              x: Math.round(unit.x), y: Math.round(unit.y),
+              action: 'survival_clear',
+              detail: `ratio:${survival.survivalRatio.toFixed(2)} danger passed` });
+          }
+          clearSurvivalState(unit);
         }
-        unit._survivalAction = null;
-        unit._isProne = false;
-        unit._isHullDown = false;
-        unit._survivalCoverTarget = null;
-        unit._repositionDir = null;
-        unit._losBreakTarget = null;
-        unit._losBreakArrived = false;
-        unit._repositionTarget = null;
       }
     }
   } else if (!target) {
-    unit._isProne = false;
-    unit._isHullDown = false;
-    unit._survivalAction = null;
-    unit._survivalCoverTarget = null;
-    unit._repositionDir = null;
-    unit._losBreakTarget = null;
-    unit._losBreakArrived = false;
-    unit._repositionTarget = null;
+    clearSurvivalState(unit);
     unit._lastSurvival = null;
   }
 
@@ -3266,6 +3450,7 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
   // Use a threshold so micro-adjustments (separation steering, float drift) don't count as movement
   const moveDist = Math.hypot(unit.x - prevX, unit.y - prevY);
   unit._movedThisFrame = moveDist > 1.5; // >1.5px = real movement (ignores formation micro-adjustments)
+  unit._moveDistThisFrame = moveDist;
   const prevStab = unit.stability ?? 0;
   updateStability(unit, dtSec, typeKey);
 
@@ -3648,9 +3833,7 @@ export function issueCommand(units, command, params = {}) {
     unit._targetLockedUntil = 0;
     unit._pushingUp = false;
     // Reset survival state
-    unit._survivalAction = null;
-    unit._losBreakTarget = null;
-    unit._losBreakArrived = false;
+    clearSurvivalState(unit);
     unit._losBreakArriveTime = 0;
     // Reset flanking/retreat state
     unit._flankTarget = null;
@@ -3736,9 +3919,32 @@ export function moveToward(b, unit, targetX, targetY, dtSec, orderSpeedMod = 1.0
   return dist < step;
 }
 
+/**
+ * Check if any boulder blocks a ray between two points.
+ * Samples queryBoulder() every 16px along the ray (same step size as LOS).
+ */
+function _boulderBlocksRay(terrainMap, x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const step = 16;
+  if (dist < step) return false;
+  const steps = Math.ceil(dist / step);
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps;
+    if (queryBoulder(terrainMap, x1 + dx * t, y1 + dy * t)) return true;
+  }
+  return false;
+}
+
 export function tryShoot(b, unit, targetX, targetY, now, targetEntity) {
   // Bridge deck blocks shots between different elevation levels
   if (isBridgeDeckBlocking(b.terrainMap?.bridges, unit.x, unit.y, targetX, targetY, unit._bridgeElevation, targetEntity?._bridgeElevation)) {
+    return false;
+  }
+
+  // Boulders block shots (suppressive fire through forest is still allowed)
+  if (b.terrainMap && _boulderBlocksRay(b.terrainMap, unit.x, unit.y, targetX, targetY)) {
     return false;
   }
 

@@ -272,7 +272,8 @@ export function compositeUnitSprite(unitDef, selections, canvas) {
 // Variant Hierarchy Rendering
 // ========================================
 
-const variantCache = new Map();  // "unitId:variantName" → variant data
+const variantCache = new Map();  // "unitId-variantName" → variant data (or null for failed)
+const variantPending = new Map(); // "unitId-variantName" → in-flight Promise (dedup concurrent calls)
 
 /**
  * Load a variant configuration from the server
@@ -280,42 +281,52 @@ const variantCache = new Map();  // "unitId:variantName" → variant data
  * @param {string} variantName - e.g., "default" or "woodland_camo"
  * @returns {Promise<Object|null>} - Variant data including parts with hierarchy
  */
-export async function loadVariant(unitId, variantName) {
+export function loadVariant(unitId, variantName) {
   // Variant ID format is "unitId-variantName"
   const variantId = `${unitId}-${variantName}`;
   const cacheKey = variantId;
 
-  // Check cache first
+  // Check cache first (includes cached failures)
   if (variantCache.has(cacheKey)) {
-    return variantCache.get(cacheKey);
+    return Promise.resolve(variantCache.get(cacheKey));
   }
 
-  try {
-    const response = await fetch(`/api/variants/${variantId}`);
-    if (!response.ok) {
-      console.log(`[sprites] Variant not found: ${cacheKey}`);
+  // Deduplicate in-flight requests
+  if (variantPending.has(cacheKey)) {
+    return variantPending.get(cacheKey);
+  }
+
+  const promise = fetch(`/api/variants/${variantId}`)
+    .then(response => {
+      if (!response.ok) {
+        variantCache.set(cacheKey, null);
+        return null;
+      }
+      return response.json().then(result => {
+        const variantData = {
+          id: variantId,
+          unitId,
+          canvasSize: {
+            width: result.data.canvasWidth || 256,
+            height: result.data.canvasHeight || 256
+          },
+          parts: result.data.parts || []
+        };
+        variantCache.set(cacheKey, variantData);
+        console.log(`[sprites] Loaded variant: ${cacheKey}`);
+        return variantData;
+      });
+    })
+    .catch(() => {
+      variantCache.set(cacheKey, null);
       return null;
-    }
-    const result = await response.json();
+    })
+    .finally(() => {
+      variantPending.delete(cacheKey);
+    });
 
-    // Transform API response to expected format
-    const variantData = {
-      id: variantId,
-      unitId,
-      canvasSize: {
-        width: result.data.canvasWidth || 256,
-        height: result.data.canvasHeight || 256
-      },
-      parts: result.data.parts || []
-    };
-
-    variantCache.set(cacheKey, variantData);
-    console.log(`[sprites] Loaded variant: ${cacheKey}`);
-    return variantData;
-  } catch (error) {
-    console.log(`[sprites] Failed to load variant: ${cacheKey}`, error.message);
-    return null;
-  }
+  variantPending.set(cacheKey, promise);
+  return promise;
 }
 
 /**
@@ -490,10 +501,7 @@ async function loadPartImage(unitId, partId) {
 export async function initAnimatedUnit(unitId, unitType, variantName = 'default') {
   // Load variant data
   const variantData = await loadVariant(unitType, variantName);
-  if (!variantData) {
-    console.log(`[sprites] Failed to load variant for ${unitType}:${variantName}`);
-    return null;
-  }
+  if (!variantData) return null;
 
   // Preload all part images
   await spriteRenderer.loadVariantImages(variantData);
@@ -582,7 +590,12 @@ export function renderAnimatedUnit(ctx, unitId, worldX, worldY, rotation = 0, sc
  */
 export function hasAnimatedUnit(unitId) {
   const state = animRuntime.getUnitAnimState(unitId);
-  return state && state.variantData && state.variantData.parts && state.variantData.parts.length > 0;
+  if (!state || !state.variantData || !state.variantData.parts || state.variantData.parts.length === 0) return false;
+  // Verify at least one part image is actually loaded in the cache
+  for (const part of state.variantData.parts) {
+    if (part.image && spriteRenderer.getCachedImage(part.image)) return true;
+  }
+  return false;
 }
 
 /**

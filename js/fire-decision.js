@@ -37,8 +37,12 @@ export function updateStability(unit, dtSec, typeKey) {
   const zeroIn = ZERO_IN_TIME[typeKey] || 2.0;
 
   if (unit._movedThisFrame) {
-    // Moving resets stability quickly (decay to 0)
-    unit.stability = Math.max(0, unit.stability - dtSec * 2.0);
+    // Scale decay by movement speed — slow creep barely affects aim, sprinting wrecks it
+    const floor = unit._isProne ? 0.3 : (unit._isHullDown ? 0.2 : 0.1);
+    const maxDist = (unit.speed || 80) * dtSec;
+    const moveFraction = Math.min((unit._moveDistThisFrame || 0) / (maxDist || 1), 1.0);
+    const decay = (0.1 + moveFraction * 1.4) * dtSec;
+    unit.stability = Math.max(floor, unit.stability - decay);
   } else {
     // Standing still builds stability toward 1.0
     // Prone: 50% faster stabilization. Hull-down: 30% faster.

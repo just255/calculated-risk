@@ -453,7 +453,7 @@ export class EntityRenderer {
         ctx.save();
         ctx.globalAlpha = alpha;
         // Draw cached canvas centered on unit. Cache is 48x48 logical at 2x res.
-        const size = 24; // Draw at 24x24 (half of 48 cache size)
+        const size = 36;
         ctx.drawImage(cached, x - size / 2, y - size / 2, size, size);
         ctx.restore();
         return;

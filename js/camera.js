@@ -72,6 +72,8 @@ export function updateFireRangeCamera(b, screenW, screenH) {
 
 /**
  * Update a hero-mode camera: center on hero position.
+ * Supports WASD pan override (for replay mode) — panning detaches from hero,
+ * F key or re-center snaps back.
  *
  * @param {object} b       - Battle object (needs .mapWidth, .mapHeight, .hero, .camera)
  * @param {number} screenW - Container pixel width
@@ -86,10 +88,42 @@ export function updateHeroCamera(b, screenW, screenH) {
   const viewW = screenW / zoom;
   const viewH = screenH / zoom;
 
-  b.camera.x = Math.max(0, Math.min(b.mapWidth - viewW, b.hero.x - viewW / 2));
-  b.camera.y = Math.max(0, Math.min(b.mapHeight - viewH, b.hero.y - viewH * 0.65));
-  b.camera.zoom = zoom;
+  // WASD camera pan override (only in replay/spectator — live play uses WASD for hero movement)
+  if (b._isReplay) {
+    const panSpeed = 400 / zoom;
+    const dtSec = 1 / 60;
+    let panX = 0, panY = 0;
+    if (b.keys?.a) panX -= panSpeed * dtSec;
+    if (b.keys?.d) panX += panSpeed * dtSec;
+    if (b.keys?.w) panY -= panSpeed * dtSec;
+    if (b.keys?.s) panY += panSpeed * dtSec;
 
+    if (panX !== 0 || panY !== 0) {
+      b.camera.x += panX;
+      b.camera.y += panY;
+      b.camera._manualPan = true;
+    }
+  }
+
+  if (!b.camera._manualPan) {
+    // Auto-follow hero
+    b.camera.x = b.hero.x - viewW / 2;
+    b.camera.y = b.hero.y - viewH * 0.65;
+  }
+
+  // Clamp within map bounds
+  if (viewW >= b.mapWidth) {
+    b.camera.x = (b.mapWidth - viewW) / 2;
+  } else {
+    b.camera.x = Math.max(0, Math.min(b.mapWidth - viewW, b.camera.x));
+  }
+  if (viewH >= b.mapHeight) {
+    b.camera.y = (b.mapHeight - viewH) / 2;
+  } else {
+    b.camera.y = Math.max(0, Math.min(b.mapHeight - viewH, b.camera.y));
+  }
+
+  b.camera.zoom = zoom;
   return zoom;
 }
 
@@ -117,8 +151,8 @@ export function cameraKeyDown(b, key) {
     if (c) cameraFitMap(b, c.offsetWidth, c.offsetHeight);
     return true;
   }
-  // Re-center on leader (fire range/replay only — hero modes auto-follow)
-  if (k === 'f' && b.fireRange) { b.camera._manualPan = false; return true; }
+  // Re-center on leader/hero (resets manual pan so auto-follow resumes)
+  if (k === 'f' && (b.fireRange || b._isReplay)) { b.camera._manualPan = false; return true; }
   return false;
 }
 

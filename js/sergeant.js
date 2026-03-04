@@ -8,8 +8,9 @@
 // Phases: MARCH → CONTACT → ENGAGE → PRESS / FALLBACK → REGROUP
 // ═══════════════════════════════════════════════════════════════
 
-import { Command, issueCommand } from './ai.js';
+import { Command, issueCommand, getArmorTier, getTierDamageMultiplier } from './ai.js';
 import { Formation } from './constants.js';
+import { getDamageFalloff } from './fire-decision.js';
 import { findPathWorld } from './pathfinding.js';
 import { getTerrainAt, TERRAIN_COVER_SCORE } from './terrain-utils.js';
 
@@ -203,14 +204,19 @@ function evalInterval(sgt) {
  * @returns {Object} Sergeant state
  */
 export function createSergeant(teamKey, personality, spawnZone, enemySpawnZone, squadId) {
+  const p = { ...DEFAULT_SERGEANT, ...personality };
+  // Personality-seeded eval offset: awareness + initiative determine initial phase
+  const awarenessDelay = (1 - (p.awareness ?? 0.5)) * 2000;
+  const initiativeOffset = (p.initiative ?? 0.5) * 1000;
+
   return {
     teamKey,
-    personality: { ...DEFAULT_SERGEANT, ...personality },
+    personality: p,
     phase: Phase.MARCH,
     prevPhase: null,
 
-    // Timing
-    lastEval: 0,
+    // Timing — seeded from personality to desynchronize multiple sergeants
+    lastEval: -(awarenessDelay + initiativeOffset),
     phaseStartTime: 0,
     contactTime: 0,
 
@@ -232,6 +238,8 @@ export function createSergeant(teamKey, personality, spawnZone, enemySpawnZone, 
 
     // Situational awareness (refreshed each eval)
     sitrep: null,
+    sitrepHistory: [],  // Ring buffer of recent sitreps for trend analysis
+    lastEngagementTime: 0, // Timestamp of last fire event — stalemate detection
     squadId: squadId ?? null
   };
 }
@@ -260,10 +268,14 @@ function buildSitrep(b, sgt, friendlies, hostiles) {
   const enemyCasualties = enemyTotal - enemyAliveCount;
   const enemyCasualtyRate = enemyTotal > 0 ? enemyCasualties / enemyTotal : 0;
 
-  // Center of mass
-  let cx = 0, cy = 0;
-  for (const u of alive) { cx += u.x; cy += u.y; }
+  // Center of mass + terrain cover quality
+  let cx = 0, cy = 0, coverSum = 0;
+  for (const u of alive) {
+    cx += u.x; cy += u.y;
+    coverSum += sampleCover(b, u);
+  }
   if (aliveCount > 0) { cx /= aliveCount; cy /= aliveCount; }
+  const avgCover = aliveCount > 0 ? coverSum / aliveCount : 0;
 
   let ecx = 0, ecy = 0;
   for (const e of enemyAlive) { ecx += e.x; ecy += e.y; }
@@ -293,12 +305,52 @@ function buildSitrep(b, sgt, friendlies, hostiles) {
   // Max weapon range across alive units
   const maxRange = alive.reduce((mx, u) => Math.max(mx, u.range ?? 400), 0);
 
+  // Effective firepower ratio — accounts for accuracy, range, armor, suppression, HP
+  let friendlyEDPS = 0, enemyEDPS = 0;
+
+  // Pre-compute average armor tier per side for cross-matchup estimation
+  let friendlyTierSum = 0, enemyTierSum = 0;
+  for (const u of alive) friendlyTierSum += getArmorTier(u);
+  for (const e of enemyAlive) enemyTierSum += getArmorTier(e);
+  const avgFriendlyTier = aliveCount > 0 ? friendlyTierSum / aliveCount : 0;
+  const avgEnemyTier = enemyAliveCount > 0 ? enemyTierSum / enemyAliveCount : 0;
+
+  for (const u of alive) {
+    const rawDPS = (u.damage || 10) / ((u.fireRate || 2000) / 1000);
+    const stability = 0.5 + (u.stability ?? 0.5) * 0.5;       // 0.5–1.0
+    const suppPenalty = 1 - (u._suppression ?? 0) * 0.3;       // 0.7–1.0
+    const falloff = getDamageFalloff(distToEnemy, u.range || 400);
+    const armorMult = getTierDamageMultiplier(getArmorTier(u), avgEnemyTier);
+    const hpWeight = Math.min(2.0, (u.hp || 60) / 60);         // Tougher units sustain DPS longer
+    friendlyEDPS += rawDPS * stability * suppPenalty * falloff * armorMult * hpWeight;
+  }
+  for (const e of enemyAlive) {
+    const rawDPS = (e.damage || 10) / ((e.fireRate || 2000) / 1000);
+    const stability = 0.5 + (e.stability ?? 0.5) * 0.5;
+    const suppPenalty = 1 - (e._suppression ?? 0) * 0.3;
+    const falloff = getDamageFalloff(distToEnemy, e.range || 400);
+    const armorMult = getTierDamageMultiplier(getArmorTier(e), avgFriendlyTier);
+    const hpWeight = Math.min(2.0, (e.hp || 60) / 60);
+    enemyEDPS += rawDPS * stability * suppPenalty * falloff * armorMult * hpWeight;
+  }
+  const firepowerRatio = enemyEDPS > 0
+    ? friendlyEDPS / enemyEDPS
+    : friendlyEDPS > 0 ? 99 : 0;
+
+  // Suppression distribution — fraction of squad heavily suppressed
+  let heavilySuppressed = 0;
+  for (const u of alive) {
+    if ((u._suppression ?? 0) > 0.5) heavilySuppressed++;
+  }
+  const suppressedRate = aliveCount > 0 ? heavilySuppressed / aliveCount : 0;
+
   return {
     alive, enemyAlive, aliveCount, enemyAliveCount,
     total, enemyTotal, casualties, casualtyRate,
     enemyCasualties, enemyCasualtyRate,
-    forceRatio, distToEnemy, spotted, underFire,
-    avgMorale, avgSuppression, maxRange,
+    forceRatio, firepowerRatio, friendlyEDPS, enemyEDPS,
+    distToEnemy, spotted, underFire,
+    avgMorale, avgSuppression, suppressedRate, avgCover, maxRange,
     center: { x: cx, y: cy },
     enemyCenter: { x: ecx, y: ecy }
   };
@@ -343,9 +395,31 @@ export function updateSergeant(b, sgt, friendlies, hostiles, now) {
   const sitrep = buildSitrep(b, sgt, friendlies, hostiles);
   sgt.sitrep = sitrep;
 
+  // Record sitrep history for trend analysis
+  sgt.sitrepHistory.push({
+    t: now,
+    casualtyRate: sitrep.casualtyRate,
+    enemyCasualtyRate: sitrep.enemyCasualtyRate,
+    forceRatio: sitrep.forceRatio,
+    firepowerRatio: sitrep.firepowerRatio,
+    avgMorale: sitrep.avgMorale,
+    suppressedRate: sitrep.suppressedRate
+  });
+  if (sgt.sitrepHistory.length > 5) sgt.sitrepHistory.shift();
+
   const prevPhase = sgt.phase;
 
+  // Track last engagement for stalemate detection
+  if (sitrep.underFire || sitrep.spotted) {
+    sgt.lastEngagementTime = now;
+  }
+  const timeSinceEngagement = now - (sgt.lastEngagementTime || 0);
+
   // ── Phase transitions ──────────────────────────────────────
+  // Patience-driven phase inertia: 1s (impatient) to 6s (patient)
+  const phaseAge = now - sgt.phaseStartTime;
+  const minPhaseAge = 1000 + sgt.personality.patience * 5000;
+
   switch (sgt.phase) {
     case Phase.MARCH:
       if (sitrep.spotted || sitrep.underFire) {
@@ -368,17 +442,21 @@ export function updateSergeant(b, sgt, friendlies, hostiles, now) {
       break;
 
     case Phase.ENGAGE:
-      if (shouldFallback(sgt, sitrep)) {
+      if (phaseAge > minPhaseAge && shouldFallback(sgt, sitrep)) {
         transition(sgt, Phase.FALLBACK, now, b);
       } else if (shouldPress(sgt, sitrep)) {
         transition(sgt, Phase.PRESS, now, b);
       } else if (!sitrep.spotted && !sitrep.underFire && sitrep.distToEnemy > sitrep.maxRange * 1.5) {
-        transition(sgt, Phase.MARCH, now, b);
+        // Stalemate breaker: if out of contact for 10s, march toward enemy
+        if (timeSinceEngagement > 10000) {
+          transition(sgt, Phase.MARCH, now, b);
+        }
       }
       break;
 
     case Phase.PRESS:
-      if (shouldFallback(sgt, sitrep)) {
+      // Only consider fallback if we're actually losing — pressing with advantage should continue
+      if (phaseAge > minPhaseAge && shouldFallback(sgt, sitrep)) {
         transition(sgt, Phase.FALLBACK, now, b);
       } else if (sitrep.enemyAliveCount === 0) {
         transition(sgt, Phase.MARCH, now, b);
@@ -386,12 +464,20 @@ export function updateSergeant(b, sgt, friendlies, hostiles, now) {
       break;
 
     case Phase.FALLBACK:
+      // Last stand: squad with >80% casualties and nowhere to retreat — charge or die
+      if (sitrep.casualtyRate > 0.8 && sitrep.enemyAliveCount > 0 && sitrep.aliveCount > 0) {
+        transition(sgt, Phase.PRESS, now, b);
+        break;
+      }
       // Retreat until near rally point, then regroup
       if (distTo(sitrep.center, sgt.rallyPoint) < 150) {
         transition(sgt, Phase.REGROUP, now, b);
-      } else if (sitrep.forceRatio > 1.5 && sitrep.avgMorale > 0.6) {
+      } else if (phaseAge > minPhaseAge && sitrep.firepowerRatio >= 1.5 && sitrep.avgMorale > 0.6) {
         // Recovered advantage — re-engage
         transition(sgt, Phase.ENGAGE, now, b);
+      } else if (timeSinceEngagement > 10000 && sitrep.enemyAliveCount > 0) {
+        // Stalemate breaker: no contact for 10s, force march to re-engage
+        transition(sgt, Phase.MARCH, now, b);
       }
       break;
 
@@ -432,6 +518,20 @@ function transition(sgt, newPhase, now, b) {
   sgt.pathGoal = null;
 }
 
+// ── Trend analysis ──────────────────────────────────────────
+
+/**
+ * Compute the trend (slope per second) of a metric from sitrep history.
+ * Positive = metric increasing, negative = decreasing, 0 = stable/insufficient data.
+ */
+function getTrend(history, field) {
+  if (history.length < 2) return 0;
+  const first = history[0][field];
+  const last = history[history.length - 1][field];
+  const dt = (history[history.length - 1].t - history[0].t) / 1000;
+  return dt > 0 ? (last - first) / dt : 0;
+}
+
 // ── Decision helpers ─────────────────────────────────────────
 
 function contactDelay(sgt) {
@@ -447,27 +547,59 @@ function regroupDuration(sgt) {
 function shouldFallback(sgt, sitrep) {
   const p = sgt.personality;
 
+  // Good cover position makes us braver — harder to justify retreating from fortified position
+  const coverBonus = Math.min((sitrep.avgCover || 0) / 50, 0.15); // up to +0.15
+
   // Courage threshold — at what casualty/morale level do we pull back?
-  // Courageous sergeants fight through more losses
-  const casualtyThreshold = 0.3 + p.courage * 0.4; // 0.3–0.7
+  const casualtyThreshold = 0.3 + p.courage * 0.4 + coverBonus; // 0.3–0.85
   const moraleThreshold = 0.2 + (1 - p.courage) * 0.3; // 0.2–0.5
 
-  if (sitrep.casualtyRate > casualtyThreshold) return true;
-  if (sitrep.avgMorale < moraleThreshold) return true;
-  if (sitrep.forceRatio < 0.3 && p.aggression < 0.8) return true;
+  // Point-in-time check (necessary condition)
+  const casualtyCritical = sitrep.casualtyRate > casualtyThreshold;
+  const moraleCritical = sitrep.avgMorale < moraleThreshold;
+  // Use firepower ratio — losing a tank matters more than losing infantry
+  const outnumberedBadly = sitrep.firepowerRatio < 0.3 && p.aggression < 0.8;
+  // Heavy suppression can trigger fallback even without casualties
+  const squadPinned = sitrep.suppressedRate > 0.6 && p.courage < 0.6;
 
-  return false;
+  if (!casualtyCritical && !moraleCritical && !outnumberedBadly && !squadPinned) return false;
+
+  // Trend check — patient sergeants need a worsening trend before pulling back
+  const casRate = getTrend(sgt.sitrepHistory, 'casualtyRate');
+  const moraleTrend = getTrend(sgt.sitrepHistory, 'avgMorale');
+  const gettingWorse = casRate > 0.01 || moraleTrend < -0.01;
+
+  // Patient sergeants require trend confirmation unless situation is extreme
+  if (p.patience > 0.5 && !gettingWorse) {
+    // Extreme override: >80% casualties or morale collapsed
+    if (sitrep.casualtyRate > 0.8 || sitrep.avgMorale < 0.1) return true;
+    return false;
+  }
+
+  // "Fool me twice" — if we just came FROM fallback, require stronger signal
+  if (sgt.prevPhase === Phase.FALLBACK) {
+    const strengthened = sitrep.casualtyRate > casualtyThreshold + 0.1
+                      || sitrep.avgMorale < moraleThreshold - 0.1;
+    return strengthened;
+  }
+
+  return true;
 }
 
 function shouldPress(sgt, sitrep) {
   const p = sgt.personality;
 
   // Aggressive sergeants press with smaller advantages
+  // Use firepower ratio for weighted assessment
   const ratioNeeded = 1.5 - p.aggression * 0.5; // 1.0–1.5
   const casualtyAdvantage = sitrep.enemyCasualtyRate > sitrep.casualtyRate + 0.15;
 
-  if (sitrep.forceRatio >= ratioNeeded) return true;
+  if (sitrep.firepowerRatio >= ratioNeeded) return true;
   if (casualtyAdvantage && p.aggression > 0.5) return true;
+
+  // Aggressive sergeants press when enemy is collapsing (trend)
+  const enemyCasTrend = getTrend(sgt.sitrepHistory, 'enemyCasualtyRate');
+  if (p.aggression > 0.7 && enemyCasTrend > 0.02 && sitrep.forceRatio > 1.0) return true;
 
   return false;
 }

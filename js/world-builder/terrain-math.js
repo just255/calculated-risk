@@ -30,10 +30,23 @@ export function calcStrokeCoverage(stroke, wx, wy) {
 
   if (dist >= stroke.radius) return 0;
 
-  // Normalize distance (0 = center, 1 = edge)
-  const normalizedDist = dist / stroke.radius;
+  // If stroke has fadeWidth, use solid-core + edge-fade model.
+  // This matches the visual renderer: solid circle at radius, blur only in fadeWidth band.
+  // Without this, smooth falloff across the entire radius causes gameplay effects
+  // (e.g. deep water blocking vehicles) far beyond the visible water edge.
+  if (stroke.fadeWidth > 0) {
+    const innerRadius = stroke.radius - stroke.fadeWidth;
+    if (dist <= innerRadius) {
+      return stroke.intensity;
+    }
+    // Fade from full intensity to 0 across the fadeWidth band
+    const fadeDist = (dist - innerRadius) / stroke.fadeWidth; // 0 at inner edge, 1 at outer edge
+    const falloffFn = FALLOFF[stroke.falloff] || FALLOFF.linear;
+    return stroke.intensity * falloffFn(fadeDist);
+  }
 
-  // Apply falloff function
+  // Legacy: falloff across entire radius (for strokes without fadeWidth)
+  const normalizedDist = dist / stroke.radius;
   const falloffFn = FALLOFF[stroke.falloff] || FALLOFF.linear;
   const falloffMult = falloffFn(normalizedDist);
 

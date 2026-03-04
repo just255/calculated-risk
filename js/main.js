@@ -6,7 +6,7 @@ import { State, SubState, HQTab, UNITS, PROJECTILES, UNIT_PROJECTILES, SquadOrde
 import { Game, newBattlePlan, newCampaign, createAdvancingScenario, createFrontlineScenario, newZoneBattle, newEndlessRun, newFireRangeRun } from './state.js';
 import { initAudio, sound } from './audio.js';
 import { save, load, saveFRConfig, loadFRConfig, saveFRNamedConfig, loadFRNamedConfigs, deleteFRNamedConfig, migrateFRConfig } from './storage.js';
-import { goto, deploy, switchUnit, stopLoop, stopFireRangeLoop, formatFireRangeLog, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, campaignMouseDown, campaignMouseUp, campaignSetAimAngle, campaignClearAimAngle, campaignSetJoystick, campaignClearJoystick, endlessKeyDown, endlessKeyUp, endlessMouseMove, endlessMouseDown, endlessMouseUp, fireRangeKeyDown, fireRangeKeyUp, fireRangeWheel } from './game.js';
+import { goto, deploy, switchUnit, stopLoop, stopFireRangeLoop, formatFireRangeLog, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, campaignMouseDown, campaignMouseUp, campaignSetAimAngle, campaignClearAimAngle, campaignSetJoystick, campaignClearJoystick, endlessKeyDown, endlessKeyUp, endlessMouseMove, endlessMouseDown, endlessMouseUp, fireRangeKeyDown, fireRangeKeyUp, fireRangeWheel, updateEventLog } from './game.js';
 import { FR_PRESETS } from './fire-range-presets.js';
 import { render, setSubState, fetchAvailableVehicles, fetchUnitVariants, fetchVariantData, getUnitVariants, fireRangeResultsHTML, replayTheaterHTML } from './ui.js';
 import { ReplayPlayer } from './replay-player.js';
@@ -19,6 +19,7 @@ import * as sprites from './sprites.js';
 const { initSprites } = sprites;
 import { loadTerrainImages } from './world-builder/battle-terrain.js';
 import { initInsigniaTab, handleInsigniaClick, handleInsigniaInput, handleInsigniaKeyDown, handleInsigniaKeyUp } from './insignia-events.js';
+import { cacheInsigniaSet } from './insignia-renderer.js';
 
 // Expose sprites module for console testing
 window.sprites = sprites;
@@ -184,6 +185,13 @@ async function initApp() {
   }).catch(err => {
     console.warn('[main] Terrain sprite preload failed (battles will use fallback):', err);
   });
+  // Preload saved insignia set for battle rendering (non-blocking)
+  if (Game.settings.insigniaSetId) {
+    fetch(`/api/insignia/${encodeURIComponent(Game.settings.insigniaSetId)}`)
+      .then(res => res.ok ? res.json() : null)
+      .then(set => { if (set) { cacheInsigniaSet(set); console.log('[main] Insignia set preloaded:', set.name); } })
+      .catch(err => console.warn('[main] Insignia set preload failed:', err));
+  }
   // Render initial state
   render();
   setupEventHandlers();
@@ -1512,8 +1520,8 @@ document.getElementById('app').addEventListener('click', e => {
       const panel = document.getElementById('fr-debug-panel');
       if (panel) panel.classList.toggle('collapsed');
     }
-    else if (a === 'fr-event-filter') {
-      const b = Game.fireRange?.battle;
+    else if (a === 'event-filter') {
+      const b = Game.fireRange?.battle || Game.endless?.battle || Game.campaign?.heroBattle || replayPlayer?.battle;
       if (b) {
         const type = action.dataset.type;
         if (!b._eventFilters) b._eventFilters = {};
@@ -1562,12 +1570,21 @@ document.getElementById('app').addEventListener('click', e => {
       goto(State.REPLAY_THEATER);
       // Fetch replay list and render
       fetch('/api/replays').then(r => r.json()).then(list => {
+        Game._replayCache = list.replays || list;
+        Game._replayFilter = 'all';
         const app = document.getElementById('app');
-        app.innerHTML = replayTheaterHTML(list.replays || list);
+        app.innerHTML = replayTheaterHTML(Game._replayCache, 'all');
       }).catch(() => {
+        Game._replayCache = [];
         const app = document.getElementById('app');
-        app.innerHTML = replayTheaterHTML([]);
+        app.innerHTML = replayTheaterHTML([], 'all');
       });
+    }
+    else if (a === 'replay-filter') {
+      const mode = action.dataset.mode || 'all';
+      Game._replayFilter = mode;
+      const app = document.getElementById('app');
+      app.innerHTML = replayTheaterHTML(Game._replayCache || [], mode);
     }
     else if (a === 'replay-back') {
       goto(State.MENU);
@@ -1597,6 +1614,9 @@ document.getElementById('app').addEventListener('click', e => {
             // Update play/pause button text
             const playBtn = document.getElementById('replay-play-btn');
             if (playBtn) playBtn.textContent = replayPlayer.playing ? 'Pause' : 'Play';
+            // Update event log sidebar (filter to current playback time)
+            const logEl = document.getElementById('replay-event-log');
+            if (logEl && replayPlayer.battle) updateEventLog(logEl, replayPlayer.battle, currentMs);
           });
           replayPlayer.onEnd(() => {
             const playBtn = document.getElementById('replay-play-btn');
@@ -1615,8 +1635,9 @@ document.getElementById('app').addEventListener('click', e => {
         // Refresh the list
         return fetch('/api/replays').then(r => r.json());
       }).then(list => {
+        Game._replayCache = list.replays || list;
         const app = document.getElementById('app');
-        app.innerHTML = replayTheaterHTML(list.replays || list);
+        app.innerHTML = replayTheaterHTML(Game._replayCache, Game._replayFilter || 'all');
       }).catch(err => {
         console.error('Failed to delete replay:', err);
       });
@@ -2075,18 +2096,6 @@ document.getElementById('app').addEventListener('input', e => {
   // Insignia editor sliders / toggles / color pickers
   if (Game.state === State.HQ && Game.hqTab === HQTab.INSIGNIA) {
     if (handleInsigniaInput(e.target)) return;
-  }
-
-  // Insignia tuner sliders (debug panel)
-  if (e.target.dataset?.action === 'fr-insignia') {
-    const key = e.target.dataset.key;
-    const val = parseFloat(e.target.value);
-    if (key && !isNaN(val)) {
-      EntityRenderer.insigniaParams[key] = val;
-      const valSpan = document.querySelector(`[data-insignia-val="${key}"]`);
-      if (valSpan) valSpan.textContent = val;
-    }
-    return;
   }
 
   // Fire Range slider + count inputs

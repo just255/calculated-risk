@@ -12,16 +12,21 @@ const RECORD_INTERVAL = 100; // ms
  */
 export function createRecorder(b, mode) {
   const unitDefs = [];
+  // Capture hero definition (endless/campaign)
+  const hasHero = b.hero && !b.hero.observer;
+  if (hasHero) {
+    unitDefs.push({ id: 'hero', team: 'blue', unitId: b.hero.unitId, maxHp: b.hero.maxHp, isHero: true });
+  }
   // Capture unit definitions for blue team
   if (b.units) {
     for (const u of b.units) {
-      unitDefs.push({ id: u.id, team: 'blue', unitId: u.unitId, maxHp: u.maxHp, rank: u._rank ?? 0 });
+      unitDefs.push({ id: u.id, team: 'blue', unitId: u.unitId, maxHp: u.maxHp, rank: u._rank ?? 0, insigniaSetId: u._insigniaSetId || null });
     }
   }
   // Capture unit definitions for red team
   if (b.enemies) {
     for (const e of b.enemies) {
-      unitDefs.push({ id: e.id, team: 'red', unitId: e.unitId, maxHp: e.maxHp, rank: e._rank ?? 0 });
+      unitDefs.push({ id: e.id, team: 'red', unitId: e.unitId, maxHp: e.maxHp, rank: e._rank ?? 0, insigniaSetId: e._insigniaSetId || null });
     }
   }
 
@@ -38,7 +43,8 @@ export function createRecorder(b, mode) {
     frames: [],
     _startTime: null,
     _lastFrameTime: 0,
-    _active: true
+    _active: true,
+    _hasHero: hasHero
   };
 
   b._recorder = recorder;
@@ -62,6 +68,19 @@ export function recordFrame(b, now) {
   rec._lastFrameTime = now;
 
   const t = now - rec._startTime;
+
+  // Snapshot hero (endless/campaign)
+  let hero = null;
+  if (rec._hasHero && b.hero) {
+    hero = {
+      x: Math.round(b.hero.x),
+      y: Math.round(b.hero.y),
+      ang: +((b.hero.angle || 0).toFixed(2)),
+      hull: +((b.hero.hullAngle || 0).toFixed(2)),
+      hp: b.hero.hp,
+      dead: b.hero.dead || false
+    };
+  }
 
   // Snapshot units (blue team)
   const units = [];
@@ -111,7 +130,9 @@ export function recordFrame(b, now) {
     }
   }
 
-  rec.frames.push({ t, units, enemies, projectiles });
+  const frameData = { t, units, enemies, projectiles };
+  if (hero) frameData.hero = hero;
+  rec.frames.push(frameData);
 }
 
 // Tier values for weighting "punching above your weight" kills
@@ -263,6 +284,22 @@ export function finalizeRecording(b) {
   rec._active = false;
   const startT = rec._startTime || 0;
 
+  // Rebuild unitDefs from current battle state (captures dynamically spawned units)
+  const unitDefs = [];
+  if (b.hero && !b.hero.observer) {
+    unitDefs.push({ id: 'hero', team: 'blue', unitId: b.hero.unitId, maxHp: b.hero.maxHp, isHero: true });
+  }
+  if (b.units) {
+    for (const u of b.units) {
+      unitDefs.push({ id: u.id, team: 'blue', unitId: u.unitId, maxHp: u.maxHp, rank: u._rank ?? 0, insigniaSetId: u._insigniaSetId || null });
+    }
+  }
+  if (b.enemies) {
+    for (const e of b.enemies) {
+      unitDefs.push({ id: e.id, team: 'red', unitId: e.unitId, maxHp: e.maxHp, rank: e._rank ?? 0, insigniaSetId: e._insigniaSetId || null });
+    }
+  }
+
   // Full event log with relative timestamps
   const events = [];
   if (b._debugLog) {
@@ -295,7 +332,7 @@ export function finalizeRecording(b) {
     recordedAt: new Date().toISOString(),
     blueSpawnZone: rec.blueSpawnZone,
     redSpawnZone: rec.redSpawnZone,
-    unitDefs: rec.unitDefs,
+    unitDefs,
     stats,
     frames: rec.frames,
     events

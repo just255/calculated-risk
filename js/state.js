@@ -25,6 +25,7 @@ export const Game = {
     difficulty: 'normal',
     mode: 'waves',
     autoRecord: true,
+    insigniaSetId: null,      // Active insignia set ID for battles
     // Control settings
     controls: {
       joystickDragThreshold: 8,      // Pixels to drag before joystick activates
@@ -703,7 +704,7 @@ export function newCampaignBattle(era, mos, battlePlan) {
   // Initialize unified AI pipeline
   const blueSpawnZone = { x: battle.mapWidth / 2, y: battle.mapHeight - 100, radius: 100 };
   const redSpawnZone = { x: battle.mapWidth / 2, y: 100, radius: 100 };
-  initBattleAI(battle, { allyPreset: 'campaignAlly', enemyPreset: 'campaignEnemy', blueSpawnZone, redSpawnZone });
+  initBattleAI(battle, { allyPreset: 'campaignAlly', enemyPreset: 'campaignEnemy', blueSpawnZone, redSpawnZone, insigniaSetId: Game.settings.insigniaSetId });
 
   return battle;
 }
@@ -1500,7 +1501,7 @@ export function newEndlessBattle(loadout, wave = 1) {
   // Initialize unified AI pipeline
   const blueZone = { x: battle.mapWidth / 2, y: battle.mapHeight - battle.cellSize * 3, radius: 100 };
   const redZone = { x: battle.mapWidth / 2, y: battle.cellSize * 3, radius: 100 };
-  initBattleAI(battle, { allyPreset: 'endlessAlly', enemyPreset: 'endlessEnemy', blueSpawnZone: blueZone, redSpawnZone: redZone });
+  initBattleAI(battle, { allyPreset: 'endlessAlly', enemyPreset: 'endlessEnemy', blueSpawnZone: blueZone, redSpawnZone: redZone, insigniaSetId: Game.settings.insigniaSetId });
 
   return battle;
 }
@@ -1882,7 +1883,8 @@ export function newFireRangeBattle(config) {
     allyPreset: 'campaignAlly',
     enemyPreset: 'campaignEnemy',
     blueSpawnZone,
-    redSpawnZone
+    redSpawnZone,
+    insigniaSetId: Game.settings.insigniaSetId
   });
 
   // Restore squad-specific sergeant configs

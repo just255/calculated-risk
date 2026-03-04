@@ -9,6 +9,7 @@ import { getSkinSelectorData, setSkinPref, clearCache as clearSkinCache } from '
 import { getSprite, hasSprite, loadPartSprites, compositeUnitSprite, getPartImage, loadVariant, renderVariant } from './sprites.js';
 import { FR_PRESET_LIST } from './fire-range-presets.js';
 import { EntityRenderer } from './entity-renderer.js';
+import { INSIGNIA_PRESETS } from './insignia-presets.js';
 
 // Mobile detection
 const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
@@ -826,94 +827,178 @@ function upgradesTabHTML() {
 function insigniaTabHTML() {
   const ed = Game.insigniaEditor || {};
   const currentRank = ed.currentRank ?? 1;
+  const mode = ed.mode || 'vector';
   const selectedIdx = ed.selectedShapeIdx ?? -1;
   const selectedIndices = ed.selectedIndices || [];
-  const propsTab = ed._propsTab || 'transform';
   const shapes = ed.currentSet?.ranks?.[currentRank]?.shapes || [];
   const sel = selectedIdx >= 0 && selectedIdx < shapes.length ? shapes[selectedIdx] : null;
 
   const SHAPE_ICONS = { chevron: 'V', arc: '\u2312', diamond: '\u25c7', line: '\u2014', circle: '\u25cb', path: '\u270e' };
 
+  // Pixel tool palette
+  const PIXEL_TOOLS = [
+    { id: 'pencil', icon: '\u270e', label: 'Pencil' },
+    { id: 'eraser', icon: '\u2395', label: 'Eraser' },
+    { id: 'line', icon: '\u2571', label: 'Line' },
+    { id: 'rect', icon: '\u25a1', label: 'Rect' },
+    { id: 'circle', icon: '\u25cb', label: 'Circle' },
+    { id: 'ellipse', icon: '\u2b2d', label: 'Ellipse' },
+    { id: 'fill', icon: '\u25a8', label: 'Fill' },
+    { id: 'spray', icon: '\u2022', label: 'Spray' },
+    { id: 'blend', icon: '\u223f', label: 'Blend' },
+  ];
+  const activeTool = ed.activeTool || 'pencil';
+
   return `
     <div class="insignia-tab">
-      <!-- Top 2/3: Shapes | Canvas | Layers -->
-      <div class="insignia-top">
-        <!-- Left: Shape palette -->
-        <div class="insignia-palette">
-          <h4>Shapes</h4>
-          ${INSIGNIA_SHAPE_TYPES.map(s => `
-            <button data-action="insignia-add-shape" data-type="${s.type}" title="${s.label}">
-              <span class="palette-icon">${s.icon}</span>
-              <span class="palette-label">${s.label}</span>
-            </button>
-          `).join('')}
-          ${ed.pathToolActive ? `
-            <button data-action="insignia-finish-path" class="path-done" title="Finish path">\u2713 Done</button>
-            <button data-action="insignia-cancel-path" class="path-cancel" title="Cancel path">\u2717 Cancel</button>
-          ` : ''}
-          <div class="insignia-file-actions">
-            <input type="text" id="insignia-set-name" placeholder="Name..." value="${ed.currentSet?.name || 'Untitled'}">
-            <button data-action="insignia-save" title="Save">Save</button>
-            <button data-action="insignia-load" title="Load">Load</button>
-            <button data-action="insignia-delete" class="danger" title="Delete">\u2717</button>
-          </div>
-        </div>
-
-        <!-- Center: Rank strip + Canvas -->
-        <div class="insignia-center">
-          <div class="insignia-rank-strip">
-            ${RANK_NAMES.map((name, i) => `
-              <div class="insignia-rank-item${i === currentRank ? ' active' : ''}"
-                data-action="insignia-select-rank" data-rank="${i}">
-                <canvas width="36" height="36" class="insignia-rank-thumb" data-rank="${i}"></canvas>
-                <span class="rank-label">${name}</span>
-              </div>
-            `).join('')}
-          </div>
-          <div class="insignia-canvas-wrap">
-            <canvas id="insignia-canvas" width="400" height="400"></canvas>
-          </div>
-        </div>
-
-        <!-- Right: Layers -->
-        <div class="insignia-layers">
-          <h4>Layers</h4>
-          ${shapes.length === 0 ? '<p class="insignia-empty">No shapes</p>' : ''}
-          ${shapes.map((s, i) => `
-            <div class="insignia-layer-item${selectedIndices.includes(i) ? ' selected' : ''}" data-action="insignia-select-shape" data-idx="${i}">
-              <span class="layer-icon">${SHAPE_ICONS[s.type] || '?'}</span>
-              <span class="layer-label">${s.type} #${i}</span>
-              <button data-action="insignia-shape-up" data-idx="${i}" title="Move up">\u25b2</button>
-              <button data-action="insignia-shape-down" data-idx="${i}" title="Move down">\u25bc</button>
-              <button data-action="insignia-shape-dup" data-idx="${i}" title="Duplicate">\u29c9</button>
-              <button data-action="insignia-shape-del" data-idx="${i}" title="Delete">\u00d7</button>
+      <!-- Rank strip (actual-size previews) -->
+      <div class="insignia-rank-strip">
+        <div class="insignia-rank-thumbs">
+          ${RANK_NAMES.map((name, i) => `
+            <div class="insignia-rank-item${i === currentRank ? ' active' : ''}"
+              data-action="insignia-select-rank" data-rank="${i}">
+              <canvas width="24" height="24" class="insignia-rank-thumb" data-rank="${i}"></canvas>
+              <span class="rank-label">${name}</span>
             </div>
           `).join('')}
+        </div>
+        <div class="insignia-battle-set">
+          <label>Battle set:</label>
+          <select id="insignia-battle-select" data-action="insignia-battle-select">
+            <option value="">None (default)</option>
+          </select>
         </div>
       </div>
 
-      <!-- Bottom 1/3: All properties (no tabs) -->
-      <div class="insignia-props">
-        ${sel ? `
-          <div class="insignia-props-sections">
-            <div class="insignia-props-col">
-              <h4>Transform</h4>
-              ${insigniaPropsHTML(sel, selectedIdx, 'transform')}
-            </div>
-            <div class="insignia-props-col">
-              <h4>${sel.type.charAt(0).toUpperCase() + sel.type.slice(1)}</h4>
-              ${insigniaPropsHTML(sel, selectedIdx, 'shape')}
-            </div>
-            <div class="insignia-props-col">
-              <h4>Style</h4>
-              ${insigniaPropsHTML(sel, selectedIdx, 'style')}
-            </div>
-            <div class="insignia-props-col insignia-props-col-actions">
-              <button class="btn-dup" data-action="insignia-shape-dup" data-idx="${selectedIdx}">Duplicate</button>
-              <button class="btn-del" data-action="insignia-shape-del" data-idx="${selectedIdx}">\u2717 Del</button>
-            </div>
+      <!-- Main area: Tools | Canvas | Layers/Props -->
+      <div class="insignia-main">
+        <!-- Left: Mode toggle + tool palette -->
+        <div class="insignia-palette">
+          <div class="insignia-mode-toggle">
+            <button data-action="insignia-set-mode" data-mode="pixel" class="${mode === 'pixel' ? 'active' : ''}">PX</button>
+            <button data-action="insignia-set-mode" data-mode="vector" class="${mode === 'vector' ? 'active' : ''}">VEC</button>
           </div>
-        ` : '<p class="insignia-empty">Select a shape to edit properties</p>'}
+
+          ${mode === 'pixel' ? `
+            <h4>Tools</h4>
+            ${PIXEL_TOOLS.map(t => `
+              <button data-action="insignia-set-tool" data-tool="${t.id}" class="${activeTool === t.id ? 'active' : ''}" title="${t.label}">
+                <span class="palette-icon">${t.icon}</span>
+                <span class="palette-label">${t.label}</span>
+              </button>
+            `).join('')}
+            <h4>Color</h4>
+            <input type="color" value="${ed.toolColor || '#ffd700'}" data-action="insignia-tool-color" class="insignia-color-input">
+            <h4>Brush</h4>
+            <input type="range" min="1" max="8" step="1" value="${ed.brushSize || 1}"
+              data-action="insignia-brush-size" class="insignia-brush-slider">
+            <span class="prop-val">${ed.brushSize || 1}px</span>
+          ` : `
+            <h4>Shapes</h4>
+            ${INSIGNIA_SHAPE_TYPES.map(s => `
+              <button data-action="insignia-add-shape" data-type="${s.type}" title="${s.label}">
+                <span class="palette-icon">${s.icon}</span>
+                <span class="palette-label">${s.label}</span>
+              </button>
+            `).join('')}
+            ${ed.pathToolActive ? `
+              <button data-action="insignia-finish-path" class="path-done" title="Finish path">\u2713 Done</button>
+              <button data-action="insignia-cancel-path" class="path-cancel" title="Cancel path">\u2717 Cancel</button>
+            ` : ''}
+          `}
+
+          <div class="insignia-file-actions">
+            <div class="insignia-name-row">
+              <input type="text" id="insignia-set-name" placeholder="Name..." value="${ed.currentSet?.name || 'Untitled'}" readonly>
+              <button data-action="insignia-rename" title="Rename">&#9998;</button>
+            </div>
+            <button data-action="insignia-save" title="Save">Save</button>
+            <button data-action="insignia-save-as" title="Save as new copy">Save As</button>
+            <button data-action="insignia-load" title="Load">Load</button>
+            <button data-action="insignia-delete" class="danger" title="Delete">\u2717</button>
+            <select data-action="insignia-load-preset" title="Load preset">
+              <option value="">Presets...</option>
+              ${INSIGNIA_PRESETS.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+
+        <!-- Center: Canvas (96x96 logical, zoomed to fill) -->
+        <div class="insignia-center">
+          <div class="insignia-canvas-wrap">
+            <canvas id="insignia-canvas" width="96" height="96"></canvas>
+          </div>
+        </div>
+
+        <!-- Right: Layers (vector) or info (pixel) + Properties -->
+        <div class="insignia-right">
+          ${mode === 'vector' ? `
+            <div class="insignia-layers">
+              <h4>Layers</h4>
+              ${shapes.length === 0 ? '<p class="insignia-empty">No shapes</p>' : ''}
+              ${shapes.map((s, i) => `
+                <div class="insignia-layer-item${selectedIndices.includes(i) ? ' selected' : ''}" data-action="insignia-select-shape" data-idx="${i}">
+                  <span class="layer-icon">${SHAPE_ICONS[s.type] || '?'}</span>
+                  <span class="layer-label">${s.type} #${i}${s.array?.linked && s.array.count > 1 ? ` [${s.array.count}x]` : ''}</span>
+                  <button data-action="insignia-shape-up" data-idx="${i}" title="Move up">\u25b2</button>
+                  <button data-action="insignia-shape-down" data-idx="${i}" title="Move down">\u25bc</button>
+                  <button data-action="insignia-shape-dup" data-idx="${i}" title="Duplicate">\u29c9</button>
+                  <button data-action="insignia-shape-del" data-idx="${i}" title="Delete">\u00d7</button>
+                </div>
+              `).join('')}
+            </div>
+            <div class="insignia-props">
+              ${sel ? `
+                <div class="insignia-props-sections">
+                  <div class="insignia-props-col">
+                    <h4>Transform</h4>
+                    ${insigniaPropsHTML(sel, selectedIdx, 'transform')}
+                  </div>
+                  <div class="insignia-props-col">
+                    <h4>${sel.type.charAt(0).toUpperCase() + sel.type.slice(1)}</h4>
+                    ${insigniaPropsHTML(sel, selectedIdx, 'shape')}
+                  </div>
+                  <div class="insignia-props-col">
+                    <h4>Style</h4>
+                    ${insigniaPropsHTML(sel, selectedIdx, 'style')}
+                  </div>
+                  <div class="insignia-props-col">
+                    <h4>Repeat</h4>
+                    ${insigniaArrayHTML(sel, selectedIdx)}
+                  </div>
+                  <div class="insignia-props-col insignia-props-col-actions">
+                    <button class="btn-dup" data-action="insignia-shape-dup" data-idx="${selectedIdx}">Duplicate</button>
+                    <button class="btn-del" data-action="insignia-shape-del" data-idx="${selectedIdx}">\u2717 Del</button>
+                  </div>
+                </div>
+              ` : insigniaPatchPropsHTML(ed)}
+            </div>
+          ` : `
+            <div class="insignia-pixel-info">
+              <h4>Pixel Mode</h4>
+              <p class="insignia-empty">96 \u00d7 96 canvas<br>Renders at 48 \u00d7 48 in battle</p>
+            </div>
+          `}
+          <div class="insignia-ref-controls">
+            <h4>Reference</h4>
+            <label class="insignia-ref-upload-label">
+              <input type="file" accept="image/*" data-action="insignia-ref-upload" style="display:none">
+              Upload
+            </label>
+            ${ed.refImages?.[currentRank] ? `
+              <label>Opacity
+                <input type="range" min="0" max="100" step="5" value="${Math.round((ed.refOpacity ?? 0.3) * 100)}"
+                  data-action="insignia-ref-opacity">
+                <span class="prop-val">${Math.round((ed.refOpacity ?? 0.3) * 100)}%</span>
+              </label>
+              <label>
+                <input type="checkbox" ${ed.refVisible !== false ? 'checked' : ''} data-action="insignia-ref-visible">
+                Visible
+              </label>
+              <button data-action="insignia-ref-clear">Clear</button>
+            ` : '<p class="insignia-empty">No reference image</p>'}
+          </div>
+        </div>
       </div>
     </div>
   `;
@@ -979,31 +1064,130 @@ export function insigniaPropsHTML(shape, idx, tab) {
   }
 
   if (tab === 'style') {
-    const cap = shape.lineCap || 'butt';
-    const join = shape.lineJoin || 'miter';
-    const capStyle = shape.capStyle || 'none';
-    const hasOpenEnds = ['chevron', 'arc', 'line', 'path'].includes(shape.type) && !shape.closed && !shape.verticalEnds;
-    const selectRow = (label, key, options, val) => `
-      <label>${label}
-        <select data-action="insignia-select" data-key="${key}" data-idx="${idx}">
-          ${options.map(o => `<option value="${o}" ${o === val ? 'selected' : ''}>${o}</option>`).join('')}
-        </select>
-      </label>`;
     return `
       ${colorRow('Stroke', 'strokeColor', shape.strokeColor)}
       ${sliderRow('Stroke W', 'strokeWidth', 0.25, 4, 0.25, shape.strokeWidth)}
-      ${selectRow('Line Cap', 'lineCap', ['butt', 'round', 'square'], cap)}
-      ${selectRow('Line Join', 'lineJoin', ['miter', 'round', 'bevel'], join)}
-      ${hasOpenEnds ? `<h4>Endpoint Caps</h4>
-      ${selectRow('Cap Shape', 'capStyle', ['none', 'miter', 'angle', 'arrow', 'diamond', 'serif', 'dot'], capStyle)}
-      ${capStyle !== 'none' ? sliderRow('Cap Size', 'capSize', 0.3, 4, 0.1, shape.capSize ?? 1) : ''}
-      ${capStyle !== 'none' ? sliderRow('Cap Rotate', 'capRotation', -180, 180, 1, shape.capRotation ?? 0) : ''}` : ''}
       ${checkRow('Fill', 'fillEnabled', shape.fillEnabled)}
       ${shape.fillEnabled ? colorRow('Fill Color', 'fillColor', shape.fillColor) : ''}
       ${shape.fillEnabled ? sliderRow('Fill Opacity', 'fillOpacity', 0, 1, 0.05, shape.fillOpacity) : ''}`;
   }
 
   return '';
+}
+
+function insigniaPatchPropsHTML(ed) {
+  const p = ed.currentSet?.patch || {};
+  const enabled = !!p.enabled;
+  const ol = p.outline || {};
+  const olEnabled = !!ol.enabled;
+  const inf = p.insigniaFill || {};
+  const infEnabled = !!inf.enabled;
+  const presets = [
+    '#ffd700','#000000','#ffffff','#c0c0c0','#4a5d3a',
+    '#2d4a1f','#c3aa73','#5c3a1e','#cc0000','#003366'
+  ];
+  return `
+    <div class="insignia-patch-controls">
+      <h4>Colors</h4>
+      <div class="ipc-palette">
+        ${presets.map(c => `<button class="ipc-swatch" data-action="insignia-preset-color" data-color="${c}" style="background:${c};" title="${c}"></button>`).join('')}
+      </div>
+      <h4 style="margin-top:6px;">Layers</h4>
+      <div class="ipc-row">
+        <label class="ipc-toggle">
+          <input type="checkbox" data-action="insignia-fill-enabled" ${infEnabled ? 'checked' : ''}>
+          Stroke Fill
+        </label>
+        ${infEnabled ? `<input type="color" value="${inf.color || '#ffd700'}" data-action="insignia-fill-color" title="Fill color">` : ''}
+      </div>
+      <div class="ipc-row">
+        <label class="ipc-toggle">
+          <input type="checkbox" data-action="insignia-outline-enabled" ${olEnabled ? 'checked' : ''}>
+          Outline
+        </label>
+        ${olEnabled ? `
+          <input type="color" value="${ol.color || '#000000'}" data-action="insignia-outline-color" title="Outline color">
+          <input type="range" min="0.5" max="6" step="0.5" value="${ol.width ?? 2}" data-action="insignia-outline-width" title="Outline width">
+          <span class="prop-val">${ol.width ?? 2}</span>
+        ` : ''}
+      </div>
+      <h4 style="margin-top:6px;">Background</h4>
+      <div class="ipc-row">
+        <label class="ipc-toggle">
+          <input type="checkbox" data-action="insignia-patch-enabled" ${enabled ? 'checked' : ''}>
+          Patch
+        </label>
+        ${enabled ? `
+          <select data-action="insignia-patch-shape" title="Patch shape">
+            ${['shield','rect','rounded','circle'].map(s =>
+              `<option value="${s}"${(p.shape || 'shield') === s ? ' selected' : ''}>${s}</option>`
+            ).join('')}
+          </select>
+        ` : ''}
+      </div>
+      ${enabled ? `
+        <div class="ipc-row">
+          <label class="ipc-toggle">
+            <input type="checkbox" data-action="insignia-patch-filled" ${(p.filled !== false) ? 'checked' : ''}>
+            Fill
+          </label>
+          ${p.filled !== false ? `<input type="color" value="${p.fillColor || '#4a5d3a'}" data-action="insignia-patch-fill" title="Patch fill">` : ''}
+          <label class="ipc-toggle">
+            <input type="checkbox" data-action="insignia-patch-outlined" ${(p.outlined !== false) ? 'checked' : ''}>
+            Border
+          </label>
+          ${p.outlined !== false ? `<input type="color" value="${p.strokeColor || '#000000'}" data-action="insignia-patch-stroke" title="Border color">` : ''}
+        </div>
+        ${p.outlined !== false ? `
+          <div class="ipc-row">
+            <span class="ipc-label">Border W</span>
+            <input type="range" min="0.5" max="4" step="0.5" value="${p.strokeWidth ?? 1}" data-action="insignia-patch-sw">
+            <span class="prop-val">${p.strokeWidth ?? 1}</span>
+          </div>
+        ` : ''}
+        <div class="ipc-row">
+          <span class="ipc-label">W</span>
+          <input type="range" min="10" max="48" step="1" value="${p.width ?? 28}" data-action="insignia-patch-width">
+          <span class="prop-val">${p.width ?? 28}</span>
+          <span class="ipc-label" style="margin-left:4px;">H</span>
+          <input type="range" min="10" max="48" step="1" value="${p.height ?? 34}" data-action="insignia-patch-height">
+          <span class="prop-val">${p.height ?? 34}</span>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function insigniaArrayHTML(shape, idx) {
+  const arr = shape.array || {};
+  const hasArray = arr.linked && arr.count > 1;
+
+  if (!hasArray) {
+    return `
+      <button data-action="insignia-array-create" data-idx="${idx}" style="width:100%;">+ Add Repeat</button>
+    `;
+  }
+
+  return `
+    <label>Count
+      <input type="range" min="2" max="8" step="1" value="${arr.count || 2}"
+        data-action="insignia-array-prop" data-key="count" data-idx="${idx}">
+      <span class="prop-val">${arr.count || 2}x</span>
+    </label>
+    <label>Spacing
+      <input type="range" min="1" max="20" step="0.5" value="${arr.spacing || 4}"
+        data-action="insignia-array-prop" data-key="spacing" data-idx="${idx}">
+      <span class="prop-val">${arr.spacing || 4}</span>
+    </label>
+    <label>Direction
+      <select data-action="insignia-array-dir" data-idx="${idx}">
+        <option value="y" ${(arr.direction || 'y') === 'y' ? 'selected' : ''}>Vertical</option>
+        <option value="x" ${arr.direction === 'x' ? 'selected' : ''}>Horizontal</option>
+      </select>
+    </label>
+    <button data-action="insignia-array-unlink" data-idx="${idx}" style="width:100%;">Unlink (expand)</button>
+    <button data-action="insignia-array-remove" data-idx="${idx}" style="width:100%;">\u2717 Remove</button>
+  `;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -4008,6 +4192,7 @@ function campaignBattleHTML() {
 
   return `
     <div class="screen campaign-battle-screen">
+      <div class="kill-feed" id="kill-feed"></div>
       <div class="minimap-overlay" data-action="toggle-minimap"></div>
       <div class="campaign-top-bar">
         <div class="campaign-minimap" data-action="toggle-minimap">
@@ -4553,6 +4738,8 @@ function endlessBattleHTML() {
         <!-- Battle canvas will be inserted here -->
       </div>
 
+      <div class="kill-feed" id="kill-feed"></div>
+
       <div class="endless-controls">
         <div class="endless-minimap">
           <canvas class="minimap-canvas" width="80" height="80"></canvas>
@@ -4790,15 +4977,36 @@ function sgtSliders(sgt, team, squadIdx) {
 // REPLAY THEATER
 // ═══════════════════════════════════════════════════════════════
 
-export function replayTheaterHTML(replays) {
-  // replays = array of { name, seed, result, duration, recordedAt, terrainLabel, unitDefs }
+export function replayTheaterHTML(replays, activeFilter = 'all') {
+  // Count replays per mode
+  const counts = { all: 0, fire_range: 0, endless: 0, campaign: 0 };
+  if (replays) {
+    counts.all = replays.length;
+    for (const r of replays) counts[r.mode || 'fire_range'] = (counts[r.mode || 'fire_range'] || 0) + 1;
+  }
+
+  // Filter tabs
+  const tabs = [
+    { key: 'all', label: 'All' },
+    { key: 'fire_range', label: 'Fire Range' },
+    { key: 'endless', label: 'Endless' },
+    { key: 'campaign', label: 'Campaign' }
+  ];
+  const tabsHTML = tabs.map(t =>
+    `<button class="replay-tab${activeFilter === t.key ? ' active' : ''}" data-action="replay-filter" data-mode="${t.key}">${t.label} <span class="replay-tab-count">${counts[t.key] || 0}</span></button>`
+  ).join('');
+
+  // Filter replays
+  const filtered = !replays ? [] : activeFilter === 'all' ? replays : replays.filter(r => (r.mode || 'fire_range') === activeFilter);
+
   let cards = '';
-  if (!replays || replays.length === 0) {
-    cards = '<div class="replay-empty">No replays saved yet. Enable recording and play a battle to save one.</div>';
+  if (filtered.length === 0) {
+    cards = '<div class="replay-empty">No replays for this mode yet.</div>';
   } else {
-    for (const r of replays) {
-      const resultColor = r.result === 'blue_wins' ? '#4a9eff' : r.result === 'red_wins' ? '#ff4444' : r.result === 'victory' ? '#4a9eff' : r.result === 'defeat' ? '#ff4444' : '#888';
-      const resultText = r.result === 'blue_wins' ? 'Blue Wins' : r.result === 'red_wins' ? 'Red Wins' : r.result === 'victory' ? 'Victory' : r.result === 'defeat' ? 'Defeat' : r.result || 'Unknown';
+    for (const r of filtered) {
+      const waveMatch = r.result?.match(/^wave_(\d+)_complete$/);
+      const resultColor = r.result === 'blue_wins' ? '#4a9eff' : r.result === 'red_wins' ? '#ff4444' : r.result === 'victory' ? '#4a9eff' : r.result === 'defeat' ? '#ff4444' : r.result === 'draw' ? '#fbbf24' : r.result === 'exit' ? '#94a3b8' : waveMatch ? '#4ade80' : '#888';
+      const resultText = r.result === 'blue_wins' ? 'Blue Wins' : r.result === 'red_wins' ? 'Red Wins' : r.result === 'victory' ? 'Victory' : r.result === 'defeat' ? 'Defeat' : r.result === 'draw' ? 'Draw' : r.result === 'exit' ? 'Exited' : waveMatch ? `Wave ${waveMatch[1]}` : r.result || 'Unknown';
       const modeLabel = r.mode === 'fire_range' ? 'Fire Range' : r.mode === 'campaign' ? 'Campaign' : r.mode === 'endless' ? 'Endless' : r.mode || 'Fire Range';
       const duration = r.duration ? `${Math.floor(r.duration / 60)}m ${Math.floor(r.duration % 60)}s` : '?';
       const date = r.recordedAt ? new Date(r.recordedAt).toLocaleString() : '?';
@@ -4824,6 +5032,7 @@ export function replayTheaterHTML(replays) {
   }
   return `<div class="replay-theater">
     <h1>REPLAY THEATER</h1>
+    <div class="replay-tabs">${tabsHTML}</div>
     <div class="replay-list">${cards}</div>
     <button class="replay-back-btn" data-action="replay-back">Back</button>
   </div>`;
@@ -4831,31 +5040,41 @@ export function replayTheaterHTML(replays) {
 
 export function replayPlaybackHTML() {
   return `<div class="replay-playback">
-    <div class="endless-battlefield" id="replay-battlefield"></div>
-    <div class="replay-controls">
-      <div class="replay-buttons">
-        <button data-action="replay-skip-start" title="Skip to start">|&lt;</button>
-        <button data-action="replay-step-back" title="Step back">&lt;</button>
-        <button data-action="replay-play-pause" title="Play/Pause" id="replay-play-btn">Play</button>
-        <button data-action="replay-step-fwd" title="Step forward">&gt;</button>
-        <button data-action="replay-skip-end" title="Skip to end">&gt;|</button>
-        <span class="replay-time" id="replay-time">0:00 / 0:00</span>
+    <div class="fr-mid">
+      <div class="fr-mid-left">
+        <div class="endless-battlefield" id="replay-battlefield"></div>
+        <div class="replay-controls">
+          <div class="replay-buttons">
+            <button data-action="replay-skip-start" title="Skip to start">|&lt;</button>
+            <button data-action="replay-step-back" title="Step back">&lt;</button>
+            <button data-action="replay-play-pause" title="Play/Pause" id="replay-play-btn">Play</button>
+            <button data-action="replay-step-fwd" title="Step forward">&gt;</button>
+            <button data-action="replay-skip-end" title="Skip to end">&gt;|</button>
+            <span class="replay-time" id="replay-time">0:00 / 0:00</span>
+          </div>
+          <div class="replay-timeline">
+            <input type="range" id="replay-scrubber" min="0" max="1000" value="0" step="1">
+          </div>
+          <div class="replay-speeds">
+            <button data-action="replay-speed" data-speed="0.25">&frac14;x</button>
+            <button data-action="replay-speed" data-speed="0.5">&frac12;x</button>
+            <button data-action="replay-speed" data-speed="1" class="active">1x</button>
+            <button data-action="replay-speed" data-speed="2">2x</button>
+            <button data-action="replay-speed" data-speed="4">4x</button>
+            <button data-action="replay-toggle-overlay">Overlay</button>
+            <button data-action="replay-exit" class="replay-exit-btn">Exit</button>
+          </div>
+        </div>
       </div>
-      <div class="replay-timeline">
-        <input type="range" id="replay-scrubber" min="0" max="1000" value="0" step="1">
+      <div class="fr-event-sidebar" id="replay-event-sidebar">
+        <h4 style="color:#ccc;margin:0 0 4px;font-size:0.65rem;letter-spacing:1px">EVENT LOG</h4>
+        <div class="fr-event-filters">
+          ${EVENT_LOG_TYPES.map(t =>
+            `<button class="fr-evt-filter active" data-action="event-filter" data-type="${t}">${t}</button>`
+          ).join('')}
+        </div>
+        <div class="fr-event-log" id="replay-event-log"></div>
       </div>
-      <div class="replay-speeds">
-        <button data-action="replay-speed" data-speed="0.25">&frac14;x</button>
-        <button data-action="replay-speed" data-speed="0.5">&frac12;x</button>
-        <button data-action="replay-speed" data-speed="1" class="active">1x</button>
-        <button data-action="replay-speed" data-speed="2">2x</button>
-        <button data-action="replay-speed" data-speed="4">4x</button>
-        <button data-action="replay-toggle-overlay">Overlay</button>
-        <button data-action="replay-exit" class="replay-exit-btn">Exit</button>
-      </div>
-    </div>
-    <div class="fr-event-sidebar" id="replay-event-sidebar">
-      <div class="fr-event-log" id="replay-event-log"></div>
     </div>
   </div>`;
 }
@@ -5023,33 +5242,11 @@ function fireRangeBattleHTML() {
             <button class="control-btn" data-action="fr-toggle-panel">Debug</button>
           </div>
         </div>
-        <div class="fr-event-sidebar">
-          <h4 style="color:#ccc;margin:0 0 4px;font-size:0.65rem;letter-spacing:1px">EVENT LOG</h4>
-          <div class="fr-event-filters">
-            ${['command','fire','hit','kill','target','action','panic','morale','morale_event','cover','move','stability','decision','survival','flank','spot','sound','formation','movement','sergeant'].map(t => {
-              const on = !b._eventFilters || b._eventFilters[t] !== false;
-              return `<button class="fr-evt-filter${on ? ' active' : ''}" data-action="fr-event-filter" data-type="${t}">${t}</button>`;
-            }).join('')}
-          </div>
-          <div class="fr-event-log" id="fr-event-log"></div>
-        </div>
+        ${eventSidebarHTML(b, 'fr-event-log')}
       </div>
 
       <div class="fr-debug-panel" id="fr-debug-panel">
         <div class="fr-debug-body">
-          <div class="fr-insignia-tuner" style="margin-bottom:8px;padding:6px;background:rgba(0,0,0,0.3);border-radius:4px;">
-            <b style="font-size:10px;color:#ffd700;">INSIGNIA</b>
-            ${['chevW|W|1|12', 'chevH|H|2|20', 'gap|Gap|1|12', 'bow|Bow|0.05|1', 'lineWidth|Ln|0.5|4', 'yOffset|Y|-20|20'].map(s => {
-              const [key, label, min, max] = s.split('|');
-              const val = EntityRenderer.insigniaParams[key];
-              return `<label style="font-size:9px;color:#ccc;margin:0 4px;">${label}
-                <input type="range" min="${min}" max="${max}" step="${key === 'bow' ? '0.05' : key === 'lineWidth' ? '0.25' : '1'}"
-                  value="${val}" data-action="fr-insignia" data-key="${key}"
-                  style="width:50px;vertical-align:middle;">
-                <span data-insignia-val="${key}" style="font-size:9px;color:#ffd700;">${val}</span>
-              </label>`;
-            }).join('')}
-          </div>
           <div class="fr-debug-col-toggles">
             ${['core','brain','fire','terrain','awareness','formation','movement'].map(g => {
               const on = !b._hiddenColGroups?.[g];
@@ -5079,6 +5276,23 @@ function fireRangeBattleHTML() {
 // ═══════════════════════════════════════════════════════════════
 // FIRE RANGE RESULTS
 // ═══════════════════════════════════════════════════════════════
+
+const EVENT_LOG_TYPES = ['command','fire','hit','kill','target','action','panic','morale','morale_event','cover','move','stability','decision','survival','flank','spot','sound','formation','movement','sergeant'];
+
+/** Reusable event sidebar HTML. Pass a unique logId for the log container. */
+function eventSidebarHTML(b, logId) {
+  return `
+    <div class="fr-event-sidebar">
+      <h4 style="color:#ccc;margin:0 0 4px;font-size:0.65rem;letter-spacing:1px">EVENT LOG</h4>
+      <div class="fr-event-filters">
+        ${EVENT_LOG_TYPES.map(t => {
+          const on = !b._eventFilters || b._eventFilters[t] !== false;
+          return `<button class="fr-evt-filter${on ? ' active' : ''}" data-action="event-filter" data-type="${t}">${t}</button>`;
+        }).join('')}
+      </div>
+      <div class="fr-event-log" id="${logId}"></div>
+    </div>`;
+}
 
 function computeBattleStats(b) {
   const log = b._debugLog || [];

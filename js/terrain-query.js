@@ -173,6 +173,7 @@ export function queryTerrain(terrainMap, x, y, radius) {
     depth,
     dominant,
     isBlocked,
+    hasBoulder,
     isBridge: !!bridge
   };
 
@@ -478,6 +479,7 @@ function _emptyResult() {
     depth: null,
     dominant: 'open',
     isBlocked: false,
+    hasBoulder: false,
     isBridge: false
   };
 }

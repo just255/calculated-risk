@@ -48,7 +48,20 @@ export const InsigniaEditor = {
   selectedShapeIdx: -1,     // Primary selected shape index, -1 = none
   selectedIndices: [],      // All selected shape indices (multi-select)
   clipboard: null,          // Copied shape(s) for paste (array)
-  _propsTab: 'transform',  // Active props tab: 'transform' | 'shape' | 'style'
+  mode: 'vector',           // Editor mode: 'vector' | 'pixel'
+
+  // Pixel mode state
+  pixelData: {},            // { rank: ImageData(96, 96) } — per-rank pixel buffers
+  pixelHistory: {},         // { rank: [ImageData, ...] } — undo stacks per rank
+  pixelRedoHistory: {},     // { rank: [ImageData, ...] } — redo stacks per rank
+  activeTool: 'pencil',    // Current pixel tool
+  toolColor: '#ffd700',    // Primary pixel drawing color
+  brushSize: 1,            // Brush diameter in pixels
+
+  // Reference image state (per-rank, for tracing)
+  refImages: {},            // { rank: HTMLImageElement } — loaded reference images
+  refOpacity: 0.3,          // Reference image opacity (0-1)
+  refVisible: true,         // Whether reference images are shown
 
   // Canvas state
   _canvas: null,            // The editor canvas element
@@ -76,6 +89,8 @@ export const InsigniaEditor = {
   // Mouse position in canvas space (for path tool preview line)
   _cursorCanvasX: 0,
   _cursorCanvasY: 0,
+  // Snap guides (drawn during drag)
+  _snapGuides: [],   // [{ axis: 'x'|'y', pos: number }] — world coords
 
   // ═════════════════════════════════════════════════════════════
   // INITIALIZATION
@@ -96,13 +111,21 @@ export const InsigniaEditor = {
   _syncCanvasSize() {
     const canvas = this._canvas;
     if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const dpr = 1; // Keep 1:1 for coordinate simplicity
-    const w = Math.round(rect.width * dpr);
-    const h = Math.round(rect.height * dpr);
-    if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w;
-      canvas.height = h;
+    if (this.mode === 'pixel') {
+      // Pixel mode: fixed 96x96 logical resolution, CSS scales to fill
+      if (canvas.width !== 96 || canvas.height !== 96) {
+        canvas.width = 96;
+        canvas.height = 96;
+      }
+    } else {
+      // Vector mode: match CSS display size for 1:1 coordinate mapping
+      const rect = canvas.getBoundingClientRect();
+      const w = Math.round(rect.width);
+      const h = Math.round(rect.height);
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
     }
   },
 
@@ -496,6 +519,13 @@ export const InsigniaEditor = {
     const w = canvas.width;
     const h = canvas.height;
 
+    // Pixel mode: render pixel buffer
+    if (this.mode === 'pixel') {
+      this._renderPixelMode(ctx, w, h);
+      return;
+    }
+
+    // Vector mode below
     // 1. Background
     ctx.fillStyle = '#1a1a2a';
     ctx.fillRect(0, 0, w, h);
@@ -506,17 +536,19 @@ export const InsigniaEditor = {
     // 3. Crosshair at center
     this._drawCrosshair(ctx, w, h);
 
-    // 4. Unit silhouette
+    // 4. Unit size reference (filled square)
     ctx.save();
     ctx.translate(w / 2 + this.panX, h / 2 + this.panY);
     ctx.scale(this.zoom, this.zoom);
-    ctx.beginPath();
-    ctx.arc(0, 0, 20, 0, Math.PI * 2);
+    const ref = 20; // half-size in world units
     ctx.fillStyle = '#333333';
     ctx.globalAlpha = 0.3;
-    ctx.fill();
+    ctx.fillRect(-ref, -ref, ref * 2, ref * 2);
     ctx.globalAlpha = 1;
     ctx.restore();
+
+    // 4b. Reference image (behind shapes, in world space)
+    this._drawRefImage(ctx, w, h, this.currentRank);
 
     // 5. All shapes for the current rank
     ctx.save();
@@ -525,7 +557,7 @@ export const InsigniaEditor = {
 
     const rankData = this.currentSet?.ranks?.[this.currentRank];
     if (rankData) {
-      drawInsignia(ctx, rankData, 1);
+      drawInsignia(ctx, rankData, 1, this.currentSet?.patch);
     }
 
     ctx.restore();
@@ -538,6 +570,31 @@ export const InsigniaEditor = {
     // 6b. Vertex handles on selected shapes
     if (this.selectedIndices.length > 0) {
       this._drawVertexHandles(ctx, w, h);
+    }
+
+    // 6c. Snap guides
+    if (this._snapGuides.length > 0) {
+      const cx = w / 2 + this.panX;
+      const cy = h / 2 + this.panY;
+      ctx.save();
+      ctx.strokeStyle = '#ff6b6b';
+      ctx.lineWidth = 0.5;
+      ctx.setLineDash([3, 3]);
+      for (const g of this._snapGuides) {
+        ctx.beginPath();
+        if (g.axis === 'x') {
+          const sx = cx + g.pos * this.zoom;
+          ctx.moveTo(sx, 0);
+          ctx.lineTo(sx, h);
+        } else {
+          const sy = cy + g.pos * this.zoom;
+          ctx.moveTo(0, sy);
+          ctx.lineTo(w, sy);
+        }
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.restore();
     }
 
     // 7. Marquee selection rectangle
@@ -562,6 +619,102 @@ export const InsigniaEditor = {
     if (this.pathToolActive) {
       this._drawPathPreview(ctx, w, h);
     }
+  },
+
+  /**
+   * Render the pixel mode canvas: checkerboard + pixel data.
+   * Canvas is 96x96 logical pixels, CSS scales it up.
+   */
+  _renderPixelMode(ctx, w, h) {
+    // Checkerboard background (transparency indicator)
+    const checkSize = 4;
+    for (let y = 0; y < h; y += checkSize) {
+      for (let x = 0; x < w; x += checkSize) {
+        const dark = ((x / checkSize) + (y / checkSize)) % 2 === 0;
+        ctx.fillStyle = dark ? '#2a2a3a' : '#323246';
+        ctx.fillRect(x, y, checkSize, checkSize);
+      }
+    }
+
+    // Reference image (behind pixel data)
+    const rank = this.currentRank;
+    this._drawRefImage(ctx, w, h, rank);
+
+    // Draw pixel data if it exists
+    const pd = this.pixelData[rank];
+    if (pd) {
+      ctx.putImageData(pd, 0, 0);
+    }
+
+    // Grid overlay (1px grid at this resolution = per-pixel grid)
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.lineWidth = 0.5;
+    for (let x = 0; x <= w; x++) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, h);
+      ctx.stroke();
+    }
+    for (let y = 0; y <= h; y++) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(w, y);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // Crosshair at center
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(w / 2, 0); ctx.lineTo(w / 2, h);
+    ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2);
+    ctx.stroke();
+    ctx.restore();
+  },
+
+  /**
+   * Get or create the pixel ImageData for the current rank.
+   * @returns {ImageData}
+   */
+  getPixelData(rank) {
+    if (!this.pixelData[rank]) {
+      this.pixelData[rank] = new ImageData(96, 96);
+    }
+    return this.pixelData[rank];
+  },
+
+  /**
+   * Draw the reference image for a given rank (if loaded and visible).
+   * In pixel mode: draws at 96x96 behind pixel data.
+   * In vector mode: draws centered at the canvas origin, scaled by zoom.
+   */
+  _drawRefImage(ctx, w, h, rank) {
+    if (!this.refVisible) return;
+    const img = this.refImages[rank];
+    if (!img) return;
+
+    ctx.save();
+    ctx.globalAlpha = this.refOpacity;
+
+    if (this.mode === 'pixel') {
+      // Fit image into 96x96
+      ctx.drawImage(img, 0, 0, w, h);
+    } else {
+      // Center at world origin, scale to fit ~40px world radius
+      const cx = w / 2 + this.panX;
+      const cy = h / 2 + this.panY;
+      ctx.translate(cx, cy);
+      ctx.scale(this.zoom, this.zoom);
+      const imgW = img.naturalWidth || img.width;
+      const imgH = img.naturalHeight || img.height;
+      const fitScale = 40 / Math.max(imgW, imgH);
+      ctx.drawImage(img, -imgW * fitScale / 2, -imgH * fitScale / 2, imgW * fitScale, imgH * fitScale);
+    }
+
+    ctx.restore();
   },
 
   /**
@@ -1348,6 +1501,7 @@ export const InsigniaEditor = {
       const dy = (canvasY - this._dragStartY) / this.zoom;
       const shapes = this.getCurrentShapes();
 
+      // Move shapes to raw position first
       for (const si of this.selectedIndices) {
         const s = shapes[si];
         const start = this._dragShapeStarts?.[si];
@@ -1356,6 +1510,105 @@ export const InsigniaEditor = {
           s.y = start.y + dy;
         }
       }
+
+      // Snap guides: compute edges/centers of dragged vs all other shapes
+      this._snapGuides = [];
+      const SNAP_THRESHOLD = 1.5; // world units
+
+      // Get bounds of primary selected shape
+      const primary = shapes[this.selectedShapeIdx];
+      if (primary) {
+        const pb = this._getShapeBounds(primary);
+        if (pb) {
+          const pCx = pb.x + pb.w / 2;
+          const pCy = pb.y + pb.h / 2;
+          const pEdges = {
+            left: pb.x, right: pb.x + pb.w, cx: pCx,
+            top: pb.y, bottom: pb.y + pb.h, cy: pCy
+          };
+
+          let snapDx = 0, snapDy = 0;
+          let bestDistX = SNAP_THRESHOLD, bestDistY = SNAP_THRESHOLD;
+
+          for (let i = 0; i < shapes.length; i++) {
+            if (this.selectedIndices.includes(i)) continue;
+            const ob = this._getShapeBounds(shapes[i]);
+            if (!ob) continue;
+            const oCx = ob.x + ob.w / 2;
+            const oCy = ob.y + ob.h / 2;
+            const oEdges = {
+              left: ob.x, right: ob.x + ob.w, cx: oCx,
+              top: ob.y, bottom: ob.y + ob.h, cy: oCy
+            };
+
+            // X-axis alignment
+            for (const pk of ['left', 'right', 'cx']) {
+              for (const ok of ['left', 'right', 'cx']) {
+                const dist = Math.abs(pEdges[pk] - oEdges[ok]);
+                if (dist < bestDistX) {
+                  bestDistX = dist;
+                  snapDx = oEdges[ok] - pEdges[pk];
+                  this._snapGuides = this._snapGuides.filter(g => g.axis !== 'x');
+                  this._snapGuides.push({ axis: 'x', pos: oEdges[ok] });
+                }
+              }
+            }
+
+            // Y-axis alignment
+            for (const pk of ['top', 'bottom', 'cy']) {
+              for (const ok of ['top', 'bottom', 'cy']) {
+                const dist = Math.abs(pEdges[pk] - oEdges[ok]);
+                if (dist < bestDistY) {
+                  bestDistY = dist;
+                  snapDy = oEdges[ok] - pEdges[pk];
+                  this._snapGuides = this._snapGuides.filter(g => g.axis !== 'y');
+                  this._snapGuides.push({ axis: 'y', pos: oEdges[ok] });
+                }
+              }
+            }
+          }
+
+          // Also snap to origin (0,0)
+          for (const pk of ['left', 'right', 'cx']) {
+            const dist = Math.abs(pEdges[pk]);
+            if (dist < bestDistX) {
+              bestDistX = dist;
+              snapDx = -pEdges[pk];
+              this._snapGuides = this._snapGuides.filter(g => g.axis !== 'x');
+              this._snapGuides.push({ axis: 'x', pos: 0 });
+            }
+          }
+          for (const pk of ['top', 'bottom', 'cy']) {
+            const dist = Math.abs(pEdges[pk]);
+            if (dist < bestDistY) {
+              bestDistY = dist;
+              snapDy = -pEdges[pk];
+              this._snapGuides = this._snapGuides.filter(g => g.axis !== 'y');
+              this._snapGuides.push({ axis: 'y', pos: 0 });
+            }
+          }
+
+          // Apply snap offset
+          if (snapDx !== 0 || snapDy !== 0) {
+            for (const si of this.selectedIndices) {
+              const s = shapes[si];
+              if (s) {
+                s.x = (s.x || 0) + snapDx;
+                s.y = (s.y || 0) + snapDy;
+              }
+            }
+          }
+
+          // Clear guides if nothing snapped
+          if (bestDistX >= SNAP_THRESHOLD) {
+            this._snapGuides = this._snapGuides.filter(g => g.axis !== 'x');
+          }
+          if (bestDistY >= SNAP_THRESHOLD) {
+            this._snapGuides = this._snapGuides.filter(g => g.axis !== 'y');
+          }
+        }
+      }
+
       this._invalidateCache();
     }
   },
@@ -1370,6 +1623,7 @@ export const InsigniaEditor = {
     }
     this._dragging = false;
     this._draggingVertex = null;
+    this._snapGuides = [];
   },
 
   /**
@@ -1464,6 +1718,21 @@ export const InsigniaEditor = {
    * @param {number} size - Pixel dimensions of the thumbnail (square)
    */
   renderThumbnail(ctx, rank, size) {
+    // Pixel mode: draw scaled pixel data
+    if (this.mode === 'pixel') {
+      const pd = this.pixelData[rank];
+      if (!pd) return;
+      // Draw 96x96 ImageData scaled down to thumbnail size
+      const tmpCanvas = new OffscreenCanvas(96, 96);
+      const tmpCtx = tmpCanvas.getContext('2d');
+      tmpCtx.putImageData(pd, 0, 0);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(tmpCanvas, 0, 0, size, size);
+      ctx.imageSmoothingEnabled = true;
+      return;
+    }
+
+    // Vector mode: render shapes
     if (!this.currentSet || !this.currentSet.ranks[rank]) return;
 
     const rankData = this.currentSet.ranks[rank];
@@ -1501,7 +1770,7 @@ export const InsigniaEditor = {
     ctx.scale(scale, scale);
     ctx.translate(-centerX, -centerY);
 
-    drawInsignia(ctx, rankData, 1);
+    drawInsignia(ctx, rankData, 1, this.currentSet?.patch);
 
     ctx.restore();
   }

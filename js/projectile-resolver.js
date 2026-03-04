@@ -1,0 +1,274 @@
+// ═══════════════════════════════════════════════════════════════
+// PROJECTILE RESOLVER — Shared hit detection, damage, and combat
+// effects for all free-form battle modes (fire range, endless, campaign).
+// Lane-based and H2H modes use their own systems.
+// ═══════════════════════════════════════════════════════════════
+
+import { Team, Owner, getStanceModifier, getEnemyStance } from './constants.js';
+import { isTerrainBlocked } from './terrain-utils.js';
+import { getBridgeCoverMult, isBridgeDeckBlocking } from './terrain-query.js';
+import {
+  recordDamage,
+  applyMoraleEvent,
+  MoraleEvent,
+  applySuppression,
+  getArmorTier,
+  getTierDamageMultiplier
+} from './ai.js';
+
+/**
+ * Resolve all projectile movement, hit detection, damage, and combat effects.
+ *
+ * @param {object} b - Battle object
+ * @param {number} now - Current timestamp (ms)
+ * @param {number} dtSec - Delta time in seconds
+ * @param {object} [opts] - Mode-specific options
+ * @param {object}   [opts.heroRef]          - Hero object (endless/campaign) or null
+ * @param {number}   [opts.heroHitRadiusSq]  - Squared hit radius for hero (625=25px, 361=19px)
+ * @param {boolean}  [opts.useTierDamage]    - Use tier-based damage scaling
+ * @param {boolean}  [opts.useStanceModifiers] - Use stance-based damage modifiers (campaign)
+ * @param {object}   [opts.debugInvincible]  - { redInvincible, blueInvincible } flags
+ * @param {Function} [opts.onEnemyKill]      - (enemy, dmg, killerUnit) mode-specific kill handling
+ * @param {Function} [opts.onAllyKill]       - (unit, dmg, killerUnit) mode-specific ally death handling
+ * @param {Function} [opts.onHeroHit]        - (hero, dmg, projectile) mode-specific hero hit handling
+ */
+export function resolveProjectiles(b, now, dtSec, opts = {}) {
+  const {
+    heroRef = null,
+    heroHitRadiusSq = 0,
+    useTierDamage = false,
+    useStanceModifiers = false,
+    debugInvincible = null,
+    onEnemyKill = null,
+    onAllyKill = null,
+    onHeroHit = null
+  } = opts;
+
+  // --- MOVE + RESOLVE ---
+  b.projectiles.forEach(p => {
+    p.x += p.vx * dtSec;
+    p.y += p.vy * dtSec;
+
+    // Bounds check
+    if (p.x < 0 || p.x > b.mapWidth || p.y < 0 || p.y > b.mapHeight) {
+      p.dead = true;
+      return;
+    }
+
+    // Terrain collision — artillery arcs over, everything else stops
+    if (p.type !== 'artillery' && b.terrainMap && isTerrainBlocked(b, p.x, p.y)) {
+      p.dead = true;
+      return;
+    }
+
+    if (p.owner === Owner.PLAYER || p.owner === Owner.ALLY) {
+      // --- Player/ally projectiles hitting enemies ---
+      b.enemies.forEach(e => {
+        if (e.dead || p.dead) return;
+        const dx = p.x - e.x;
+        const dy = p.y - e.y;
+        if (dx * dx + dy * dy < 400) { // ~20px radius
+          // Bridge deck blocks shots between different elevation levels
+          if (isBridgeDeckBlocking(b.terrainMap?.bridges, p.originX ?? p.x, p.originY ?? p.y, e.x, e.y, p._bridgeElevation, e._bridgeElevation)) return;
+
+          let dmg = p.damage;
+
+          // Tier-based damage scaling (infantry < light < medium < heavy)
+          if (useTierDamage) {
+            const defTier = getArmorTier(e);
+            dmg = Math.round(dmg * getTierDamageMultiplier(p.attackerTier ?? 0, defTier));
+          }
+
+          // Stance-based damage modifiers (campaign)
+          if (useStanceModifiers) {
+            let attackerStance = 'autonomous';
+            if (p.owner === Owner.ALLY && p.sourceId) {
+              const sourceUnit = b.units?.find(u => u.id === p.sourceId);
+              if (sourceUnit) attackerStance = sourceUnit.stance || 'autonomous';
+            } else if (p.owner === Owner.PLAYER) {
+              attackerStance = 'aggressive';
+            }
+            const targetStance = getEnemyStance(e.aiType);
+            const stanceMod = getStanceModifier(attackerStance, targetStance);
+            dmg = Math.round(dmg * stanceMod.damageMod);
+          }
+
+          // Legacy modifier damage reduction (armored/shielded)
+          if (e.modifier === 'armored') {
+            dmg = Math.round(dmg * 0.5);
+          } else if (e.modifier === 'shielded') {
+            const projAngle = Math.atan2(p.vy, p.vx);
+            let angleDiff = projAngle - e.angle;
+            while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+            while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+            if (Math.abs(angleDiff) > Math.PI / 2) dmg = Math.round(dmg * 0.3);
+          }
+
+          // Bridge truss cover — directional damage reduction
+          const bridgeMult = getBridgeCoverMult(b.terrainMap?.bridges, e.x, e.y, p.vx, p.vy);
+          if (bridgeMult < 1) dmg = Math.round(dmg * bridgeMult);
+
+          e.hp -= dmg;
+          if (e.hp < 0) e.hp = 0;
+          p.dead = true;
+
+          // Combat effects
+          e._shockTimer = 2;
+          applySuppression(e, 0.25);
+          recordDamage(e, p.sourceId || 'hero', dmg);
+
+          // Debug invincibility
+          if (debugInvincible?.redInvincible) {
+            e.hp = e.maxHp; e.dead = false;
+          }
+
+          if (e.hp <= 0) {
+            e.dead = true;
+            b.kills++;
+
+            if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: Team.BLUE, type: 'kill', x: Math.round(e.x), y: Math.round(e.y), action: 'kill', target: e.id, dmg, detail: `hp:0/${e.maxHp}` });
+
+            // Killer morale boost
+            const killer = b.units?.find(u => u.id === p.sourceId);
+            if (killer && !killer.dead) applyMoraleEvent(killer, MoraleEvent.LANDED_KILL, 0.5);
+
+            // Commander succession
+            _handleCommanderDeath(b, e, b.enemies, Team.RED, now);
+
+            // Nearby morale/suppression cascade
+            _cascadeMorale(b.enemies, e);
+
+            // Mode-specific kill callback
+            if (onEnemyKill) onEnemyKill(e, dmg, killer);
+          } else {
+            if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: Team.BLUE, type: 'hit', x: Math.round(e.x), y: Math.round(e.y), action: 'hit', target: e.id, dmg, detail: `hp:${e.hp}/${e.maxHp}` });
+          }
+        }
+      });
+    } else if (p.owner === Owner.ENEMY) {
+      // --- Enemy projectiles hitting hero ---
+      if (heroRef && !p.dead && heroHitRadiusSq > 0) {
+        const hdx = p.x - heroRef.x;
+        const hdy = p.y - heroRef.y;
+        if (hdx * hdx + hdy * hdy < heroHitRadiusSq) {
+          heroRef.hp -= p.damage;
+          p.dead = true;
+          if (onHeroHit) onHeroHit(heroRef, p.damage, p);
+        }
+      }
+
+      // --- Enemy projectiles hitting ally units ---
+      if (!p.dead && b.units) {
+        for (const unit of b.units) {
+          if (unit.dead || p.dead) continue;
+          const udx = p.x - unit.x;
+          const udy = p.y - unit.y;
+          if (udx * udx + udy * udy < 400) {
+            // Bridge deck blocks shots
+            if (isBridgeDeckBlocking(b.terrainMap?.bridges, p.originX ?? p.x, p.originY ?? p.y, unit.x, unit.y, p._bridgeElevation, unit._bridgeElevation)) continue;
+
+            let dmg = p.damage;
+
+            // Tier-based damage
+            if (useTierDamage) {
+              const defTier = getArmorTier(unit);
+              dmg = Math.round(dmg * getTierDamageMultiplier(p.attackerTier ?? 0, defTier));
+            }
+
+            // Bridge truss cover
+            const bridgeMult = getBridgeCoverMult(b.terrainMap?.bridges, unit.x, unit.y, p.vx, p.vy);
+            if (bridgeMult < 1) dmg = Math.round(dmg * bridgeMult);
+
+            unit.hp -= dmg;
+            p.dead = true;
+
+            // Combat effects
+            unit._shockTimer = 2;
+            applySuppression(unit, 0.25);
+
+            // Debug invincibility
+            if (debugInvincible?.blueInvincible) {
+              unit.hp = unit.maxHp; unit.dead = false;
+            }
+
+            if (unit.hp <= 0) {
+              unit.hp = 0; unit.dead = true;
+
+              if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: Team.RED, type: 'kill', x: Math.round(unit.x), y: Math.round(unit.y), action: 'kill', target: unit.id, dmg, detail: `hp:0/${unit.maxHp}` });
+
+              // Killer morale boost
+              const killer = b.enemies?.find(en => en.id === p.sourceId);
+              if (killer && !killer.dead) applyMoraleEvent(killer, MoraleEvent.LANDED_KILL, 0.5);
+
+              // Commander succession
+              _handleCommanderDeath(b, unit, b.units, Team.BLUE, now);
+
+              // Nearby morale/suppression cascade
+              _cascadeMorale(b.units, unit);
+
+              // Mode-specific ally death callback
+              if (onAllyKill) onAllyKill(unit, dmg, killer);
+            } else {
+              if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: Team.RED, type: 'hit', x: Math.round(unit.x), y: Math.round(unit.y), action: 'hit', target: unit.id, dmg, detail: `hp:${unit.hp}/${unit.maxHp}` });
+            }
+            break;
+          }
+        }
+      }
+    }
+  });
+
+  // --- NEAR-MISS SUPPRESSION --- Projectiles within 30px suppress nearby units
+  b.projectiles.forEach(p => {
+    if (p.dead) return;
+    if (!p._suppressedIds) p._suppressedIds = new Set();
+    const nearMissRadSq = 900; // 30px^2
+    const nearTargets = (p.owner === Owner.PLAYER || p.owner === Owner.ALLY) ? b.enemies : (b.units || []);
+    for (const u of nearTargets) {
+      if (u.dead || p._suppressedIds.has(u.id)) continue;
+      const dx = p.x - u.x, dy = p.y - u.y;
+      if (dx * dx + dy * dy < nearMissRadSq) {
+        applySuppression(u, 0.15);
+        p._suppressedIds.add(u.id);
+      }
+    }
+  });
+
+  // --- CLEANUP ---
+  b.projectiles = b.projectiles.filter(p => !p.dead);
+}
+
+// --- Internal helpers ---
+
+/** Handle commander death: promote highest-leadership survivor */
+function _handleCommanderDeath(b, deadUnit, teamUnits, team, now) {
+  if (!deadUnit.isLeader) return;
+  deadUnit.isLeader = false;
+  const candidates = teamUnits.filter(u => !u.dead && u !== deadUnit);
+  const successor = candidates.length > 0
+    ? candidates.reduce((best, u) => (u.leadership ?? 0) > (best.leadership ?? 0) ? u : best, candidates[0])
+    : null;
+  if (successor) {
+    successor.isLeader = true;
+    if (b._teamCommanders) b._teamCommanders[team] = successor;
+    if (b._debugLog) b._debugLog.push({ t: now, who: deadUnit.id, team, type: 'movement', x: Math.round(deadUnit.x), y: Math.round(deadUnit.y), action: 'commander died', detail: `promoted ${successor.id} (ldr:${(successor.leadership ?? 0).toFixed(1)})` });
+  } else {
+    if (b._teamCommanders) b._teamCommanders[team] = null;
+    if (b._debugLog) b._debugLog.push({ t: now, who: deadUnit.id, team, type: 'movement', x: Math.round(deadUnit.x), y: Math.round(deadUnit.y), action: 'commander died', detail: 'no successor' });
+  }
+}
+
+/** Cascade morale loss + suppression to nearby allies of a killed unit */
+function _cascadeMorale(teamUnits, deadUnit) {
+  for (const ally of teamUnits) {
+    if (ally.dead || ally === deadUnit) continue;
+    const adx = ally.x - deadUnit.x, ady = ally.y - deadUnit.y;
+    const distSq = adx * adx + ady * ady;
+    if (distSq < 40000) { // within ~200px
+      applyMoraleEvent(ally, MoraleEvent.ALLY_DIED, 0.5);
+      if (distSq < 6400) { // within ~80px
+        applySuppression(ally, 0.20);
+      }
+    }
+  }
+}

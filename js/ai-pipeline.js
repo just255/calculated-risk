@@ -19,6 +19,20 @@ import {
 import { updateModifierEffects } from './elite-modifiers.js';
 
 // ═══════════════════════════════════════════════════════════════
+// DETERMINISTIC UNIT HASH — Personality-driven desync seed
+// ═══════════════════════════════════════════════════════════════
+
+/** Simple deterministic hash from unit id string → 0-1 float */
+function hashUnitId(id) {
+  let h = 0;
+  const s = String(id);
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  }
+  return (Math.abs(h) % 10000) / 10000;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // BRAIN PRESETS — Config-driven defaults per mode
 // ═══════════════════════════════════════════════════════════════
 
@@ -104,6 +118,24 @@ export function applyBrainDefaults(unit, presetOrName) {
 
   // Suppression init
   if (unit._suppression === undefined) unit._suppression = 0;
+
+  // Personality-driven timer stagger — desynchronize units within a squad
+  // Uses deterministic hash so behavior is reproducible, not random
+  const hash = hashUnitId(unit.id);
+  const initiative = unit.personality?.initiative ?? 0.5;
+
+  // Fire timing: initiative drives readiness at battle start
+  if (unit.lastShot === undefined) {
+    const maxDelay = unit.fireRate || 2000;
+    unit.lastShot = -(hash * maxDelay * (0.5 + initiative * 0.5));
+  }
+
+  // Eval timer stagger: each unit's "rhythm" based on personality hash
+  const evalSpread = 800;
+  if (unit._lastSurvivalCheck === undefined) unit._lastSurvivalCheck = -(hash * evalSpread);
+  if (unit._lastTargetLockCheck === undefined) unit._lastTargetLockCheck = -(hash * evalSpread * 0.7);
+  if (unit._lastFlankCheck === undefined) unit._lastFlankCheck = -(hash * evalSpread * 1.3);
+  if (unit._lastCoverCheck === undefined) unit._lastCoverCheck = -(hash * evalSpread * 0.9);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -248,6 +280,9 @@ export function initBattleAI(b, opts = {}) {
   const blueSpawnZone = opts.blueSpawnZone || { x: b.mapWidth / 2, y: b.mapHeight - 100, radius: 100 };
   const redSpawnZone = opts.redSpawnZone || { x: b.mapWidth / 2, y: 100, radius: 100 };
 
+  // Reset squad ID counter for fresh battle
+  _nextSquadId = 0;
+
   // Init shared structures
   if (!b._teamWaypoints) b._teamWaypoints = {};
   if (!b._debugLog) b._debugLog = [];
@@ -261,14 +296,18 @@ export function initBattleAI(b, opts = {}) {
   // Stamp brain defaults on all units
   const blueUnits = (b.units || []);
   const redUnits = (b.enemies || []);
+  const insigniaSetId = opts.insigniaSetId || null;
+  b._insigniaSetId = insigniaSetId;
 
   for (const u of blueUnits) {
     applyBrainDefaults(u, allyPreset);
     if (!u.team) u.team = Team.BLUE;
+    if (insigniaSetId) u._insigniaSetId = insigniaSetId;
   }
   for (const e of redUnits) {
     applyBrainDefaults(e, enemyPreset);
     if (!e.team) e.team = Team.RED;
+    if (insigniaSetId) e._insigniaSetId = insigniaSetId;
   }
 
   // Create squads
@@ -402,10 +441,15 @@ export function runBattleAI(b, now, dtSec) {
     _checkSuccession(b, squad);
   }
 
-  // 6. Sync _sergeants for backwards compat
+  // 6. Prune dead squads to keep array lean
+  if (b._squads.length > 10) {
+    b._squads = b._squads.filter(sq => sq.active);
+  }
+
+  // 7. Sync _sergeants for backwards compat
   _syncSergeants(b);
 
-  // 7. Cap debug log
+  // 8. Cap debug log
   if (b._debugLog && b._debugLog.length > 2000) {
     b._debugLog.splice(0, b._debugLog.length - 2000);
   }
@@ -445,9 +489,11 @@ function _getAllSquadMembers(squad, pool) {
 export function spawnSquad(b, team, units, spawnZone, opts = {}) {
   // Stamp brain defaults
   const preset = opts.preset || (team === Team.BLUE ? 'endlessAlly' : 'endlessEnemy');
+  const insigniaSetId = opts.insigniaSetId || b._insigniaSetId || null;
   for (const u of units) {
     applyBrainDefaults(u, preset);
     if (!u.team) u.team = team;
+    if (insigniaSetId) u._insigniaSetId = insigniaSetId;
   }
 
   // Determine enemy zone (opposite side of map)

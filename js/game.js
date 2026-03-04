@@ -56,6 +56,7 @@ import { rollModifier, applyModifier, getModifiedDamage } from './elite-modifier
 import { runBattleAI, spawnSquad, applyBrainDefaults, scaleBrainByWave, BRAIN_PRESETS } from './ai-pipeline.js';
 import { createRecorder, recordFrame, finalizeRecording, isRecording, saveReplay } from './replay-recorder.js';
 import { updateFireRangeCamera, updateHeroCamera, cameraKeyDown, cameraKeyUp, cameraZoom } from './camera.js';
+import { resolveProjectiles } from './projectile-resolver.js';
 
 // Get effective unit stats with upgrades applied
 function getUnitStats(unitIdx) {
@@ -454,11 +455,14 @@ export function goto(newState, data = {}) {
       startCampaignLoop();
       break;
 
-    case State.CAMPAIGN_RESULT:
+    case State.CAMPAIGN_RESULT: {
       stopLoop();
       stopCampaignLoop();
+      const cb = Game.campaign?.heroBattle;
+      if (cb && isRecording(cb)) saveReplay(cb);
       render();
       break;
+    }
 
     // Endless Mode States
     case State.ENDLESS_LOADOUT:
@@ -516,10 +520,13 @@ export function goto(newState, data = {}) {
       render();
       break;
 
-    case State.ENDLESS_RESULT:
+    case State.ENDLESS_RESULT: {
       stopEndlessLoop();
+      const eb = Game.endless?.battle;
+      if (eb) saveReplay(eb);
       render();
       break;
+    }
 
     // Fire Range States
     case State.FIRE_RANGE:
@@ -2006,6 +2013,7 @@ let campaignLastT = 0;
 
 function startCampaignLoop() {
   if (campaignLoopId) return;
+  _lastFeedIndex = 0;
 
   // Activate initial zone spawning for zone battles
   const b = Game.campaign?.heroBattle;
@@ -2055,6 +2063,7 @@ let endlessLastT = 0;
 
 function startEndlessLoop() {
   if (endlessLoopId) return;
+  _lastFeedIndex = 0;
 
   const b = Game.endless?.battle;
   if (b) {
@@ -2266,107 +2275,25 @@ function updateEndlessBattle(dt) {
   }
 
   // --- UPDATE PROJECTILES ---
-  b.projectiles.forEach(p => {
-    p.x += p.vx * dtSec;
-    p.y += p.vy * dtSec;
-
-    // Check bounds
-    if (p.x < 0 || p.x > b.mapWidth || p.y < 0 || p.y > b.mapHeight) {
-      p.dead = true;
-      return;
-    }
-
-    // Boulder collision — artillery arcs over, everything else stops
-    if (p.type !== 'artillery' && b.terrainMap && isTerrainBlocked(b, p.x, p.y)) {
-      p.dead = true;
-      return;
-    }
-
-    // Check collision
-    if (p.owner === Owner.PLAYER || p.owner === Owner.ALLY) {
-      // Player/ally projectiles hit enemies
-      b.enemies.forEach(e => {
-        if (e.dead || p.dead) return;
-        const dx = p.x - e.x;
-        const dy = p.y - e.y;
-        if (dx * dx + dy * dy < 400) {  // ~20px radius
-          // Bridge deck blocks shots between different elevation levels
-          if (isBridgeDeckBlocking(b.terrainMap?.bridges, p.originX ?? p.x, p.originY ?? p.y, e.x, e.y, p._bridgeElevation, e._bridgeElevation)) return;
-
-          // Apply modifier damage reduction (armored, shielded)
-          let dmg = p.damage;
-          if (e.modifier === 'armored') {
-            dmg = Math.round(dmg * 0.5);
-          } else if (e.modifier === 'shielded') {
-            // Frontal damage reduction — check angle between projectile and enemy facing
-            const projAngle = Math.atan2(p.vy, p.vx);
-            let angleDiff = projAngle - e.angle;
-            while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-            while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-            // If projectile is within 90° of enemy's facing (frontal arc)
-            if (Math.abs(angleDiff) > Math.PI / 2) {
-              dmg = Math.round(dmg * 0.3); // 70% frontal reduction
-            }
-          }
-
-          // Bridge truss cover — directional damage reduction
-          const bridgeMult1 = getBridgeCoverMult(b.terrainMap?.bridges, e.x, e.y, p.vx, p.vy);
-          if (bridgeMult1 < 1) dmg = Math.round(dmg * bridgeMult1);
-
-          e.hp -= dmg;
-          p.dead = true;
-          recordDamage(e, p.sourceId || 'hero', dmg);
-          if (e.hp <= 0) {
-            e.dead = true;
-            b.kills++;
-            Game.endless.kills++;
-            Game.endless.score += 100;
-            Game.endless.loot.scrap += 5 + Math.floor(Math.random() * 10);
-          }
-        }
-      });
-    } else if (p.owner === Owner.ENEMY) {
-      // Enemy projectiles hit hero
-      const hdx = p.x - hero.x;
-      const hdy = p.y - hero.y;
-      if (hdx * hdx + hdy * hdy < 625) {  // ~25px radius
-        hero.hp -= p.damage;
-        p.dead = true;
-
-        if (useCanvasRendering && hero.animId) {
-          sprites.triggerUnitAnim(hero.animId, 'hit');
-        }
-
-        if (hero.hp <= 0) {
-          hero.hp = 0;
-          b.result = 'defeat';
-          Game.endless.result = 'death';
-          Game.endless.exitWave = Game.endless.wave;
-          goto(State.ENDLESS_RESULT);
-        }
-      }
-
-      // Enemy projectiles also hit ally units
-      if (!p.dead && b.units) {
-        for (const unit of b.units) {
-          if (unit.dead || p.dead) continue;
-          const udx = p.x - unit.x;
-          const udy = p.y - unit.y;
-          if (udx * udx + udy * udy < 400) {  // ~20px radius
-            unit.hp -= p.damage;
-            p.dead = true;
-            if (unit.hp <= 0) {
-              unit.hp = 0;
-              unit.dead = true;
-            }
-          }
-        }
+  resolveProjectiles(b, now, dtSec, {
+    heroRef: hero,
+    heroHitRadiusSq: 625, // ~25px
+    onEnemyKill(e) {
+      Game.endless.kills++;
+      Game.endless.score += 100;
+      Game.endless.loot.scrap += 5 + Math.floor(Math.random() * 10);
+    },
+    onHeroHit(h, dmg, p) {
+      if (useCanvasRendering && h.animId) sprites.triggerUnitAnim(h.animId, 'hit');
+      if (h.hp <= 0) {
+        h.hp = 0;
+        b.result = 'defeat';
+        Game.endless.result = 'death';
+        Game.endless.exitWave = Game.endless.wave;
+        goto(State.ENDLESS_RESULT);
       }
     }
   });
-
-  // Remove dead projectiles
-  b.projectiles = b.projectiles.filter(p => !p.dead);
 
   // --- CHECK WAVE COMPLETE ---
   const aliveEnemies = b.enemies.filter(e => !e.dead).length;
@@ -2377,7 +2304,13 @@ function updateEndlessBattle(dt) {
     // Short delay then go to between screen
     setTimeout(() => {
       if (Game.state === State.ENDLESS_BATTLE) {
-        Game.endless.battle = null;  // Clear battle for next wave
+        // Save replay before clearing battle for next wave
+        const ob = Game.endless?.battle;
+        if (ob && isRecording(ob)) {
+          ob.result = ob.result || `wave_${Game.endless.wave}_complete`;
+          saveReplay(ob);
+        }
+        Game.endless.battle = null;
         goto(State.ENDLESS_BETWEEN);
       }
     }, 1500);
@@ -2568,6 +2501,11 @@ function spawnEndlessWave(b) {
 
   b.enemiesRemaining = totalEnemies - b.enemies.length; // Remaining in queue
 
+  // Log wave event for kill feed
+  if (b._debugLog) {
+    b._debugLog.push({ t: Date.now(), type: 'wave', action: `Wave ${wave} — ${totalEnemies} enemies`, team: null });
+  }
+
   // Create squad for immediately spawned enemies (queue enemies get squaded when they spawn)
   const immediateEnemies = b.enemies.slice(enemiesBeforeSpawn);
   if (immediateEnemies.length > 0) {
@@ -2607,6 +2545,9 @@ function drawEndlessBattle() {
   if (waveEl) waveEl.textContent = `Wave ${Game.endless.wave}`;
   if (killsEl) killsEl.textContent = `Kills: ${Game.endless.kills}`;
   if (scoreEl) scoreEl.textContent = Game.endless.score.toLocaleString();
+
+  // Update kill feed
+  updateKillFeed(b);
 }
 
 // Endless input handlers
@@ -2857,179 +2798,10 @@ function updateFireRangeBattle(dt) {
   if (b._recorder) recordFrame(b, now);
 
   // --- UPDATE PROJECTILES ---
-  b.projectiles.forEach(p => {
-    p.x += p.vx * dtSec;
-    p.y += p.vy * dtSec;
-
-    if (p.x < 0 || p.x > b.mapWidth || p.y < 0 || p.y > b.mapHeight) {
-      p.dead = true;
-      return;
-    }
-
-    // Boulder collision — artillery arcs over, everything else stops
-    if (p.type !== 'artillery' && b.terrainMap && isTerrainBlocked(b, p.x, p.y)) {
-      p.dead = true;
-      return;
-    }
-
-    if (p.owner === Owner.PLAYER || p.owner === Owner.ALLY) {
-      b.enemies.forEach(e => {
-        if (e.dead || p.dead) return;
-        const dx = p.x - e.x;
-        const dy = p.y - e.y;
-        if (dx * dx + dy * dy < 400) {
-          // Bridge deck blocks shots between different elevation levels
-          if (isBridgeDeckBlocking(b.terrainMap?.bridges, p.originX ?? p.x, p.originY ?? p.y, e.x, e.y, p._bridgeElevation, e._bridgeElevation)) return;
-          let dmg = p.damage;
-          // Tier-based damage scaling (infantry < light < medium < heavy)
-          const defTier = getArmorTier(e);
-          dmg = Math.round(dmg * getTierDamageMultiplier(p.attackerTier ?? 0, defTier));
-          // Legacy modifier damage reduction
-          if (e.modifier === 'armored') dmg = Math.round(dmg * 0.5);
-          else if (e.modifier === 'shielded') {
-            const projAngle = Math.atan2(p.vy, p.vx);
-            let angleDiff = projAngle - e.angle;
-            while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-            while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-            if (Math.abs(angleDiff) > Math.PI / 2) dmg = Math.round(dmg * 0.3);
-          }
-          // Bridge truss cover — directional damage reduction
-          const bridgeMult2 = getBridgeCoverMult(b.terrainMap?.bridges, e.x, e.y, p.vx, p.vy);
-          if (bridgeMult2 < 1) dmg = Math.round(dmg * bridgeMult2);
-
-          e.hp -= dmg;
-          if (e.hp < 0) e.hp = 0;
-          p.dead = true;
-          e._shockTimer = 2; // Awareness shock from taking damage
-          applySuppression(e, 0.25); // Direct hit suppression
-          recordDamage(e, p.sourceId || 'ally', dmg);
-          // Debug: red invincible — prevent death
-          if (b.debug?.redInvincible) {
-            e.hp = e.maxHp; e.dead = false;
-          }
-          if (e.hp <= 0) {
-            e.dead = true; b.kills++;
-            if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: Team.BLUE, type: 'kill', x: Math.round(e.x), y: Math.round(e.y), action: 'kill', target: e.id, dmg, detail: `hp:0/${e.maxHp}` });
-            // Killer gets morale boost
-            const killer = b.units?.find(u => u.id === p.sourceId);
-            if (killer && !killer.dead) applyMoraleEvent(killer, MoraleEvent.LANDED_KILL, 0.5);
-            // Commander death: promote highest-leadership alive unit to leader
-            if (e.isLeader) {
-              e.isLeader = false;
-              const candidates = b.enemies.filter(u => !u.dead && u !== e);
-              const successor = candidates.length > 0
-                ? candidates.reduce((best, u) => (u.leadership ?? 0) > (best.leadership ?? 0) ? u : best, candidates[0])
-                : null;
-              if (successor) {
-                successor.isLeader = true;
-                b._teamCommanders[Team.RED] = successor;
-                if (b._debugLog) b._debugLog.push({ t: now, who: e.id, team: Team.RED, type: 'movement', x: Math.round(e.x), y: Math.round(e.y), action: 'commander died', detail: `promoted ${successor.id} (ldr:${(successor.leadership ?? 0).toFixed(1)})` });
-              } else {
-                b._teamCommanders[Team.RED] = null;
-                if (b._debugLog) b._debugLog.push({ t: now, who: e.id, team: Team.RED, type: 'movement', x: Math.round(e.x), y: Math.round(e.y), action: 'commander died', detail: 'no successor' });
-              }
-            }
-            // Nearby enemies of dead unit lose morale + gain suppression
-            for (const ally of b.enemies) {
-              if (ally.dead || ally === e) continue;
-              const adx = ally.x - e.x, ady = ally.y - e.y;
-              if (adx * adx + ady * ady < 40000) { // within ~200px
-                applyMoraleEvent(ally, MoraleEvent.ALLY_DIED, 0.5);
-                if (adx * adx + ady * ady < 6400) { // within ~80px — closer = suppression
-                  applySuppression(ally, 0.20);
-                }
-              }
-            }
-          } else {
-            if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: Team.BLUE, type: 'hit', x: Math.round(e.x), y: Math.round(e.y), action: 'hit', target: e.id, dmg, detail: `hp:${e.hp}/${e.maxHp}` });
-          }
-        }
-      });
-    } else if (p.owner === Owner.ENEMY) {
-      // Enemy projectiles hit ally units only (no hero in fire range)
-      if (b.units) {
-        for (const unit of b.units) {
-          if (unit.dead || p.dead) continue;
-          const udx = p.x - unit.x;
-          const udy = p.y - unit.y;
-          if (udx * udx + udy * udy < 400) {
-            // Bridge deck blocks shots between different elevation levels
-            if (isBridgeDeckBlocking(b.terrainMap?.bridges, p.originX ?? p.x, p.originY ?? p.y, unit.x, unit.y, p._bridgeElevation, unit._bridgeElevation)) continue;
-            // Tier-based damage scaling
-            const defTier = getArmorTier(unit);
-            let tierDmg = Math.round(p.damage * getTierDamageMultiplier(p.attackerTier ?? 0, defTier));
-            // Bridge truss cover — directional damage reduction
-            const bridgeMult3 = getBridgeCoverMult(b.terrainMap?.bridges, unit.x, unit.y, p.vx, p.vy);
-            if (bridgeMult3 < 1) tierDmg = Math.round(tierDmg * bridgeMult3);
-
-            unit.hp -= tierDmg;
-            p.dead = true;
-            unit._shockTimer = 2; // Awareness shock from taking damage
-            applySuppression(unit, 0.25); // Direct hit suppression
-            // Debug: blue invincible — prevent death
-            if (b.debug?.blueInvincible) {
-              unit.hp = unit.maxHp; unit.dead = false;
-            }
-            if (unit.hp <= 0) {
-              unit.hp = 0; unit.dead = true;
-              if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: Team.RED, type: 'kill', x: Math.round(unit.x), y: Math.round(unit.y), action: 'kill', target: unit.id, dmg: tierDmg, detail: `hp:0/${unit.maxHp}` });
-              // Killer gets morale boost
-              const killer = b.enemies?.find(en => en.id === p.sourceId);
-              if (killer && !killer.dead) applyMoraleEvent(killer, MoraleEvent.LANDED_KILL, 0.5);
-              // Commander death: promote highest-leadership alive unit to leader
-              if (unit.isLeader) {
-                unit.isLeader = false;
-                const candidates = b.units.filter(u => !u.dead && u !== unit);
-                const successor = candidates.length > 0
-                  ? candidates.reduce((best, u) => (u.leadership ?? 0) > (best.leadership ?? 0) ? u : best, candidates[0])
-                  : null;
-                if (successor) {
-                  successor.isLeader = true;
-                  b._teamCommanders[Team.BLUE] = successor;
-                  if (b._debugLog) b._debugLog.push({ t: now, who: unit.id, team: Team.BLUE, type: 'movement', x: Math.round(unit.x), y: Math.round(unit.y), action: 'commander died', detail: `promoted ${successor.id} (ldr:${(successor.leadership ?? 0).toFixed(1)})` });
-                } else {
-                  b._teamCommanders[Team.BLUE] = null;
-                  if (b._debugLog) b._debugLog.push({ t: now, who: unit.id, team: Team.BLUE, type: 'movement', x: Math.round(unit.x), y: Math.round(unit.y), action: 'commander died', detail: 'no successor' });
-                }
-              }
-              // Nearby blue allies of dead unit lose morale + gain suppression
-              for (const ally of b.units) {
-                if (ally.dead || ally === unit) continue;
-                const adx = ally.x - unit.x, ady = ally.y - unit.y;
-                if (adx * adx + ady * ady < 40000) { // within ~200px
-                  applyMoraleEvent(ally, MoraleEvent.ALLY_DIED, 0.5);
-                  if (adx * adx + ady * ady < 6400) { // within ~80px — closer = suppression
-                    applySuppression(ally, 0.20);
-                  }
-                }
-              }
-            } else {
-              if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: Team.RED, type: 'hit', x: Math.round(unit.x), y: Math.round(unit.y), action: 'hit', target: unit.id, dmg: tierDmg, detail: `hp:${unit.hp}/${unit.maxHp}` });
-            }
-          }
-        }
-      }
-    }
+  resolveProjectiles(b, now, dtSec, {
+    useTierDamage: true,
+    debugInvincible: b.debug
   });
-
-  // --- NEAR-MISS SUPPRESSION --- Projectiles within 30px suppress nearby units
-  b.projectiles.forEach(p => {
-    if (p.dead) return;
-    if (!p._suppressedIds) p._suppressedIds = new Set();
-    const nearMissRadSq = 900; // 30px^2
-    // Allied projectiles suppress enemies, enemy projectiles suppress allies
-    const nearTargets = (p.owner === Owner.PLAYER || p.owner === Owner.ALLY) ? b.enemies : (b.units || []);
-    for (const u of nearTargets) {
-      if (u.dead || p._suppressedIds.has(u.id)) continue;
-      const dx = p.x - u.x, dy = p.y - u.y;
-      if (dx * dx + dy * dy < nearMissRadSq) {
-        applySuppression(u, 0.15);
-        p._suppressedIds.add(u.id);
-      }
-    }
-  });
-
-  b.projectiles = b.projectiles.filter(p => !p.dead);
 
   // --- CLEAN UP EFFECTS ---
   b.effects = b.effects.filter(e => {
@@ -3246,22 +3018,78 @@ function _updateDebugPanel(b) {
     redTable.innerHTML = html;
   }
 
-  if (logEl && b._debugLog) {
-    // Filter by active event types
-    const filters = b._eventFilters;
-    const filtered = filters
-      ? b._debugLog.filter(ev => !ev.type || filters[ev.type] !== false)
-      : b._debugLog;
-    // Show last 40 events
-    const events = filtered.slice(-40);
-    let html = '';
-    for (const ev of events) {
-      const color = ev.team === Team.BLUE ? '#4a9eff' : ev.team === Team.RED ? '#ff4444' : '#888';
-      const tag = ev.type ? `<span class="fr-log-tag fr-log-${ev.type}">${ev.type}</span> ` : '';
-      html += `<div class="fr-log-entry">${tag}<span style="color:${color}">${ev.who}</span> ${ev.action} <span style="color:#aaa">${ev.target || ''}</span>${ev.dmg ? ` (${ev.dmg} dmg)` : ''}${ev.acc ? ` acc:${ev.acc}` : ''}${ev.detail ? ` <span style="color:#555">${ev.detail}</span>` : ''}</div>`;
+  if (logEl) updateEventLog(logEl, b);
+}
+
+/** Render _debugLog entries into an event log DOM element. Shared by fire range, endless, replay.
+ *  @param {number} [maxTime] - If set, only show events with t <= maxTime (for replay scrubbing) */
+export function updateEventLog(logEl, b, maxTime) {
+  if (!b._debugLog) return;
+  let log = b._debugLog;
+  if (maxTime !== undefined) log = log.filter(ev => ev.t <= maxTime);
+  const filters = b._eventFilters;
+  const filtered = filters
+    ? log.filter(ev => !ev.type || filters[ev.type] !== false)
+    : log;
+  const events = filtered.slice(-40);
+  let html = '';
+  for (const ev of events) {
+    const color = ev.team === Team.BLUE ? '#4a9eff' : ev.team === Team.RED ? '#ff4444' : '#888';
+    const tag = ev.type ? `<span class="fr-log-tag fr-log-${ev.type}">${ev.type}</span> ` : '';
+    html += `<div class="fr-log-entry">${tag}<span style="color:${color}">${ev.who}</span> ${ev.action} <span style="color:#aaa">${ev.target || ''}</span>${ev.dmg ? ` (${ev.dmg} dmg)` : ''}${ev.acc ? ` acc:${ev.acc}` : ''}${ev.detail ? ` <span style="color:#555">${ev.detail}</span>` : ''}</div>`;
+  }
+  logEl.innerHTML = html;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+/** Kill feed for endless mode — shows kills, deaths, wave events. */
+let _lastFeedIndex = 0;
+
+function updateKillFeed(b) {
+  const feedEl = document.getElementById('kill-feed');
+  if (!feedEl || !b._debugLog) return;
+
+  const log = b._debugLog;
+  // Process only new events since last check
+  for (let i = Math.max(_lastFeedIndex, log.length - 50); i < log.length; i++) {
+    const ev = log[i];
+    if (!ev.type) continue;
+
+    let css = '';
+    let text = '';
+
+    if (ev.type === 'kill') {
+      const who = ev.who || '?';
+      const target = ev.target || '?';
+      if (ev.team === Team.BLUE) {
+        css = 'feed-kill';
+        text = `${who} killed ${target}`;
+      } else {
+        css = 'feed-death';
+        text = `${target} killed by ${who}`;
+      }
+    } else if (ev.type === 'wave') {
+      css = 'feed-wave';
+      text = ev.action;
+    } else {
+      continue;
     }
-    logEl.innerHTML = html;
-    logEl.scrollTop = logEl.scrollHeight;
+
+    if (!text) continue;
+
+    const entry = document.createElement('div');
+    entry.className = `kill-feed-entry ${css}`;
+    entry.textContent = text;
+    feedEl.appendChild(entry);
+
+    // Remove after animation completes (4s)
+    setTimeout(() => entry.remove(), 4100);
+  }
+  _lastFeedIndex = log.length;
+
+  // Safety cap: remove excess entries if somehow stacking
+  while (feedEl.children.length > 6) {
+    feedEl.firstChild.remove();
   }
 }
 
@@ -4048,76 +3876,15 @@ function updateCampaignBattle(dt) {
   }
 
   // --- UPDATE PROJECTILES ---
-  b.projectiles.forEach(p => {
-    p.x += p.vx * dtSec;
-    p.y += p.vy * dtSec;
-
-    // Check bounds
-    if (p.x < 0 || p.x > b.mapWidth || p.y < 0 || p.y > b.mapHeight) {
-      p.hit = true;
-      return;
-    }
-
-    // Boulder collision — artillery arcs over, everything else stops
-    if (p.type !== 'artillery' && b.terrainMap && isTerrainBlocked(b, p.x, p.y)) {
-      p.hit = true;
-      return;
-    }
-
-    // Check hit on enemies (player and ally projectiles)
-    if (p.owner === Owner.PLAYER || p.owner === Owner.ALLY) {
-      for (const e of b.enemies) {
-        if (e.dead) continue;
-        const dx = e.x - p.x;
-        const dy = e.y - p.y;
-        // Use actual entity radius for hit detection (projectile + enemy)
-        const hitRadius = ENTITY_RADIUS.projectile + ENTITY_RADIUS.enemy;
-        if (dx * dx + dy * dy < hitRadius * hitRadius) {
-          // Apply stance modifiers to damage
-          let attackerStance = 'autonomous';
-
-          // Get attacker stance
-          if (p.owner === 'ally' && p.sourceId) {
-            const sourceUnit = b.units.find(u => u.id === p.sourceId);
-            if (sourceUnit) {
-              attackerStance = sourceUnit.stance || 'autonomous';
-            }
-          } else if (p.owner === Owner.PLAYER) {
-            // Hero uses aggressive stance by default
-            attackerStance = 'aggressive';
-          }
-
-          // Get target stance from enemy AI type
-          const targetStance = getEnemyStance(e.aiType);
-
-          // Apply stance modifier
-          const stanceMod = getStanceModifier(attackerStance, targetStance);
-          const finalDamage = Math.round(p.damage * stanceMod.damageMod);
-
-          e.hp -= finalDamage;
-          p.hit = true;
-
-          // Record damage for aggro system
-          if (p.owner === Owner.PLAYER) {
-            recordDamage(e, 'hero', finalDamage);
-          } else if (p.owner === 'ally' && p.sourceId) {
-            recordDamage(e, p.sourceId, finalDamage);
-          }
-
-          if (e.hp <= 0) {
-            e.dead = true;
-            b.kills++;
-            b.enemiesRemaining--;
-            sound('explosion');
-          }
-          break;
-        }
-      }
+  resolveProjectiles(b, now, dtSec, {
+    heroRef: hero,
+    heroHitRadiusSq: (ENTITY_RADIUS.projectile + ENTITY_RADIUS.enemy) ** 2,
+    useStanceModifiers: true,
+    onEnemyKill(e) {
+      b.enemiesRemaining--;
+      sound('explosion');
     }
   });
-
-  // Remove hit projectiles
-  b.projectiles = b.projectiles.filter(p => !p.hit);
 
   // Clear concentrate target if enemy is dead
   if (b.squad?.concentrateTarget) {
@@ -4203,6 +3970,9 @@ function drawCampaignBattle() {
 
   // Use shared drawing function
   drawHeroBattle(bf, b);
+
+  // Kill feed overlay
+  updateKillFeed(b);
 
   // Campaign-specific HUD updates
   const hpBar = document.querySelector('.campaign-hp-fill');

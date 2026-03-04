@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { queryTerrain, queryBridgeRailing } from './terrain-query.js';
+import { getSpatialHash, SCATTER_TYPES } from './world-builder/scatter.js';
 import { WATER_DEPTH_SPEED } from './terrain-utils.js';
 
 // Pathfinding cell size for terrainMap battles (finer than the old 64px rasterize grid)
@@ -276,6 +277,33 @@ function reconstructPath(goalNode) {
 // ═══════════════════════════════════════════════════════════════
 
 /**
+ * Check if any boulder's collision circle overlaps a pathfinding cell.
+ * Single spatial hash query covers the whole cell — much cheaper than 4x queryBoulder().
+ */
+function _cellHasBoulder(terrainMap, cx, cy, cellSize) {
+  const spatialHash = getSpatialHash(terrainMap);
+  const half = cellSize / 2;
+  // Search radius: cell half-diagonal + max boulder collision radius
+  const maxBoulderRadius = 256 * 0.15 * 0.4; // ~15px
+  const searchRadius = half * 1.42 + maxBoulderRadius; // ~38px for 32px cells
+  const nearby = spatialHash.query(cx, cy, searchRadius);
+
+  for (const item of nearby) {
+    const config = SCATTER_TYPES[item.type];
+    if (!config || config.category !== 'boulder') continue;
+    const collisionRadius = 256 * item.scale * 0.4;
+    // Check if boulder circle overlaps the cell rectangle
+    // Clamp boulder center to nearest point on cell, then check distance
+    const nearestX = Math.max(cx - half, Math.min(item.x, cx + half));
+    const nearestY = Math.max(cy - half, Math.min(item.y, cy + half));
+    const dx = item.x - nearestX;
+    const dy = item.y - nearestY;
+    if (dx * dx + dy * dy < collisionRadius * collisionRadius) return true;
+  }
+  return false;
+}
+
+/**
  * Build a cost function from a battle object's terrain.
  * Supports both terrainMap (PCG) and legacy 2D grids.
  *
@@ -304,6 +332,9 @@ export function buildCostFn(b, category = 'infantry') {
       const result = queryTerrain(tm, wx, wy);
 
       if (result.isBlocked) return Infinity;
+
+      // Check for boulders that overlap this cell (even if center is outside collision radius)
+      if (_cellHasBoulder(tm, wx, wy, cellSize)) return Infinity;
 
       // Bridge railing — high cost so A* routes fully on or fully off the bridge
       if (tm.bridges && queryBridgeRailing(tm.bridges, wx, wy)) return 10.0;

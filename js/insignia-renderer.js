@@ -8,6 +8,74 @@
 // Keys are "${setId}_${rank}"
 const cache = new Map();
 
+// ─── Patch Background ──────────────────────────────────────────
+
+/**
+ * Draw a patch background shape centered at origin.
+ * Called before shapes so it sits behind everything.
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {object} patch - { enabled, shape, fillColor, strokeColor, strokeWidth, width, height }
+ */
+function drawPatch(ctx, patch) {
+  if (!patch || !patch.enabled) return;
+
+  const w = (patch.width ?? 28) / 2;
+  const h = (patch.height ?? 34) / 2;
+  const r = Math.min(w, h);
+
+  ctx.save();
+  ctx.beginPath();
+
+  switch (patch.shape) {
+    case 'shield':
+      // Classic Army shield: flat top, pointed bottom
+      ctx.moveTo(-w, -h);
+      ctx.lineTo(w, -h);
+      ctx.lineTo(w, h * 0.3);
+      ctx.lineTo(0, h);
+      ctx.lineTo(-w, h * 0.3);
+      ctx.closePath();
+      break;
+
+    case 'rounded':
+      // Rounded rectangle
+      const cr = Math.min(4, w, h);
+      ctx.moveTo(-w + cr, -h);
+      ctx.lineTo(w - cr, -h);
+      ctx.quadraticCurveTo(w, -h, w, -h + cr);
+      ctx.lineTo(w, h - cr);
+      ctx.quadraticCurveTo(w, h, w - cr, h);
+      ctx.lineTo(-w + cr, h);
+      ctx.quadraticCurveTo(-w, h, -w, h - cr);
+      ctx.lineTo(-w, -h + cr);
+      ctx.quadraticCurveTo(-w, -h, -w + cr, -h);
+      ctx.closePath();
+      break;
+
+    case 'circle':
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      break;
+
+    case 'rect':
+    default:
+      ctx.rect(-w, -h, w * 2, h * 2);
+      break;
+  }
+
+  if (patch.filled !== false && patch.fillColor) {
+    ctx.fillStyle = patch.fillColor;
+    ctx.fill();
+  }
+  if (patch.outlined !== false && patch.strokeColor && (patch.strokeWidth ?? 1) > 0) {
+    ctx.strokeStyle = patch.strokeColor;
+    ctx.lineWidth = patch.strokeWidth ?? 1;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
 // ─── Shape Drawing ─────────────────────────────────────────────
 
 /**
@@ -30,10 +98,105 @@ export function drawShape(ctx, shape) {
   if (sx !== 1 || sy !== 1) ctx.scale(sx, sy);
 
   // --- Style ---
-  ctx.lineCap = shape.lineCap || 'butt';
-  ctx.lineJoin = shape.lineJoin || 'miter';
+  ctx.lineCap = shape._lineCap || (shape._roundCaps ? 'round' : 'butt');
+  ctx.lineJoin = shape._lineJoin || (shape._roundCaps ? 'round' : 'miter');
+  if (shape._miterLimit != null) ctx.miterLimit = shape._miterLimit;
   ctx.strokeStyle = shape.strokeColor || '#ffd700';
   ctx.lineWidth = shape.strokeWidth ?? 1.5;
+
+  // --- Mitered chevron: each arm as a filled polygon with skewed apex end ---
+  // Tips get square-cap extensions, apex ends are cut along the miter line (x=0).
+  if (shape._splitArms && shape.type === 'chevron') {
+    const halfW = shape.halfW ?? 6;
+    const h = shape.height ?? 7;
+    const bow = halfW * (shape.bow ?? 0.35);
+    const sc = shape.strokeColor || '#ffd700';
+    const hw = (shape.strokeWidth ?? 1.5) / 2;
+    const N = 16;
+
+    // Fill the closed chevron interior if needed
+    if (shape.fillEnabled && shape._closePath) {
+      ctx.beginPath();
+      ctx.moveTo(-halfW, h);
+      ctx.quadraticCurveTo(-halfW * 0.5 + bow, h * 0.45, 0, 0);
+      ctx.quadraticCurveTo(halfW * 0.5 - bow, h * 0.45, halfW, h);
+      ctx.closePath();
+      const prevA = ctx.globalAlpha;
+      ctx.globalAlpha = prevA * (shape.fillOpacity ?? 1);
+      ctx.fillStyle = shape.fillColor || sc;
+      ctx.fill();
+      ctx.globalAlpha = prevA;
+    }
+
+    // Helper: find y where an edge line crosses x=0 (extrapolate from last 2 samples)
+    const xZeroY = (p1, p2) => {
+      const dx = p2[0] - p1[0];
+      if (Math.abs(dx) < 0.001) return p2[1];
+      const t = -p1[0] / dx;
+      return p1[1] + t * (p2[1] - p1[1]);
+    };
+
+    // Left arm: sample offset edges
+    const lP0 = [-halfW, h];
+    const lCP = [-halfW * 0.5 + bow, h * 0.45];
+    const lP1 = [0, 0];
+    const left = _sampleArm(...lP0, ...lCP, ...lP1, hw, N, false);
+
+    // Square cap at left tip: extend by hw along reverse tangent
+    const [lt0x, lt0y] = _tangentQ(...lP0, ...lCP, ...lP1, 0);
+    const lt0L = Math.hypot(lt0x, lt0y) || 1;
+    const tipDx = -(lt0x / lt0L) * hw, tipDy = -(lt0y / lt0L) * hw;
+    const tipE1 = [left.edge1[0][0] + tipDx, left.edge1[0][1] + tipDy];
+    const tipE2 = [left.edge2[0][0] + tipDx, left.edge2[0][1] + tipDy];
+
+    // Miter at apex: extrapolate each edge to x=0
+    const apexY1 = xZeroY(left.edge1[N - 1], left.edge1[N]);
+    const apexY2 = xZeroY(left.edge2[N - 1], left.edge2[N]);
+
+    // Build left arm polygon
+    ctx.beginPath();
+    ctx.moveTo(tipE1[0], tipE1[1]);
+    for (let i = 0; i <= N; i++) ctx.lineTo(left.edge1[i][0], left.edge1[i][1]);
+    ctx.lineTo(0, apexY1); // skewed apex end
+    ctx.lineTo(0, apexY2);
+    for (let i = N; i >= 0; i--) ctx.lineTo(left.edge2[i][0], left.edge2[i][1]);
+    ctx.lineTo(tipE2[0], tipE2[1]);
+    ctx.closePath();
+    ctx.fillStyle = sc;
+    ctx.fill();
+
+    // Right arm: sample offset edges
+    const rP0 = [0, 0];
+    const rCP = [halfW * 0.5 - bow, h * 0.45];
+    const rP1 = [halfW, h];
+    const right = _sampleArm(...rP0, ...rCP, ...rP1, hw, N, false);
+
+    // Square cap at right tip: extend by hw along tangent at t=1
+    const [rt1x, rt1y] = _tangentQ(...rP0, ...rCP, ...rP1, 1);
+    const rt1L = Math.hypot(rt1x, rt1y) || 1;
+    const tipDxR = (rt1x / rt1L) * hw, tipDyR = (rt1y / rt1L) * hw;
+    const tipE1R = [right.edge1[N][0] + tipDxR, right.edge1[N][1] + tipDyR];
+    const tipE2R = [right.edge2[N][0] + tipDxR, right.edge2[N][1] + tipDyR];
+
+    // Miter at apex: extrapolate each edge to x=0
+    const apexY1R = xZeroY(right.edge1[1], right.edge1[0]);
+    const apexY2R = xZeroY(right.edge2[1], right.edge2[0]);
+
+    // Build right arm polygon
+    ctx.beginPath();
+    ctx.moveTo(0, apexY1R); // skewed apex end
+    for (let i = 0; i <= N; i++) ctx.lineTo(right.edge1[i][0], right.edge1[i][1]);
+    ctx.lineTo(tipE1R[0], tipE1R[1]);
+    ctx.lineTo(tipE2R[0], tipE2R[1]);
+    for (let i = N; i >= 0; i--) ctx.lineTo(right.edge2[i][0], right.edge2[i][1]);
+    ctx.lineTo(0, apexY2R);
+    ctx.closePath();
+    ctx.fillStyle = sc;
+    ctx.fill();
+
+    ctx.restore();
+    return;
+  }
 
   // --- Build path by type ---
   ctx.beginPath();
@@ -62,6 +225,9 @@ export function drawShape(ctx, shape) {
       return;
   }
 
+  // Close open paths (chevron, arc, line) so fill covers the full shape
+  if (shape._closePath) ctx.closePath();
+
   // --- Fill (optional) then stroke ---
   if (shape.fillEnabled) {
     const prevAlpha = ctx.globalAlpha;
@@ -77,9 +243,6 @@ export function drawShape(ctx, shape) {
     _fillOutline(ctx, shape);
   } else {
     ctx.stroke();
-    if (shape.capStyle && shape.capStyle !== 'none') {
-      _drawEndpointCaps(ctx, shape);
-    }
   }
 
   ctx.restore();
@@ -227,14 +390,16 @@ function _fillOutline(ctx, shape) {
     const e1 = [...left.edge1, ...right.edge1];
     const e2 = [...left.edge2, ...right.edge2];
 
-    // Force vertical ends
-    e1[0][0] = -halfW;
-    e2[0][0] = -halfW;
     const last = e1.length - 1;
-    e1[last][0] = halfW;
-    e2[last][0] = halfW;
+    // Force vertical ends only when explicitly requested
+    if (shape.verticalEnds) {
+      e1[0][0] = -halfW;
+      e2[0][0] = -halfW;
+      e1[last][0] = halfW;
+      e2[last][0] = halfW;
+    }
 
-    // Build polygon: edge1 forward → edge2 backward → closePath (vertical left end)
+    // Build polygon: edge1 forward → edge2 backward → closePath
     ctx.beginPath();
     ctx.moveTo(e1[0][0], e1[0][1]);
     for (let i = 1; i <= last; i++) ctx.lineTo(e1[i][0], e1[i][1]);
@@ -249,11 +414,12 @@ function _fillOutline(ctx, shape) {
 
     const arm = _sampleArm(-halfW, 0, 0, -arcH, halfW, 0, hw, N, false);
 
-    // Force vertical ends
-    arm.edge1[0][0] = -halfW;
-    arm.edge2[0][0] = -halfW;
-    arm.edge1[N][0] = halfW;
-    arm.edge2[N][0] = halfW;
+    if (shape.verticalEnds) {
+      arm.edge1[0][0] = -halfW;
+      arm.edge2[0][0] = -halfW;
+      arm.edge1[N][0] = halfW;
+      arm.edge2[N][0] = halfW;
+    }
 
     ctx.beginPath();
     ctx.moveTo(arm.edge1[0][0], arm.edge1[0][1]);
@@ -265,143 +431,25 @@ function _fillOutline(ctx, shape) {
   }
 }
 
-// ─── Endpoint Caps ───────────────────────────────────────────
-
-/** Cap style presets drawn at each endpoint of open paths. */
-const CAP_STYLES = {
-  /** Angled cut — slashes the cap at 45° */
-  angle(ctx, size, lw) {
-    ctx.beginPath();
-    ctx.moveTo(-lw * 0.5, -size);
-    ctx.lineTo(lw * 0.5, size);
-    ctx.lineTo(lw * 0.5, -size);
-    ctx.closePath();
-    ctx.fill();
-  },
-  /** Arrow / pointed tip */
-  arrow(ctx, size, lw) {
-    ctx.beginPath();
-    ctx.moveTo(0, -size * 1.2);
-    ctx.lineTo(lw * 0.6, 0);
-    ctx.lineTo(0, size * 1.2);
-    ctx.closePath();
-    ctx.fill();
-  },
-  /** Small diamond at the tip */
-  diamond(ctx, size, lw) {
-    ctx.beginPath();
-    ctx.moveTo(lw * 0.5, 0);
-    ctx.lineTo(0, -size);
-    ctx.lineTo(-size * 0.6, 0);
-    ctx.lineTo(0, size);
-    ctx.closePath();
-    ctx.fill();
-  },
-  /** Serif — small perpendicular bar */
-  serif(ctx, size, lw) {
-    ctx.fillRect(-lw * 0.3, -size, lw * 0.6, size * 2);
-  },
-  /** Round dot at the tip */
-  dot(ctx, size) {
-    ctx.beginPath();
-    ctx.arc(0, 0, size * 0.7, 0, Math.PI * 2);
-    ctx.fill();
-  },
-  /** Miter — right-triangle cut, one edge stays straight/vertical */
-  miter(ctx, size, lw) {
-    const hw = lw * 0.5;
-    ctx.beginPath();
-    ctx.moveTo(0, -hw);       // top of stroke at cap
-    ctx.lineTo(size, -hw);    // extend outward along top edge
-    ctx.lineTo(0, hw);        // bottom of stroke stays put
-    ctx.closePath();
-    ctx.fill();
-  },
-};
-
-/**
- * Get the two endpoints and their outward tangent angles for open-path shapes.
- * Returns [{ x, y, angle }, ...] (angle in radians, pointing outward from the shape).
- */
-function _getEndpoints(shape) {
-  switch (shape.type) {
-    case 'chevron': {
-      const hw = shape.halfW ?? 6;
-      const h = shape.height ?? 7;
-      const bow = hw * (shape.bow ?? 0.35);
-      // Left tip tangent: direction from the quadratic control point to the endpoint
-      const cpLx = -hw * 0.5 + bow, cpLy = h * 0.45;
-      const angL = Math.atan2(h - cpLy, -hw - cpLx);
-      // Right tip tangent: direction from the quadratic control point to the endpoint
-      const cpRx = hw * 0.5 - bow, cpRy = h * 0.45;
-      const angR = Math.atan2(h - cpRy, hw - cpRx);
-      return [
-        { x: -hw, y: h, angle: angL },
-        { x: hw, y: h, angle: angR },
-      ];
-    }
-    case 'arc': {
-      const hw = shape.halfW ?? 6;
-      const arcH = shape.arcHeight ?? 4;
-      // Tangent at left endpoint: direction from control point (0, -arcH) to (-halfW, 0)
-      const angL = Math.atan2(0 - (-arcH), -hw - 0);
-      const angR = Math.atan2(0 - (-arcH), hw - 0);
-      return [
-        { x: -hw, y: 0, angle: angL },
-        { x: hw, y: 0, angle: angR },
-      ];
-    }
-    case 'line': {
-      const half = (shape.length ?? 10) / 2;
-      return [
-        { x: -half, y: 0, angle: Math.PI },
-        { x: half, y: 0, angle: 0 },
-      ];
-    }
-    case 'path': {
-      const pts = shape.points;
-      if (!pts || pts.length < 2 || shape.closed) return [];
-      const first = pts[0], second = pts[1];
-      const last = pts[pts.length - 1], prev = pts[pts.length - 2];
-      return [
-        { x: first.x, y: first.y, angle: Math.atan2(first.y - second.y, first.x - second.x) },
-        { x: last.x, y: last.y, angle: Math.atan2(last.y - prev.y, last.x - prev.x) },
-      ];
-    }
-    default:
-      return []; // Closed shapes (diamond, circle) have no open endpoints
-  }
-}
-
-/**
- * Draw decorative caps at each endpoint of an open-path shape.
- */
-function _drawEndpointCaps(ctx, shape) {
-  const style = CAP_STYLES[shape.capStyle];
-  if (!style) return;
-
-  const endpoints = _getEndpoints(shape);
-  if (endpoints.length === 0) return;
-
-  const size = (shape.capSize ?? 1) * (shape.strokeWidth ?? 1.5);
-  const lw = shape.strokeWidth ?? 1.5;
-  ctx.fillStyle = shape.strokeColor || '#ffd700';
-
-  const capRot = (shape.capRotation ?? 0) * Math.PI / 180;
-
-  for (let i = 0; i < endpoints.length; i++) {
-    const ep = endpoints[i];
-    ctx.save();
-    ctx.translate(ep.x, ep.y);
-    ctx.rotate(ep.angle + capRot);
-    // Mirror asymmetric caps for the second endpoint so both sides match
-    if (i > 0) ctx.scale(1, -1);
-    style(ctx, size, lw);
-    ctx.restore();
-  }
-}
-
 // ─── Insignia Composition ─────────────────────────────────────
+
+
+/** Draw a shape, handling array/repeat if present. */
+function _drawShapeWithArray(ctx, shape) {
+  if (shape.array && shape.array.linked && shape.array.count > 1) {
+    const { count, spacing, direction } = shape.array;
+    const dx = direction === 'x' ? (spacing || 4) : 0;
+    const dy = direction === 'x' ? 0 : (spacing || 4);
+    for (let i = 0; i < count; i++) {
+      ctx.save();
+      ctx.translate(dx * i, dy * i);
+      drawShape(ctx, shape);
+      ctx.restore();
+    }
+  } else {
+    drawShape(ctx, shape);
+  }
+}
 
 /**
  * Draw all shapes for a rank definition.
@@ -410,7 +458,7 @@ function _drawEndpointCaps(ctx, shape) {
  * @param {object} rankData - { shapes: [...] }
  * @param {number} [scale=1] - Overall scale multiplier
  */
-export function drawInsignia(ctx, rankData, scale) {
+export function drawInsignia(ctx, rankData, scale, patch) {
   if (!rankData || !rankData.shapes) return;
 
   scale = scale ?? 1;
@@ -418,9 +466,58 @@ export function drawInsignia(ctx, rankData, scale) {
   ctx.save();
   if (scale !== 1) ctx.scale(scale, scale);
 
-  for (const shape of rankData.shapes) {
-    if (shape.visible === false) continue;
-    drawShape(ctx, shape);
+  // Draw patch background behind shapes
+  drawPatch(ctx, patch);
+
+  const outline = patch?.outline;
+  const insigniaFill = patch?.insigniaFill;
+
+  if (outline?.enabled || insigniaFill?.enabled) {
+    // Square caps extend stroke by strokeWidth/2 past endpoints.
+    // Thicker outline extends further than thinner fill — uniform border at tips.
+    const capStyle = { _splitArms: true, _lineCap: 'square', _lineJoin: 'miter', verticalEnds: false };
+    const fillClose = insigniaFill?.enabled ? { _closePath: true } : {};
+
+    // Pass 1: Outline — thick stroke in outline color (only fill interior if insigniaFill is on)
+    if (outline?.enabled) {
+      const olFill = !!insigniaFill?.enabled;
+      for (const shape of rankData.shapes) {
+        if (shape.visible === false) continue;
+        const outShape = {
+          ...shape, ...capStyle, ...fillClose,
+          strokeColor: outline.color || '#000000',
+          strokeWidth: (shape.strokeWidth ?? 1.5) + (outline.width ?? 2) * 2,
+          fillEnabled: olFill,
+          fillColor: outline.color || '#000000',
+          fillOpacity: 1
+        };
+        _drawShapeWithArray(ctx, outShape);
+      }
+    }
+
+    // Pass 2: Fill — normal stroke + fill in fill color, covers outline interior
+    const fc = insigniaFill?.enabled ? (insigniaFill.color || '#ffd700') : null;
+    for (const shape of rankData.shapes) {
+      if (shape.visible === false) continue;
+      if (fc) {
+        const fillShape = {
+          ...shape, ...capStyle, ...fillClose,
+          strokeColor: fc,
+          fillEnabled: true,
+          fillColor: fc,
+          fillOpacity: 1
+        };
+        _drawShapeWithArray(ctx, fillShape);
+      } else {
+        _drawShapeWithArray(ctx, { ...shape, ...capStyle });
+      }
+    }
+  } else {
+    // No outline/fill — draw shapes normally
+    for (const shape of rankData.shapes) {
+      if (shape.visible === false) continue;
+      _drawShapeWithArray(ctx, shape);
+    }
   }
 
   ctx.restore();
@@ -456,7 +553,7 @@ export function cacheInsigniaSet(set) {
     ctx.translate(CACHE_SIZE / 2, CACHE_SIZE / 2);
 
     if (rankData) {
-      drawInsignia(ctx, rankData, 1);
+      drawInsignia(ctx, rankData, 1, set.patch);
     }
 
     cache.set(key, oc);

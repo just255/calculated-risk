@@ -7,7 +7,9 @@ import { Team } from './constants.js';
 import { Game } from './state.js';
 import { BattleRenderer } from './battle-renderer.js';
 import { randomizeBattleConfig, generateBattleTerrain } from './world-builder/battle-terrain.js';
-import { updateFireRangeCamera } from './camera.js';
+import { updateFireRangeCamera, updateHeroCamera } from './camera.js';
+import { cacheInsigniaSet } from './insignia-renderer.js';
+import * as sprites from './sprites.js';
 
 export class ReplayPlayer {
   constructor() {
@@ -66,7 +68,8 @@ export class ReplayPlayer {
       terrainLabel: replay.terrainLabel || '',
       blueSpawnZone: replay.blueSpawnZone,
       redSpawnZone: replay.redSpawnZone,
-      fireRange: true,
+      fireRange: replay.mode === 'fire_range',
+      _isReplay: true,
       debugOverlay: false,
       showTerrainGrid: 0,
       units: [],
@@ -87,6 +90,21 @@ export class ReplayPlayer {
 
     // Create unit objects from unitDefs
     for (const def of replay.unitDefs) {
+      if (def.isHero) {
+        // Reconstruct hero for endless/campaign replays
+        const heroAnimId = `replay-hero-${def.unitId}-${Date.now()}`;
+        b.hero = {
+          x: 0, y: 0, angle: 0, hullAngle: 0,
+          hp: def.maxHp, maxHp: def.maxHp,
+          unitId: def.unitId,
+          dead: false,
+          isHero: true,
+          animId: heroAnimId
+        };
+        // Load hero sprite
+        sprites.initAnimatedUnit(heroAnimId, def.unitId, 'default');
+        continue;
+      }
       const unit = {
         id: def.id,
         team: def.team === 'blue' ? Team.BLUE : Team.RED,
@@ -99,6 +117,7 @@ export class ReplayPlayer {
         _dbg: {},
         _suppression: 0,
         _rank: def.rank ?? 0,
+        _insigniaSetId: def.insigniaSetId || null,
         range: 400,
         speed: 30
       };
@@ -107,6 +126,18 @@ export class ReplayPlayer {
       } else {
         b.enemies.push(unit);
       }
+    }
+
+    // Cache insignia sets used by units
+    const insigniaIds = new Set();
+    for (const def of replay.unitDefs) {
+      if (def.insigniaSetId) insigniaIds.add(def.insigniaSetId);
+    }
+    for (const setId of insigniaIds) {
+      fetch(`/api/insignia/${encodeURIComponent(setId)}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(set => { if (set) cacheInsigniaSet(set); })
+        .catch(() => {});
     }
 
     // Reconstruct terrain from seed if terrain images are available
@@ -345,6 +376,44 @@ export class ReplayPlayer {
       e._dbg = { state: f.st };
     }
 
+    // Apply hero position (endless/campaign replays)
+    if (b.hero && frame.hero) {
+      const fh = frame.hero;
+      const nh = nextFrame?.hero;
+      const prevX = b.hero.x;
+      const prevY = b.hero.y;
+      if (nh && lerp > 0 && !fh.dead) {
+        b.hero.x = fh.x + (nh.x - fh.x) * lerp;
+        b.hero.y = fh.y + (nh.y - fh.y) * lerp;
+        b.hero.angle = _lerpAngle(fh.ang, nh.ang, lerp);
+        b.hero.hullAngle = _lerpAngle(fh.hull, nh.hull, lerp);
+      } else {
+        b.hero.x = fh.x;
+        b.hero.y = fh.y;
+        b.hero.angle = fh.ang;
+        b.hero.hullAngle = fh.hull;
+      }
+      b.hero.hp = fh.hp;
+      b.hero.dead = fh.dead;
+
+      // Drive hero animation from movement + fire/hit events
+      if (b.hero.animId && sprites.hasAnimatedUnit(b.hero.animId)) {
+        const dx = b.hero.x - prevX;
+        const dy = b.hero.y - prevY;
+        const isMoving = (dx * dx + dy * dy) > 1;
+        if (isMoving !== b.hero._wasMoving) {
+          b.hero._wasMoving = isMoving;
+          sprites.setUnitAnimTrigger(b.hero.animId, isMoving ? 'move' : 'idle');
+        }
+        // Drive turret aim (relative angle in degrees, same as live gameplay)
+        const relativeAim = (b.hero.angle || 0) - (b.hero.hullAngle || 0);
+        sprites.setUnitAimAngle(b.hero.animId, relativeAim * 180 / Math.PI);
+      }
+    }
+
+    // Drive fire/hit animation triggers from event log
+    this._applyAnimTriggers(b, this.currentTime);
+
     // Apply projectiles — no interpolation, just show current frame's projectiles
     b.projectiles = (frame.projectiles || []).map(p => ({
       x: p.x,
@@ -368,8 +437,6 @@ export class ReplayPlayer {
     const BUBBLE_DURATION = 2500;
     const events = this.replay.events || [];
     const allUnits = [...b.units, ...b.enemies];
-
-
 
     // Clear expired or future bubbles (handles seeking backwards)
     for (const u of allUnits) {
@@ -402,6 +469,42 @@ export class ReplayPlayer {
     }
   }
 
+  /**
+   * Scan event log for fire/hit events near the current time and
+   * trigger one-shot animations on the corresponding units.
+   */
+  _applyAnimTriggers(b, currentTime) {
+    const events = this.replay.events || [];
+    const TRIGGER_WINDOW = 150; // ms — only trigger if event is very recent
+
+    // Track last processed event index to avoid re-triggering on the same frame
+    if (this._lastTriggerIdx === undefined) this._lastTriggerIdx = -1;
+
+    // On seek backwards, reset so we don't skip events
+    if (this._lastTriggerTime > currentTime) this._lastTriggerIdx = -1;
+    this._lastTriggerTime = currentTime;
+
+    for (let i = Math.max(0, this._lastTriggerIdx + 1); i < events.length; i++) {
+      const ev = events[i];
+      if (ev.t > currentTime) break; // future events
+      if (currentTime - ev.t > TRIGGER_WINDOW) continue; // too old
+
+      this._lastTriggerIdx = i;
+
+      if (ev.type === 'fire' || ev.type === 'hit') {
+        // Find the unit that did the action
+        if (ev.who === 'hero' && b.hero?.animId) {
+          sprites.triggerUnitAnim(b.hero.animId, ev.type);
+        } else {
+          const unit = b.units.find(u => u.id === ev.who) || b.enemies.find(u => u.id === ev.who);
+          if (unit?.animId && sprites.hasAnimatedUnit(unit.animId)) {
+            sprites.triggerUnitAnim(unit.animId, ev.type);
+          }
+        }
+      }
+    }
+  }
+
   _renderFrame() {
     const b = this.battle;
     if (!b || !this.renderer) return;
@@ -409,7 +512,10 @@ export class ReplayPlayer {
     const container = this.renderer._container;
     if (!container) return;
 
-    const zoom = updateFireRangeCamera(b, container.offsetWidth, container.offsetHeight);
+    // Use hero camera for replays with a hero, fire range camera otherwise
+    const zoom = (b.hero && !b.hero.observer)
+      ? updateHeroCamera(b, container.offsetWidth, container.offsetHeight)
+      : updateFireRangeCamera(b, container.offsetWidth, container.offsetHeight);
     this.renderer.setCamera(b.camera.x, b.camera.y, zoom);
     this.renderer.render(b);
   }

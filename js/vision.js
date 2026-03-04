@@ -59,6 +59,8 @@ export function traceLineOfSight(b, x1, y1, x2, y2) {
       const sx = x1 + dx * t;
       const sy = y1 + dy * t;
       const result = queryTerrain(b.terrainMap, sx, sy);
+      // Boulders hard-block LOS (hasBoulder is boulder-specific, unlike isBlocked which includes deep water)
+      if (result.hasBoulder) return 0;
       // Use the terrain's visibility value directly as a per-step multiplier
       visibility *= result.visibility;
       if (visibility < 0.1) return 0;
