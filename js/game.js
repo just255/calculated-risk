@@ -63,6 +63,8 @@ import { drawMinimap } from './minimap.js';
 import { toggleDebugPanel, debugInspectAt, isDebugPanelVisible, destroyDebugPanel } from './debug-panel.js';
 import { logEvent, EventCategory, EventSeverity } from './battle-log.js';
 import { isCrewMode, drawCrewLineup, drawCrewAvailable, drawCrewCard, handleLineupClick, handleSectionHeaderClick, handleCrewAvailableClick, handleCrewAddClick, handlePoolTabClick, handleMotorPoolClick, handleCrewTransfer, clearCrewSelection } from './deploy-crew.js';
+import { getSoldier, getCrewForVehicle, saveRoster, saveVehicles, getVehicle, healAllSoldiers, repairAllVehicles } from './roster.js';
+import { getEffectivePersonality } from './crew.js';
 import { initCMDMode, updateCMDCamera, drawCMDOverlay, handleCMDClick, handleCMDRightClick, handleCMDKey, shouldHeroRunAI } from './cmd-mode.js';
 import { drawPresetPanel, applyPreset } from './loadouts.js';
 
@@ -2535,6 +2537,8 @@ function updateEndlessBattle(dt) {
     b.result = 'defeat';
     Game.endless.result = 'death';
     Game.endless.exitWave = Game.endless.wave;
+    // Post-battle: update roster durability + progression on defeat
+    _processPostBattle(b, 'loss');
     saveReplay(b);
     goto(State.ENDLESS_RESULT);
   }
@@ -2567,6 +2571,9 @@ function updateEndlessBattle(dt) {
   const hasReserves = redCmdrCheck && (redCmdrCheck.reserves.length > 0 || redCmdrCheck._pendingDeployments?.length > 0);
   if (aliveEnemies === 0 && queuedEnemies === 0 && !hasReserves && !b.waveComplete) {
     b.waveComplete = true;
+
+    // Post-battle: update roster durability + progression
+    _processPostBattle(b, 'win');
 
     // Short delay then go to between screen
     setTimeout(() => {
@@ -4468,6 +4475,149 @@ function getZoneComposition(b, zone) {
   return Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ');
 }
 
+// ── Roster → battle unit stamping ─────────────────────────
+
+/**
+ * Stamp roster soldier data onto battle units at deploy time.
+ * - Infantry: copy personality from roster soldier
+ * - Vehicles: blend crew personality via getEffectivePersonality()
+ * - Initialize battle metrics tracking for post-battle progression
+ */
+function _stampRosterData(b) {
+  const allUnits = [...(b.units || [])];
+  if (b.hero && !b.hero.observer) allUnits.push(b.hero);
+
+  // Initialize metrics map for post-battle progression
+  b._soldierMetrics = new Map();
+
+  for (const unit of allUnits) {
+    // Infantry with roster link
+    if (unit._soldierId) {
+      const soldier = getSoldier(unit._soldierId);
+      if (soldier) {
+        unit.personality = { ...soldier.personality };
+        // Init metrics for this soldier
+        b._soldierMetrics.set(soldier.id, {
+          soldierId: soldier.id,
+          unitId: unit.id,
+          role: unit._role || soldier.role,
+          shotsFired: 0, shotsHit: 0, damageDealt: 0,
+          kills: 0, died: false, damageTaken: 0
+        });
+      }
+    }
+
+    // Vehicle with roster link
+    if (unit._vehicleId) {
+      const crew = getCrewForVehicle(unit.id);
+      // Store crew soldier IDs on the unit
+      unit._crewSoldierIds = {};
+      for (const [slot, soldier] of Object.entries(crew)) {
+        if (soldier) {
+          unit._crewSoldierIds[slot] = soldier.id;
+          // Init metrics for each crew member
+          b._soldierMetrics.set(soldier.id, {
+            soldierId: soldier.id,
+            unitId: unit.id,
+            role: slot,
+            shotsFired: 0, shotsHit: 0, damageDealt: 0,
+            kills: 0, died: false, damageTaken: 0
+          });
+        }
+      }
+
+      // Blend crew personality onto vehicle
+      const blended = getEffectivePersonality(unit.id, unit.unitId);
+      if (blended) unit.personality = blended;
+    }
+  }
+}
+
+/**
+ * Post-battle: update roster soldiers and vehicles with battle results.
+ * - Durability: carry forward HP damage
+ * - KIA/destroyed marking
+ * - XP awards + promotion checks
+ * - Passive healing/repair between waves
+ */
+function _processPostBattle(b, result) {
+  if (!b._soldierMetrics) return;
+
+  const allUnits = [...(b.units || [])];
+  if (b.hero && !b.hero.observer) allUnits.push(b.hero);
+
+  for (const unit of allUnits) {
+    // Update soldier durability
+    if (unit._soldierId) {
+      const soldier = getSoldier(unit._soldierId);
+      if (soldier) {
+        if (unit.dead) {
+          soldier.status = 'kia';
+          soldier.hpPercent = 0;
+        } else {
+          soldier.hpPercent = Math.max(0, unit.hp / (unit.maxHp || 1));
+          if (soldier.hpPercent < 0.3) soldier.status = 'wounded';
+        }
+        // XP: base 10 + 5 per kill + 2 per shot hit
+        const metrics = b._soldierMetrics.get(soldier.id);
+        if (metrics) {
+          soldier.experience += 10 + (metrics.kills * 5) + (metrics.shotsHit * 2);
+          soldier.kills += metrics.kills;
+          soldier.battlesServed++;
+        }
+      }
+    }
+
+    // Update vehicle durability
+    if (unit._vehicleId) {
+      const vehicle = getVehicle(unit._vehicleId);
+      if (vehicle) {
+        if (unit.dead) {
+          vehicle.status = 'destroyed';
+          vehicle.hpPercent = 0;
+        } else {
+          vehicle.hpPercent = Math.max(0, unit.hp / (unit.maxHp || 1));
+          if (vehicle.hpPercent < 0.3) vehicle.status = 'damaged';
+        }
+        vehicle.battlesServed++;
+
+        // Mark crew as KIA if vehicle was destroyed
+        if (unit.dead && unit._crewSoldierIds) {
+          for (const soldierId of Object.values(unit._crewSoldierIds)) {
+            const crewSoldier = getSoldier(soldierId);
+            if (crewSoldier) {
+              crewSoldier.status = 'kia';
+              crewSoldier.hpPercent = 0;
+            }
+          }
+        } else if (unit._crewSoldierIds) {
+          // Award XP to crew members
+          for (const [slot, soldierId] of Object.entries(unit._crewSoldierIds)) {
+            const crewSoldier = getSoldier(soldierId);
+            if (!crewSoldier) continue;
+            const metrics = b._soldierMetrics.get(soldierId);
+            if (metrics) {
+              crewSoldier.experience += 10 + (metrics.kills * 5) + (metrics.shotsHit * 2);
+              crewSoldier.kills += metrics.kills;
+            }
+            crewSoldier.battlesServed++;
+          }
+        }
+      }
+    }
+  }
+
+  // Passive healing/repair between waves (on win only)
+  if (result === 'win') {
+    healAllSoldiers(0.2);   // 20% HP recovery
+    repairAllVehicles(0.15); // 15% HP recovery
+  }
+
+  // Save everything
+  saveRoster();
+  saveVehicles();
+}
+
 // ── Deployment click handler ────────────────────────────────
 
 export function handleDeployClick(b, screenX, screenY, ctrlKey) {
@@ -4513,6 +4663,9 @@ export function handleDeployClick(b, screenX, screenY, ctrlKey) {
         units[i].y = stageY + 100 + (i - positions.length + 1) * 40;
       }
     }
+    // Stamp roster personality onto battle units at deploy time
+    _stampRosterData(b);
+
     b.deployReady.blue = true;
     return true;
   }

@@ -406,7 +406,12 @@ export function initBattleAI(b, opts = {}) {
   }
 
   // Create commanders and assign initial objectives
+  // In unit/sgt modes, only the red commander exists (blue is player-driven)
   _initCommanders(b, opts);
+  // Remove blue commander for non-CMD play modes (sergeant drives blue team)
+  if (b.playMode && b.playMode !== 'cmd' && !b.fireRange) {
+    b._teamCommanders[Team.BLUE] = null;
+  }
 
   // Backwards compat: build _sergeants from squads
   _syncSergeants(b);

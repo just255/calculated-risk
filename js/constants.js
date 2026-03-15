@@ -1809,4 +1809,33 @@ export const INFANTRY_MOS = {
   heavy_gunner: { label: 'Heavy Gunner', special: 'suppress' }
 };
 
+// Distinct combat stats per infantry archetype (role)
+// All render as 'infantry' base type but fight differently
+export const INFANTRY_ARCHETYPES = {
+  rifleman:     { hp: 180, damage: 10, fireRate: 1000, speed: 50, range: 400 },
+  medic:        { hp: 160, damage: 8,  fireRate: 1200, speed: 55, range: 350, special: 'heal' },
+  engineer:     { hp: 170, damage: 9,  fireRate: 1100, speed: 45, range: 380, special: 'repair' },
+  heavy_gunner: { hp: 200, damage: 14, fireRate: 800,  speed: 40, range: 450, special: 'suppress' }
+};
+
+// Maps roster roles → unit type ID for rendering/sprites
+// All infantry archetypes render as 'infantry' (same sprite set)
+export const ROLE_TO_UNIT_ID = {
+  rifleman: 'infantry',
+  medic: 'medic',
+  engineer: 'infantry',
+  heavy_gunner: 'infantry',
+  // Vehicle roles don't need mapping — they ride in the vehicle
+  tc: null,
+  gunner: null,
+  driver: null
+};
+
+// Default vehicle pool for new endless runs
+export const STARTER_VEHICLES = [
+  { unitId: 'sherman', count: 2 },
+  { unitId: 'jeep', count: 1 },
+  { unitId: 'humvee', count: 1 }
+];
+
 export const VEHICLE_ROLES = ['tc', 'gunner', 'driver'];

@@ -3,6 +3,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { Game } from './state.js';
+import { loadRoster, saveRoster, seedStarterRoster, loadVehicles, saveVehicles, seedStarterVehicles } from './roster.js';
 
 const SAVE_KEY = 'cr_save';
 const FR_LAST_KEY = 'cr_fr_last_config';
@@ -16,6 +17,8 @@ export function save() {
       settings: Game.settings,
       player: Game.player
     }));
+    saveRoster();
+    saveVehicles();
   } catch (e) {
     console.warn('Failed to save:', e);
   }
@@ -50,6 +53,25 @@ export function load() {
         }
       }
     }
+    // Load persistent roster + vehicles (separate storage keys)
+    loadRoster();
+    loadVehicles();
+    // Seed starters if first time
+    seedStarterRoster();
+    seedStarterVehicles();
+
+    // Cleanup: unassign vehicle crew pointing to stale/missing vehicle IDs
+    const vehicleIds = new Set((Game.vehicles || []).map(v => v.id));
+    let cleanedCount = 0;
+    for (const s of (Game.roster || [])) {
+      if (s.pool === 'vehicle' && s.assignedVehicleId && !vehicleIds.has(s.assignedVehicleId)) {
+        s.assignedVehicleId = null;
+        s.assignedSlot = null;
+        cleanedCount++;
+      }
+    }
+    if (cleanedCount > 0) console.log(`[roster] Cleaned ${cleanedCount} stale crew assignments`);
+
   } catch (e) {
     console.warn('Failed to load:', e);
   }
@@ -97,6 +119,9 @@ export function migrateFRConfig(config) {
     delete config.redTeam;
     delete config.redSergeant;
   }
+  // Ensure commander config exists
+  if (!config.blueCommander) config.blueCommander = { personality: {} };
+  if (!config.redCommander) config.redCommander = { personality: {} };
   return config;
 }
 

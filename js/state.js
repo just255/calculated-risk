@@ -2,13 +2,14 @@
 // STATE - Game state object and battle factory
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, H2H_BUDGET, CAMPAIGN_HERO_UNITS, UNITS, ENEMIES, UNIT_COMBAT_STATS, ZoneOwner, ScenarioType, Biome, BIOME_TERRAIN, Team } from './constants.js';
+import { State, SubState, HQTab, H2H_BUDGET, CAMPAIGN_HERO_UNITS, UNITS, ENEMIES, UNIT_COMBAT_STATS, ZoneOwner, ScenarioType, Biome, BIOME_TERRAIN, Team, INFANTRY_ARCHETYPES, ROLE_TO_UNIT_ID, CREW_SCHEMAS } from './constants.js';
 import { WorldBuilder } from './world-builder/index.js';
 import { generateBattleTerrain, randomizeBattleConfig } from './world-builder/battle-terrain.js';
 import { hashString } from './world-builder/rng.js';
 import { createSergeant, DEFAULT_SERGEANT } from './sergeant.js';
 import { initBattleAI, applyBrainDefaults } from './ai-pipeline.js';
 import { findValidSpawnPos } from './terrain-utils.js';
+import { getPool, getAvailableVehicles, getRankName, getSoldier, getCrewForVehicle } from './roster.js';
 
 export const Game = {
   state: State.MENU,
@@ -1355,29 +1356,61 @@ export function createUnit(unitId, overrides = {}) {
   return unit;
 }
 
-// Generate a pool of available reserve units the player can swap in
-function createReservePool() {
-  const pool = [
-    { unitId: 'infantry', leadership: 0.1 },
-    { unitId: 'infantry', leadership: 0.15 },
-    { unitId: 'infantry', leadership: 0.2 },
-    { unitId: 'medic',    leadership: 0.25 },
-    { unitId: 'specops',  leadership: 0.5 },
-    { unitId: 'jeep',     leadership: 0.3 },
-    { unitId: 'humvee',   leadership: 0.35 },
-    { unitId: 'sherman',  leadership: 0.55 },
-    { unitId: 'sherman',  leadership: 0.6 },
-    { unitId: 'tiger',    leadership: 0.7 },
-  ];
-  return pool.map((def, i) => {
-    const name = generateUnitName(def.leadership);
-    const unitDef = UNITS.find(u => u.id === def.unitId);
-    return createUnit(def.unitId, {
-      id: `reserve_${i}`,
-      unitName: name,
-      displayName: unitDef?.name || def.unitId
-    });
-  });
+// Build deployment pool from persistent roster + vehicle inventory
+function buildDeploymentPool() {
+  const pool = [];
+
+  // Infantry from roster — each soldier becomes a deployable unit
+  const infantrySoldiers = getPool('infantry');
+  for (let i = 0; i < infantrySoldiers.length; i++) {
+    const soldier = infantrySoldiers[i];
+    const archetype = INFANTRY_ARCHETYPES[soldier.role] || INFANTRY_ARCHETYPES.rifleman;
+    const renderUnitId = ROLE_TO_UNIT_ID[soldier.role] || 'infantry';
+    const maxHp = archetype.hp;
+
+    pool.push(createUnit(renderUnitId, {
+      id: `roster_inf_${i}`,
+      hp: Math.round(maxHp * soldier.hpPercent),
+      maxHp,
+      damage: archetype.damage,
+      fireRate: archetype.fireRate,
+      speed: archetype.speed,
+      range: archetype.range,
+      // Roster link
+      _soldierId: soldier.id,
+      _role: soldier.role,
+      _special: archetype.special || null,
+      // Display
+      unitName: getRankName(soldier),
+      displayName: `${getRankName(soldier)} (${(INFANTRY_ARCHETYPES[soldier.role] ? soldier.role : 'rifleman')})`,
+      // Personality from roster soldier (will be stamped by applyBrainDefaults, but seed it)
+      personality: { ...soldier.personality }
+    }));
+  }
+
+  // Vehicles from persistent inventory
+  const vehicles = getAvailableVehicles();
+  for (let i = 0; i < vehicles.length; i++) {
+    const vehicle = vehicles[i];
+    const unitDef = UNITS.find(u => u.id === vehicle.unitId);
+    const stats = UNIT_COMBAT_STATS[vehicle.unitId] || {};
+    const baseHp = unitDef?.hp || 300;
+    const maxHp = baseHp;
+
+    pool.push(createUnit(vehicle.unitId, {
+      id: `roster_veh_${i}`,
+      hp: Math.round(maxHp * vehicle.hpPercent),
+      maxHp,
+      // Vehicle link
+      _vehicleId: vehicle.id,
+      _crewSoldierIds: {},
+      // Display
+      unitName: vehicle.name || (unitDef?.name || vehicle.unitId),
+      displayName: unitDef?.name || vehicle.unitId
+    }));
+  }
+
+  return pool;
 }
 
 // Create AI-controlled ally squad for endless mode testing
@@ -1628,8 +1661,8 @@ export function newEndlessBattle(loadout, wave = 1) {
     redCommanderOrigin: Game.settings?.redCommanderOrigin
   });
 
-  // Generate reserve pool (name generator continues from squad names)
-  battle.reservePool = createReservePool();
+  // Build deployment pool from persistent roster + vehicle inventory
+  battle.reservePool = buildDeploymentPool();
 
   return battle;
 }

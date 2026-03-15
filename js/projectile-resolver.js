@@ -15,6 +15,35 @@ import {
   getArmorTier,
   getTierDamageMultiplier
 } from './ai.js';
+import { logEvent } from './battle-log.js';
+
+/**
+ * Track hit/kill metrics for roster soldier progression.
+ * Finds the source unit by ID, then credits the linked soldier (infantry)
+ * or gunner crew member (vehicle).
+ */
+function _trackHitMetric(b, sourceId, dmg, isKill) {
+  if (!b._soldierMetrics || !sourceId) return;
+  const allUnits = [...(b.units || [])];
+  if (b.hero && !b.hero.observer) allUnits.push(b.hero);
+  const srcUnit = allUnits.find(u => u.id === sourceId);
+  if (!srcUnit) return;
+
+  // Infantry: credit soldier directly
+  if (srcUnit._soldierId && b._soldierMetrics.has(srcUnit._soldierId)) {
+    const m = b._soldierMetrics.get(srcUnit._soldierId);
+    m.shotsHit++;
+    m.damageDealt += dmg;
+    if (isKill) m.kills++;
+  }
+  // Vehicle: credit gunner
+  if (srcUnit._crewSoldierIds?.gunner && b._soldierMetrics.has(srcUnit._crewSoldierIds.gunner)) {
+    const m = b._soldierMetrics.get(srcUnit._crewSoldierIds.gunner);
+    m.shotsHit++;
+    m.damageDealt += dmg;
+    if (isKill) m.kills++;
+  }
+}
 
 /**
  * Resolve all projectile movement, hit detection, damage, and combat effects.
@@ -114,6 +143,7 @@ export function resolveProjectiles(b, now, dtSec, opts = {}) {
 
           // Combat effects
           e._shockTimer = 2;
+          e._lastAttackerId = p.sourceId || null;
           applySuppression(e, 0.25);
           recordDamage(e, p.sourceId || 'hero', dmg);
 
@@ -126,7 +156,9 @@ export function resolveProjectiles(b, now, dtSec, opts = {}) {
             e.dead = true;
             b.kills++;
 
-            if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: Team.BLUE, type: 'kill', x: Math.round(e.x), y: Math.round(e.y), action: 'kill', target: e.id, dmg, detail: `hp:0/${e.maxHp}` });
+            logEvent(b, { t: now, who: p.sourceId || '?', team: Team.BLUE, type: 'kill', x: Math.round(e.x), y: Math.round(e.y), action: 'kill', target: e.id, dmg, detail: `hp:0/${e.maxHp}` });
+            // Track kill for roster metrics
+            _trackHitMetric(b, p.sourceId, dmg, true);
 
             // Killer morale boost
             const killer = b.units?.find(u => u.id === p.sourceId);
@@ -141,7 +173,8 @@ export function resolveProjectiles(b, now, dtSec, opts = {}) {
             // Mode-specific kill callback
             if (onEnemyKill) onEnemyKill(e, dmg, killer);
           } else {
-            if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: Team.BLUE, type: 'hit', x: Math.round(e.x), y: Math.round(e.y), action: 'hit', target: e.id, dmg, detail: `hp:${e.hp}/${e.maxHp}` });
+            logEvent(b, { t: now, who: p.sourceId || '?', team: Team.BLUE, type: 'hit', x: Math.round(e.x), y: Math.round(e.y), action: 'hit', target: e.id, dmg, detail: `hp:${e.hp}/${e.maxHp}` });
+            _trackHitMetric(b, p.sourceId, dmg, false);
           }
         }
       });
@@ -184,6 +217,7 @@ export function resolveProjectiles(b, now, dtSec, opts = {}) {
 
             // Combat effects
             unit._shockTimer = 2;
+            unit._lastAttackerId = p.sourceId || null;
             applySuppression(unit, 0.25);
 
             // Debug invincibility
@@ -194,7 +228,7 @@ export function resolveProjectiles(b, now, dtSec, opts = {}) {
             if (unit.hp <= 0) {
               unit.hp = 0; unit.dead = true;
 
-              if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: Team.RED, type: 'kill', x: Math.round(unit.x), y: Math.round(unit.y), action: 'kill', target: unit.id, dmg, detail: `hp:0/${unit.maxHp}` });
+              logEvent(b, { t: now, who: p.sourceId || '?', team: Team.RED, type: 'kill', x: Math.round(unit.x), y: Math.round(unit.y), action: 'kill', target: unit.id, dmg, detail: `hp:0/${unit.maxHp}` });
 
               // Killer morale boost
               const killer = b.enemies?.find(en => en.id === p.sourceId);
@@ -209,7 +243,7 @@ export function resolveProjectiles(b, now, dtSec, opts = {}) {
               // Mode-specific ally death callback
               if (onAllyKill) onAllyKill(unit, dmg, killer);
             } else {
-              if (b._debugLog) b._debugLog.push({ t: now, who: p.sourceId || '?', team: Team.RED, type: 'hit', x: Math.round(unit.x), y: Math.round(unit.y), action: 'hit', target: unit.id, dmg, detail: `hp:${unit.hp}/${unit.maxHp}` });
+              logEvent(b, { t: now, who: p.sourceId || '?', team: Team.RED, type: 'hit', x: Math.round(unit.x), y: Math.round(unit.y), action: 'hit', target: unit.id, dmg, detail: `hp:${unit.hp}/${unit.maxHp}` });
             }
             break;
           }
@@ -250,11 +284,11 @@ function _handleCommanderDeath(b, deadUnit, teamUnits, team, now) {
     : null;
   if (successor) {
     successor.isLeader = true;
-    if (b._teamCommanders) b._teamCommanders[team] = successor;
-    if (b._debugLog) b._debugLog.push({ t: now, who: deadUnit.id, team, type: 'movement', x: Math.round(deadUnit.x), y: Math.round(deadUnit.y), action: 'commander died', detail: `promoted ${successor.id} (ldr:${(successor.leadership ?? 0).toFixed(1)})` });
+    if (b._teamLeaders) b._teamLeaders[team] = successor;
+    logEvent(b, { t: now, who: deadUnit.id, team, type: 'movement', x: Math.round(deadUnit.x), y: Math.round(deadUnit.y), action: 'commander died', detail: `promoted ${successor.id} (ldr:${(successor.leadership ?? 0).toFixed(1)})` });
   } else {
-    if (b._teamCommanders) b._teamCommanders[team] = null;
-    if (b._debugLog) b._debugLog.push({ t: now, who: deadUnit.id, team, type: 'movement', x: Math.round(deadUnit.x), y: Math.round(deadUnit.y), action: 'commander died', detail: 'no successor' });
+    if (b._teamLeaders) b._teamLeaders[team] = null;
+    logEvent(b, { t: now, who: deadUnit.id, team, type: 'movement', x: Math.round(deadUnit.x), y: Math.round(deadUnit.y), action: 'commander died', detail: 'no successor' });
   }
 }
 

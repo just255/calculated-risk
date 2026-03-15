@@ -4591,6 +4591,18 @@ export function tryShoot(b, unit, targetX, targetY, now, targetEntity) {
     _bridgeElevation: unit._bridgeElevation || null
   });
 
+  // Track shotsFired for roster metrics
+  if (b._soldierMetrics) {
+    // Infantry: credit the soldier directly
+    if (unit._soldierId && b._soldierMetrics.has(unit._soldierId)) {
+      b._soldierMetrics.get(unit._soldierId).shotsFired++;
+    }
+    // Vehicle: credit the gunner
+    if (unit._crewSoldierIds?.gunner && b._soldierMetrics.has(unit._crewSoldierIds.gunner)) {
+      b._soldierMetrics.get(unit._crewSoldierIds.gunner).shotsFired++;
+    }
+  }
+
   {
     const factorStr = fireDecision.factors
       ? fireDecision.factors.map(f => `${f.name}:${f.value.toFixed(2)}`).join(' ')
