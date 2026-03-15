@@ -4422,8 +4422,11 @@ export function issueCommand(units, command, params = {}) {
     unit._coverFailedUntil = 0;
     unit._targetLockedUntil = 0;
     unit._pushingUp = false;
-    // Reset survival state
-    clearSurvivalState(unit);
+    // Preserve survival state if unit is actively committed — let the survival
+    // system run its course. Only clear if no active commitment.
+    if (!unit._survivalAction || !unit._survivalCommitment) {
+      clearSurvivalState(unit);
+    }
     unit._losBreakArriveTime = 0;
     // Reset flanking/retreat state
     unit._flankTarget = null;

@@ -341,8 +341,10 @@ function buildSitrep(b, sgt, friendlies, hostiles, now) {
     ? alive.reduce((s, u) => s + (u._suppression ?? 0), 0) / aliveCount
     : 0;
 
-  // Under fire? Any unit has active shock timer (set on receiving damage)
-  const underFire = alive.some(u => (u._shockTimer ?? 0) > 0);
+  // Under fire intensity: 0-1 ratio of squad under active shock (smooth, not binary)
+  const underFireCount = alive.filter(u => (u._shockTimer ?? 0) > 0).length;
+  const underFireRatio = aliveCount > 0 ? underFireCount / aliveCount : 0;
+  const underFire = underFireRatio > 0; // boolean for backward compat
 
   // Max weapon range across alive units
   const maxRange = alive.reduce((mx, u) => Math.max(mx, u.range ?? 400), 0);
@@ -500,7 +502,7 @@ function buildSitrep(b, sgt, friendlies, hostiles, now) {
     total, enemyTotal, casualties, casualtyRate,
     enemyCasualties, enemyCasualtyRate,
     forceRatio, firepowerRatio, friendlyEDPS, enemyEDPS,
-    distToEnemy, spotted, underFire,
+    distToEnemy, spotted, underFire, underFireRatio,
     avgMorale, avgSuppression, suppressedRate, avgCover, maxRange,
     center: { x: cx, y: cy },
     enemyCenter,
@@ -665,7 +667,7 @@ function getSitrepScore(phase, sitrep, personality) {
     case Phase.ENGAGE:
       if (!inContact) { score -= 0.5; break; }
       if (inRange) score += 0.4;
-      if (sitrep.underFire) score += 0.2;
+      score += (sitrep.underFireRatio ?? 0) * 0.25; // smooth 0-0.25 (was binary +0.2)
       // Enemy advancing into us — hold ground and engage
       if (enemyAdvancing) score += 0.2;
       break;
@@ -927,9 +929,9 @@ export function updateSergeant(b, sgt, friendlies, hostiles, now) {
 
   // ── Phase selection via scoring ──────────────────────────────
   // Minimum phase duration: discipline-driven cooldown prevents rapid oscillation
-  // High discipline = longer commitment (3-5s), low discipline = shorter (1.5-3s)
+  // High discipline = longer commitment (6-10s), low discipline = shorter (4-6s)
   const phaseDiscipline = sgt.personality.discipline ?? 0.5;
-  const minPhaseDuration = (1.5 + phaseDiscipline * 3.5) * 1000; // 1.5s - 5.0s
+  const minPhaseDuration = (4.0 + phaseDiscipline * 6.0) * 1000; // 4s - 10s
   const phaseAge = now - (sgt.phaseStartTime || 0);
   const phaseCooldownMet = phaseAge >= minPhaseDuration;
 
