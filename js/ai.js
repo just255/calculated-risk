@@ -22,6 +22,22 @@ import {
   MovementMode, buildMovementContext, resolveMovementMode,
   computeThreatSpeed
 } from './movement-modes.js';
+import { smoothRotateToward } from './movement.js';
+import { logEvent } from './battle-log.js';
+
+
+// ═══════════════════════════════════════════════════════════════
+// SQUAD-SCOPED WAYPOINT LOOKUP
+// Multi-squad support: each squad can have its own waypoint.
+// Falls back to team-level waypoint for backwards compat.
+// ═══════════════════════════════════════════════════════════════
+
+function getSquadWaypoint(b, unit) {
+  if (unit._squadId != null && b._squadWaypoints?.[unit._squadId]) {
+    return b._squadWaypoints[unit._squadId];
+  }
+  return b._teamWaypoints?.[unit.team] ?? null;
+}
 
 
 // ═══════════════════════════════════════════════════════════════
@@ -293,9 +309,9 @@ export function applyMoraleEvent(unit, event, intensity = 0.5) {
   unit.morale = clamp01(unit.morale + delta);
 
   // Log morale event to battle debug log if available
-  if (unit._battle?._debugLog && Math.abs(delta) > 0.02) {
+  if (Math.abs(delta) > 0.02) {
     const logTeam = unit.team;
-    unit._battle._debugLog.push({
+    logEvent(unit._battle, {
       t: Date.now(), who: unit.id, team: logTeam, type: 'morale_event',
       x: Math.round(unit.x || 0), y: Math.round(unit.y || 0),
       action: `${event}`, detail: `delta:${delta > 0 ? '+' : ''}${delta.toFixed(3)} mrl:${prevMorale.toFixed(2)}→${unit.morale.toFixed(2)} int:${intensity.toFixed(1)}`
@@ -578,6 +594,149 @@ function inferCategory(unit) {
   }
 }
 
+// ── Turn rates per unit category (radians/sec) ──────────────
+// Tanks: tracked, can pivot in place at full rate.
+// Wheeled: need forward speed to turn; stationary turn is very slow.
+// Infantry: free movement, near-instant facing.
+const TURN_RATE = {
+  [UnitCategory.INFANTRY]:      Math.PI * 6,    // ~1080 deg/s — near-instant
+  [UnitCategory.LIGHT_VEHICLE]: Math.PI * 1.0,  // ~180 deg/s — nimble but visible
+  [UnitCategory.MEDIUM_TANK]:   Math.PI * 0.5,  // ~90 deg/s  — deliberate
+  [UnitCategory.HEAVY_TANK]:    Math.PI * 0.33, // ~60 deg/s  — lumbering
+};
+
+// Movement model per category
+const MOVE_MODEL = {
+  [UnitCategory.INFANTRY]:      'free',    // move any direction, face instantly
+  [UnitCategory.LIGHT_VEHICLE]: 'wheeled', // need speed to turn, move along hull
+  [UnitCategory.MEDIUM_TANK]:   'tracked', // pivot in place, move along hull
+  [UnitCategory.HEAVY_TANK]:    'tracked', // pivot in place, move along hull
+};
+
+// Wheeled vehicles: fraction of turn rate when stationary (creep-turn)
+const WHEELED_STATIONARY_TURN = 0.15;
+
+// How much misalignment reduces forward speed (0 = no penalty, 1 = full stop if sideways)
+// At 90° off, speed = baseSpeed * (1 - ALIGNMENT_PENALTY)
+const ALIGNMENT_PENALTY = 0.7;
+
+// Beyond this angle diff (radians), vehicle reverses instead of doing a full 180
+const REVERSE_THRESHOLD = Math.PI * 0.75; // 135°
+
+// Fallback acceleration rates by category (used when UNIT_COMBAT_STATS has no accel/decel)
+const ACCEL_RATE = {
+  [UnitCategory.INFANTRY]:      { accel: 4.0, decel: 6.0 },
+  [UnitCategory.LIGHT_VEHICLE]: { accel: 4.5, decel: 3.5 },
+  [UnitCategory.MEDIUM_TANK]:   { accel: 2.0, decel: 3.5 },
+  [UnitCategory.HEAVY_TANK]:    { accel: 1.5, decel: 3.0 },
+};
+
+/**
+ * Smoothly rotate unit.hullAngle toward a target angle at the unit's hull turn rate.
+ * Wheeled vehicles turn slower when stationary/slow.
+ * Unit-level override: set unit._hullRate (deg/s) to customize per-unit.
+ */
+function turnHullToward(unit, targetAngle, dtSec) {
+  const cat = inferCategory(unit);
+  const combatStats = UNIT_COMBAT_STATS[unit.unitId];
+  let rate = unit._hullRate
+    ? (unit._hullRate * Math.PI / 180)
+    : combatStats?.hullRate
+      ? (combatStats.hullRate * Math.PI / 180)
+      : (unit._turnRate ?? TURN_RATE[cat] ?? TURN_RATE[UnitCategory.INFANTRY]);
+
+  // Wheeled vehicles turn slower when not moving
+  if (MOVE_MODEL[cat] === 'wheeled') {
+    const speed = unit._currentSpeed ?? 0;
+    const maxSpeed = unit.speed ?? 80;
+    const speedFrac = Math.min(1, speed / maxSpeed);
+    const turnFrac = WHEELED_STATIONARY_TURN + (1 - WHEELED_STATIONARY_TURN) * speedFrac;
+    rate *= turnFrac;
+  }
+
+  if (unit.hullAngle == null) unit.hullAngle = unit.angle;
+  unit.hullAngle = smoothRotateToward(unit.hullAngle, targetAngle, rate * dtSec);
+}
+
+/**
+ * Smoothly rotate unit.angle (turret/torso) toward a target angle.
+ * Uses trapezoidal motion profile: accelerate → cruise → decelerate.
+ * For small angles, triangular profile (never reaches max speed).
+ * Enforces turret arc hard limit relative to hullAngle.
+ * Tracks angular velocity for stability penalty.
+ */
+function turnTurretToward(unit, targetAngle, dtSec) {
+  const combatStats = UNIT_COMBAT_STATS[unit.unitId];
+  const maxRateDeg = combatStats?.turretRate ?? 270;
+  const maxRate = maxRateDeg * Math.PI / 180;           // rad/s max
+  const accelDeg = combatStats?.turretAccel ?? (maxRateDeg * 4);
+  const accel = accelDeg * Math.PI / 180;               // rad/s² accel & decel
+
+  // Enforce turret arc hard limit relative to hull facing
+  const arcDeg = combatStats?.turretArc ?? 360;
+  if (arcDeg < 360) {
+    const halfArc = (arcDeg / 2) * Math.PI / 180;
+    const hull = unit.hullAngle ?? unit.angle;
+    let relAngle = normalizeAngle(targetAngle - hull);
+    relAngle = Math.max(-halfArc, Math.min(halfArc, relAngle));
+    targetAngle = hull + relAngle;
+  }
+
+  const prevAngle = unit.angle;
+  let diff = normalizeAngle(targetAngle - unit.angle);
+  const absDiff = Math.abs(diff);
+  const sign = Math.sign(diff) || 1;
+
+  // Current turret angular speed (unsigned, rad/s)
+  let curSpeed = Math.abs(unit._turretCurSpeed ?? 0);
+
+  if (absDiff < 0.001) {
+    // Close enough — snap and zero speed
+    unit.angle = targetAngle;
+    curSpeed = 0;
+  } else {
+    // Stopping distance at current speed: d = v² / (2a)
+    const stopDist = (curSpeed * curSpeed) / (2 * accel);
+
+    if (stopDist >= absDiff) {
+      // Must decelerate — we'd overshoot if we maintained speed
+      curSpeed = Math.max(0, curSpeed - accel * dtSec);
+    } else {
+      // Room to accelerate (or cruise at max)
+      curSpeed = Math.min(maxRate, curSpeed + accel * dtSec);
+    }
+
+    // Clamp movement to remaining distance
+    const move = Math.min(curSpeed * dtSec, absDiff);
+    unit.angle = normalizeAngle(unit.angle + sign * move);
+  }
+
+  // Store unsigned speed for next frame
+  unit._turretCurSpeed = curSpeed;
+
+  // Track angular velocity for stability penalty — smoothed with exponential decay
+  // so a single-frame turret snap (e.g. first target acquisition) doesn't cause max penalty
+  const instantAngVel = Math.abs(normalizeAngle(unit.angle - prevAngle)) / Math.max(dtSec, 0.001);
+  const prev = unit._turretAngVel ?? 0;
+  const smoothing = 0.3; // blend factor: 0.3 = 30% new, 70% old (smooths over ~3 frames)
+  unit._turretAngVel = prev + (instantAngVel - prev) * smoothing;
+}
+
+/**
+ * Check if turret is aimed close enough to target to fire.
+ */
+function isTurretAligned(unit, targetAngle) {
+  const combatStats = UNIT_COMBAT_STATS[unit.unitId];
+  const toleranceDeg = combatStats?.fireTolerance ?? 10;
+  const tolerance = toleranceDeg * Math.PI / 180;
+  return Math.abs(normalizeAngle(unit.angle - targetAngle)) <= tolerance;
+}
+
+// Legacy alias — some callers still use the old name
+function turnUnitToward(unit, targetAngle, dtSec) {
+  turnTurretToward(unit, targetAngle, dtSec);
+}
+
 /**
  * First-frame initialization. Sets personality, morale, command, team.
  */
@@ -668,6 +827,7 @@ function selectBrainTarget(b, unit, hostiles, leader, command) {
   const spotted = unit._spotted;
   const bridges = b.terrainMap?.bridges;
   const alive = [];
+  const spottedByEnemy = new Map(); // enemyId → spotted entry (concealment, accuracy)
   const bridgeBlocked = [];
   if (Array.isArray(spotted)) {
     // Vision system active — only target what this unit can see
@@ -678,6 +838,7 @@ function selectBrainTarget(b, unit, hostiles, leader, command) {
           bridgeBlocked.push(s.enemy);
         } else {
           alive.push(s.enemy);
+          spottedByEnemy.set(s.enemy.id, s);
         }
       }
     }
@@ -717,22 +878,29 @@ function selectBrainTarget(b, unit, hostiles, leader, command) {
   let wThreat = tgt.threat ?? 0.0;
   let wValue = tgt.value ?? 0.0;
 
-  // Personality influence:
+  // Personality influence (doubled from original — needs to overcome normalization compression):
   // - Patient units lean toward weakness (finish off wounded efficiently)
   // - Aggressive units lean toward distance (push into closest)
   // - Courageous units lean toward threat (take on the biggest danger)
+  // - Initiative adds random bias per-unit so identical personalities diverge
   const patience = p.patience ?? 0.5;
   const aggression = p.aggression ?? 0.5;
   const courage = p.courage ?? 0.5;
-  wWeak += (patience - 0.5) * 0.4;       // +0.2 at max patience, -0.2 at min
-  wDist += (aggression - 0.5) * 0.3;     // aggressive = close, cautious = less distance focus
-  wThreat += (courage - 0.5) * 0.3;      // brave = engage threats, cowardly = avoid them
+  const initiative = p.initiative ?? 0.5;
+  wWeak += (patience - 0.5) * 0.8;       // ±0.4 (was ±0.2)
+  wDist += (aggression - 0.5) * 0.6;     // ±0.3 (was ±0.15)
+  wThreat += (courage - 0.5) * 0.6;      // ±0.3 (was ±0.15)
+
+  // Note: personality influence above is multiplicative with factor scores.
+  // When targets are similar (same type, similar range), factor gaps compress
+  // and personality * tiny_gap ≈ 0. The per-target additive bias below
+  // ensures personality still differentiates even when factors are compressed.
 
   // Courage-gated targeting priority:
   // Low courage → prioritize threats to SELF (self-defense)
   // High courage → prioritize threats to ALLIES (ally-defense)
-  const wSelfDefense = (1 - courage) * 0.4;   // max 0.4 for cowardly unit
-  const wAllyDefense = courage * 0.3;          // max 0.3 for brave unit
+  const wSelfDefense = (1 - courage) * 0.5;   // max 0.5 for cowardly unit (was 0.4)
+  const wAllyDefense = courage * 0.4;          // max 0.4 for brave unit (was 0.3)
 
   // Command influence:
   // - HOLD: boost distance (engage what's close, don't chase)
@@ -776,6 +944,27 @@ function selectBrainTarget(b, unit, hostiles, leader, command) {
   if (maxDmg < 1) maxDmg = 1;
   if (maxMaxHp < 1) maxMaxHp = 1;
 
+  // --- Perception roll: awareness determines how much this unit perceives right now ---
+  // Single roll per evaluation — determines perception quality for all 8 factors
+  const awareness = unit._awareness ?? (p.awareness ?? 0.5);
+  const discipline = p.discipline ?? 0.5;
+  const perceptionRoll = Math.random();
+  const perceives = perceptionRoll < awareness; // true = full perception this eval
+
+  // Pre-compute engagement counts (how many friendlies target each enemy) — only if perceived
+  let engagedCounts = null;
+  if (perceives && command !== Command.FOCUS_FIRE) {
+    engagedCounts = new Map();
+    const friendlyPool = unit.team === Team.BLUE ? (b.units || []) : (b.enemies || []);
+    for (const f of friendlyPool) {
+      if (f === unit || f.dead) continue;
+      const ft = f._currentTarget;
+      if (ft && !ft.dead) {
+        engagedCounts.set(ft.id, (engagedCounts.get(ft.id) || 0) + 1);
+      }
+    }
+  }
+
   // --- Score each target ---
   let bestScore = -Infinity, bestEntry = null;
   for (const td of targetData) {
@@ -790,12 +979,86 @@ function selectBrainTarget(b, unit, hostiles, leader, command) {
 
     td.score = distScore * wDist + weakScore * wWeak + threatScore * wThreat + valueScore * wValue;
 
+    // Personality-driven additive bias — ensures different personalities pick
+    // different targets even when factor scores compress (same unit type, similar range).
+    const persBonus = (aggression - 0.5) * distScore * 0.16   // aggressive → close
+                    + (patience - 0.5) * weakScore * 0.16     // patient → wounded
+                    + (courage - 0.5) * threatScore * 0.16;   // brave → dangerous
+    td.score += persBonus;
+
     // Courage-gated: bonus for enemies targeting me or my allies
+    // Scaled by how much damage they deal (DPS proxy)
     const enemyTarget = td.target._currentTarget;
+    const enemyDpsRatio = td.dmg / maxDmg;
     if (enemyTarget === unit) {
-      td.score += wSelfDefense;  // This enemy is shooting at ME
+      td.score += wSelfDefense * (0.5 + enemyDpsRatio * 0.5);
     } else if (enemyTarget && enemyTarget.team === unit.team && !enemyTarget.dead) {
-      td.score += wAllyDefense;  // This enemy is shooting at a teammate
+      const allyHpRatio = enemyTarget.hp / (enemyTarget.maxHp || 1);
+      const urgency = (1 - allyHpRatio) * 0.4 + enemyDpsRatio * 0.6;
+      td.score += wAllyDefense * urgency;
+    }
+
+    // ── PERCEPTION LAYER ─────────────────────────────────────────
+    // Awareness determines IF the unit perceives each factor.
+    // Personality determines HOW the brain processes what was perceived.
+    // Bonuses are small (0.10-0.15) — nudge decisions, don't override weights.
+    if (perceives) {
+      const e = td.target;
+      const sEntry = spottedByEnemy.get(e.id);
+
+      // 1. CONCEALMENT — discipline: high → bonus for exposed, low → bonus for any visible
+      const concealment = sEntry?.concealment ?? 0;
+      td.score += (1 - concealment) * discipline * 0.12      // disciplined: bonus for exposed
+               +  concealment * (1 - discipline) * 0.06;     // undisciplined: doesn't care, slight bonus (commits)
+
+      // 2. SUPPRESSION STATE — initiative: high → bonus for unsuppressed, low → bonus for maintaining pressure
+      const eSup = e._suppression ?? 0;
+      td.score += (1 - eSup) * initiative * 0.12             // high initiative: seek active threats
+               +  eSup * (1 - initiative) * 0.08;            // low initiative: keep pressure on pinned
+
+      // 3. FORTIFIED (stance + stability) — courage: high → bonus for dug-in, low → bonus for exposed
+      const fortified = (e._isProne ? 0.4 : 0) + (e._isHullDown ? 0.6 : 0);
+      const eStab = e.stability ?? 0.5;
+      const fortifiedScore = Math.min(1, fortified + eStab * 0.3);
+      td.score += fortifiedScore * courage * 0.12             // brave: engage the dug-in threat
+               +  (1 - fortifiedScore) * (1 - courage) * 0.10; // cautious: pick easy exposed target
+
+      // 4. ENGAGEMENT STATE — initiative: high → bonus for unengaged, focus_fire overrides
+      if (engagedCounts) {
+        const engaged = engagedCounts.get(e.id) || 0;
+        const unengaged = engaged === 0 ? 1 : 0;
+        td.score += unengaged * initiative * 0.15;            // high initiative: distribute fire
+      }
+
+      // 5. SPOTTED CLARITY — discipline: high → bonus for clear, low → bonus for any
+      const clarity = sEntry?.accuracy ?? 1.0;
+      td.score += clarity * discipline * 0.10                 // disciplined: prefer clear targets
+               +  (1 - discipline) * 0.04;                    // undisciplined: shoots at anything (flat bonus)
+
+      // 6. ADVANCING ENEMY — aggression: high → bonus for chargers, low → bonus for static
+      const eVelX = (e.x - (e._prevX ?? e.x));
+      const eVelY = (e.y - (e._prevY ?? e.y));
+      const toMeX = unit.x - e.x, toMeY = unit.y - e.y;
+      const toMeDist = Math.sqrt(toMeX * toMeX + toMeY * toMeY) || 1;
+      const approachDot = (eVelX * toMeX + eVelY * toMeY) / toMeDist; // positive = closing
+      const advancing = approachDot > 1 ? 1 : approachDot > 0 ? approachDot : 0; // 0-1
+      td.score += advancing * aggression * 0.12               // aggressive: engage the charger head-on
+               +  (1 - advancing) * (1 - aggression) * 0.06; // cautious: prefer static targets you can aim at
+
+      // 7. VULNERABILITY WINDOW — initiative: high → exploit cooldown, low → doesn't notice
+      const now = Date.now();
+      const sinceShot = now - (e.lastShot || 0);
+      const eFireRate = e.fireRate || 2000;
+      const inCooldown = sinceShot < eFireRate ? 1 : 0;
+      td.score += inCooldown * initiative * 0.10;             // high initiative: exploit the opening
+
+      // 8. ISOLATION — patience: high → bonus for loners, low → doesn't notice
+      const nearbyAllies = hostiles.reduce((c, h) => {
+        if (h === e || h.dead) return c;
+        return distanceBetween(e, h) < 150 ? c + 1 : c;
+      }, 0);
+      const isolated = nearbyAllies === 0 ? 1 : nearbyAllies === 1 ? 0.5 : 0;
+      td.score += isolated * patience * 0.12;                 // patient: finish the loner efficiently
     }
 
     td.factors = { dist: distScore, weak: weakScore, threat: threatScore, value: valueScore };
@@ -808,8 +1071,11 @@ function selectBrainTarget(b, unit, hostiles, leader, command) {
 
   const chosen = bestEntry?.target || null;
 
+  // Store winning score for hysteresis comparison
+  unit._lastTargetScore = bestEntry?.score ?? 0;
+
   // Log target selection reasoning when target changes
-  if (chosen && b._debugLog) {
+  if (chosen) {
     const prevTarget = unit._dbg?.targetId;
     if (chosen.id !== prevTarget) {
       const logTeam = unit.team;
@@ -817,13 +1083,124 @@ function selectBrainTarget(b, unit, hostiles, leader, command) {
       const wStr = `w[d:${wDist.toFixed(1)} w:${wWeak.toFixed(1)} t:${wThreat.toFixed(1)} v:${wValue.toFixed(1)}]`;
       const fStr = `f[d:${f.dist.toFixed(2)} w:${f.weak.toFixed(2)} t:${f.threat.toFixed(2)} v:${f.value.toFixed(2)}]`;
       const sStr = `s[d:${statsMod.dDist.toFixed(2)} w:${statsMod.dWeak.toFixed(2)} t:${statsMod.dThreat.toFixed(2)} v:${statsMod.dValue.toFixed(2)}]`;
-      b._debugLog.push({ t: Date.now(), who: unit.id, team: logTeam, type: 'decision',
+      logEvent(b, { t: Date.now(), who: unit.id, team: logTeam, type: 'decision',
         x: Math.round(unit.x), y: Math.round(unit.y),
         action: `chose ${chosen.id}`,
         detail: `score:${bestScore.toFixed(2)} ${wStr} ${sStr} ${fStr} hp:${chosen.hp}/${chosen.maxHp}` });
     }
   }
   return chosen;
+}
+
+/**
+ * Quick-score an existing target for hysteresis comparison.
+ * Uses the same weights as selectBrainTarget but only scores one target
+ * against the same candidate pool for normalization.
+ */
+function _scoreExistingTarget(b, unit, target, hostiles, leader, command) {
+  const spotted = unit._spotted;
+  const alive = [];
+  if (Array.isArray(spotted)) {
+    for (const s of spotted) {
+      if (s.enemy && !s.enemy.dead && s.enemy.hp > 0) alive.push(s.enemy);
+    }
+  } else {
+    for (const e of hostiles) {
+      if (!e.dead && e.hp > 0) alive.push(e);
+    }
+  }
+  if (alive.length === 0) return 0;
+
+  // Compute normalization bounds from all visible targets
+  let maxDist = 0, maxDmg = 0, maxMaxHp = 0;
+  for (const e of alive) {
+    const dx = e.x - unit.x, dy = e.y - unit.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > maxDist) maxDist = dist;
+    const dmg = e.damage || 10;
+    if (dmg > maxDmg) maxDmg = dmg;
+    const mhp = e.maxHp || 60;
+    if (mhp > maxMaxHp) maxMaxHp = mhp;
+  }
+  if (maxDist < 1) maxDist = 1;
+  if (maxDmg < 1) maxDmg = 1;
+  if (maxMaxHp < 1) maxMaxHp = 1;
+
+  // Resolve weights (mirrors selectBrainTarget weight logic)
+  const p = unit.personality || {};
+  const tgt = unit.targeting || {};
+  let wDist = tgt.distance ?? 0.7, wWeak = tgt.weakness ?? 0.3;
+  let wThreat = tgt.threat ?? 0.0, wValue = tgt.value ?? 0.0;
+  const patience = p.patience ?? 0.5;
+  const aggression = p.aggression ?? 0.5;
+  const courage = p.courage ?? 0.5;
+  const initiative = p.initiative ?? 0.5;
+  wWeak += (patience - 0.5) * 0.8;
+  wDist += (aggression - 0.5) * 0.6;
+  wThreat += (courage - 0.5) * 0.6;
+  // (No arbitrary hash noise — personality-driven additive bias applied per-target below)
+  if (command === Command.HOLD) wDist += 0.3;
+  else if (command === Command.FALL_BACK) { wThreat += 0.3; wDist += 0.2; }
+  else if (command === Command.COVER_ME) wThreat += 0.4;
+  const statsMod = getStatsTargetingModifiers(unit);
+  wDist = Math.max(0, wDist + statsMod.dDist);
+  wWeak = Math.max(0, wWeak + statsMod.dWeak);
+  wThreat = Math.max(0, wThreat + statsMod.dThreat);
+  wValue = Math.max(0, wValue + statsMod.dValue);
+
+  // Score the existing target
+  const dx = target.x - unit.x, dy = target.y - unit.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const distScore = 1.0 - (dist / (maxDist * 1.2));
+  const weakScore = 1.0 - (target.hp / (target.maxHp || 1));
+  const tdDmg = target.damage || 10;
+  let threatScore = tdDmg / maxDmg;
+  if (target._flankThreatBoost && Date.now() < target._flankThreatBoost) {
+    threatScore = Math.min(1, threatScore + 0.5);
+  }
+  const valueScore = (target.maxHp || 60) / maxMaxHp;
+  let score = distScore * wDist + weakScore * wWeak + threatScore * wThreat + valueScore * wValue;
+
+  // Additive personality bias (mirrors selectBrainTarget)
+  score += (aggression - 0.5) * distScore * 0.16
+         + (patience - 0.5) * weakScore * 0.16
+         + (courage - 0.5) * threatScore * 0.16;
+
+  // DPS-scaled courage-gated bonuses (mirrors selectBrainTarget)
+  const wSelfDefense = (1 - courage) * 0.5;
+  const wAllyDefense = courage * 0.4;
+  const enemyDpsRatio = tdDmg / maxDmg;
+  const enemyTarget = target._currentTarget;
+  if (enemyTarget === unit) {
+    score += wSelfDefense * (0.5 + enemyDpsRatio * 0.5);
+  } else if (enemyTarget && enemyTarget.team === unit.team && !enemyTarget.dead) {
+    const allyHpRatio = enemyTarget.hp / (enemyTarget.maxHp || 1);
+    const urgency = (1 - allyHpRatio) * 0.4 + enemyDpsRatio * 0.6;
+    score += wAllyDefense * urgency;
+  }
+
+  return score;
+}
+
+/**
+ * Spiral-search for the nearest passable cell and teleport the unit there.
+ * Used as a safety net when a unit is terrain-stuck for too long.
+ * Returns true if a valid position was found.
+ */
+function nudgeToPassable(b, unit, category) {
+  for (let i = 1; i <= 24; i++) {
+    const angle = i * 2.399; // Golden angle
+    const dist = 20 + i * 15;
+    const nx = unit.x + Math.cos(angle) * dist;
+    const ny = unit.y + Math.sin(angle) * dist;
+    if (nx < 0 || ny < 0 || nx > b.mapWidth || ny > b.mapHeight) continue;
+    if (!isTerrainBlocked(b, nx, ny) && isTerrainPassable(b, nx, ny, category)) {
+      unit.x = nx;
+      unit.y = ny;
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -876,6 +1253,14 @@ function moveBrainUnit(b, unit, targetX, targetY, dtSec, allUnits, speedMult = 1
   dirX += waterNudge.x;
   dirY += waterNudge.y;
 
+  // Map edge avoidance — push units out of the gradient fade zones (150px from edge)
+  const edgeMargin = 150;
+  const edgePush = 0.8;
+  if (unit.x < edgeMargin) dirX += edgePush * (1 - unit.x / edgeMargin);
+  else if (unit.x > b.mapWidth - edgeMargin) dirX -= edgePush * (1 - (b.mapWidth - unit.x) / edgeMargin);
+  if (unit.y < edgeMargin) dirY += edgePush * (1 - unit.y / edgeMargin);
+  else if (unit.y > b.mapHeight - edgeMargin) dirY -= edgePush * (1 - (b.mapHeight - unit.y) / edgeMargin);
+
   // Formation slot steering — bias toward assigned slot position
   // Formations are a suggestion: discipline controls nudge strength
   if (unit._inFormation && unit._slotTarget && unit !== unit._formationLeader) {
@@ -895,8 +1280,98 @@ function moveBrainUnit(b, unit, targetX, targetY, dtSec, allUnits, speedMult = 1
   const dirLen = Math.sqrt(dirX * dirX + dirY * dirY);
   if (dirLen > 0) { dirX /= dirLen; dirY /= dirLen; }
 
-  const newX = unit.x + dirX * finalSpeed * dtSec;
-  const newY = unit.y + dirY * finalSpeed * dtSec;
+  // ── Movement model: free / tracked / wheeled ──────────────
+  const model = MOVE_MODEL[category] ?? 'free';
+  const desiredAngle = Math.atan2(dirY, dirX);
+  let moveDirX = dirX;
+  let moveDirY = dirY;
+  let speedScale = 1;
+
+  if (model === 'free') {
+    // Infantry: move any direction, face hull toward movement direction
+    turnHullToward(unit, desiredAngle, dtSec);
+  } else {
+    // Tracked / Wheeled: movement locked to hull facing
+    const hullAng = unit.hullAngle ?? unit.angle;
+    let angleDiff = desiredAngle - hullAng;
+    if (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+    if (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+
+    if (Math.abs(angleDiff) > REVERSE_THRESHOLD) {
+      // Target is mostly behind — reverse instead of doing a full 180
+      const reverseAngle = normalizeAngle(desiredAngle + Math.PI);
+      turnHullToward(unit, reverseAngle, dtSec);
+      moveDirX = -Math.cos(unit.hullAngle);
+      moveDirY = -Math.sin(unit.hullAngle);
+      speedScale = 0.5; // reverse is slower
+    } else {
+      // Rotate hull toward desired direction
+      turnHullToward(unit, desiredAngle, dtSec);
+      // Move along current hull facing
+      moveDirX = Math.cos(unit.hullAngle);
+      moveDirY = Math.sin(unit.hullAngle);
+      // Speed penalty when hull isn't aligned yet
+      const alignment = Math.cos(angleDiff); // 1 = aligned, 0 = 90°, -1 = opposite
+      speedScale = Math.max(0.1, 1 - ALIGNMENT_PENALTY * (1 - Math.max(0, alignment)));
+    }
+
+    // Turning telemetry (throttled — only log when significantly misaligned)
+    {
+      const absDiff = Math.abs(angleDiff);
+      const now = Date.now();
+      const wasAligned = unit._wasHullAligned ?? true;
+      const isAligned = absDiff < 0.15; // ~8.5°
+
+      if (!isAligned && wasAligned) {
+        // Started turning
+        unit._turnStartTime = now;
+        unit._turnStartAngle = absDiff;
+      } else if (isAligned && !wasAligned && unit._turnStartTime) {
+        // Finished turning — log the completed turn
+        const elapsed = now - unit._turnStartTime;
+        const turned = unit._turnStartAngle ?? absDiff;
+        const logTeam = unit.team === 'red' ? 'red' : 'blue';
+        logEvent(b, { t: now, who: unit.id, team: logTeam, type: 'turning',
+          x: Math.round(unit.x), y: Math.round(unit.y),
+          action: `turn_complete`,
+          detail: `model:${model} turned:${Math.round(turned * 180 / Math.PI)}° in ${elapsed}ms spd:${Math.round(unit._currentSpeed)}` });
+        unit._turnStartTime = null;
+      }
+      unit._wasHullAligned = isAligned;
+
+      // Log reversals (once per reversal)
+      if (Math.abs(angleDiff) > REVERSE_THRESHOLD && !unit._wasReversing) {
+        const logTeam = unit.team === 'red' ? 'red' : 'blue';
+        logEvent(b, { t: now, who: unit.id, team: logTeam, type: 'turning',
+          x: Math.round(unit.x), y: Math.round(unit.y),
+          action: 'reversing',
+          detail: `model:${model} angleDiff:${Math.round(Math.abs(angleDiff) * 180 / Math.PI)}°` });
+      }
+      unit._wasReversing = Math.abs(angleDiff) > REVERSE_THRESHOLD;
+    }
+  }
+
+  // Arrival deceleration — slow down when approaching target
+  // Stopping distance scales with current speed and decel rate
+  const combatStats = UNIT_COMBAT_STATS[unit.unitId];
+  const accelFallback = ACCEL_RATE[category] || ACCEL_RATE[UnitCategory.INFANTRY];
+  const unitAccel = combatStats?.accel ?? accelFallback.accel;
+  const unitDecel = combatStats?.decel ?? accelFallback.decel;
+  const stoppingDist = (unit.speed || 80) / unitDecel; // px needed to decelerate to 0
+  let arrivalScale = 1.0;
+  if (dist < stoppingDist * 2) {
+    arrivalScale = Math.max(0.15, dist / (stoppingDist * 2));
+  }
+
+  // Acceleration/deceleration — exponential ease, per-unit power-to-weight
+  const targetSpeed = finalSpeed * speedScale * arrivalScale;
+  if (unit._currentSpeed == null) unit._currentSpeed = 0;
+  const rate = targetSpeed >= unit._currentSpeed ? unitAccel : unitDecel;
+  const blend = 1 - Math.exp(-rate * dtSec);
+  unit._currentSpeed += (targetSpeed - unit._currentSpeed) * blend;
+
+  const newX = unit.x + moveDirX * unit._currentSpeed * dtSec;
+  const newY = unit.y + moveDirY * unit._currentSpeed * dtSec;
 
   // Axis-independent terrain blocking + water passability
   const xBlocked = isTerrainBlocked(b, newX, unit.y);
@@ -926,8 +1401,8 @@ function moveBrainUnit(b, unit, targetX, targetY, dtSec, allUnits, speedMult = 1
     const slide = finalSpeed * dtSec * 0.5;
     let escaped = false;
     // Try perpendicular directions first
-    const perpX = -dirY;
-    const perpY = dirX;
+    const perpX = -moveDirY;
+    const perpY = moveDirX;
     for (const sign of [1, -1]) {
       const sx = unit.x + perpX * slide * sign;
       const sy = unit.y + perpY * slide * sign;
@@ -942,8 +1417,8 @@ function moveBrainUnit(b, unit, targetX, targetY, dtSec, allUnits, speedMult = 1
     }
     // Fallback: reverse direction (back away from obstacle)
     if (!escaped) {
-      const rx = unit.x - dirX * slide;
-      const ry = unit.y - dirY * slide;
+      const rx = unit.x - moveDirX * slide;
+      const ry = unit.y - moveDirY * slide;
       const rxOk = !isTerrainBlocked(b, rx, unit.y) && isTerrainPassable(b, rx, unit.y, category);
       const ryOk = !isTerrainBlocked(b, unit.x, ry) && isTerrainPassable(b, unit.x, ry, category);
       if (rxOk) unit.x = rx;
@@ -956,14 +1431,12 @@ function moveBrainUnit(b, unit, targetX, targetY, dtSec, allUnits, speedMult = 1
     const now = Date.now();
     if (!unit._lastMoveBlockLog || now - unit._lastMoveBlockLog > 5000) {
       unit._lastMoveBlockLog = now;
-      if (b._debugLog) {
-        const logTeam = unit.team;
-        b._debugLog.push({
-          t: now, who: unit.id, team: logTeam, type: 'move_blocked',
-          x: Math.round(unit.x), y: Math.round(unit.y),
-          detail: `x:${xBlocked ? 'blocked' : xImpass ? 'impass' : 'ok'} y:${yBlocked ? 'blocked' : yImpass ? 'impass' : 'ok'} target:(${Math.round(targetX)},${Math.round(targetY)}) cat:${category}`
-        });
-      }
+      const logTeam = unit.team;
+      logEvent(b, {
+        t: now, who: unit.id, team: logTeam, type: 'move_blocked',
+        x: Math.round(unit.x), y: Math.round(unit.y),
+        detail: `x:${xBlocked ? 'blocked' : xImpass ? 'impass' : 'ok'} y:${yBlocked ? 'blocked' : yImpass ? 'impass' : 'ok'} target:(${Math.round(targetX)},${Math.round(targetY)}) cat:${category}`
+      });
     }
   }
 
@@ -1011,11 +1484,12 @@ function moveBrainUnit(b, unit, targetX, targetY, dtSec, allUnits, speedMult = 1
     }
   }
 
-  // Clamp to map bounds
+  // Clamp to map bounds (extended during staging to allow off-map positions)
   const mapW = b.mapWidth || 2000;
   const mapH = b.mapHeight || 2000;
+  const stagePad = b.stageDepth || 0;
   unit.x = Math.max(20, Math.min(mapW - 20, unit.x));
-  unit.y = Math.max(20, Math.min(mapH - 20, unit.y));
+  unit.y = Math.max(-stagePad, Math.min(mapH + stagePad, unit.y));
 
   return false;
 }
@@ -1244,12 +1718,9 @@ function boundingAdvance(b, unit, objX, objY, dtSec, friendlies, now) {
       unit._actionVerb = 'bounding_hold';
 
       // Log arrival at cover
-      if (b._debugLog) {
-        const logTeam = unit.team;
-        b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'cover',
-          x: Math.round(unit.x), y: Math.round(unit.y),
-          action: 'bound reached', detail: `bias:${coverBias.toFixed(2)} pause:${Math.round((500 + patience * 1500) * coverBias)}ms` });
-      }
+      logEvent(b, { t: now, who: unit.id, team: unit.team, type: 'cover',
+        x: Math.round(unit.x), y: Math.round(unit.y),
+        action: 'bound reached', detail: `bias:${coverBias.toFixed(2)} pause:${Math.round((500 + patience * 1500) * coverBias)}ms` });
       return true;
     }
 
@@ -1274,13 +1745,10 @@ function boundingAdvance(b, unit, objX, objY, dtSec, friendlies, now) {
     unit._boundTarget = nextBound;
     unit._actionVerb = 'bounding_advance';
 
-    if (b._debugLog) {
-      const logTeam = unit.team;
-      b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'cover',
-        x: Math.round(unit.x), y: Math.round(unit.y),
-        action: 'bound selected', target: `(${Math.round(nextBound.x)},${Math.round(nextBound.y)})`,
-        detail: `bias:${coverBias.toFixed(2)} score:${nextBound.score.toFixed(2)}` });
-    }
+    logEvent(b, { t: now, who: unit.id, team: unit.team, type: 'cover',
+      x: Math.round(unit.x), y: Math.round(unit.y),
+      action: 'bound selected', target: `(${Math.round(nextBound.x)},${Math.round(nextBound.y)})`,
+      detail: `bias:${coverBias.toFixed(2)} score:${nextBound.score.toFixed(2)}` });
 
     moveBrainUnit(b, unit, nextBound.x, nextBound.y, dtSec, friendlies);
     return true;
@@ -1492,10 +1960,11 @@ export function updateFormation(b, friendlies, hostiles, now) {
     return;
   }
 
-  // Formation stress — personality-driven breaking
+  // Formation stress — personality-driven breaking (squad-scoped for multi-squad support)
   const teamKey = alive[0].team;
+  const stateKey = alive[0]._squadId ?? teamKey;
   if (!b._formationStress) b._formationStress = {};
-  let stress = b._formationStress[teamKey] ?? 0;
+  let stress = b._formationStress[stateKey] ?? 0;
 
   // Stress sources
   const casualtyRatio = 1 - alive.length / friendlies.length;
@@ -1522,15 +1991,15 @@ export function updateFormation(b, friendlies, hostiles, now) {
     stress -= (stress - targetStress) * Math.min(1, dtSec * 0.05 * (1 + avgDiscipline)); // Decay slow
   }
   stress = Math.max(0, Math.min(1, stress));
-  b._formationStress[teamKey] = stress;
+  b._formationStress[stateKey] = stress;
 
   // Break threshold: disciplined teams hold longer
   const breakThreshold = 0.5 + avgDiscipline * 0.3;
   if (stress >= breakThreshold) {
     for (const u of alive) u._inFormation = false;
-    const fs = b._formationState?.[teamKey];
-    if (fs?.assigned && b._debugLog) {
-      b._debugLog.push({ t: now, who: alive[0].id, team: teamKey, type: 'formation',
+    const fs = b._formationState?.[stateKey];
+    if (fs?.assigned) {
+      logEvent(b, { t: now, who: alive[0].id, team: teamKey, type: 'formation',
         x: Math.round(alive[0].x), y: Math.round(alive[0].y),
         action: 'formation broken',
         detail: `stress:${stress.toFixed(2)} thresh:${breakThreshold.toFixed(2)} cas:${casualtyStress.toFixed(2)} sup:${suppressionStress.toFixed(2)} ldr:${leaderStress.toFixed(1)} blind:${blindStress.toFixed(1)}` });
@@ -1579,7 +2048,7 @@ export function updateFormation(b, friendlies, hostiles, now) {
 
   // teamKey already declared above in stress section
   const formationState = b._formationState = b._formationState || {};
-  const teamState = formationState[teamKey] = formationState[teamKey] || {};
+  const teamState = formationState[stateKey] = formationState[stateKey] || {};
 
   const aliveCount = alive.length;
   const leaderTerrain = getTerrainAt(b, leader.x, leader.y);
@@ -1600,7 +2069,7 @@ export function updateFormation(b, friendlies, hostiles, now) {
   } else {
     // Face direction of movement — use waypoint direction (already updated by sergeant this
     // frame) instead of leader's facing angle, which may still point at the previous waypoint
-    const wp = b._teamWaypoints?.[teamKey];
+    const wp = getSquadWaypoint(b, leader);
     if (wp) {
       formationAngle = Math.atan2(wp.y - leader.y, wp.x - leader.x);
     } else {
@@ -1614,11 +2083,11 @@ export function updateFormation(b, friendlies, hostiles, now) {
 
   // Terrain spacing modifier
   if (leaderTerrain === 'forest') {
-    formationState[teamKey].spacingMult = spacingMult * 1.5;
+    formationState[stateKey].spacingMult = spacingMult * 1.5;
   } else {
-    formationState[teamKey].spacingMult = spacingMult;
+    formationState[stateKey].spacingMult = spacingMult;
   }
-  const finalSpacing = formationState[teamKey].spacingMult;
+  const finalSpacing = formationState[stateKey].spacingMult;
 
   // Assign slots (only reassign periodically or when composition changes)
   if (teamState.leader !== leader.id || teamState.count !== aliveCount
@@ -1630,13 +2099,13 @@ export function updateFormation(b, friendlies, hostiles, now) {
     teamState.assigned = true;
 
     // Log formation change with slot assignments
-    if (b._debugLog) {
+    {
       const offsets = FORMATION_OFFSETS[formationType] || FORMATION_OFFSETS.line;
       const slotDetails = alive.filter(u => u !== leader).map(u => {
         const pos = slotWorldPos(offsets[Math.min(u._formationSlot, offsets.length - 1)], leader, formationAngle, finalSpacing);
         return `${u.id}→s${u._formationSlot}(${Math.round(pos.x)},${Math.round(pos.y)}) d=${Math.round(Math.hypot(pos.x - u.x, pos.y - u.y))}`;
       }).join(' ');
-      b._debugLog.push({ t: now, who: leader.id, team: teamKey, type: 'formation',
+      logEvent(b, { t: now, who: leader.id, team: teamKey, type: 'formation',
         x: Math.round(leader.x), y: Math.round(leader.y),
         action: `formation: ${formationType}`,
         detail: `lead:${leader.id} units:${aliveCount} ang:${Math.round(formationAngle * 180 / Math.PI)}° spc:${finalSpacing.toFixed(2)} | ${slotDetails}` });
@@ -1668,18 +2137,45 @@ export function updateFormation(b, friendlies, hostiles, now) {
   }
 
   // Periodic formation telemetry (every 4 seconds)
-  if (b._debugLog && now - (teamState.lastTelemetry || 0) > 4000) {
+  if (now - (teamState.lastTelemetry || 0) > 4000) {
     teamState.lastTelemetry = now;
     const followers = alive.filter(u => u !== leader && u._slotTarget);
     const maxDev = followers.reduce((mx, f) => Math.max(mx, Math.hypot(f._slotTarget.x - f.x, f._slotTarget.y - f.y)), 0);
     const avgDev = followers.length > 0 ? followers.reduce((s, f) => s + Math.hypot(f._slotTarget.x - f.x, f._slotTarget.y - f.y), 0) / followers.length : 0;
     const xSpread = alive.length > 1 ? Math.max(...alive.map(u => u.x)) - Math.min(...alive.map(u => u.x)) : 0;
     const devList = followers.map(f => `${f.id}:${Math.round(Math.hypot(f._slotTarget.x - f.x, f._slotTarget.y - f.y))}`).join(' ');
-    b._debugLog.push({ t: now, who: leader.id, team: teamKey, type: 'formation',
+    logEvent(b, { t: now, who: leader.id, team: teamKey, type: 'formation',
       x: Math.round(leader.x), y: Math.round(leader.y),
       action: 'formation_state',
       detail: `maxDev:${Math.round(maxDev)} avgDev:${Math.round(avgDev)} xSpd:${Math.round(xSpread)} ang:${Math.round(formationAngle * 180 / Math.PI)}° | ${devList}` });
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FIRE PAUSE — Units halt to stabilize before firing
+// Patient/disciplined units pause movement to let stability build.
+// Returns true if the unit should halt (skip movement this frame).
+// ═══════════════════════════════════════════════════════════════
+function shouldHaltToFire(unit, target, targetDist, range) {
+  if (!target || target.dead) return false;
+  // Only halt when target is within weapon range
+  if (targetDist > range * 1.1) return false;
+  // Don't halt if already stable enough
+  const p = unit.personality || {};
+  const minStab = (p.discipline ?? 0.5) * 0.4 + (p.patience ?? 0.5) * 0.2;
+  if ((unit.stability ?? 0) >= minStab) {
+    unit._haltingToFire = false;
+    return false;
+  }
+  // Halt probability: patient units halt more readily, aggressive less
+  // Once halted, stay halted until stable (via _haltingToFire flag)
+  if (unit._haltingToFire) return true;
+  const haltDrive = (p.patience ?? 0.5) * 0.6 + (p.discipline ?? 0.5) * 0.4;
+  if (haltDrive > 0.3) {
+    unit._haltingToFire = true;
+    return true;
+  }
+  return false;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1697,6 +2193,10 @@ export function updateFormation(b, friendlies, hostiles, now) {
  */
 function executeMovementMode(b, unit, modeResult, ctx, range, speed, now, dtSec, friendlies) {
   const { mode } = modeResult;
+  // Track mode start time for minimum duration cooldown
+  if (mode !== unit._movementMode) {
+    unit._movementModeStart = Date.now();
+  }
   unit._movementMode = mode;
 
   // Clear cover latch when a different mode wins
@@ -1923,7 +2423,7 @@ function executeUrgentCover(b, unit, ctx, range, now, dtSec, friendlies) {
 
     // Fire while rushing — aggression scales probability (continuous)
     if (ctx.target && ctx.targetDist <= range * 1.1 && Math.random() < aggression * 0.5) {
-      unit.angle = Math.atan2(ctx.target.y - unit.y, ctx.target.x - unit.x);
+      turnUnitToward(unit, Math.atan2(ctx.target.y - unit.y, ctx.target.x - unit.x), dtSec);
       tryShoot(b, unit, ctx.target.x, ctx.target.y, now, ctx.target);
     }
   } else {
@@ -1941,14 +2441,14 @@ function executeUrgentCover(b, unit, ctx, range, now, dtSec, friendlies) {
       unit._isHullDown = true;
       unit._actionVerb = 'hull_down';
       if (ctx.target && ctx.targetDist <= range * 1.1) {
-        unit.angle = Math.atan2(ctx.target.y - unit.y, ctx.target.x - unit.x);
+        turnUnitToward(unit, Math.atan2(ctx.target.y - unit.y, ctx.target.x - unit.x), dtSec);
         tryShoot(b, unit, ctx.target.x, ctx.target.y, now, ctx.target);
       }
     } else {
       // Light vehicle: exposed, fire if able
       unit._actionVerb = 'exposed';
       if (ctx.target && ctx.targetDist <= range * 1.1) {
-        unit.angle = Math.atan2(ctx.target.y - unit.y, ctx.target.x - unit.x);
+        turnUnitToward(unit, Math.atan2(ctx.target.y - unit.y, ctx.target.x - unit.x), dtSec);
         tryShoot(b, unit, ctx.target.x, ctx.target.y, now, ctx.target);
       }
     }
@@ -1967,8 +2467,7 @@ function executeTacticalBound(b, unit, ctx, range, speed, now, dtSec, friendlies
     objY = ctx.target.y;
   } else {
     // No target — advance toward sergeant waypoint or enemy base
-    const teamKey = unit.team;
-    const wp = b._teamWaypoints?.[teamKey];
+    const wp = getSquadWaypoint(b, unit);
     if (wp) {
       objX = wp.x; objY = wp.y;
     } else {
@@ -1993,7 +2492,7 @@ function executeTacticalBound(b, unit, ctx, range, speed, now, dtSec, friendlies
 
   // Fire while bounding (between bounds)
   if (ctx.target && ctx.targetDist <= range) {
-    unit.angle = Math.atan2(ctx.target.y - unit.y, ctx.target.x - unit.x);
+    turnUnitToward(unit, Math.atan2(ctx.target.y - unit.y, ctx.target.x - unit.x), dtSec);
     tryShoot(b, unit, ctx.target.x, ctx.target.y, now, ctx.target);
   }
 }
@@ -2049,8 +2548,7 @@ function executeRegroupMode(b, unit, ctx, range, now, dtSec, friendlies) {
     moveBrainUnit(b, unit, ctx.nearestAlly.x, ctx.nearestAlly.y, dtSec, friendlies, 0.9);
   } else {
     // No ally nearby — fall back to sergeant waypoint or own spawn
-    const teamKey = unit.team;
-    const wp = b._teamWaypoints?.[teamKey];
+    const wp = getSquadWaypoint(b, unit);
     const isBlue = unit.team === Team.BLUE;
     const ownZone = isBlue ? b.blueSpawnZone : b.redSpawnZone;
 
@@ -2063,7 +2561,7 @@ function executeRegroupMode(b, unit, ctx, range, now, dtSec, friendlies) {
 
   // Fire while regrouping
   if (ctx.target && ctx.targetDist <= range) {
-    unit.angle = Math.atan2(ctx.target.y - unit.y, ctx.target.x - unit.x);
+    turnUnitToward(unit, Math.atan2(ctx.target.y - unit.y, ctx.target.x - unit.x), dtSec);
     tryShoot(b, unit, ctx.target.x, ctx.target.y, now, ctx.target);
   }
 }
@@ -2089,7 +2587,7 @@ function executeHold(b, unit, target, targetDist, range, now, dtSec, friendlies)
 
   if (target) {
     // Always face target
-    unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+    turnUnitToward(unit, Math.atan2(target.y - unit.y, target.x - unit.x), dtSec);
 
     // Bridge-blocked target: can't shoot through bridge, don't advance toward it.
     // Hold position and wait — HOLD means hold.
@@ -2098,9 +2596,10 @@ function executeHold(b, unit, target, targetDist, range, now, dtSec, friendlies)
       return;
     }
 
-    // Always try to fire — shouldFire() handles range gating at range×1.1
+    // Always try to fire — shouldFire() handles range gating + stability + acquisition
     if (tryShoot(b, unit, target.x, target.y, now, target)) {
       unit._actionVerb = 'firing';
+      unit._haltingToFire = false;
     }
 
     // Check actual damage effectiveness, not just raw range
@@ -2108,6 +2607,10 @@ function executeHold(b, unit, target, targetDist, range, now, dtSec, friendlies)
 
     if (falloff >= 0.5) {
       // In effective range — hold and fire (doing meaningful damage)
+      // Halt to stabilize if needed
+      if (shouldHaltToFire(unit, target, targetDist, range)) {
+        unit._actionVerb = 'aiming';
+      }
     } else if (falloff > 0) {
       // In weapon reach but ineffective (falloff < 0.5) — advance to effective range
       const d = targetDist || 1;
@@ -2153,7 +2656,7 @@ function executeHold(b, unit, target, targetDist, range, now, dtSec, friendlies)
       // Enemies spotted but not targeted — face nearest threat
       const nearest = spotted[0]?.enemy;
       if (nearest && !nearest.dead) {
-        unit.angle = Math.atan2(nearest.y - unit.y, nearest.x - unit.x);
+        turnUnitToward(unit, Math.atan2(nearest.y - unit.y, nearest.x - unit.x), dtSec);
         // Try to fire at spotted enemies (pipeline handles range gating)
         tryShoot(b, unit, nearest.x, nearest.y, now, nearest);
       }
@@ -2181,6 +2684,9 @@ function executeHold(b, unit, target, targetDist, range, now, dtSec, friendlies)
  * initiative→flanking aggressiveness (continuous scaling, no hard thresholds).
  */
 function executeAdvance(b, unit, target, targetDist, range, speed, now, dtSec, friendlies) {
+  // Clear prone/hull-down — advancing means moving
+  unit._isProne = false;
+  unit._isHullDown = false;
   unit._actionVerb = 'advancing';
   const p = unit.personality || {};
 
@@ -2189,8 +2695,7 @@ function executeAdvance(b, unit, target, targetDist, range, speed, now, dtSec, f
 
   if (!target) {
     // No target — advance toward sergeant waypoint or enemy base
-    const teamKey = unit.team;
-    const wp = b._teamWaypoints?.[teamKey];
+    const wp = getSquadWaypoint(b, unit);
     let cx, cy;
     if (wp) {
       cx = wp.x; cy = wp.y;
@@ -2205,7 +2710,7 @@ function executeAdvance(b, unit, target, targetDist, range, speed, now, dtSec, f
         cy = unit.team === Team.RED ? mapH - 128 : 128;
       }
     }
-    unit.angle = Math.atan2(cy - unit.y, cx - unit.x);
+    turnUnitToward(unit, Math.atan2(cy - unit.y, cx - unit.x), dtSec);
     moveBrainUnit(b, unit, cx, cy, dtSec, friendlies);
 
     // Opportunity fire: shoot at spotted enemies in reach while advancing
@@ -2253,6 +2758,12 @@ function executeAdvance(b, unit, target, targetDist, range, speed, now, dtSec, f
     // In comfortable zone — hold position or flank
     unit._isBackingOff = false;
 
+    // Halt to stabilize before firing (patient/disciplined units)
+    if (shouldHaltToFire(unit, target, targetDist, range)) {
+      unit._actionVerb = 'aiming';
+      // Skip flanking while stabilizing — stand still
+    } else {
+
     // Flanking: initiative scales aggressiveness (continuous, no threshold)
     const initiative = p.initiative ?? 0.5;
     const suppression = unit._suppression ?? 0;
@@ -2264,13 +2775,10 @@ function executeAdvance(b, unit, target, targetDist, range, speed, now, dtSec, f
         const flankPos = findFlankPosition(b, unit, target, range);
         if (flankPos) {
           unit._flankTarget = { x: flankPos.x, y: flankPos.y };
-          if (b._debugLog) {
-            const logTeam = unit.team;
-            b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'flank',
-              x: Math.round(unit.x), y: Math.round(unit.y),
-              action: 'flanking', target: `(${Math.round(flankPos.x)},${Math.round(flankPos.y)})`,
-              detail: `init:${initiative.toFixed(2)} drive:${flankDrive.toFixed(2)} score:${flankPos.flankScore.toFixed(2)}` });
-          }
+          logEvent(b, { t: now, who: unit.id, team: unit.team, type: 'flank',
+            x: Math.round(unit.x), y: Math.round(unit.y),
+            action: 'flanking', target: `(${Math.round(flankPos.x)},${Math.round(flankPos.y)})`,
+            detail: `init:${initiative.toFixed(2)} drive:${flankDrive.toFixed(2)} score:${flankPos.flankScore.toFixed(2)}` });
         }
       }
 
@@ -2285,6 +2793,7 @@ function executeAdvance(b, unit, target, targetDist, range, speed, now, dtSec, f
         }
       }
     }
+    } // end halt-to-fire else
   }
 
   // Clear flank target if target dies or we lose sight
@@ -2292,10 +2801,11 @@ function executeAdvance(b, unit, target, targetDist, range, speed, now, dtSec, f
     unit._flankTarget = null;
   }
 
-  // Fire at target — shouldFire() handles range gating at range×1.1
-  unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+  // Fire at target — shouldFire() handles range gating + stability + acquisition
+  turnUnitToward(unit, Math.atan2(target.y - unit.y, target.x - unit.x), dtSec);
   if (tryShoot(b, unit, target.x, target.y, now, target)) {
     unit._actionVerb = 'firing';
+    unit._haltingToFire = false;
   }
 }
 
@@ -2341,7 +2851,7 @@ function executeFollow(b, unit, leader, target, targetDist, range, speed, now, d
   }
 
   // Face same direction as leader when not firing
-  unit.angle = leaderAngle;
+  turnUnitToward(unit, leaderAngle, dtSec);
 
   // Fire discipline: FOLLOW holds fire unless squad is under fire
   const squadUnderFire = friendlies.some(f =>
@@ -2350,7 +2860,7 @@ function executeFollow(b, unit, leader, target, targetDist, range, speed, now, d
   );
 
   if (squadUnderFire && target) {
-    unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+    turnUnitToward(unit, Math.atan2(target.y - unit.y, target.x - unit.x), dtSec);
 
     if (aggression > discipline) {
       // Aggressive: break away from formation to fight
@@ -2384,8 +2894,7 @@ function executeFallBack(b, unit, target, targetDist, range, speed, now, dtSec, 
   const category = inferCategory(unit);
 
   // Resolve rally point: sergeant waypoint > own spawn fallback
-  const teamKey = unit.team;
-  const wp = b._teamWaypoints?.[teamKey];
+  const wp = getSquadWaypoint(b, unit);
   let rallyX, rallyY;
 
   if (wp) {
@@ -2439,11 +2948,13 @@ function executeFallBack(b, unit, target, targetDist, range, speed, now, dtSec, 
 
     // Fire at targets from rally position (pipeline handles range)
     if (target) {
-      unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+      turnUnitToward(unit, Math.atan2(target.y - unit.y, target.x - unit.x), dtSec);
       tryShoot(b, unit, target.x, target.y, now, target);
     }
   } else {
-    // Retreating toward rally point
+    // Retreating toward rally point — must clear prone/hull-down to move
+    unit._isProne = false;
+    unit._isHullDown = false;
     unit._actionVerb = 'retreating';
     moveBrainUnit(b, unit, rallyX, rallyY, dtSec, friendlies);
 
@@ -2453,7 +2964,7 @@ function executeFallBack(b, unit, target, targetDist, range, speed, now, dtSec, 
     if (target && aggression > 0.15) { // Even low-agg units occasionally shoot
       // Fire probability scales with aggression: random check
       if (Math.random() < aggression) {
-        unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+        turnUnitToward(unit, Math.atan2(target.y - unit.y, target.x - unit.x), dtSec);
         tryShoot(b, unit, target.x, target.y, now, target);
       }
     }
@@ -2491,12 +3002,17 @@ function executeCoverMe(b, unit, leader, target, targetDist, range, now, dtSec, 
   }
 
   if (target) {
-    unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+    turnUnitToward(unit, Math.atan2(target.y - unit.y, target.x - unit.x), dtSec);
 
     if (targetDist <= range * 1.1) {
+      // Halt to stabilize if covering (discipline-driven)
+      if (shouldHaltToFire(unit, target, targetDist, range)) {
+        unit._actionVerb = 'aiming';
+      }
       // Target in reach — suppress from position
       if (tryShoot(b, unit, target.x, target.y, now, target)) {
         unit._actionVerb = 'suppressing';
+        unit._haltingToFire = false;
       }
     } else {
       // Target out of reach — move up to get in suppress range
@@ -2512,7 +3028,7 @@ function executeCoverMe(b, unit, leader, target, targetDist, range, now, dtSec, 
     }
   } else {
     // No target — face leader's facing direction, scan for threats
-    unit.angle = leader.angle || 0;
+    turnUnitToward(unit, leader.angle || 0, dtSec);
     unit._actionVerb = 'guarding';
 
     // Gently drift toward bodyguard position if not already there
@@ -2585,10 +3101,16 @@ function executeFocusFire(b, unit, target, targetDist, range, speed, now, dtSec,
     }
   }
 
-  // Fire at target — shouldFire() handles range gating and accuracy
-  unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+  // Halt to stabilize if in engagement range (patient/disciplined units)
+  if (shouldHaltToFire(unit, target, targetDist, range)) {
+    unit._actionVerb = 'aiming';
+  }
+
+  // Fire at target — shouldFire() handles range gating + stability + acquisition
+  turnUnitToward(unit, Math.atan2(target.y - unit.y, target.x - unit.x), dtSec);
   if (tryShoot(b, unit, target.x, target.y, now, target)) {
     unit._actionVerb = 'firing';
+    unit._haltingToFire = false;
   }
 }
 
@@ -2711,7 +3233,8 @@ function assessSurvival(unit, target, hostiles, friendlies, b) {
   const myAccuracy = Math.max(0.3, unit.stability || 0.5);
   const myDPS = (myDmg / myFireRate) * myAccuracy;
 
-  // Incoming threat: count nearby enemies that could be targeting me
+  // Incoming threat: count enemies actually threatening THIS unit
+  // Full DPS from enemies targeting me, reduced DPS from enemies targeting others
   // Awareness gates how many threats we perceive (low awareness = tunnel vision)
   const threatRange = (unit.range || 400) * 1.5;
   let incomingDPS = 0;
@@ -2725,7 +3248,13 @@ function assessSurvival(unit, target, hostiles, friendlies, b) {
       if (threatCount > Math.ceil(awareness * 5)) break;
       const hDmg = h.damage || 10;
       const hRate = (h.fireRate || 2000) / 1000;
-      incomingDPS += (hDmg / hRate) * 0.5;
+      const baseDPS = hDmg / hRate;
+      // Enemies targeting me are the real threat; others are ambient danger
+      if (h._currentTarget === unit) {
+        incomingDPS += baseDPS * 0.7;  // Targeting me directly
+      } else {
+        incomingDPS += baseDPS * 0.1;  // Not focused on me — ambient risk only
+      }
     }
   }
   // Fallback: single-target model if no threats scanned
@@ -2863,25 +3392,25 @@ function executeSurvivalAction(b, unit, target, targetDist, range, survival, now
   if (!action) return false;
 
   switch (action) {
-    case 'go_prone':       return executeProne(b, unit, target, targetDist, range, now);
+    case 'go_prone':       return executeProne(b, unit, target, targetDist, range, now, dtSec);
     case 'rush_to_cover': return executeRushToCover(b, unit, target, targetDist, range, now, dtSec, friendlies);
     case 'fall_back_to_allies': return executeFallBackToAllies(b, unit, target, range, now, dtSec, friendlies);
     case 'disengage':      return executeDisengage(b, unit, target, dtSec, friendlies);
     case 'reposition':     return executeReposition(b, unit, target, range, now, dtSec, friendlies);
     case 'break_los':      return executeBreakLOS(b, unit, target, range, now, dtSec, friendlies);
-    case 'hull_down':      return executeHullDown(b, unit, target, targetDist, range, now);
+    case 'hull_down':      return executeHullDown(b, unit, target, targetDist, range, now, dtSec);
     case 'charge':         return executeCharge(b, unit, target, targetDist, range, now, dtSec, friendlies);
     default: return false;
   }
 }
 
-function executeProne(b, unit, target, targetDist, range, now) {
+function executeProne(b, unit, target, targetDist, range, now, dtSec) {
   unit._isProne = true;
   unit._isHullDown = false;
   unit._actionVerb = 'prone';
 
   if (target && targetDist <= range * 1.5) {
-    unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+    turnUnitToward(unit, Math.atan2(target.y - unit.y, target.x - unit.x), dtSec);
     tryShoot(b, unit, target.x, target.y, now, target);
   }
   return true;
@@ -2913,7 +3442,7 @@ function executeRushToCover(b, unit, target, targetDist, range, now, dtSec, frie
 
   // Snap-fire while running
   if (target && targetDist <= range * 0.8) {
-    unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+    turnUnitToward(unit, Math.atan2(target.y - unit.y, target.x - unit.x), dtSec);
     tryShoot(b, unit, target.x, target.y, now, target);
   }
   return true;
@@ -2939,8 +3468,7 @@ function executeFallBackToAllies(b, unit, target, range, now, dtSec, friendlies)
     moveBrainUnit(b, unit, nearestAlly.x, nearestAlly.y, dtSec, friendlies);
   } else if (!nearestAlly) {
     // No ally — fall back to waypoint or own spawn
-    const teamKey = unit.team;
-    const wp = b._teamWaypoints?.[teamKey];
+    const wp = getSquadWaypoint(b, unit);
     const isBlue = unit.team === Team.BLUE;
     const ownZone = isBlue ? b.blueSpawnZone : b.redSpawnZone;
     const dest = wp || ownZone;
@@ -2953,7 +3481,7 @@ function executeFallBackToAllies(b, unit, target, range, now, dtSec, friendlies)
   if (target) {
     const dist = distanceBetween(unit, target);
     if (dist <= range) {
-      unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+      turnUnitToward(unit, Math.atan2(target.y - unit.y, target.x - unit.x), dtSec);
       tryShoot(b, unit, target.x, target.y, now, target);
     }
   }
@@ -2972,8 +3500,7 @@ function executeDisengage(b, unit, target, dtSec, friendlies) {
     moveBrainUnit(b, unit, retreatX, retreatY, dtSec, friendlies);
   } else {
     // No target — move to waypoint or own spawn
-    const teamKey = unit.team;
-    const wp = b._teamWaypoints?.[teamKey];
+    const wp = getSquadWaypoint(b, unit);
     const isBlue = unit.team === Team.BLUE;
     const ownZone = isBlue ? b.blueSpawnZone : b.redSpawnZone;
     const dest = wp || ownZone;
@@ -3014,13 +3541,10 @@ function executeBreakLOS(b, unit, target, range, now, dtSec, friendlies) {
       if (unit._survivalCommitment) {
         unit._survivalCommitment.targetPos = { x: pos.x, y: pos.y };
       }
-      if (b._debugLog) {
-        const logTeam = unit.team;
-        b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'survival',
-          x: Math.round(unit.x), y: Math.round(unit.y),
-          action: 'break_los', target: `(${Math.round(pos.x)},${Math.round(pos.y)})`,
-          detail: `los:${pos.los.toFixed(2)} threatDist:${Math.round(pos.threatDist)}` });
-      }
+      logEvent(b, { t: now, who: unit.id, team: unit.team, type: 'survival',
+        x: Math.round(unit.x), y: Math.round(unit.y),
+        action: 'break_los', target: `(${Math.round(pos.x)},${Math.round(pos.y)})`,
+        detail: `los:${pos.los.toFixed(2)} threatDist:${Math.round(pos.threatDist)}` });
     } else {
       // No LOS-break position found — fall back to disengaging
       return executeDisengage(b, unit, target, dtSec, friendlies);
@@ -3079,20 +3603,20 @@ function executeReposition(b, unit, target, range, now, dtSec, friendlies) {
 
     // Fire while repositioning
     if (distanceBetween(unit, target) <= range) {
-      unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+      turnUnitToward(unit, Math.atan2(target.y - unit.y, target.x - unit.x), dtSec);
       tryShoot(b, unit, target.x, target.y, now, target);
     }
   }
   return true;
 }
 
-function executeHullDown(b, unit, target, targetDist, range, now) {
+function executeHullDown(b, unit, target, targetDist, range, now, dtSec) {
   unit._isHullDown = true;
   unit._isProne = false;
   unit._actionVerb = 'hull_down';
 
   if (target) {
-    unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+    turnUnitToward(unit, Math.atan2(target.y - unit.y, target.x - unit.x), dtSec);
     if (targetDist <= range * 1.3) {
       tryShoot(b, unit, target.x, target.y, now, target);
     }
@@ -3107,14 +3631,13 @@ function executeCharge(b, unit, target, targetDist, range, now, dtSec, friendlie
 
   if (target && !target.dead) {
     moveBrainUnit(b, unit, target.x, target.y, dtSec, friendlies);
-    unit.angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+    turnUnitToward(unit, Math.atan2(target.y - unit.y, target.x - unit.x), dtSec);
     if (targetDist <= range) {
       tryShoot(b, unit, target.x, target.y, now, target);
     }
   } else {
     // Target died or no target — charge toward objective (waypoint or enemy spawn)
-    const teamKey = unit.team;
-    const wp = b._teamWaypoints?.[teamKey];
+    const wp = getSquadWaypoint(b, unit);
     const isBlue = unit.team === Team.BLUE;
     const enemyZone = isBlue ? b.redSpawnZone : b.blueSpawnZone;
     const dest = wp || enemyZone;
@@ -3133,7 +3656,7 @@ function executeCharge(b, unit, target, targetDist, range, now, dtSec, friendlie
  * Scan for enemies flanking this unit (behind it, within detection range).
  * Boosts flanker's threat score temporarily. Initiative controls scan frequency.
  */
-function checkFlankThreats(b, unit, hostiles, now) {
+function checkFlankThreats(b, unit, hostiles, now, dtSec) {
   const initiative = unit.personality?.initiative ?? 0.5;
   const awareness = unit._awareness ?? 0.5;
   const scanInterval = 3000 - initiative * 2000; // 1s (high) to 3s (low)
@@ -3164,17 +3687,14 @@ function checkFlankThreats(b, unit, hostiles, now) {
       e._flankThreatBoost = now + 2000; // boost lasts 2 seconds
       flankerFound = true;
 
-      if (b._debugLog) {
-        const logTeam = unit.team;
-        b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'flank',
-          x: Math.round(unit.x), y: Math.round(unit.y),
-          action: `flanked by ${e.id}`,
-          detail: `dist:${Math.round(dist)} angle:${Math.round(Math.abs(angleDiff) * 180 / Math.PI)}°` });
-      }
+      logEvent(b, { t: now, who: unit.id, team: unit.team, type: 'flank',
+        x: Math.round(unit.x), y: Math.round(unit.y),
+        action: `flanked by ${e.id}`,
+        detail: `dist:${Math.round(dist)} angle:${Math.round(Math.abs(angleDiff) * 180 / Math.PI)}°` });
 
       // High awareness: auto-rotate to face flanker
       if (awareness > 0.7) {
-        unit.angle = angleToEnemy;
+        turnUnitToward(unit, angleToEnemy, dtSec);
       }
       break; // Only report first flanker per scan
     }
@@ -3231,13 +3751,10 @@ function awarenessCoverCheck(b, unit, friendlies, now, dtSec) {
   const coverPos = findNearbyCoverPos(b, unit, searchRadius);
   if (coverPos) {
     unit._proactiveCoverTarget = coverPos;
-    if (b._debugLog) {
-      const logTeam = unit.team;
-      b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'decision',
-        x: Math.round(unit.x), y: Math.round(unit.y),
-        action: 'cover seek',
-        detail: `awr:${awareness.toFixed(2)} radius:${searchRadius} cover@(${Math.round(coverPos.x)},${Math.round(coverPos.y)})` });
-    }
+    logEvent(b, { t: now, who: unit.id, team: unit.team, type: 'decision',
+      x: Math.round(unit.x), y: Math.round(unit.y),
+      action: 'cover seek',
+      detail: `awr:${awareness.toFixed(2)} radius:${searchRadius} cover@(${Math.round(coverPos.x)},${Math.round(coverPos.y)})` });
   }
 }
 
@@ -3305,7 +3822,7 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
   // 2.6. Compute cover bias — how much this unit prefers cover-to-cover movement
   unit._coverBias = computeCoverBias(unit, activeCommand);
 
-  // 4. Select target (initiative-driven re-evaluation interval)
+  // 4. Select target (initiative-driven re-evaluation interval + hysteresis)
   const initiative = unit.personality?.initiative ?? 0.5;
   const reEvalInterval = 1500 - initiative * 1000; // 500ms (high) to 1500ms (low)
   let target;
@@ -3317,12 +3834,32 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
     target = prevTarget;
   } else {
     // Re-evaluate target
-    target = selectBrainTarget(b, unit, hostiles, leader, activeCommand);
+    const candidate = selectBrainTarget(b, unit, hostiles, leader, activeCommand);
+
+    // Target-switch hysteresis: only switch if the new target scores meaningfully
+    // better than keeping the current one. Prevents oscillation between close scores.
+    // Discipline increases the margin needed to switch (disciplined units commit).
+    if (candidate && prevTargetAlive && candidate !== prevTarget) {
+      const discipline = unit.personality?.discipline ?? 0.5;
+      const switchMargin = 0.15 + discipline * 0.15; // 0.15-0.30 score margin required
+      const candidateScore = unit._lastTargetScore ?? 0;
+      const prevScore = _scoreExistingTarget(b, unit, prevTarget, hostiles, leader, activeCommand);
+      if (candidateScore - prevScore < switchMargin) {
+        // Not enough advantage — keep current target
+        target = prevTarget;
+      } else {
+        target = candidate;
+      }
+    } else {
+      target = candidate;
+    }
     unit._targetLockedUntil = now + reEvalInterval;
   }
-  // Clear flank target when switching targets
+  // Clear flank target and stamp acquisition time when switching targets
   if (target !== prevTarget) {
     unit._flankTarget = null;
+    unit._targetAcquiredAt = now;
+    unit._targetJustSwitched = true; // Triggers stability reset in fire-decision
   }
   unit._currentTarget = target;
 
@@ -3359,13 +3896,10 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
           };
         }
         unit._survivalAction = unit._survivalCommitment.action;
-        if (b._debugLog) {
-          const logTeam = team;
-          b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'survival',
-            x: Math.round(unit.x), y: Math.round(unit.y),
-            action: unit._survivalAction,
-            detail: `ratio:${survival.survivalRatio.toFixed(2)} myTTK:${survival.myTTK.toFixed(1)}s theirTTK:${survival.theirTTK.toFixed(1)}s` });
-        }
+        logEvent(b, { t: now, who: unit.id, team, type: 'survival',
+          x: Math.round(unit.x), y: Math.round(unit.y),
+          action: unit._survivalAction,
+          detail: `ratio:${survival.survivalRatio.toFixed(2)} myTTK:${survival.myTTK.toFixed(1)}s theirTTK:${survival.theirTTK.toFixed(1)}s` });
       } else {
         // Danger passed — check commitment before clearing
         const commitment = unit._survivalCommitment;
@@ -3381,12 +3915,10 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
 
             if (Math.random() > abandonThreshold + progressBonus) {
               // Abandon — low discipline gives up
-              if (b._debugLog) {
-                b._debugLog.push({ t: now, who: unit.id, team, type: 'survival',
-                  x: Math.round(unit.x), y: Math.round(unit.y),
-                  action: 'survival_abandon',
-                  detail: `disc:${discipline.toFixed(2)} elapsed:${(elapsed / 1000).toFixed(1)}s` });
-              }
+              logEvent(b, { t: now, who: unit.id, team, type: 'survival',
+                x: Math.round(unit.x), y: Math.round(unit.y),
+                action: 'survival_abandon',
+                detail: `disc:${discipline.toFixed(2)} elapsed:${(elapsed / 1000).toFixed(1)}s` });
               clearSurvivalState(unit);
             } else {
               // Stay committed — keep doing current action
@@ -3394,18 +3926,16 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
             }
           } else {
             // Action completed — clear normally
-            if (b._debugLog) {
-              b._debugLog.push({ t: now, who: unit.id, team, type: 'survival',
-                x: Math.round(unit.x), y: Math.round(unit.y),
-                action: 'survival_complete',
-                detail: `action:${commitment.action} elapsed:${((now - commitment.startTime) / 1000).toFixed(1)}s` });
-            }
+            logEvent(b, { t: now, who: unit.id, team, type: 'survival',
+              x: Math.round(unit.x), y: Math.round(unit.y),
+              action: 'survival_complete',
+              detail: `action:${commitment.action} elapsed:${((now - commitment.startTime) / 1000).toFixed(1)}s` });
             clearSurvivalState(unit);
           }
         } else {
           // No active commitment or already completed — clear
-          if (unit._survivalAction && b._debugLog) {
-            b._debugLog.push({ t: now, who: unit.id, team, type: 'survival',
+          if (unit._survivalAction) {
+            logEvent(b, { t: now, who: unit.id, team, type: 'survival',
               x: Math.round(unit.x), y: Math.round(unit.y),
               action: 'survival_clear',
               detail: `ratio:${survival.survivalRatio.toFixed(2)} danger passed` });
@@ -3425,8 +3955,7 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
   const modeResult = resolveMovementMode(unit, moveCtx);
 
   // Log mode changes with full score breakdown
-  if (b._debugLog && unit._prevMovementMode !== modeResult.mode) {
-    const logTeam = team;
+  if (unit._prevMovementMode !== modeResult.mode) {
     // Build compact score summary: UCvr:35 Surv:0 Bnd:12 Cmd:40 Rgrp:5
     const scoreStr = modeResult.scores ? Object.entries(modeResult.scores)
       .map(([k, v]) => {
@@ -3434,7 +3963,7 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
           tactical_bound: 'Bnd', command_execute: 'Cmd', regroup: 'Rgrp' };
         return `${abbr[k] || k}:${Math.round(v)}`;
       }).join(' ') : '';
-    b._debugLog.push({ t: now, who: unit.id, team: logTeam, type: 'movement',
+    logEvent(b, { t: now, who: unit.id, team, type: 'movement',
       x: Math.round(unit.x), y: Math.round(unit.y),
       action: modeResult.mode,
       detail: `winner:${Math.round(modeResult.score)} [${scoreStr}] prev:${unit._prevMovementMode || 'none'}` });
@@ -3444,35 +3973,77 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
   executeMovementMode(b, unit, modeResult, moveCtx, range, speed, now, dtSec, friendlies);
 
   // 6.7. Flank detection (awareness + initiative gated) — read-only, no movement
-  checkFlankThreats(b, unit, hostiles, now);
+  checkFlankThreats(b, unit, hostiles, now, dtSec);
 
   // 7. Track movement and update stability
   // Use a threshold so micro-adjustments (separation steering, float drift) don't count as movement
   const moveDist = Math.hypot(unit.x - prevX, unit.y - prevY);
-  unit._movedThisFrame = moveDist > 1.5; // >1.5px = real movement (ignores formation micro-adjustments)
+  // Scale movement threshold by expected per-frame displacement (speed * dt)
+  // 20% of expected = real movement vs micro-drift; floor at 0.3px
+  const expectedFrameMove = (unit.speed || 80) * dtSec;
+  const rawMoved = moveDist > Math.max(0.3, expectedFrameMove * 0.2);
   unit._moveDistThisFrame = moveDist;
+
+  // Debounce movement state — prevent micro-stutter from destroying stability
+  // Unit must be stationary for 3+ consecutive frames before we consider it "not moving"
+  if (rawMoved) {
+    unit._stationaryFrames = 0;
+    unit._movedThisFrame = true;
+  } else {
+    unit._stationaryFrames = (unit._stationaryFrames || 0) + 1;
+    unit._movedThisFrame = unit._stationaryFrames < 3; // Still "moving" for first 2 frames
+  }
+
   const prevStab = unit.stability ?? 0;
   updateStability(unit, dtSec, typeKey);
 
-  // 7.5. Stuck detector — dump full decision state when unit hasn't moved for 2+ seconds
-  // Only count stuck time for movement verbs — stationary verbs (holding, firing, prone, etc.) are intentional
-  if (b._debugLog) {
+  // 7.5. Stuck detector — sliding window displacement check
+  // Track position history over 2-second window and check total displacement
+  // Only applies to movement verbs — stationary verbs (holding, firing, prone) are intentional
+  {
     const MOVEMENT_VERBS = new Set([
       'advancing', 'rushing_to_cover', 'pushing_up', 'closing_to_fire',
       'flanking', 'bounding_advance', 'regrouping', 'repositioning',
       'breaking_los', 'retreating', 'catching_up', 'following'
     ]);
     const isMovementVerb = MOVEMENT_VERBS.has(unit._actionVerb || '');
-    if (isMovementVerb && moveDist < 2) {
+
+    // Initialize position history ring buffer (stores positions every 0.5s)
+    if (!unit._posHistory) unit._posHistory = [];
+    if (!unit._posHistoryTimer) unit._posHistoryTimer = 0;
+    unit._posHistoryTimer += dtSec;
+    if (unit._posHistoryTimer >= 0.5) {
+      unit._posHistoryTimer = 0;
+      unit._posHistory.push({ x: unit.x, y: unit.y, t: now });
+      // Keep only last 2 seconds worth (4 entries at 0.5s intervals)
+      while (unit._posHistory.length > 5) unit._posHistory.shift();
+    }
+
+    // Check displacement over the full window (oldest entry to current position)
+    const oldest = unit._posHistory[0];
+    const windowDisplacement = oldest
+      ? Math.hypot(unit.x - oldest.x, unit.y - oldest.y)
+      : Infinity;
+    const windowDuration = oldest ? (now - oldest.t) / 1000 : 0;
+
+    // Stuck threshold: unit should have moved at least 10% of expected distance over the window
+    // Floor of 8px prevents false positives from slow formation movement, terrain drag, etc.
+    const expectedWindowMove = (unit.speed || 80) * windowDuration;
+    const stuckThreshold = Math.max(8, expectedWindowMove * 0.10);
+
+    // Skip dead units entirely
+    const isDead = unit.dead || unit.hp <= 0;
+
+    if (isMovementVerb && !isDead && windowDuration >= 2 && windowDisplacement < stuckThreshold) {
       unit._stuckTime = (unit._stuckTime || 0) + dtSec;
-    } else {
+    } else if (!isMovementVerb || isDead || windowDisplacement >= stuckThreshold) {
       unit._stuckTime = 0;
     }
-    if (unit._stuckTime >= 2 && now - (unit._lastStuckLog || 0) > 2000) {
+    if (unit._stuckTime >= 3 && now - (unit._lastStuckLog || 0) > 4000) {
       unit._lastStuckLog = now;
       const logTeam2 = team;
       const ldr = unit._formationLeader;
-      const wp = b._teamWaypoints?.[unit.team];
+      const wp = getSquadWaypoint(b, unit);
       const scores = modeResult?.scores || {};
       const scoreStr = Object.entries(scores)
         .map(([k, v]) => {
@@ -3480,7 +4051,7 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
             tactical_bound: 'Bnd', command_execute: 'Cmd', regroup: 'Rgrp' };
           return `${abbr[k] || k}:${Math.round(v)}`;
         }).join(' ');
-      b._debugLog.push({
+      logEvent(b, {
         t: now, who: unit.id, team: logTeam2, type: 'STUCK',
         x: Math.round(unit.x), y: Math.round(unit.y),
         action: `stuck ${unit._stuckTime.toFixed(1)}s`,
@@ -3503,16 +4074,32 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
         ].filter(Boolean).join(' ')
       });
     }
+
+    // Terrain escape: if stuck for 5+ seconds AND actually on impassable terrain
+    const cat = inferCategory(unit);
+    const terrainTrapped = isTerrainBlocked(b, unit.x, unit.y)
+      || !isTerrainPassable(b, unit.x, unit.y, cat);
+    if (unit._stuckTime >= 5 && terrainTrapped && !unit._escapeAttempted) {
+      unit._escapeAttempted = true;
+      const escaped = nudgeToPassable(b, unit, cat);
+      if (escaped) {
+        logEvent(b, {
+          t: now, who: unit.id, team, type: 'STUCK',
+          x: Math.round(unit.x), y: Math.round(unit.y),
+          action: 'terrain_escape',
+          detail: `Nudged to (${Math.round(unit.x)},${Math.round(unit.y)})`
+        });
+      }
+    }
+    if (unit._stuckTime === 0) unit._escapeAttempted = false;
   }
 
   // 8. State-change event logging
   const unitTerrain = getTerrainAt(b, unit.x, unit.y);
   const inCover = unitTerrain === 'trench' || unitTerrain === 'pillbox';
   const prevDbg = unit._dbg || {};
-  const log = b._debugLog;
-  const logTeam = team;
 
-  if (log) {
+  {
     const ux = Math.round(unit.x), uy = Math.round(unit.y);
     const prevTarget = prevDbg.targetId || null;
     const curTarget = target?.id || null;
@@ -3522,7 +4109,7 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
     // Command changed (sergeant issued new command or FOCUS_FIRE auto-transitioned)
     const prevCmd = prevDbg.command || null;
     if (activeCommand !== prevCmd && prevCmd !== null) {
-      log.push({ t: now, who: unit.id, team: logTeam, type: 'command', x: ux, y: uy,
+      logEvent(b, { t: now, who: unit.id, team, type: 'command', x: ux, y: uy,
         action: `${prevCmd} → ${activeCommand}`,
         detail: `verb:${curAction}` });
     }
@@ -3531,17 +4118,17 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
     const prevSurvival = prevDbg.survivalAction || null;
     if (curSurvival !== prevSurvival) {
       if (curSurvival) {
-        log.push({ t: now, who: unit.id, team: logTeam, type: 'survival', x: ux, y: uy,
+        logEvent(b, { t: now, who: unit.id, team, type: 'survival', x: ux, y: uy,
           action: `survival → ${curSurvival}`,
           detail: `mode:${unit._movementMode || '?'} hp:${Math.round((unit.hp / (unit.maxHp || 100)) * 100)}%` });
       } else if (prevSurvival) {
-        log.push({ t: now, who: unit.id, team: logTeam, type: 'survival', x: ux, y: uy,
+        logEvent(b, { t: now, who: unit.id, team, type: 'survival', x: ux, y: uy,
           action: `survival cleared (was ${prevSurvival})` });
       }
     }
     // Target changed
     if (curTarget !== prevTarget) {
-      log.push({ t: now, who: unit.id, team: logTeam, type: 'target', x: ux, y: uy,
+      logEvent(b, { t: now, who: unit.id, team, type: 'target', x: ux, y: uy,
         action: curTarget ? `target → ${curTarget}` : 'lost target',
         detail: prevTarget ? `was ${prevTarget}` : 'had none' });
     }
@@ -3551,57 +4138,54 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
         && curAction !== 'firing' && prevAction !== 'firing') {
       const lastActionLogTime = unit._lastActionLogTime || 0;
       if (now - lastActionLogTime > 500) {
-        log.push({ t: now, who: unit.id, team: logTeam, type: 'action', x: ux, y: uy,
+        logEvent(b, { t: now, who: unit.id, team, type: 'action', x: ux, y: uy,
           action: `${prevAction} → ${curAction}` });
         unit._lastActionLogTime = now;
       }
     }
     // Panic started/stopped
     if (unit._panicking && !prevDbg.panicking) {
-      log.push({ t: now, who: unit.id, team: logTeam, type: 'panic', x: ux, y: uy,
+      logEvent(b, { t: now, who: unit.id, team, type: 'panic', x: ux, y: uy,
         action: 'PANIC', detail: `morale:${(unit.morale||0).toFixed(2)} crg:${courage.toFixed(2)}` });
     } else if (!unit._panicking && prevDbg.panicking) {
-      log.push({ t: now, who: unit.id, team: logTeam, type: 'panic', x: ux, y: uy,
+      logEvent(b, { t: now, who: unit.id, team, type: 'panic', x: ux, y: uy,
         action: 'panic over', detail: `morale:${(unit.morale||0).toFixed(2)}` });
     }
     // Morale threshold crossings (check every update, but only log on cross)
     const mrl = unit.morale ?? 0.8;
     const prevMrl = prevDbg._rawMorale ?? mrl;
     if (prevMrl >= 0.5 && mrl < 0.5) {
-      log.push({ t: now, who: unit.id, team: logTeam, type: 'morale', x: ux, y: uy,
+      logEvent(b, { t: now, who: unit.id, team, type: 'morale', x: ux, y: uy,
         action: 'morale LOW', detail: mrl.toFixed(2) });
     } else if (prevMrl < 0.5 && mrl >= 0.5) {
-      log.push({ t: now, who: unit.id, team: logTeam, type: 'morale', x: ux, y: uy,
+      logEvent(b, { t: now, who: unit.id, team, type: 'morale', x: ux, y: uy,
         action: 'morale recovered', detail: mrl.toFixed(2) });
     }
     if (prevMrl >= 0.2 && mrl < 0.2) {
-      log.push({ t: now, who: unit.id, team: logTeam, type: 'morale', x: ux, y: uy,
+      logEvent(b, { t: now, who: unit.id, team, type: 'morale', x: ux, y: uy,
         action: 'morale CRITICAL', detail: mrl.toFixed(2) });
     }
     // Cover entered/left
     if (inCover && !prevDbg.inCover) {
-      log.push({ t: now, who: unit.id, team: logTeam, type: 'cover', x: ux, y: uy, action: 'entered cover', detail: unitTerrain });
+      logEvent(b, { t: now, who: unit.id, team, type: 'cover', x: ux, y: uy, action: 'entered cover', detail: unitTerrain });
     } else if (!inCover && prevDbg.inCover) {
-      log.push({ t: now, who: unit.id, team: logTeam, type: 'cover', x: ux, y: uy, action: 'left cover' });
+      logEvent(b, { t: now, who: unit.id, team, type: 'cover', x: ux, y: uy, action: 'left cover' });
     }
-    // Movement start/stop
-    const wasMoving = prevDbg._moving || false;
-    if (unit._movedThisFrame && !wasMoving) {
-      log.push({ t: now, who: unit.id, team: logTeam, type: 'move', x: ux, y: uy, action: 'started moving',
-        detail: `stab:${prevStab.toFixed(2)}→decaying` });
-    } else if (!unit._movedThisFrame && wasMoving) {
-      log.push({ t: now, who: unit.id, team: logTeam, type: 'move', x: ux, y: uy,
-        action: 'stopped', detail: `stab:${(unit.stability||0).toFixed(2)} zeroing in...` });
-    }
+    // Movement start/stop — tracked via frame data (x,y,stab), no event needed
     // Stability threshold crossings
     const curStab = unit.stability || 0;
     if (prevStab < 0.95 && curStab >= 0.95) {
-      log.push({ t: now, who: unit.id, team: logTeam, type: 'stability', x: ux, y: uy,
+      logEvent(b, { t: now, who: unit.id, team, type: 'stability', x: ux, y: uy,
         action: 'zeroed in', detail: `stab:${curStab.toFixed(2)} type:${typeKey}` });
     } else if (prevStab >= 0.5 && curStab < 0.5) {
-      log.push({ t: now, who: unit.id, team: logTeam, type: 'stability', x: ux, y: uy,
+      logEvent(b, { t: now, who: unit.id, team, type: 'stability', x: ux, y: uy,
         action: 'stability lost', detail: `stab:${curStab.toFixed(2)} (moving)` });
     }
+  }
+
+  // 8.5. Turret return-to-forward — when no target, slowly center turret on hull
+  if (!target && unit.hullAngle != null) {
+    turnTurretToward(unit, unit.hullAngle, dtSec * 0.3);
   }
 
   // 9. Debug telemetry — read by fire range overlay and debug panel
@@ -3653,7 +4237,6 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
     inCover: unit._coverReached || false,
     suppression: +(unit._suppression ?? 0).toFixed(2),
     _rawMorale: unit.morale ?? 0.8,
-    _moving: unit._movedThisFrame,
     // Fire readiness
     stability: +(unit.stability || 0).toFixed(2),
     cooldown: +cooldownPct.toFixed(2),
@@ -3746,22 +4329,29 @@ export function updateEnemyAI(b, enemy, hero, allies, now, dtSec) {
  * Call once per frame per team, AFTER all individual brain updates.
  * Nearby allies share their _spotted lists. Quality scales with receiver's awareness.
  * Scouts (hasRecon) share at 2x cohesion range.
+ *
+ * @param {Array} friendlies - Units to share intel between
+ * @param {number} now - Current timestamp
+ * @param {object} opts - Optional: { squadMode: true } bypasses range limit (sgt relay)
  */
-export function shareTeamIntel(friendlies, now) {
+export function shareTeamIntel(friendlies, now, opts = {}) {
   const COHESION_RANGE = 120;
   const SCOUT_MULT = 2.0;
+  const squadMode = opts.squadMode || false;
 
   for (const unit of friendlies) {
     if (unit.dead) continue;
     if (!unit._spotted || unit._spotted.length === 0) continue;
 
     const isScout = CATEGORY_SKILLS[inferCategory(unit)]?.hasRecon || false;
-    const shareRange = isScout ? COHESION_RANGE * SCOUT_MULT : COHESION_RANGE;
+    const shareRange = squadMode ? Infinity : (isScout ? COHESION_RANGE * SCOUT_MULT : COHESION_RANGE);
 
     for (const ally of friendlies) {
       if (ally === unit || ally.dead) continue;
-      const d = distanceBetween(unit, ally);
-      if (d > shareRange) continue;
+      if (!squadMode) {
+        const d = distanceBetween(unit, ally);
+        if (d > shareRange) continue;
+      }
 
       const allyAwareness = ally._awareness ?? 0.5;
       // Accuracy degradation by receiver's awareness
@@ -3938,6 +4528,14 @@ function _boulderBlocksRay(terrainMap, x1, y1, x2, y2) {
 }
 
 export function tryShoot(b, unit, targetX, targetY, now, targetEntity) {
+  // Turret alignment gate — unit can't fire until turret is aimed at target
+  if (unit.hullAngle != null) {
+    const aimAngle = Math.atan2(targetY - unit.y, targetX - unit.x);
+    if (!isTurretAligned(unit, aimAngle)) {
+      return false;
+    }
+  }
+
   // Bridge deck blocks shots between different elevation levels
   if (isBridgeDeckBlocking(b.terrainMap?.bridges, unit.x, unit.y, targetX, targetY, unit._bridgeElevation, targetEntity?._bridgeElevation)) {
     return false;
@@ -3964,8 +4562,8 @@ export function tryShoot(b, unit, targetX, targetY, now, targetEntity) {
 
   unit.lastShot = now;
   const baseAngle = Math.atan2(dy, dx);
-  // Suppression reduces accuracy (max 30% penalty)
-  const suppressionAccPenalty = 1 - (unit._suppression ?? 0) * 0.3;
+  // Suppression reduces accuracy (max 55% penalty at full suppression)
+  const suppressionAccPenalty = 1 - (unit._suppression ?? 0) * 0.55;
   const accuracy = fireDecision.accuracy * suppressionAccPenalty;
   const maxSpread = Math.PI / 12;
   const spread = (1.0 - accuracy) * maxSpread;
@@ -3990,11 +4588,11 @@ export function tryShoot(b, unit, targetX, targetY, now, targetEntity) {
     _bridgeElevation: unit._bridgeElevation || null
   });
 
-  if (b._debugLog) {
+  {
     const factorStr = fireDecision.factors
       ? fireDecision.factors.map(f => `${f.name}:${f.value.toFixed(2)}`).join(' ')
       : `stab:${(unit.stability||0).toFixed(2)}`;
-    b._debugLog.push({
+    logEvent(b, {
       t: now,
       who: unit.id,
       team: unit.team,

@@ -4,10 +4,11 @@
 // Provides a unified per-frame AI pipeline that replaces
 // inline AI code in all battle modes (campaign, endless, fire range).
 //
-// Architecture: Squads → Sergeants → Formations → Brains → Intel
+// Architecture: Commanders → Squads → Sergeants → Formations → Brains → Intel
 // ═══════════════════════════════════════════════════════════════
 
-import { Team } from './constants.js';
+import { Team, UNIT_COMBAT_STATS } from './constants.js';
+import { Objective, Play, COMMANDER_PRESETS, COMMANDER_TRAIT_PRESETS, createCommander, updateCommander, assignObjective, scaleCommanderByWave, planDeployment, getEdgeSpawnZones, initDefenseZones } from './commander.js';
 import { createSergeant, updateSergeant } from './sergeant.js';
 import {
   updateUnitAI,
@@ -17,6 +18,8 @@ import {
   Command
 } from './ai.js';
 import { updateModifierEffects } from './elite-modifiers.js';
+import { buildSpottedList } from './vision.js';
+import { logEvent } from './battle-log.js';
 
 // ═══════════════════════════════════════════════════════════════
 // DETERMINISTIC UNIT HASH — Personality-driven desync seed
@@ -33,6 +36,53 @@ function hashUnitId(id) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// PERSONALITY PRESETS — Named archetypes for unit personality
+// Each defines 6 traits + spread (per-unit variance range).
+// Used in fire range config, endless spawning, and campaign.
+// ═══════════════════════════════════════════════════════════════
+
+export const PERSONALITY_PRESETS = {
+  random:     { label: 'Random',     spread: 0.5,
+    traits: { aggression: 0.5, patience: 0.5, courage: 0.5, discipline: 0.5, initiative: 0.5, awareness: 0.5 } },
+  aggressive: { label: 'Aggressive', spread: 0.15,
+    traits: { aggression: 0.85, patience: 0.2, courage: 0.7, discipline: 0.3, initiative: 0.7, awareness: 0.4 } },
+  cautious:   { label: 'Cautious',   spread: 0.15,
+    traits: { aggression: 0.2, patience: 0.8, courage: 0.4, discipline: 0.7, initiative: 0.3, awareness: 0.7 } },
+  disciplined:{ label: 'Disciplined',spread: 0.1,
+    traits: { aggression: 0.4, patience: 0.7, courage: 0.6, discipline: 0.9, initiative: 0.4, awareness: 0.6 } },
+  reckless:   { label: 'Reckless',   spread: 0.15,
+    traits: { aggression: 0.9, patience: 0.1, courage: 0.8, discipline: 0.1, initiative: 0.8, awareness: 0.3 } },
+  veteran:    { label: 'Veteran',    spread: 0.1,
+    traits: { aggression: 0.5, patience: 0.7, courage: 0.7, discipline: 0.8, initiative: 0.6, awareness: 0.8 } },
+  green:      { label: 'Green',      spread: 0.2,
+    traits: { aggression: 0.3, patience: 0.3, courage: 0.3, discipline: 0.3, initiative: 0.2, awareness: 0.3 } },
+  sniper:     { label: 'Sniper',     spread: 0.1,
+    traits: { aggression: 0.2, patience: 0.95, courage: 0.5, discipline: 0.9, initiative: 0.3, awareness: 0.9 } },
+  berserker:  { label: 'Berserker',  spread: 0.1,
+    traits: { aggression: 1.0, patience: 0.0, courage: 0.9, discipline: 0.0, initiative: 0.6, awareness: 0.2 } },
+};
+
+/**
+ * Generate personality traits from a preset with per-unit variance.
+ * @param {string} presetName - Key into PERSONALITY_PRESETS (or 'custom' to skip)
+ * @param {object} [overrides] - Optional trait overrides (for 'custom' mode)
+ * @returns {object} Personality object with 6 traits
+ */
+export function personalityFromPreset(presetName, overrides) {
+  if (presetName === 'custom' && overrides) {
+    return { ...overrides };
+  }
+  const preset = PERSONALITY_PRESETS[presetName] || PERSONALITY_PRESETS.random;
+  const spread = presetName === 'random' ? preset.spread : preset.spread;
+  const result = {};
+  for (const [k, v] of Object.entries(preset.traits)) {
+    const raw = v + (Math.random() - 0.5) * 2 * spread;
+    result[k] = Math.max(0, Math.min(1, raw));
+  }
+  return result;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // BRAIN PRESETS — Config-driven defaults per mode
 // ═══════════════════════════════════════════════════════════════
 
@@ -41,29 +91,25 @@ export const BRAIN_PRESETS = {
     command: 'hold',
     personality: { aggression: 0.4, patience: 0.6, courage: 0.5, discipline: 0.7, initiative: 0.4 },
     targeting: { distance: 0.6, weakness: 0.3, threat: 0.1, value: 0.0 },
-    awareness: 0.5, leadership: 0, morale: 0.8, veterancy: 0,
-    viewRange: 200, viewCone: 140
+    awareness: 0.5, leadership: 0, morale: 0.8, veterancy: 0
   },
   campaignEnemy: {
     command: 'advance',
     personality: { aggression: 0.6, patience: 0.3, courage: 0.4, discipline: 0.3, initiative: 0.3 },
     targeting: { distance: 0.8, weakness: 0.1, threat: 0.1, value: 0.0 },
-    awareness: 0.3, leadership: 0, morale: 0.6, veterancy: 0,
-    viewRange: 180, viewCone: 120
+    awareness: 0.3, leadership: 0, morale: 0.6, veterancy: 0
   },
   endlessAlly: {
     command: 'advance',
     personality: { aggression: 0.5, patience: 0.5, courage: 0.5, discipline: 0.5, initiative: 0.5 },
     targeting: { distance: 0.7, weakness: 0.3, threat: 0.0, value: 0.0 },
-    awareness: 0.5, leadership: 0, morale: 0.8, veterancy: 0,
-    viewRange: 200, viewCone: 140
+    awareness: 0.5, leadership: 0, morale: 0.8, veterancy: 0
   },
   endlessEnemy: {
     command: 'advance',
     personality: { aggression: 0.5, patience: 0.4, courage: 0.4, discipline: 0.3, initiative: 0.3 },
     targeting: { distance: 0.8, weakness: 0.2, threat: 0.0, value: 0.0 },
-    awareness: 0.3, leadership: 0, morale: 0.6, veterancy: 0,
-    viewRange: 180, viewCone: 120
+    awareness: 0.3, leadership: 0, morale: 0.6, veterancy: 0
   }
 };
 
@@ -85,9 +131,20 @@ export function applyBrainDefaults(unit, presetOrName) {
   // Command
   if (unit.command === undefined) unit.command = preset.command || Command.ADVANCE;
 
-  // Personality (merge at trait level, don't overwrite existing object)
+  // Personality — use personalityPreset if set, otherwise copy from brain preset with spread
   if (!unit.personality) {
-    unit.personality = { ...preset.personality };
+    if (unit.personalityPreset) {
+      unit.personality = personalityFromPreset(unit.personalityPreset);
+    } else {
+      // Brain preset personality + per-unit spread so units aren't identical
+      const base = preset.personality;
+      unit.personality = {};
+      const spread = 0.15;
+      for (const k of Object.keys(base)) {
+        const raw = base[k] + (Math.random() - 0.5) * 2 * spread;
+        unit.personality[k] = Math.max(0, Math.min(1, raw));
+      }
+    }
   } else {
     const p = preset.personality;
     for (const k of Object.keys(p)) {
@@ -105,13 +162,22 @@ export function applyBrainDefaults(unit, presetOrName) {
     }
   }
 
-  // Scalar brain fields
-  if (unit.awareness === undefined) unit.awareness = preset.awareness ?? 0.5;
+  // Scalar brain fields (with spread so units aren't clones)
+  if (unit.awareness === undefined) {
+    const baseAwr = preset.awareness ?? 0.5;
+    unit.awareness = Math.max(0, Math.min(1, baseAwr + (Math.random() - 0.5) * 0.3));
+  }
   if (unit.leadership === undefined) unit.leadership = preset.leadership ?? 0;
   if (unit.morale === undefined) unit.morale = preset.morale ?? 0.8;
   if (unit.veterancy === undefined) unit.veterancy = preset.veterancy ?? 0;
-  if (unit.viewRange === undefined && preset.viewRange != null) unit.viewRange = preset.viewRange;
-  if (unit.viewCone === undefined && preset.viewCone != null) unit.viewCone = preset.viewCone;
+  if (unit.viewRange === undefined) {
+    const combatStats = UNIT_COMBAT_STATS[unit.unitId];
+    unit.viewRange = preset.viewRange ?? combatStats?.viewRange ?? 400;
+  }
+  if (unit.viewCone === undefined) {
+    const combatStats = UNIT_COMBAT_STATS[unit.unitId];
+    unit.viewCone = preset.viewCone ?? combatStats?.viewCone ?? 140;
+  }
 
   // Squad assignment
   if (unit._squadId === undefined) unit._squadId = 0;
@@ -285,7 +351,11 @@ export function initBattleAI(b, opts = {}) {
 
   // Init shared structures
   if (!b._teamWaypoints) b._teamWaypoints = {};
+  if (!b._squadWaypoints) b._squadWaypoints = {};
   if (!b._debugLog) b._debugLog = [];
+  // Fog of war: start with empty visibility (no enemies visible until spotted)
+  // null = no fog (fire range), Set = fog active (campaign/endless)
+  if (!b.fireRange) b._visibleEnemies = new Set();
   if (!b._teamCommanders) {
     b._teamCommanders = {
       [Team.BLUE]: null,
@@ -335,8 +405,61 @@ export function initBattleAI(b, opts = {}) {
     }
   }
 
+  // Create commanders and assign initial objectives
+  _initCommanders(b, opts);
+
   // Backwards compat: build _sergeants from squads
   _syncSergeants(b);
+}
+
+/**
+ * Create commanders for both teams and assign initial objectives to all sergeants.
+ */
+function _initCommanders(b, opts) {
+  const now = Date.now();
+
+  // Blue commander
+  const bluePers = opts.config?.blueCommander?.personality || COMMANDER_PRESETS.balanced;
+  const blueSquadIds = b._squads.filter(s => s.team === Team.BLUE).map(s => s.id);
+  b._teamCommanders[Team.BLUE] = createCommander({
+    team: Team.BLUE,
+    personality: bluePers,
+    originUnit: opts.config?.blueCommander?.originUnit,
+    maxSquads: opts.maxSquads ?? 3,
+    spawnEdge: 'bottom',
+    driver: opts.blueCommanderDriver || 'ai'
+  });
+  b._teamCommanders[Team.BLUE].squads = blueSquadIds;
+  if (b.mapWidth && b.mapHeight) {
+    initDefenseZones(b._teamCommanders[Team.BLUE], b.mapWidth, b.mapHeight);
+  }
+
+  // Red commander
+  const redPers = opts.config?.redCommander?.personality || COMMANDER_PRESETS.balanced;
+  const redSquadIds = b._squads.filter(s => s.team === Team.RED).map(s => s.id);
+  b._teamCommanders[Team.RED] = createCommander({
+    team: Team.RED,
+    personality: redPers,
+    originUnit: opts.config?.redCommander?.originUnit || opts.redCommanderOrigin,
+    maxSquads: opts.maxSquads ?? 3,
+    spawnEdge: 'top',
+    driver: opts.redCommanderDriver || 'ai'
+  });
+  b._teamCommanders[Team.RED].squads = redSquadIds;
+  if (b.mapWidth && b.mapHeight) {
+    initDefenseZones(b._teamCommanders[Team.RED], b.mapWidth, b.mapHeight);
+  }
+
+  // Assign initial objectives — ATTACK for all squads
+  for (const squad of b._squads) {
+    if (!squad.sergeant) continue;
+    const cmdr = b._teamCommanders[squad.team];
+    if (cmdr) {
+      const objective = opts.config?.[squad.team === Team.BLUE ? 'blueSquads' : 'redSquads']
+        ?.[0]?.objective || Objective.ATTACK;
+      assignObjective(cmdr, squad.sergeant, { type: objective }, now, b);
+    }
+  }
 }
 
 /**
@@ -375,7 +498,7 @@ function _syncSergeants(b) {
 /**
  * Unified per-frame AI pipeline. Replaces all inline AI code.
  *
- * Order: Modifiers → Sergeants → Formations → Brains → Intel → Succession
+ * Order: Modifiers → Commanders → Sergeants → Formations → Brains → Intel → Succession
  *
  * @param {object} b - Battle object
  * @param {number} now - Current timestamp (ms)
@@ -396,13 +519,24 @@ export function runBattleAI(b, now, dtSec) {
   // 1. Update modifier effects (commander aura, berserker rage, etc.)
   updateModifierEffects(allEnemies, dtSec);
 
-  // 2. Per-squad: Sergeant → Formation
+  // 2. Commanders — evaluate battlefield, update objectives
+  if (b._teamCommanders) {
+    for (const cmdr of Object.values(b._teamCommanders)) {
+      if (cmdr) updateCommander(b, cmdr, now);
+    }
+  }
+
+  // Build hostiles pool that includes hero for red sergeant awareness
+  const heroAsHostile = (hero && !hero.dead && !hero.observer) ? [hero] : [];
+  const redEnemyPool = allUnits.concat(heroAsHostile);
+
+  // 3. Per-squad: Sergeant → Formation
   for (const squad of b._squads) {
     if (!squad.active) continue;
 
     // Gather squad members — alive-only for formations, all (incl. dead) for sergeant
     const allPool = squad.team === Team.BLUE ? allUnits : allEnemies;
-    const enemyPool = squad.team === Team.BLUE ? allEnemies : allUnits;
+    const enemyPool = squad.team === Team.BLUE ? allEnemies : redEnemyPool;
     const aliveMembers = _getSquadMembers(squad, allPool);
 
     if (aliveMembers.length === 0) {
@@ -432,6 +566,35 @@ export function runBattleAI(b, now, dtSec) {
     updateUnitAI(b, u, hero, allEnemies, now, dtSec);
   }
 
+  // 3.5. Hero AI — runs through brain in CMD mode or fire range (when included as combatant)
+  const heroAutoFire = b.playMode === 'cmd' || b.fireRange;
+  if (hero && !hero.dead && !hero.observer && heroAutoFire) {
+    // Ensure hero has brain defaults stamped (first frame only)
+    if (!hero._brainInit) {
+      hero._brainInit = true;
+      const wave = b.wave || 1;
+      const preset = scaleBrainByWave(BRAIN_PRESETS.campaignAlly, wave);
+      applyBrainDefaults(hero, preset);
+    }
+    updateUnitAI(b, hero, null, allEnemies, now, dtSec);
+  }
+
+  // 3.5b. Hero spotting — hero doesn't run through updateBrain in unit mode, so build spotted list here
+  if (hero && !hero.dead && !hero.observer) {
+    if (!heroAutoFire) {
+      buildSpottedList(hero, allEnemies, b, now);
+    }
+    // Share hero intel with all blue allies (hero acts as scout for the team)
+    _shareHeroIntel(b, hero, allUnits, now);
+  }
+
+  // 3.6. Track whether hero is spotted by any red unit (for UI alert)
+  if (hero && !hero.dead) {
+    hero._isSpottedByEnemy = allEnemies.some(e =>
+      !e.dead && e._spotted && e._spotted.some(s => s.enemy === hero)
+    );
+  }
+
   // 4. Intel sharing (hierarchical: intra-squad instant, cross-squad delayed)
   shareHierarchicalIntel(b, now);
 
@@ -453,6 +616,9 @@ export function runBattleAI(b, now, dtSec) {
   if (b._debugLog && b._debugLog.length > 2000) {
     b._debugLog.splice(0, b._debugLog.length - 2000);
   }
+
+  // 9. Build fog-of-war visibility set for renderer
+  buildVisibilitySet(b);
 }
 
 /**
@@ -496,7 +662,7 @@ export function spawnSquad(b, team, units, spawnZone, opts = {}) {
     if (insigniaSetId) u._insigniaSetId = insigniaSetId;
   }
 
-  // Determine enemy zone (opposite side of map)
+  // Determine enemy zone (opposite side of map from this team)
   const enemyZone = team === Team.BLUE
     ? { x: b.mapWidth / 2, y: 100, radius: 100 }
     : { x: b.mapWidth / 2, y: b.mapHeight - 100, radius: 100 };
@@ -504,12 +670,24 @@ export function spawnSquad(b, team, units, spawnZone, opts = {}) {
   const squad = createSquad(team, units, {
     spawnZone,
     enemyZone,
-    personality: opts.personality,
+    personality: opts.sgtPersonality || opts.personality,
     formation: opts.formation || 'wedge',
     command: opts.command || 'advance'
   });
 
   b._squads.push(squad);
+
+  // Register with commander (objective assignment handled by caller if skipObjective is set)
+  if (squad.sergeant && b._teamCommanders) {
+    const cmdr = b._teamCommanders[team];
+    if (cmdr) {
+      cmdr.squads.push(squad.id);
+      if (!opts.skipObjective) {
+        assignObjective(cmdr, squad.sergeant, { type: Objective.ATTACK }, performance.now(), b);
+      }
+    }
+  }
+
   _syncSergeants(b);
 
   return squad;
@@ -535,9 +713,26 @@ function _checkSuccession(b, squad) {
   promoteSgtSuccessor(b, squad);
 }
 
+// Survivability tier for sergeant succession — higher = more survivable, better commander
+const _SGT_CATEGORY_TIER = {
+  heavy_tank: 4,
+  medium_tank: 3,
+  light_vehicle: 2,
+  infantry: 1
+};
+function _unitCategoryTier(unit) {
+  switch (unit.unitId || 'infantry') {
+    case 'tiger': case 'abrams': case 'howitzer': return 4;
+    case 'sherman': return 3;
+    case 'jeep': case 'humvee': return 2;
+    default: return 1;
+  }
+}
+
 /**
- * Called when sergeant unit dies. Finds highest-leadership surviving
- * squad member, promotes them, transfers sergeant state.
+ * Called when sergeant unit dies. Finds best surviving squad member to promote.
+ * Priority: unit category (tanks > vehicles > infantry) then leadership score.
+ * This ensures the most survivable unit leads, with leadership as tiebreaker.
  */
 export function promoteSgtSuccessor(b, squad) {
   const allPool = squad.team === Team.BLUE ? (b.units || []) : (b.enemies || []);
@@ -550,11 +745,18 @@ export function promoteSgtSuccessor(b, squad) {
     return;
   }
 
-  // Find highest leadership
+  // Find best successor: category tier first, then leadership as tiebreaker
   let best = aliveMembers[0];
-  for (const u of aliveMembers) {
-    if ((u.leadership || 0) > (best.leadership || 0)) {
+  let bestTier = _unitCategoryTier(best);
+  let bestLead = best.leadership || 0;
+  for (let i = 1; i < aliveMembers.length; i++) {
+    const u = aliveMembers[i];
+    const tier = _unitCategoryTier(u);
+    const lead = u.leadership || 0;
+    if (tier > bestTier || (tier === bestTier && lead > bestLead)) {
       best = u;
+      bestTier = tier;
+      bestLead = lead;
     }
   }
 
@@ -576,16 +778,14 @@ export function promoteSgtSuccessor(b, squad) {
   }
 
   // Log succession
-  if (b._debugLog) {
-    b._debugLog.push({
-      t: Date.now(),
-      who: `squad-${squad.id}`,
-      team: squad.team,
-      type: 'sergeant',
-      action: `sgt promoted ${best.id}`,
-      detail: `squad ${squad.id} | remaining: ${aliveMembers.length}`
-    });
-  }
+  logEvent(b, {
+    t: Date.now(),
+    who: `squad-${squad.id}`,
+    team: squad.team,
+    type: 'sergeant',
+    action: `sgt promoted ${best.id}`,
+    detail: `squad ${squad.id} | remaining: ${aliveMembers.length}`
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -611,17 +811,17 @@ export function shareHierarchicalIntel(b, now) {
     const pool = team === Team.BLUE ? (b.units || []) : (b.enemies || []);
 
     if (squads.length === 1) {
-      // Single squad — just do flat intel sharing (same as before)
+      // Single squad — sergeant relays to all members (no range limit)
       const members = _getSquadMembers(squads[0], pool);
-      if (members.length > 0) shareTeamIntel(members, now);
+      if (members.length > 0) shareTeamIntel(members, now, { squadMode: true });
       continue;
     }
 
-    // Multiple squads: intra-squad instant, cross-squad delayed
-    // Step 1: Intra-squad sharing (instant)
+    // Multiple squads: intra-squad instant (full range), cross-squad delayed
+    // Step 1: Intra-squad sharing (instant, sergeant relays — no range limit)
     for (const sq of squads) {
       const members = _getSquadMembers(sq, pool);
-      if (members.length > 0) shareTeamIntel(members, now);
+      if (members.length > 0) shareTeamIntel(members, now, { squadMode: true });
     }
 
     // Step 2: Sergeant relay (cross-squad)
@@ -692,6 +892,91 @@ function _relaySergeantIntel(b, squads, pool, now) {
       }
     }
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HERO INTEL SHARING — Hero spots shared with all blue units
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Share hero's spotted list with all blue allies.
+ * Hero acts as a forward observer — instant, high-quality intel.
+ */
+function _shareHeroIntel(b, hero, blueUnits, now) {
+  if (!hero._spotted || hero._spotted.length === 0) return;
+
+  for (const ally of blueUnits) {
+    if (ally.dead) continue;
+    if (!ally._spotted) ally._spotted = [];
+
+    const directIds = new Set();
+    for (const s of ally._spotted) {
+      if (s.direct) directIds.add(s.enemy?.id);
+    }
+
+    for (const entry of hero._spotted) {
+      if (!entry.enemy || entry.enemy.dead) continue;
+      if (directIds.has(entry.enemy.id)) continue;
+
+      const existing = ally._spotted.find(s => s.enemy?.id === entry.enemy.id && !s.direct);
+      if (existing) {
+        if (entry.timestamp > existing.timestamp) {
+          existing.accuracy = entry.accuracy * 0.9;
+          existing.timestamp = entry.timestamp;
+          existing.posUncertainty = 15;
+          existing.source = 'hero';
+        }
+      } else {
+        ally._spotted.push({
+          enemy: entry.enemy,
+          dist: Math.sqrt((ally.x - entry.enemy.x) ** 2 + (ally.y - entry.enemy.y) ** 2),
+          zone: entry.zone,
+          accuracy: entry.accuracy * 0.9,
+          concealment: entry.concealment,
+          direct: false,
+          source: 'hero',
+          posUncertainty: 15,
+          timestamp: entry.timestamp
+        });
+      }
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FOG OF WAR — Team visibility set for renderer filtering
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Build b._visibleEnemies — a Set of enemy IDs spotted by any blue unit or the hero.
+ * The renderer uses this to hide/fade enemies not in the set.
+ * In fire range mode, fog of war is disabled (set to null = show all).
+ */
+function buildVisibilitySet(b) {
+  // Fire range is a sandbox — no fog of war
+  if (b.fireRange) {
+    b._visibleEnemies = null;
+    return;
+  }
+
+  const visible = new Set();
+
+  // Collect from all blue units' spotted lists
+  for (const unit of (b.units || [])) {
+    if (unit.dead) continue;
+    for (const s of (unit._spotted || [])) {
+      if (s.enemy && !s.enemy.dead) visible.add(s.enemy.id);
+    }
+  }
+
+  // Hero spotted list (built in step 3.5 via buildSpottedList)
+  if (b.hero && !b.hero.dead && !b.hero.observer) {
+    for (const s of (b.hero._spotted || [])) {
+      if (s.enemy && !s.enemy.dead) visible.add(s.enemy.id);
+    }
+  }
+
+  b._visibleEnemies = visible;
 }
 
 // ═══════════════════════════════════════════════════════════════

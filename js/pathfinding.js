@@ -6,6 +6,7 @@
 import { queryTerrain, queryBridgeRailing } from './terrain-query.js';
 import { getSpatialHash, SCATTER_TYPES } from './world-builder/scatter.js';
 import { WATER_DEPTH_SPEED } from './terrain-utils.js';
+import { logEvent } from './battle-log.js';
 
 // Pathfinding cell size for terrainMap battles (finer than the old 64px rasterize grid)
 const PATH_CELL_SIZE = 32;
@@ -662,14 +663,11 @@ export function resolveNavWaypoint(b, unit, targetX, targetY, category) {
       if (!unit._lastNavFailLog || now - unit._lastNavFailLog > 5000) {
         unit._lastNavFailLog = now;
         unit._navFailCount = (unit._navFailCount || 0) + 1;
-        if (b._debugLog) {
-          const logTeam = unit.team;
-          b._debugLog.push({
-            t: now, who: unit.id, team: logTeam, type: 'nav_fail',
-            x: Math.round(unit.x), y: Math.round(unit.y),
-            detail: `no path to (${Math.round(targetX)},${Math.round(targetY)}) dist:${Math.round(navDist)} cat:${category} fails:${unit._navFailCount}`
-          });
-        }
+        logEvent(b, {
+          t: now, who: unit.id, team: unit.team, type: 'nav_fail',
+          x: Math.round(unit.x), y: Math.round(unit.y),
+          detail: `no path to (${Math.round(targetX)},${Math.round(targetY)}) dist:${Math.round(navDist)} cat:${category} fails:${unit._navFailCount}`
+        });
       }
       unit._navPath = null;
       unit._navTarget = null;

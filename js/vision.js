@@ -5,6 +5,7 @@
 
 import { getTerrainAt } from './terrain-utils.js';
 import { queryTerrain, isBridgeDeckBlocking } from './terrain-query.js';
+import { logEvent } from './battle-log.js';
 
 // ── LOS & Visibility ──────────────────────────────────────────
 
@@ -13,7 +14,7 @@ const TERRAIN_VISIBILITY = {
   open: 1.0,
   grass: 1.0,
   brush: 0.8,
-  forest: 0.5,
+  forest: 0.7,
   trench: 0.9,   // Low profile, doesn't block much overhead LOS
   pillbox: 0.3,  // Mostly opaque structure
   high: 0.0,     // Fully blocks LOS
@@ -59,9 +60,15 @@ export function traceLineOfSight(b, x1, y1, x2, y2) {
       const sx = x1 + dx * t;
       const sy = y1 + dy * t;
       const result = queryTerrain(b.terrainMap, sx, sy);
-      // Boulders hard-block LOS (hasBoulder is boulder-specific, unlike isBlocked which includes deep water)
-      if (result.hasBoulder) return 0;
-      // Use the terrain's visibility value directly as a per-step multiplier
+      // Boulders heavily reduce LOS but don't fully block (they're ground-level obstacles,
+      // elevated units like tanks can see over them; the ray may clip an edge)
+      if (result.hasBoulder) {
+        visibility *= 0.15;
+        if (visibility < 0.1) return 0;
+        continue; // Skip normal terrain vis for this step — boulder dominates
+      }
+      // Per-step visibility derived from terrain losRange — no softening needed.
+      // At full forest coverage (losRange 350), LOS drops to 0.1 after ~350px.
       visibility *= result.visibility;
       if (visibility < 0.1) return 0;
     }
@@ -92,6 +99,72 @@ export function traceLineOfSight(b, x1, y1, x2, y2) {
  */
 export function hasLineOfSight(b, x1, y1, x2, y2) {
   return traceLineOfSight(b, x1, y1, x2, y2) > 0.1;
+}
+
+/**
+ * Trace a ray from (x1,y1) in a given direction, returning the distance
+ * at which visibility drops below 0.1 (or maxRange if clear).
+ * Used for building vision polygons.
+ */
+function traceViewRay(b, x1, y1, angle, maxRange) {
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const step = LOS_STEP;
+  const steps = Math.ceil(maxRange / step);
+  let visibility = 1.0;
+
+  if (b.terrainMap) {
+    for (let i = 1; i <= steps; i++) {
+      const d = Math.min(i * step, maxRange);
+      const sx = x1 + cos * d;
+      const sy = y1 + sin * d;
+      const result = queryTerrain(b.terrainMap, sx, sy);
+      if (result.hasBoulder) {
+        visibility *= 0.15;
+        if (visibility < 0.1) return d;
+        continue;
+      }
+      // Per-step visibility derived from terrain losRange — no softening needed.
+      visibility *= result.visibility;
+      if (visibility < 0.1) return d;
+    }
+  } else {
+    const cellSize = b.cellSize || 64;
+    for (let i = 1; i <= steps; i++) {
+      const d = Math.min(i * step, maxRange);
+      const sx = x1 + cos * d;
+      const sy = y1 + sin * d;
+      const terrain = getTerrainAt(b, sx, sy);
+      visibility *= (TERRAIN_VISIBILITY[terrain] ?? 1.0);
+      if (visibility < 0.1) return d;
+    }
+  }
+  return maxRange;
+}
+
+/**
+ * Build a vision polygon for a unit — array of {x, y} points forming
+ * the visible area boundary. Casts rays in all directions, each limited
+ * by LOS occlusion or maxRange.
+ * @param {object} b - Battle state
+ * @param {object} unit - Unit with x, y, viewRange
+ * @param {number} [rayCount=72] - Number of rays (every 5° at 72)
+ * @returns {Array<{x: number, y: number}>}
+ */
+export function buildVisionPolygon(b, unit, rayCount = 72) {
+  const maxRange = unit.viewRange || 400;
+  const points = [];
+  const step = (Math.PI * 2) / rayCount;
+
+  for (let i = 0; i < rayCount; i++) {
+    const angle = i * step;
+    const dist = traceViewRay(b, unit.x, unit.y, angle, maxRange);
+    points.push({
+      x: unit.x + Math.cos(angle) * dist,
+      y: unit.y + Math.sin(angle) * dist
+    });
+  }
+  return points;
 }
 
 /**
@@ -140,6 +213,18 @@ function clamp01(v) {
  * @returns {{ detected: boolean, zone: string, distance: number, accuracy: number, concealment: number }}
  */
 export function canDetect(detector, target, b) {
+  // Units off-map cannot be detected or detect others
+  const mapW = b?.mapWidth || 9999;
+  const mapH = b?.mapHeight || 9999;
+  if (target.x < 0 || target.y < 0 || target.x > mapW || target.y > mapH) {
+    return { detected: false, zone: 'offmap', distance: Infinity, accuracy: 0, concealment: 1 };
+  }
+  // Allow detectors slightly off-map (staging area) — use generous margin
+  const detectorMargin = 200;
+  if (detector.x < -detectorMargin || detector.y < -detectorMargin || detector.x > mapW + detectorMargin || detector.y > mapH + detectorMargin) {
+    return { detected: false, zone: 'offmap', distance: Infinity, accuracy: 0, concealment: 1 };
+  }
+
   const dx = target.x - detector.x;
   const dy = target.y - detector.y;
   const dist = Math.sqrt(dx * dx + dy * dy);
@@ -153,8 +238,9 @@ export function canDetect(detector, target, b) {
   const halfCone = effectiveCone / 2;
 
   // Angle from detector's facing to target
+  // Use hullAngle for detection (crew scans from hull, not gun barrel)
   const angleToTarget = Math.atan2(dy, dx);
-  const facingAngle = detector.angle || 0;
+  const facingAngle = detector.hullAngle ?? detector.angle ?? 0;
   let angleDiff = angleToTarget - facingAngle;
   // Normalize to -PI..PI
   while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
@@ -178,10 +264,19 @@ export function canDetect(detector, target, b) {
   }
 
   // Target concealment reduces effective detection range
-  const concealment = getConcealment(b, target);
+  let concealment = getConcealment(b, target);
 
-  // Effective range for this zone and target
-  const effectiveRange = viewRange * zoneMult * concealment;
+  // Tracer-back: if we were recently hit, we know roughly where the shot came from.
+  // The attacker's concealment is heavily reduced — muzzle flash + bullet trajectory.
+  // Awareness modulates how well the unit reads the tracer direction.
+  if ((detector._shockTimer ?? 0) > 0 && detector._lastAttackerId && detector._lastAttackerId === target.id) {
+    const tracerBoost = 0.5 + (detector._awareness ?? 0.5) * 0.3; // 0.5-0.8 minimum concealment
+    concealment = Math.max(concealment, tracerBoost);
+  }
+
+  // Effective range: concealment < 1.0 shrinks range (hidden target),
+  // but never extends beyond base viewRange (firing doesn't make you visible from farther)
+  const effectiveRange = viewRange * zoneMult * Math.min(concealment, 1.0);
 
   // Distance check
   if (dist > effectiveRange) {
@@ -307,8 +402,9 @@ export function buildSpottedList(unit, hostiles, b, now) {
         timestamp: now
       });
       // Log new visual detections
-      if (log && !prevIds.has(enemy.id)) {
-        log.push({ t: now, who: unit.id, team: logTeam, type: 'spot',
+      if (b && !prevIds.has(enemy.id)) {
+        logEvent(b, { t: now, who: unit.id, team: logTeam, type: 'spot',
+          source: 'unit', category: 'intel', severity: 'info',
           x: Math.round(unit.x), y: Math.round(unit.y),
           action: 'spotted', target: enemy.id,
           detail: `zone:${result.zone} dist:${Math.round(result.distance)} acc:${result.accuracy.toFixed(2)} conceal:${result.concealment.toFixed(2)}` });
@@ -336,8 +432,9 @@ export function buildSpottedList(unit, hostiles, b, now) {
         timestamp: now
       });
       // Log new sound detections
-      if (log && !prevIds.has(enemy.id)) {
-        log.push({ t: now, who: unit.id, team: logTeam, type: 'sound',
+      if (b && !prevIds.has(enemy.id)) {
+        logEvent(b, { t: now, who: unit.id, team: logTeam, type: 'sound',
+          source: 'unit', category: 'intel', severity: 'info',
           x: Math.round(unit.x), y: Math.round(unit.y),
           action: 'heard', target: enemy.id,
           detail: `type:${sound.soundType} dir:${Math.round(sound.direction * 180 / Math.PI)}° dist:${Math.round(sound.dist)}` });

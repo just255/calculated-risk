@@ -54,6 +54,9 @@ export const Game = {
     spriteSelections: {}          // { unitId: { partName: 'spriteName', ... } | null } - custom sprites per unit, null = use default SVG
   },
 
+  // Persistent soldier roster (crew system)
+  roster: [],
+
   // Reset each battle
   battle: null,
 
@@ -492,35 +495,23 @@ export function newCampaignBattle(era, mos, battlePlan) {
       // Note: Smart positioning is handled by assignSmartPositions() in game.js
       // Units without explicit positions will have them assigned after battle creation
 
-      playerUnits.push({
-        id: `unit_${index}`,  // Unique ID for aggro tracking
-        unitId: placement.unitId,
-        // Start at spawn point
-        x: spawnX + (index % 3 - 1) * 40,  // Spread out slightly
+      playerUnits.push(createUnit(placement.unitId, {
+        id: `unit_${index}`,
+        x: spawnX + (index % 3 - 1) * 40,
         y: spawnY + Math.floor(index / 3) * 40,
         hp: hp,
         maxHp: hp,
-        angle: -Math.PI / 2,  // Face up (toward enemy)
-        lastShot: 0,
-        // Destination-based movement
         primaryPos: primaryPos,
         advancePos: advancePos,
         fallbackPos: fallbackPos,
-        currentDestination: primaryPos,  // Will be set by smart positioning if null
-        advanceTarget: null,              // Target for ADVANCING state
-        repositionTarget: null,           // Target for REPOSITIONING state
+        currentDestination: primaryPos,
+        advanceTarget: null,
+        repositionTarget: null,
         isSupport: placement.isSupport || false,
-        // AI stance (determines proactive behavior)
         stance: placement.isSupport ? 'support' : 'autonomous',
-        // AI state - starts idle, will advance proactively
         aiState: 'idle',
         reachedDestination: false,
-        // Squad system
-        targetPriority: 'nearest',  // 'nearest' | 'weakest' | 'strongest' | 'armor' | 'infantry' | etc.
-        currentOrder: 'hold',       // Current order this unit is following
-        hasIndividualOrder: false,  // True if unit has override order (not following squad)
-        isSelected: false           // UI selection state
-      });
+      }));
     });
   }
 
@@ -535,23 +526,19 @@ export function newCampaignBattle(era, mos, battlePlan) {
             y: (wp.row + 0.5) * CELL_SIZE
           }));
 
-          playerUnits.push({
+          playerUnits.push(createUnit(cell.unitId, {
             id: `unit_${row}_${col}`,
-            unitId: cell.unitId,
             x: (col + 0.5) * CELL_SIZE,
             y: (row + 0.5) * CELL_SIZE,
             hp: 100,
             maxHp: 100,
-            angle: -Math.PI / 2,
-            lastShot: 0,
             waypoints: waypoints,
             currentWaypoint: 0,
             aiBehavior: cell.aiBehavior || null,
-            aiState: 'idle',  // Will proactively advance
-            stance: 'autonomous',
+            aiState: 'idle',
             advanceTarget: null,
             repositionTarget: null
-          });
+          }));
         }
       }
     }
@@ -609,25 +596,26 @@ export function newCampaignBattle(era, mos, battlePlan) {
     camera: { x: 0, y: 0 },
 
     // Hero
-    hero: {
+    hero: createUnit(heroStats.id, {
+      id: `hero_${Date.now()}`,
       x: heroX,
       y: heroY,
-      angle: -Math.PI / 2,  // Face up
       hp: heroStats.hp,
-      maxHp: heroStats.hp,  // maxHp for threat calculation
+      maxHp: heroStats.hp,
       speed: heroStats.speed,
       damage: heroStats.damage,
       fireRate: heroStats.fireRate,
-      lastShot: 0,
-      unitId: heroStats.id,
-      mos: mos,  // MOS for weapon category (infantry, cavalry, etc.)
-      animId: `hero-${heroStats.id}-${Date.now()}`,  // Unique animation ID
+      mos: mos,
+      animId: `hero-${heroStats.id}-${Date.now()}`,
       isMoving: false,
       lastX: heroX,
       lastY: heroY,
-      hullAngle: -Math.PI / 2,  // Hull facing direction (separate from aim angle)
-      targetHullAngle: -Math.PI / 2  // Target hull angle for smooth turning
-    },
+      targetHullAngle: -Math.PI / 2,
+      _currentSpeed: heroStats.speed,
+      viewRange: UNIT_COMBAT_STATS[heroStats.id]?.viewRange || 950,
+      viewCone: 360,
+      _awareness: 0.6
+    }),
 
     // Player units from battlePlan
     units: playerUnits,
@@ -1054,24 +1042,18 @@ function createStartingSquad(heroX, heroY, cellSize) {
   ];
 
   squadPositions.forEach((pos, i) => {
-    units.push({
+    units.push(createUnit('infantry', {
       id: `ally_${i}`,
-      unitId: 'infantry',
       x: heroX + pos.dx,
       y: heroY + pos.dy,
       hp: 50,
       maxHp: 50,
       damage: 8,
       fireRate: 1200,
-      lastShot: 0,
-      speed: 80,
-      angle: -Math.PI / 2,  // Face north
-      currentOrder: 'hold',
-      hasIndividualOrder: false,
       supportTarget: null,
       protectTarget: null,
       moveTarget: null
-    });
+    }));
   });
 
   return units;
@@ -1151,7 +1133,9 @@ export function newZoneBattle(era, mos, scenario) {
       lastX: heroX,
       lastY: heroY,
       hullAngle: -Math.PI / 2,  // Hull facing direction (separate from aim angle)
-      targetHullAngle: -Math.PI / 2  // Target hull angle for smooth turning
+      targetHullAngle: -Math.PI / 2,  // Target hull angle for smooth turning
+      _currentSpeed: heroStats.speed,  // Start at full speed (no stall on spawn)
+      viewRange: UNIT_COMBAT_STATS[heroStats.id]?.viewRange || 950
     },
 
     // Player units - spawn a starting squad near the hero
@@ -1295,8 +1279,109 @@ export function newEndlessRun() {
   };
 }
 
+// ── Unit name generator ──────────────────────────────────────
+const SURNAMES = [
+  'Adams', 'Baker', 'Clark', 'Davis', 'Evans', 'Foster', 'Grant', 'Hayes',
+  'Irving', 'Jones', 'Kelly', 'Lopez', 'Mason', 'Nash', 'Ortiz', 'Palmer',
+  'Quinn', 'Reed', 'Stone', 'Torres', 'Upton', 'Vega', 'Walsh', 'Young',
+  'Abbott', 'Brooks', 'Cole', 'Drake', 'Ellis', 'Flynn', 'Gray', 'Hart',
+  'Jacobs', 'Kane', 'Lane', 'Mills', 'Noble', 'Owens', 'Price', 'Reese',
+  'Shaw', 'Tate', 'Vale', 'Webb', 'York', 'Cruz', 'Dunn', 'Ford',
+  'Gibbs', 'Holt', 'Ives', 'Judd', 'Knox', 'Lake', 'Moss', 'Nolan',
+  'Park', 'Rowe', 'Sims', 'Troy', 'Wade', 'Zane', 'Burns', 'Cross'
+];
+const RANKS = ['PVT', 'PV2', 'PFC', 'SPC', 'CPL', 'SGT'];
+
+let _nameIdx = 0;
+export function generateUnitName(leadership = 0) {
+  const rank = RANKS[Math.min(RANKS.length - 1, Math.floor(leadership * (RANKS.length - 1)))];
+  const surname = SURNAMES[_nameIdx % SURNAMES.length];
+  _nameIdx++;
+  return { rank, surname, display: `${rank} ${surname}` };
+}
+export function resetNameGenerator() { _nameIdx = 0; }
+
+// ── Unit factory ─────────────────────────────────────────────
+// Single source of truth for creating unit objects. All fields that the
+// AI brain, rendering, or replay systems expect MUST be set here.
+// Callers override via the `overrides` parameter.
+
+export function createUnit(unitId, overrides = {}) {
+  const stats = UNIT_COMBAT_STATS[unitId] || {};
+  const unitDef = UNITS.find(u => u.id === unitId);
+  const isInfantryType = unitId === 'infantry' || unitId === 'medic' || unitId === 'specops' || unitId === 'stinger';
+
+  const unit = {
+    // Identity
+    id: overrides.id || `unit_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    unitId,
+
+    // Position & orientation
+    x: 0,
+    y: 0,
+    angle: -Math.PI / 2,       // Face north by default
+    hullAngle: -Math.PI / 2,
+
+    // Combat stats — prefer UNIT_COMBAT_STATS, fall back to unit def, then defaults
+    hp: unitDef?.hp || (isInfantryType ? 60 : 150),
+    maxHp: unitDef?.hp || (isInfantryType ? 60 : 150),
+    damage: unitDef?.damage || (isInfantryType ? 10 : 30),
+    fireRate: stats.fireRate || (isInfantryType ? 1000 : 1500),
+    speed: stats.speed || (isInfantryType ? 80 : 70),
+    range: stats.range || (isInfantryType ? 350 : 450),
+    lastShot: 0,
+
+    // State
+    dead: false,
+    stability: 0,
+
+    // AI fields (stamped properly by applyBrainDefaults, but must exist)
+    aiState: null,
+    aiBehavior: null,
+    currentOrder: 'hold',
+    hasIndividualOrder: false,
+    stance: 'autonomous',
+    targetPriority: 'nearest',
+    isSelected: false,
+    _squadId: 0,
+  };
+
+  // Apply caller overrides (position, id, hp scaling, etc.)
+  Object.assign(unit, overrides);
+
+  // Ensure maxHp matches hp if only hp was overridden
+  if (overrides.hp && !overrides.maxHp) unit.maxHp = unit.hp;
+
+  return unit;
+}
+
+// Generate a pool of available reserve units the player can swap in
+function createReservePool() {
+  const pool = [
+    { unitId: 'infantry', leadership: 0.1 },
+    { unitId: 'infantry', leadership: 0.15 },
+    { unitId: 'infantry', leadership: 0.2 },
+    { unitId: 'medic',    leadership: 0.25 },
+    { unitId: 'specops',  leadership: 0.5 },
+    { unitId: 'jeep',     leadership: 0.3 },
+    { unitId: 'humvee',   leadership: 0.35 },
+    { unitId: 'sherman',  leadership: 0.55 },
+    { unitId: 'sherman',  leadership: 0.6 },
+    { unitId: 'tiger',    leadership: 0.7 },
+  ];
+  return pool.map((def, i) => {
+    const name = generateUnitName(def.leadership);
+    const unitDef = UNITS.find(u => u.id === def.unitId);
+    return createUnit(def.unitId, {
+      id: `reserve_${i}`,
+      unitName: name,
+      displayName: unitDef?.name || def.unitId
+    });
+  });
+}
+
 // Create AI-controlled ally squad for endless mode testing
-function createEndlessSquad(heroX, heroY, mapWidth, mapHeight, cellSize) {
+function createEndlessSquad(heroX, heroY, mapWidth, mapHeight, cellSize, terrainMap, stageDepth) {
   const units = [];
 
   // Squad composition: mixed unit types spread across the bottom half
@@ -1309,39 +1394,27 @@ function createEndlessSquad(heroX, heroY, mapWidth, mapHeight, cellSize) {
     { unitId: 'sherman',  behavior: 'AGGRESSIVE', order: 'advance' },
   ];
 
-  const spawnCenterX = mapWidth / 2;
-  const spawnCenterY = mapHeight - cellSize * 5;
+  // Spawn at staging position (off-map, behind bottom edge)
+  const spawnCenterX = heroX;
+  const spawnCenterY = mapHeight + (stageDepth || 0) / 2;
+  const spawnZone = { x: spawnCenterX, y: spawnCenterY, radius: squad.length * 40 };
 
   squad.forEach((def, i) => {
-    // Spread in a line across the map
+    // Spread in a line around hero
     const offsetX = (i - squad.length / 2) * 60;
     const offsetY = (Math.random() - 0.5) * 80;
+    // Don't validate terrain for off-map positions
+    const pos = stageDepth ? { x: spawnZone.x + offsetX, y: spawnZone.y + offsetY } : findValidSpawnPos(spawnZone, offsetX, offsetY, terrainMap);
 
-    units.push({
+    const name = generateUnitName(def.unitId === 'sherman' ? 0.6 : 0.1 + Math.random() * 0.3);
+    units.push(createUnit(def.unitId, {
       id: `ally_${i}`,
-      unitId: def.unitId,
-      x: spawnCenterX + offsetX,
-      y: spawnCenterY + offsetY,
-      hp: def.unitId === 'sherman' ? 150 : 60,
-      maxHp: def.unitId === 'sherman' ? 150 : 60,
-      damage: def.unitId === 'sherman' ? 30 : 10,
-      fireRate: def.unitId === 'sherman' ? 1500 : 1000,
-      speed: def.unitId === 'sherman' ? 60 : 80,
-      range: UNIT_COMBAT_STATS[def.unitId]?.range || 400,
-      lastShot: 0,
-      angle: -Math.PI / 2,
-      dead: false,
-      // AI config
+      unitName: name,
+      x: pos.x,
+      y: pos.y,
       currentOrder: def.order,
-      hasIndividualOrder: false,
-      aiState: null,  // Will be initialized by updateUnitAI
-      aiBehavior: null,  // Will be set below via key
-      _behaviorKey: def.behavior,  // Used to set behavior on first frame
-      stance: 'autonomous',
-      targetPriority: 'nearest',
-      isSelected: false,
-      _squadId: 0
-    });
+      _behaviorKey: def.behavior,
+    }));
   });
 
   return units;
@@ -1356,13 +1429,13 @@ export function newEndlessBattle(loadout, wave = 1) {
   const battleSeed = seed ? (typeof seed === 'string' ? hashString(seed) : seed) + wave : Math.floor(Math.random() * 999999);
   const varied = Game.terrainImages ? randomizeBattleConfig(battleSeed) : null;
 
-  // Map size tiers — bigger maps = harder battles
-  // Waves 1-3: Skirmish (small), 4-7: Engagement (medium), 8-12: Assault (large), 13+: Siege (xl)
+  // Map size tiers — smaller start, ~50% growth per tier
+  // Waves 1-3: small (1 squad max), 4-7: medium (2), 8-12: large (3), 13+: xl (3)
   const SIZE_TIERS = [
-    { maxWave: 3,  grid: 24, label: 'Patrol',      enemyMult: 1.0 },
-    { maxWave: 7,  grid: 32, label: 'Sortie',      enemyMult: 1.3 },
-    { maxWave: 12, grid: 40, label: 'Operation',   enemyMult: 1.6 },
-    { maxWave: Infinity, grid: 48, label: 'Campaign', enemyMult: 2.0 }
+    { maxWave: 3,  grid: 24, label: 'Patrol',      enemyMult: 1.0, maxSquads: 1 },
+    { maxWave: 7,  grid: 32, label: 'Sortie',      enemyMult: 1.3, maxSquads: 2 },
+    { maxWave: 12, grid: 42, label: 'Operation',   enemyMult: 1.6, maxSquads: 3 },
+    { maxWave: Infinity, grid: 52, label: 'Campaign', enemyMult: 2.0, maxSquads: 3 }
   ];
   const sizeTier = SIZE_TIERS.find(t => wave <= t.maxWave) || SIZE_TIERS[SIZE_TIERS.length - 1];
   const gridWidth = sizeTier.grid;
@@ -1373,9 +1446,12 @@ export function newEndlessBattle(loadout, wave = 1) {
   // Generate fallback terrain
   const terrain = generateEndlessTerrain(gridWidth, gridHeight, wave, seed);
 
-  // Hero starts at bottom center
+  // Staging depth for off-map spawn (wave 1 only)
+  const stageDepth = wave === 1 ? Math.round(mapHeight * 0.1) : 0;
+
+  // Hero position: wave 1 starts off-map (behind bottom edge), later waves on-map
   const heroX = mapWidth / 2;
-  const heroY = mapHeight - CELL_SIZE * 3;
+  const heroY = wave === 1 ? mapHeight + stageDepth / 2 : mapHeight - CELL_SIZE * 3;
 
   // Get vehicle stats from loadout
   const vehicleId = loadout?.vehicle || 'abrams';
@@ -1383,6 +1459,7 @@ export function newEndlessBattle(loadout, wave = 1) {
 
   // Default hero stats (heavy tank feel — slow, powerful)
   const heroStats = {
+    id: vehicleId,
     hp: vehicleDef?.hp || 200,
     speed: 70,         // Slow tank: positioning matters
     damage: vehicleDef?.damage || 40,
@@ -1425,6 +1502,7 @@ export function newEndlessBattle(loadout, wave = 1) {
 
     // Difficulty scaling from map size tier
     sizeTier: sizeTier.label,
+    _sizeTier: sizeTier,
     enemyMult: sizeTier.enemyMult,
 
     // Map size in pixels
@@ -1447,6 +1525,7 @@ export function newEndlessBattle(loadout, wave = 1) {
 
     // Hero (player's tank)
     hero: {
+      id: `hero_${Date.now()}`,
       x: heroX,
       y: heroY,
       angle: -Math.PI / 2,  // Face UP (north)
@@ -1457,6 +1536,7 @@ export function newEndlessBattle(loadout, wave = 1) {
       fireRate: heroStats.fireRate,
       lastShot: 0,
       unitId: vehicleId,
+      unitName: { rank: 'LT', surname: 'Commander', display: 'LT Commander' },
       variantId: loadout?.variant || 'default',
       isHero: true,
       animId: `hero-${vehicleId}-${Date.now()}`,
@@ -1464,11 +1544,18 @@ export function newEndlessBattle(loadout, wave = 1) {
       lastX: heroX,
       lastY: heroY,
       hullAngle: -Math.PI / 2,
-      targetHullAngle: -Math.PI / 2
+      targetHullAngle: -Math.PI / 2,
+      _currentSpeed: heroStats.speed,
+      viewRange: UNIT_COMBAT_STATS[vehicleId]?.viewRange || 950,
+      viewCone: 360,
+      _awareness: 0.6
     },
 
-    // Test squad — AI-controlled allies
-    units: createEndlessSquad(heroX, heroY, mapWidth, mapHeight, CELL_SIZE),
+    // Test squad — AI-controlled allies (spawned off-map at staging position)
+    units: (resetNameGenerator(), createEndlessSquad(heroX, heroY, mapWidth, mapHeight, CELL_SIZE, terrainMap, stageDepth)),
+
+    // Reserve pool — available units for swapping during deployment
+    reservePool: null,  // Populated after object creation (needs name generator state)
 
     // Input state
     keys: { w: false, a: false, s: false, d: false },
@@ -1495,13 +1582,54 @@ export function newEndlessBattle(loadout, wave = 1) {
     kills: 0,
 
     // Command UI feedback
-    commandFeedback: null
+    commandFeedback: null,
+
+    // Deployment phase (wave 1 only — later waves spawn mid-combat)
+    phase: wave === 1 ? 'deploying' : 'active',
+    deployReady: { blue: wave !== 1, red: wave !== 1 },
+    countdownStart: null,
+    playMode: 'unit',              // 'unit' | 'sgt' | 'cmd' (only 'unit' implemented)
+    stageDepth,
+    deployZones: null  // Set below
+  };
+
+  // Build deployment zones: 3 zones per edge (ALPHA / BRAVO / CHARLIE)
+  const zoneNames = ['ALPHA', 'BRAVO', 'CHARLIE'];
+  const zoneW = mapWidth / 3;
+  battle.deployZones = {
+    blue: zoneNames.map((name, i) => ({
+      name,
+      x: i * zoneW,
+      y: mapHeight - CELL_SIZE * 2,
+      width: zoneW,
+      height: CELL_SIZE * 2,
+      units: [],
+      selected: false
+    })),
+    red: zoneNames.map((name, i) => ({
+      name,
+      x: i * zoneW,
+      y: 0,
+      width: zoneW,
+      height: CELL_SIZE * 2,
+      units: [],
+      selected: false
+    }))
   };
 
   // Initialize unified AI pipeline
   const blueZone = { x: battle.mapWidth / 2, y: battle.mapHeight - battle.cellSize * 3, radius: 100 };
   const redZone = { x: battle.mapWidth / 2, y: battle.cellSize * 3, radius: 100 };
-  initBattleAI(battle, { allyPreset: 'endlessAlly', enemyPreset: 'endlessEnemy', blueSpawnZone: blueZone, redSpawnZone: redZone, insigniaSetId: Game.settings.insigniaSetId });
+  initBattleAI(battle, {
+    allyPreset: 'endlessAlly', enemyPreset: 'endlessEnemy',
+    blueSpawnZone: blueZone, redSpawnZone: redZone,
+    insigniaSetId: Game.settings.insigniaSetId,
+    maxSquads: sizeTier.maxSquads,
+    redCommanderOrigin: Game.settings?.redCommanderOrigin
+  });
+
+  // Generate reserve pool (name generator continues from squad names)
+  battle.reservePool = createReservePool();
 
   return battle;
 }
@@ -1547,6 +1675,8 @@ const DEFAULT_FIRE_RANGE_CONFIG = {
       ]
     }
   ],
+  blueCommander: { personality: {} },
+  redCommander: { personality: {} },
   mapSize: 'medium',
   debug: {
     blueInvincible: false,
@@ -1686,6 +1816,7 @@ export function newFireRangeBattle(config) {
           viewCone: stats.viewCone || 140,
           lastShot: 0,
           angle: -Math.PI / 2,
+          hullAngle: -Math.PI / 2,
           dead: false,
           // Brain fields from config
           command: slot.command || 'advance',
@@ -1753,6 +1884,7 @@ export function newFireRangeBattle(config) {
           viewRange: stats ? stats.viewRange : (FR_UNIT_STATS[enemyDef?.unitId]?.viewRange || 200),
           viewCone: stats ? stats.viewCone : (FR_UNIT_STATS[enemyDef?.unitId]?.viewCone || 140),
           angle: Math.PI / 2,
+          hullAngle: Math.PI / 2,
           dead: false,
           stability: 0,
           recentDamageFrom: {},
@@ -1794,13 +1926,13 @@ export function newFireRangeBattle(config) {
     blueLeader.isLeader = true;
   }
 
-  // Leader promotion: if blue leader exists, use as hero
+  // Hero: only include as a combatant if config.includeHero is true (default: observer)
   let battleHero = null;
-  if (blueLeader) {
+  if (config.includeHero && blueLeader) {
     blueLeader.isHero = true;
     battleHero = blueLeader;
   } else {
-    // Observer hero — hidden far off-map, won't be targeted
+    // Observer hero — hidden far off-map, won't be targeted or rendered
     battleHero = {
       x: -9999, y: -9999,
       hp: 99999, maxHp: 99999,
@@ -1872,6 +2004,13 @@ export function newFireRangeBattle(config) {
     result: null,
     commandFeedback: null,
 
+    // Commander UI state
+    _commanderUI: {
+      selectedSquadId: null,
+      pendingOrder: null,       // Objective type awaiting map click (for positional orders)
+      visible: true
+    },
+
     // Debug telemetry
     debugOverlay: false,
     showTerrainGrid: 0,
@@ -1884,7 +2023,11 @@ export function newFireRangeBattle(config) {
     enemyPreset: 'campaignEnemy',
     blueSpawnZone,
     redSpawnZone,
-    insigniaSetId: Game.settings.insigniaSetId
+    insigniaSetId: Game.settings.insigniaSetId,
+    config: {
+      blueCommander: config.blueCommander,
+      redCommander: config.redCommander
+    }
   });
 
   // Restore squad-specific sergeant configs
@@ -1902,8 +2045,8 @@ export function newFireRangeBattle(config) {
     }
   }
 
-  // Restore _teamCommanders (fire range explicitly sets leaders)
-  battle._teamCommanders = {
+  // Track team leaders (unit-level, separate from commander AI objects)
+  battle._teamLeaders = {
     blue: blueLeader || null,
     red: enemyLeader || null
   };

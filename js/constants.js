@@ -625,18 +625,26 @@ export const UNIT_PROJECTILES = {
 // viewRange (pixels): how far the crew can see (independent of fire range)
 // viewCone (degrees): forward vision cone angle (peripheral/rear zones computed from this)
 export const UNIT_COMBAT_STATS = {
-  infantry:  { range: 400, speed: 30, isAir: false, viewRange: 700, viewCone: 140 },
-  medic:     { range: 300, speed: 25, isAir: false, viewRange: 600, viewCone: 150 },
-  specops:   { range: 500, speed: 35, isAir: false, viewRange: 900, viewCone: 130 },
-  stinger:   { range: 550, speed: 30, isAir: false, viewRange: 750, viewCone: 140 },
-  jeep:      { range: 450, speed: 60, isAir: false, viewRange: 800, viewCone: 120 },
-  humvee:    { range: 500, speed: 50, isAir: false, viewRange: 800, viewCone: 130 },
-  sherman:   { range: 550, speed: 35, isAir: false, viewRange: 850, viewCone: 100 },
-  tiger:     { range: 600, speed: 25, isAir: false, viewRange: 900, viewCone: 100 },
-  abrams:    { range: 700, speed: 40, isAir: false, viewRange: 950, viewCone: 110 },
-  howitzer:  { range: 900, speed: 20, isAir: false, viewRange: 500, viewCone: 140 },
-  drone:     { range: 500, speed: 70, isAir: true,  viewRange: 1000, viewCone: 160 },
-  apache:    { range: 700, speed: 50, isAir: true,  viewRange: 1100, viewCone: 160 }
+  // hullRate/turretRate in deg/s (max), fireTolerance in deg, turretArc in deg
+  // turretPivot: {x,y} offset from center in sprite-local coords
+  // turretAccel: deg/s² — how fast turret accelerates/decelerates (trapezoidal profile)
+  //   High = snappy (infantry aiming). Low = heavy turret inertia (tiger).
+  // zeroIn: seconds to reach full stability from 0. Discipline modulates ±20%.
+  // accel/decel: exponential lerp rates for hull movement (higher = snappier).
+  //   Infantry: instant sprint response. Jeep: high p/w, launches fast. Tiger: sluggish.
+  // baseAccuracy: weapon system's inherent precision ceiling (0-1). Upgrades/crew can push higher.
+  infantry:  { range: 400, speed: 50,  accel: 2.5, decel: 4.0,  isAir: false, viewRange: 550, viewCone: 140, hullRate: 1080, turretRate: 720,  turretAccel: 3600, fireTolerance: 15, turretArc: 360, zeroIn: 2.5, baseAccuracy: 0.82, turretPivot: { x: 0, y: 0 },  hullParts: ['boots', 'legs'],            turretParts: ['body', 'helmet', 'weapon'] },
+  medic:     { range: 300, speed: 45,  accel: 2.5, decel: 4.0,  isAir: false, viewRange: 450, viewCone: 150, hullRate: 1080, turretRate: 720,  turretAccel: 3600, fireTolerance: 15, turretArc: 360, zeroIn: 2.8, baseAccuracy: 0.75, turretPivot: { x: 0, y: 0 },  hullParts: ['boots', 'legs'],            turretParts: ['body', 'helmet', 'weapon'] },
+  specops:   { range: 500, speed: 55,  accel: 3.0, decel: 4.5,  isAir: false, viewRange: 800, viewCone: 130, hullRate: 1080, turretRate: 720,  turretAccel: 3600, fireTolerance: 15, turretArc: 360, zeroIn: 2.0, baseAccuracy: 0.90, turretPivot: { x: 0, y: 0 },  hullParts: ['boots', 'legs'],            turretParts: ['body', 'helmet', 'weapon'] },
+  stinger:   { range: 550, speed: 45,  accel: 2.5, decel: 4.0,  isAir: false, viewRange: 600, viewCone: 140, hullRate: 1080, turretRate: 720,  turretAccel: 3600, fireTolerance: 15, turretArc: 360, zeroIn: 3.0, baseAccuracy: 0.80, turretPivot: { x: 0, y: 0 },  hullParts: ['boots', 'legs'],            turretParts: ['body', 'helmet', 'weapon'] },
+  jeep:      { range: 450, speed: 120, accel: 5.0, decel: 3.5,  isAir: false, viewRange: 700, viewCone: 120, hullRate: 180,  turretRate: 360,  turretAccel: 1200, fireTolerance: 10, turretArc: 360, zeroIn: 3.5, baseAccuracy: 0.72, turretPivot: { x: 0, y: 2 },  hullParts: ['wheels', 'body', 'hood', 'seats', 'spare', 'detail'], turretParts: ['weapon'] },
+  humvee:    { range: 500, speed: 100, accel: 4.0, decel: 3.5,  isAir: false, viewRange: 700, viewCone: 130, hullRate: 180,  turretRate: 360,  turretAccel: 1200, fireTolerance: 10, turretArc: 360, zeroIn: 3.2, baseAccuracy: 0.78, turretPivot: { x: 0, y: -2 }, hullParts: ['wheels', 'body', 'hood', 'roof', 'detail'],           turretParts: ['turret', 'gun'] },
+  sherman:   { range: 550, speed: 60,  accel: 2.0, decel: 3.5,  isAir: false, viewRange: 750, viewCone: 100, hullRate: 90,   turretRate: 270,  turretAccel: 540,  fireTolerance: 5,  turretArc: 360, zeroIn: 3.0, baseAccuracy: 0.85, turretPivot: { x: 0, y: 2 },  hullParts: ['tracks', 'hull'],           turretParts: ['turret', 'gun', 'hatches'] },
+  tiger:     { range: 600, speed: 50,  accel: 1.5, decel: 3.0,  isAir: false, viewRange: 800, viewCone: 100, hullRate: 60,   turretRate: 180,  turretAccel: 360,  fireTolerance: 5,  turretArc: 360, zeroIn: 2.5, baseAccuracy: 0.88, turretPivot: { x: 0, y: 2 },  hullParts: ['tracks', 'hull'],           turretParts: ['turret', 'gun', 'hatches'] },
+  abrams:    { range: 700, speed: 55,  accel: 3.0, decel: 4.0,  isAir: false, viewRange: 850, viewCone: 110, hullRate: 108,  turretRate: 270,  turretAccel: 720,  fireTolerance: 5,  turretArc: 360, zeroIn: 2.0, baseAccuracy: 0.92, turretPivot: { x: 0, y: 1 },  hullParts: ['tracks', 'hull'],           turretParts: ['turret', 'gun', 'hatches'] },
+  howitzer:  { range: 900, speed: 30,  accel: 1.2, decel: 2.5,  isAir: false, viewRange: 400, viewCone: 140, hullRate: 45,   turretRate: 120,  turretAccel: 240,  fireTolerance: 3,  turretArc: 360, zeroIn: 4.0, baseAccuracy: 0.70, turretPivot: { x: 0, y: 3 },  hullParts: ['tracks', 'hull'],           turretParts: ['turret', 'gun'] },
+  drone:     { range: 500, speed: 120, accel: 6.0, decel: 6.0,  isAir: true,  viewRange: 900, viewCone: 160, hullRate: 360,  turretRate: 360,  turretAccel: 1800, fireTolerance: 10, turretArc: 360, zeroIn: 1.5, baseAccuracy: 0.80, turretPivot: { x: 0, y: 0 },  hullParts: [],                           turretParts: [] },
+  apache:    { range: 700, speed: 130, accel: 4.0, decel: 5.0,  isAir: true,  viewRange: 900, viewCone: 160, hullRate: 270,  turretRate: 360,  turretAccel: 1440, fireTolerance: 10, turretArc: 360, zeroIn: 1.8, baseAccuracy: 0.85, turretPivot: { x: 0, y: 0 },  hullParts: [],                           turretParts: [] }
 };
 
 // Unit descriptions for details panel
@@ -1760,3 +1768,45 @@ export const SYSTEM_DEFINITIONS = {
     appliesTo: ['turret', 'fuselage', 'rotor']
   }
 };
+
+// ═══════════════════════════════════════════════════════════════
+// CREW SYSTEM
+// ═══════════════════════════════════════════════════════════════
+
+// Crew slot definitions per vehicle type
+export const CREW_SCHEMAS = {
+  jeep:     ['tc', 'driver', 'gunner'],
+  humvee:   ['tc', 'driver', 'gunner'],
+  sherman:  ['tc', 'gunner', 'driver'],
+  tiger:    ['tc', 'gunner', 'driver'],
+  abrams:   ['tc', 'gunner', 'driver'],
+  howitzer: ['tc', 'gunner'],
+  infantry: ['self'],
+  medic:    ['self'],
+  specops:  ['self'],
+  stinger:  ['self']
+};
+
+// Rank progression table — CPL is the first NCO rank (E-4 NCO track)
+export const RANK_TABLE = [
+  { grade: 'E-1', abbr: 'PVT', title: 'Private',             xp: 0,    nco: false },
+  { grade: 'E-2', abbr: 'PV2', title: 'Private 2nd Class',   xp: 50,   nco: false },
+  { grade: 'E-3', abbr: 'PFC', title: 'Private First Class', xp: 150,  nco: false },
+  { grade: 'E-4', abbr: 'SPC', title: 'Specialist',          xp: 350,  nco: false },
+  { grade: 'E-4', abbr: 'CPL', title: 'Corporal',            xp: 500,  nco: true  },
+  { grade: 'E-5', abbr: 'SGT', title: 'Sergeant',            xp: 700,  nco: true  },
+  { grade: 'E-6', abbr: 'SSG', title: 'Staff Sergeant',      xp: 1000, nco: true  },
+  { grade: 'E-7', abbr: 'SFC', title: 'Sgt First Class',     xp: 1500, nco: true  },
+  { grade: 'E-8', abbr: 'MSG', title: 'Master Sergeant',     xp: 2200, nco: true  },
+  { grade: 'E-9', abbr: 'SGM', title: 'Sergeant Major',      xp: 3000, nco: true  }
+];
+
+// Infantry specializations
+export const INFANTRY_MOS = {
+  rifleman:     { label: 'Rifleman',     special: null },
+  medic:        { label: 'Medic',        special: 'heal' },
+  engineer:     { label: 'Engineer',     special: 'repair' },
+  heavy_gunner: { label: 'Heavy Gunner', special: 'suppress' }
+};
+
+export const VEHICLE_ROLES = ['tc', 'gunner', 'driver'];
