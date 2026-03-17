@@ -5493,7 +5493,10 @@ function computeBattleStats(b) {
   const log = b._debugLog || [];
   const unitMap = {};
 
-  // Build unit lookup from both teams
+  // Build unit lookup from both teams (include hero)
+  if (b.hero && !b.hero.observer) {
+    unitMap[b.hero.id] = { id: b.hero.id, team: Team.BLUE, kills: 0, damage: 0, shots: 0, hits: 0, alive: !b.hero.dead };
+  }
   for (const u of (b.units || [])) {
     unitMap[u.id] = { id: u.id, team: Team.BLUE, kills: 0, damage: 0, shots: 0, hits: 0, alive: !u.dead };
   }

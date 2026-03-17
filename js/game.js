@@ -4543,8 +4543,8 @@ function _stampRosterData(b) {
       }
     }
 
-    // Vehicle with roster link
-    if (unit._vehicleId) {
+    // Vehicle with roster link (or hero vehicle)
+    if (unit._vehicleId || unit.isHero) {
       const crew = getCrewForVehicle(unit.id);
       // Store crew soldier IDs on the unit
       unit._crewSoldierIds = {};
@@ -4675,9 +4675,10 @@ function _processPostBattle(b, result) {
       _processSoldier(soldier, metrics, unit, null);
     }
 
-    // Vehicle durability + crew
-    if (unit._vehicleId) {
-      const vehicle = getVehicle(unit._vehicleId);
+    // Vehicle durability + crew (including hero vehicle)
+    if (unit._vehicleId || (unit.isHero && unit._crewSoldierIds)) {
+      const vehicle = unit._vehicleId ? getVehicle(unit._vehicleId) : null;
+      // Update persistent vehicle durability (if it exists)
       if (vehicle) {
         if (unit.dead) {
           vehicle.status = 'destroyed';
@@ -4687,10 +4688,11 @@ function _processPostBattle(b, result) {
           if (vehicle.hpPercent < 0.3) vehicle.status = 'damaged';
         }
         vehicle.battlesServed++;
+      }
 
-        // Process each crew member
-        if (unit._crewSoldierIds) {
-          const vehCtx = { vehicleId: unit._vehicleId, unitId: unit.unitId };
+      // Process crew members (works for roster vehicles AND hero vehicle)
+      if (unit._crewSoldierIds) {
+          const vehCtx = { vehicleId: unit._vehicleId || unit.id, unitId: unit.unitId };
           for (const [slot, soldierId] of Object.entries(unit._crewSoldierIds)) {
             const crewSoldier = getSoldier(soldierId);
             const metrics = b._soldierMetrics.get(soldierId);
@@ -4712,7 +4714,7 @@ function _processPostBattle(b, result) {
                 battleScore: 0, mmrBefore: crewMmrBefore, mmrAfter: crewMmrBefore, mmrDelta: 0,
                 streak: 0, rankBefore: crewSoldier?.rankIndex || 0, rankAfter: crewSoldier?.rankIndex || 0,
                 promoted: false, demoted: false, heroics: [], commendationsEarned: [],
-                vehicleId: unit._vehicleId, vehicleUnitId: unit.unitId, crewSlot: slot
+                vehicleId: unit._vehicleId || unit.id, vehicleUnitId: unit.unitId, crewSlot: slot
               });
             } else {
               _processSoldier(crewSoldier, metrics, unit, { ...vehCtx, slot });
@@ -4721,7 +4723,6 @@ function _processPostBattle(b, result) {
         }
       }
     }
-  }
 
   // Store progression results for the results screen
   if (Game.endless) {
