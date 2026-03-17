@@ -63,7 +63,7 @@ import { drawMinimap } from './minimap.js';
 import { toggleDebugPanel, debugInspectAt, isDebugPanelVisible, destroyDebugPanel } from './debug-panel.js';
 import { logEvent, EventCategory, EventSeverity } from './battle-log.js';
 import { isCrewMode, drawCrewLineup, drawCrewAvailable, drawCrewCard, handleLineupClick, handleSectionHeaderClick, handleCrewAvailableClick, handleCrewAddClick, handlePoolTabClick, handleMotorPoolClick, handleCrewTransfer, clearCrewSelection } from './deploy-crew.js';
-import { getSoldier, getCrewForVehicle, saveRoster, saveVehicles, getVehicle, healAllSoldiers, repairAllVehicles, computePPB, detectHeroics, recordBattlePPB, applyPromotion, applyDemotion } from './roster.js';
+import { getSoldier, getCrewForVehicle, saveRoster, saveVehicles, getVehicle, healAllSoldiers, repairAllVehicles, computeBattleScore, detectHeroics, recordBattleScore, applyPromotion, applyDemotion } from './roster.js';
 import { getEffectivePersonality } from './crew.js';
 import { initCMDMode, updateCMDCamera, drawCMDOverlay, handleCMDClick, handleCMDRightClick, handleCMDKey, shouldHeroRunAI } from './cmd-mode.js';
 import { drawPresetPanel, applyPreset } from './loadouts.js';
@@ -4611,9 +4611,9 @@ function _processPostBattle(b, result) {
       if (!soldier.heroicActions.includes(h)) soldier.heroicActions.push(h);
     }
 
-    // Compute PPB and record
-    const ppb = computePPB(metrics, result);
-    recordBattlePPB(soldier, ppb, metrics);
+    // Compute battle score and update MMR
+    const score = computeBattleScore(metrics, result);
+    recordBattleScore(soldier, score, metrics);
 
     // Update lifetime stats
     soldier.kills = (soldier.kills || 0) + (metrics.kills || 0);

@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { Game } from './state.js';
-import { RANK_TABLE, CREW_SCHEMAS, VEHICLE_ROLES, PPB_WEIGHTS, PPB_WINDOW, HEROIC_ACTIONS, COMMENDATIONS } from './constants.js';
+import { RANK_TABLE, CREW_SCHEMAS, VEHICLE_ROLES, SCORE_WEIGHTS, STREAK_CONFIG, HEROIC_ACTIONS, COMMENDATIONS } from './constants.js';
 
 // ─── Name pools ───────────────────────────────────────────────
 
@@ -90,9 +90,10 @@ export function createSoldier(opts) {
     woundedBattlesLeft: 0,
 
     traits: [],
-    commendations: [],      // earned commendation IDs (permanent PPB floor boosts)
-    ppbHistory: [],          // rolling window of PPB scores (last N battles)
-    ppbFloor: 0,             // permanent minimum PPB from commendations (ratchet)
+    commendations: [],      // earned commendation IDs (permanent MMR floor boosts)
+    mmr: 0,                  // cumulative rating — goes up/down each battle (RL-style)
+    mmrFloor: 0,             // permanent minimum MMR from commendations (ratchet)
+    streak: 0,               // consecutive "good" battle count (amplifies gains)
     heroicActions: [],       // lifetime heroic action IDs earned
     bonds: {},
 
@@ -249,45 +250,39 @@ export function getRankName(soldier) {
 }
 
 /**
- * Get the soldier's rolling average PPB (Points Per Battle).
- * Floored by commendation bonus (can never drop below ppbFloor).
+ * Get the soldier's effective MMR (floored by commendation ratchet).
  */
-export function getRollingPPB(soldier) {
-  const history = soldier.ppbHistory || [];
-  if (history.length === 0) return soldier.ppbFloor || 0;
-  const window = history.slice(-PPB_WINDOW);
-  const avg = window.reduce((sum, v) => sum + v, 0) / window.length;
-  return Math.max(avg, soldier.ppbFloor || 0);
+export function getMMR(soldier) {
+  return Math.max(soldier.mmr || 0, soldier.mmrFloor || 0);
 }
 
 /**
  * Check if a soldier is eligible for promotion.
- * Requires rolling PPB to meet next rank threshold.
+ * MMR must meet next rank threshold.
  * Returns the new rank index if eligible, or null.
  */
 export function checkPromotion(soldier) {
   const nextIndex = soldier.rankIndex + 1;
   if (nextIndex >= RANK_TABLE.length) return null;
   const nextRank = RANK_TABLE[nextIndex];
-  const ppb = getRollingPPB(soldier);
-  return ppb >= nextRank.ppb ? nextIndex : null;
+  const mmr = getMMR(soldier);
+  return mmr >= nextRank.mmr ? nextIndex : null;
 }
 
 /**
  * Check if a soldier should be demoted.
- * Demotes if rolling PPB drops below current rank threshold.
+ * Demotes if MMR drops below current rank threshold.
  * Returns the new (lower) rank index, or null if no demotion.
  */
 export function checkDemotion(soldier) {
   if (soldier.rankIndex <= 0) return null;
   const currentRank = RANK_TABLE[soldier.rankIndex];
-  const ppb = getRollingPPB(soldier);
-  if (ppb < currentRank.ppb) {
-    // Find the highest rank this PPB still qualifies for
+  const mmr = getMMR(soldier);
+  if (mmr < currentRank.mmr) {
     for (let i = soldier.rankIndex - 1; i >= 0; i--) {
-      if (ppb >= RANK_TABLE[i].ppb) return i;
+      if (mmr >= RANK_TABLE[i].mmr) return i;
     }
-    return 0; // Demote to PVT
+    return 0;
   }
   return null;
 }
@@ -313,88 +308,100 @@ export function applyDemotion(soldier) {
 }
 
 /**
- * Record a battle's PPB score for a soldier.
- * Also checks and awards commendations.
+ * Record a battle's score for a soldier — RL-style cumulative MMR.
+ * Good performance raises MMR, bad performance lowers it.
+ * Streaks amplify gains.
  */
-export function recordBattlePPB(soldier, ppbScore, battleMetrics) {
-  if (!soldier.ppbHistory) soldier.ppbHistory = [];
-  soldier.ppbHistory.push(ppbScore);
-  // Trim to 2x window to keep history manageable
-  if (soldier.ppbHistory.length > PPB_WINDOW * 2) {
-    soldier.ppbHistory = soldier.ppbHistory.slice(-PPB_WINDOW);
+export function recordBattleScore(soldier, battleScore, battleMetrics) {
+  if (soldier.mmr === undefined) soldier.mmr = 0;
+  if (soldier.streak === undefined) soldier.streak = 0;
+
+  // Streak tracking
+  const isGood = battleScore >= STREAK_CONFIG.threshold;
+  if (isGood) {
+    soldier.streak = Math.min((soldier.streak || 0) + 1, STREAK_CONFIG.maxStreak);
+  } else {
+    soldier.streak = 0; // Reset on bad performance
   }
 
+  // Streak multiplier: 1.0 base + bonus per consecutive good battle
+  const streakMult = 1.0 + soldier.streak * STREAK_CONFIG.bonusPerStreak;
+
+  // Apply score to MMR (positive scores amplified by streak, negative scores applied directly)
+  if (battleScore > 0) {
+    soldier.mmr += Math.round(battleScore * streakMult * 10) / 10;
+  } else {
+    soldier.mmr += battleScore; // No streak multiplier on losses
+  }
+
+  // Floor: can never drop below commendation floor
+  soldier.mmr = Math.max(soldier.mmr, soldier.mmrFloor || 0);
+
   // Check commendations
-  _checkCommendations(soldier, ppbScore, battleMetrics);
+  _checkCommendations(soldier, battleScore, battleMetrics);
 }
 
 /**
  * Check and award commendations based on performance.
  */
-function _checkCommendations(soldier, ppbScore, metrics) {
+function _checkCommendations(soldier, battleScore, metrics) {
   if (!soldier.commendations) soldier.commendations = [];
   const earned = new Set(soldier.commendations);
-
-  const currentRankPPB = RANK_TABLE[soldier.rankIndex]?.ppb || 0;
-  const history = soldier.ppbHistory || [];
 
   // Combat Action: 10+ shots in one battle
   if (!earned.has('combatAction') && (metrics?.shotsFired || 0) >= 10) {
     soldier.commendations.push('combatAction');
-    soldier.ppbFloor = (soldier.ppbFloor || 0) + (COMMENDATIONS.combatAction?.floorBoost || 1);
+    soldier.mmrFloor = (soldier.mmrFloor || 0) + (COMMENDATIONS.combatAction?.floorBoost || 10);
   }
 
   // Purple Heart: survived below 30% HP
   if (!earned.has('purpleHeart') && !metrics?.died && (metrics?.hpPercent || 1) < 0.3) {
     soldier.commendations.push('purpleHeart');
-    soldier.ppbFloor = (soldier.ppbFloor || 0) + (COMMENDATIONS.purpleHeart?.floorBoost || 1);
+    soldier.mmrFloor = (soldier.mmrFloor || 0) + (COMMENDATIONS.purpleHeart?.floorBoost || 10);
   }
 
   // Veteran Service: 20+ battles
   if (!earned.has('veteranService') && (soldier.battlesServed || 0) >= 20) {
     soldier.commendations.push('veteranService');
-    soldier.ppbFloor = (soldier.ppbFloor || 0) + (COMMENDATIONS.veteranService?.floorBoost || 3);
+    soldier.mmrFloor = (soldier.mmrFloor || 0) + (COMMENDATIONS.veteranService?.floorBoost || 30);
   }
 
-  // Bronze Star: PPB > rank+10 for last 5 battles
-  if (!earned.has('bronzeStar') && history.length >= 5) {
-    const last5 = history.slice(-5);
-    if (last5.every(p => p > currentRankPPB + 10)) {
-      soldier.commendations.push('bronzeStar');
-      soldier.ppbFloor = (soldier.ppbFloor || 0) + (COMMENDATIONS.bronzeStar?.floorBoost || 2);
-    }
+  // Bronze Star: 3+ streak with score > 25
+  if (!earned.has('bronzeStar') && (soldier.streak || 0) >= 3 && battleScore > 25) {
+    soldier.commendations.push('bronzeStar');
+    soldier.mmrFloor = (soldier.mmrFloor || 0) + (COMMENDATIONS.bronzeStar?.floorBoost || 20);
   }
 
-  // Silver Star: PPB > rank+20 for last 3 battles
-  if (!earned.has('silverStar') && history.length >= 3) {
-    const last3 = history.slice(-3);
-    if (last3.every(p => p > currentRankPPB + 20)) {
-      soldier.commendations.push('silverStar');
-      soldier.ppbFloor = (soldier.ppbFloor || 0) + (COMMENDATIONS.silverStar?.floorBoost || 4);
-    }
+  // Silver Star: 3+ streak with score > 40
+  if (!earned.has('silverStar') && (soldier.streak || 0) >= 3 && battleScore > 40) {
+    soldier.commendations.push('silverStar');
+    soldier.mmrFloor = (soldier.mmrFloor || 0) + (COMMENDATIONS.silverStar?.floorBoost || 50);
   }
 }
 
 /**
- * Compute PPB score from battle metrics.
+ * Compute battle score from metrics — RL-style MMR delta.
+ * Positive = gained rating, negative = lost rating.
+ * NOTE: All weights are placeholder — needs playtesting
  */
-export function computePPB(metrics, result) {
-  let ppb = 0;
-  ppb += (metrics.kills || 0) * PPB_WEIGHTS.kill;
-  ppb += (metrics.shotsHit || 0) * PPB_WEIGHTS.hit;
-  ppb += (metrics.damageDealt || 0) * PPB_WEIGHTS.damageDealt;
-  ppb += (metrics.shotsFired || 0) * PPB_WEIGHTS.shotFired;
-  if (!metrics.died) ppb += PPB_WEIGHTS.survived;
-  if (result === 'win') ppb += PPB_WEIGHTS.waveCleared;
+export function computeBattleScore(metrics, result) {
+  let score = 0;
+  score += (metrics.kills || 0) * SCORE_WEIGHTS.kill;
+  score += (metrics.shotsHit || 0) * SCORE_WEIGHTS.hit;
+  score += (metrics.damageDealt || 0) * SCORE_WEIGHTS.damageDealt;
+  score += (metrics.shotsFired || 0) * SCORE_WEIGHTS.shotFired;
+  if (!metrics.died) score += SCORE_WEIGHTS.survived;
+  if (metrics.died) score += SCORE_WEIGHTS.died;
+  if (result === 'win') score += SCORE_WEIGHTS.waveCleared;
 
   // Heroic action bonuses
   if (metrics._heroics) {
     for (const actionId of metrics._heroics) {
-      ppb += HEROIC_ACTIONS[actionId]?.ppb || 0;
+      score += HEROIC_ACTIONS[actionId]?.score || 0;
     }
   }
 
-  return Math.round(ppb * 10) / 10; // One decimal
+  return Math.round(score * 10) / 10;
 }
 
 /**
@@ -458,11 +465,12 @@ export function debugDemote(soldier) {
   return false;
 }
 
-/** Reset a soldier's rank, PPB history, and commendations. */
+/** Reset a soldier's rank, MMR, and commendations. */
 export function debugClearRank(soldier) {
   soldier.rankIndex = 0;
-  soldier.ppbHistory = [];
-  soldier.ppbFloor = 0;
+  soldier.mmr = 0;
+  soldier.mmrFloor = 0;
+  soldier.streak = 0;
   soldier.commendations = [];
   soldier.heroicActions = [];
   soldier.experience = 0;
