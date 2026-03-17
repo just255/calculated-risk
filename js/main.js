@@ -1258,6 +1258,32 @@ document.getElementById('app').addEventListener('click', e => {
       Game.endless._record = Game.settings?.autoRecord !== false;
       fetchUnitVariants().then(() => { goto(State.ENDLESS_LOADOUT); render(); });
     }
+    else if (a === 'endless-next-wave') {
+      // Advance to next wave — reuse existing between→battle flow
+      if (Game.endless) {
+        Game.endless.wave++;
+        Game.endless.battle = null;
+        goto(State.ENDLESS_BATTLE);
+      }
+    }
+    else if (a === 'results-tab') {
+      // Switch between Battle Report and Rank Report tabs
+      if (Game.endless) {
+        Game.endless._resultTab = action.dataset.tab || 'battle';
+        render();
+      }
+    }
+    else if (a === 'results-expand-vehicle') {
+      // Toggle vehicle crew expand/collapse in battle report
+      const vehId = action.dataset.vehicle;
+      if (vehId) {
+        const el = document.getElementById(`veh-expand-${vehId}`);
+        if (el) el.classList.toggle('collapsed');
+        // Toggle arrow
+        const arrow = action.textContent.startsWith('\u25BC') ? '\u25B6' : '\u25BC';
+        action.textContent = action.textContent.replace(/^[\u25B6\u25BC]/, arrow);
+      }
+    }
     // Fire Range actions
     else if (a === 'fire-range') {
       Game.fireRange = newFireRangeRun();

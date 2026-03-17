@@ -9041,6 +9041,7 @@
       position: relative;
       background: #1a1a2e;
     }
+    .endless-battlefield.hero-crosshair { cursor: none; }
 
     .endless-controls {
       position: absolute;
@@ -9081,6 +9082,8 @@
     .kill-feed-entry.feed-death { border-color: #888; }
     .kill-feed-entry.feed-wave { border-color: var(--accent-orange); }
     .kill-feed-entry.feed-elite { border-color: var(--accent-yellow); }
+    .kill-feed-entry.feed-commander { border-color: #c44; color: #e66; font-style: italic; }
+    .kill-feed-entry.feed-critical { border-color: #f44; color: #f88; font-weight: 600; text-transform: uppercase; }
 
     @keyframes kill-feed-fade {
       0%, 70% { opacity: 1; }
@@ -9218,12 +9221,16 @@
     .endless-result-screen {
       display: flex;
       flex-direction: column;
-      align-items: center;
-      justify-content: center;
+      align-items: stretch;
       height: 100%;
       padding: 20px;
       background: var(--bg-dark);
+    }
+    .endless-result-screen .result-header,
+    .endless-result-screen .results-tab-bar,
+    .endless-result-screen .result-actions {
       text-align: center;
+      align-self: center;
     }
 
     .result-icon {
@@ -9273,6 +9280,147 @@
     .loot-lost {
       color: var(--accent-red);
     }
+
+    /* ── Results Screen (Battle + Rank Reports) ── */
+    .results-tab-bar {
+      display: flex; gap: 2px; margin-bottom: 12px;
+    }
+    .results-tab {
+      padding: 8px 20px; border: none; cursor: pointer;
+      background: rgba(255,255,255,0.05); color: var(--text-secondary);
+      font-family: 'Oxanium', monospace; font-size: 0.8rem; font-weight: bold;
+      border-radius: 4px 4px 0 0; transition: background 0.2s, color 0.2s;
+    }
+    .results-tab:hover { background: rgba(255,255,255,0.1); }
+    .results-tab.active {
+      background: rgba(74,158,255,0.15); color: #4a9eff;
+      border-bottom: 2px solid #4a9eff;
+    }
+    .results-content {
+      flex: 1; overflow-y: auto;
+      padding: 0 4px; width: 100%;
+    }
+    .results-empty {
+      color: var(--text-secondary); text-align: center; padding: 20px;
+      font-size: 0.85rem;
+    }
+    .result-header.wave-clear h2 { color: var(--accent-green); }
+
+    /* Vehicle expand/collapse in battle report */
+    .vehicle-expandable { cursor: pointer; user-select: none; }
+    .vehicle-expandable:hover { color: #6ab8ff; }
+    .vehicle-crew-count { font-weight: normal; font-size: 0.65rem; color: var(--text-secondary); }
+    .vehicle-crew-rows.collapsed { display: none; }
+    .vehicle-result-group { margin-bottom: 8px; }
+
+    /* Rank up badge in battle report */
+    .rank-up-badge { color: #ffd700; font-size: 0.7rem; }
+
+    /* ── Rank Report — Soldier Card Grid ── */
+    .rank-report-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 10px; padding: 4px;
+    }
+    .soldier-card {
+      background: rgba(255,255,255,0.04); border-radius: 6px;
+      padding: 10px 12px; border-left: 3px solid rgba(74,158,255,0.3);
+      position: relative;
+    }
+    .soldier-card.sc-kia {
+      opacity: 0.45; border-left-color: var(--accent-red);
+    }
+    .soldier-card.sc-knocked-out {
+      opacity: 0.6; border-left-color: var(--accent-orange);
+    }
+    .vehicle-card {
+      border-left-color: rgba(74,222,128,0.3);
+    }
+    .vehicle-card.sc-kia { border-left-color: var(--accent-red); }
+
+    .sc-role-badge, .sc-crew-slot {
+      font-size: 0.6rem; padding: 1px 5px; border-radius: 3px;
+      background: rgba(100,160,250,0.15); color: #60a5fa;
+      font-family: 'Share Tech Mono', monospace;
+      display: inline-block; margin-bottom: 4px;
+    }
+    .sc-vehicle-name {
+      font-family: 'Oxanium', monospace; font-size: 0.85rem;
+      color: var(--accent-green); font-weight: bold; margin-bottom: 6px;
+    }
+    .sc-status-badge {
+      font-size: 0.6rem; padding: 1px 5px; border-radius: 3px;
+      font-family: 'Share Tech Mono', monospace;
+      display: inline-block; margin-left: 6px; float: right;
+    }
+    .sc-kia-badge { background: rgba(248,113,113,0.2); color: var(--accent-red); }
+    .sc-ko-badge { background: rgba(251,191,36,0.2); color: var(--accent-yellow); }
+
+    .sc-header {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    }
+    .sc-name {
+      font-family: 'Oxanium', monospace; font-size: 0.8rem;
+      color: var(--text-primary); font-weight: bold;
+    }
+    .sc-stats {
+      font-family: 'Share Tech Mono', monospace; font-size: 0.7rem;
+      color: var(--text-secondary); margin: 2px 0;
+    }
+    .sc-crew-row { padding: 4px 0; }
+    .sc-crew-row.sc-crew-dead { opacity: 0.4; }
+    .sc-crew-row.sc-crew-ko { opacity: 0.6; }
+    .sc-crew-divider {
+      border-top: 1px solid rgba(255,255,255,0.06); margin: 2px 0;
+    }
+    .streak-badge {
+      font-size: 0.7rem; color: #fb923c;
+    }
+    .mmr-delta {
+      margin-left: auto; font-family: 'Share Tech Mono', monospace;
+      font-size: 0.85rem; font-weight: bold;
+    }
+    .mmr-up { color: var(--accent-green); }
+    .mmr-down { color: var(--accent-red); }
+    .mmr-flat { color: var(--text-secondary); }
+
+    /* Rank change highlight */
+    .rank-change {
+      font-size: 0.75rem; font-weight: bold; margin-bottom: 4px;
+      font-family: 'Share Tech Mono', monospace;
+    }
+    .rank-change.promoted { color: #ffd700; }
+    .rank-change.demoted { color: var(--accent-red); }
+
+    /* Progress bar */
+    .rank-progress {
+      display: flex; align-items: center; gap: 6px; margin: 4px 0;
+    }
+    .rank-progress-label {
+      font-size: 0.6rem; color: var(--text-secondary);
+      font-family: 'Share Tech Mono', monospace; min-width: 24px;
+    }
+    .rank-progress-bar {
+      flex: 1; height: 6px; background: rgba(255,255,255,0.08);
+      border-radius: 3px; overflow: hidden;
+    }
+    .rank-progress-fill {
+      height: 100%; background: linear-gradient(90deg, #4a9eff, #60a5fa);
+      border-radius: 3px; transition: width 0.3s;
+    }
+    .rank-mmr {
+      font-size: 0.6rem; color: var(--text-secondary);
+      font-family: 'Share Tech Mono', monospace; min-width: 30px; text-align: right;
+    }
+
+    /* Heroic badges */
+    .rank-heroics { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+    .heroic-badge {
+      font-size: 0.55rem; padding: 1px 6px; border-radius: 3px;
+      background: rgba(74,222,128,0.15); color: var(--accent-green);
+      font-family: 'Oxanium', monospace;
+    }
+    .comm-badge { font-size: 0.7rem; }
 
     .loot-gained {
       color: var(--accent-green);
@@ -9382,6 +9530,16 @@
       padding: 6px 8px 8px;
       background: rgba(255,255,255,0.02);
       border-top: 1px solid rgba(255,255,255,0.05);
+    }
+    .fr-personality-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 4px;
+    }
+    .fr-personality-preset {
+      flex: 1;
+      max-width: 140px;
     }
     .fr-tgt-label {
       font-size: 0.55rem;
@@ -9629,6 +9787,21 @@
       margin-bottom: 2px;
       display: block;
     }
+    .fr-cmd-section {
+      margin-bottom: 8px;
+      padding: 6px 8px;
+      background: rgba(255,255,255,0.04);
+      border-radius: 4px;
+      border-left: 2px solid rgba(255,255,255,0.15);
+    }
+    .fr-cmd-section .fr-label {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      opacity: 0.6;
+      margin-bottom: 2px;
+      display: block;
+    }
     .fr-center-col {
       display: flex;
       flex-direction: column;
@@ -9710,6 +9883,73 @@
       color: #aaa;
       margin-left: 8px;
     }
+    /* Commander overlay */
+    .cmdr-overlay {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      z-index: 150;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      pointer-events: auto;
+      max-height: calc(100% - 16px);
+      overflow-y: auto;
+    }
+    .cmdr-squad-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .cmdr-sq-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      background: rgba(0,0,0,0.75);
+      border-radius: 3px;
+      cursor: pointer;
+      font: 600 11px/1 'Oxanium', monospace;
+      color: var(--text-secondary, #94a3b8);
+      min-width: 160px;
+    }
+    .cmdr-sq-row:hover { background: rgba(255,255,255,0.1); }
+    .cmdr-sq-selected { background: rgba(255,255,255,0.15); color: var(--text-primary, #e2e8f0); }
+    .cmdr-sq-name { font-weight: 700; min-width: 24px; }
+    .cmdr-sq-strength { min-width: 30px; text-align: center; }
+    .cmdr-sq-phase { font-size: 10px; text-transform: uppercase; opacity: 0.7; }
+    .cmdr-sq-obj { font-size: 10px; text-transform: uppercase; opacity: 0.5; margin-left: auto; }
+    .cmdr-orders {
+      display: flex;
+      gap: 3px;
+      flex-wrap: wrap;
+    }
+    .cmdr-ord-btn {
+      padding: 4px 8px;
+      background: rgba(0,0,0,0.8);
+      border: 1px solid rgba(255,255,255,0.2);
+      color: var(--text-secondary, #94a3b8);
+      border-radius: 3px;
+      cursor: pointer;
+      font: 600 11px/1 'Oxanium', monospace;
+      min-width: 44px;
+      min-height: 32px;
+      text-align: center;
+    }
+    .cmdr-ord-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+    .cmdr-ord-active { border-color: var(--accent-green, #4ade80); color: var(--accent-green, #4ade80); }
+    .cmdr-ord-pending { border-color: var(--accent-yellow, #fbbf24); color: var(--accent-yellow, #fbbf24); animation: cmdr-pulse 1s infinite; }
+    @keyframes cmdr-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .cmdr-targeting {
+      padding: 4px 8px;
+      background: rgba(251,191,36,0.15);
+      border: 1px solid var(--accent-yellow, #fbbf24);
+      border-radius: 3px;
+      color: var(--accent-yellow, #fbbf24);
+      font: 600 11px/1 'Oxanium', monospace;
+      text-align: center;
+    }
+
     .fr-battle-controls {
       display: flex;
       justify-content: center;
@@ -9984,6 +10224,8 @@
     .replay-result { font-weight: bold; font-size: 1.1em; }
     .replay-mode { color: #aaa; font-size: 0.85em; padding: 1px 6px; background: #2a2a3e; border-radius: 3px; }
     .replay-seed { color: #666; font-family: monospace; }
+    .replay-card.debug-save { border-color: #fb923c44; }
+    .replay-debug-tag { color: #fb923c; font-size: 0.75em; font-weight: 600; padding: 1px 5px; background: #fb923c22; border: 1px solid #fb923c44; border-radius: 3px; text-transform: uppercase; letter-spacing: 0.5px; }
     .replay-card-body { display: flex; gap: 16px; color: #999; font-size: 0.9em; margin-bottom: 8px; }
     .replay-card-footer { display: flex; justify-content: space-between; align-items: center; }
     .replay-date { color: #555; font-size: 0.85em; }
@@ -10040,25 +10282,24 @@
 
   <script type="module" src="js/main.js"></script>
 
-  <!-- Service Worker disabled for development - uncomment for production
+  <!-- Service Worker — caches all static assets after first load -->
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js')
-        .then(reg => console.log('SW registered:', reg.scope))
+        .then(reg => {
+          console.log('SW registered:', reg.scope);
+          // When a new SW is waiting, tell it to activate immediately
+          if (reg.waiting) reg.waiting.postMessage('SKIP_WAITING');
+          reg.addEventListener('updatefound', () => {
+            const nw = reg.installing;
+            nw.addEventListener('statechange', () => {
+              if (nw.state === 'activated') {
+                console.log('SW updated — new cache active');
+              }
+            });
+          });
+        })
         .catch(err => console.log('SW registration failed:', err));
-    }
-  </script>
-  -->
-
-  <!-- Unregister any existing service workers (run once to clean up) -->
-  <script>
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistrations().then(registrations => {
-        registrations.forEach(reg => {
-          reg.unregister();
-          console.log('SW unregistered:', reg.scope);
-        });
-      });
     }
   </script>
 </body>

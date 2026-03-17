@@ -2,12 +2,14 @@
 // UI - HTML rendering functions
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, UnitType, UNITS, ENEMIES, UNIT_COSTS, H2H_BUDGET, VEHICLE_UNITS, TYPE_CHART, UNIT_PROJECTILES, PROJECTILES, UNIT_DESCRIPTIONS, CAMPAIGN_ERAS, CAMPAIGN_MOS, SquadOrder, TargetPriority, Formation, VEHICLE_CATEGORIES, ENDLESS_VEHICLES, PART_CATEGORY_CONFIG, SYSTEM_DEFINITIONS, UNIT_PART_SLOTS, UNIT_TYPE_MAP, Team, RANK_NAMES, INSIGNIA_SHAPE_TYPES } from './constants.js';
+import { State, SubState, HQTab, UnitType, UNITS, ENEMIES, UNIT_COSTS, H2H_BUDGET, VEHICLE_UNITS, TYPE_CHART, UNIT_PROJECTILES, PROJECTILES, UNIT_DESCRIPTIONS, CAMPAIGN_ERAS, CAMPAIGN_MOS, SquadOrder, TargetPriority, Formation, VEHICLE_CATEGORIES, ENDLESS_VEHICLES, PART_CATEGORY_CONFIG, SYSTEM_DEFINITIONS, UNIT_PART_SLOTS, UNIT_TYPE_MAP, Team, RANK_NAMES, INSIGNIA_SHAPE_TYPES, RANK_TABLE, HEROIC_ACTIONS } from './constants.js';
 import { Game } from './state.js';
 import { save } from './storage.js';
-import { getSkinSelectorData, setSkinPref, clearCache as clearSkinCache } from './skins.js';
+import { getSkinSelectorData, setSkinPref, clearCache as clearSkinCache, loadVariantData, getCachedVariant } from './skins.js';
 import { getSprite, hasSprite, loadPartSprites, compositeUnitSprite, getPartImage, loadVariant, renderVariant } from './sprites.js';
 import { FR_PRESET_LIST } from './fire-range-presets.js';
+import { Objective } from './commander.js';
+import { PERSONALITY_PRESETS } from './ai-pipeline.js';
 import { EntityRenderer } from './entity-renderer.js';
 import { INSIGNIA_PRESETS } from './insignia-presets.js';
 
@@ -3036,40 +3038,33 @@ export function getUnitVariants(unitId) {
 // VARIANT DATA FETCHING - Full variant data for parts system
 // ═══════════════════════════════════════════════════════════════
 
-let variantDataCache = {};
-
 /**
  * Fetch full variant data (parts, animations, etc.)
+ * Delegates to skins.js loadVariantData() — single source of truth for variant fetching.
  * @param {string} unitId - The unit ID (e.g., 'abrams')
  * @param {string} variantName - The variant name (e.g., 'default')
  * @returns {Promise<Object|null>} Variant data or null if not found
  */
 export async function fetchVariantData(unitId, variantName) {
   const key = `${unitId}-${variantName}`;
-  if (variantDataCache[key]) return variantDataCache[key];
-
-  try {
-    const res = await fetch(`/api/variants/${key}`);
-    if (!res.ok) return null;
-    const response = await res.json();
-    // API returns { manifest, data: versionData } - extract the data portion which has parts
-    const variantData = response.data || response;
-    variantDataCache[key] = variantData;
-    return variantData;
-  } catch (err) {
-    console.warn('[ui] Failed to fetch variant data:', err);
-    return null;
-  }
+  const data = await loadVariantData(key);
+  if (!data) return null;
+  // API returns { manifest, data: versionData } - extract the data portion which has parts
+  return data.data || data;
 }
 
 /**
- * Get cached variant data (synchronous)
+ * Get cached variant data (synchronous) — returns null if not yet loaded.
+ * Delegates to skins.js getCachedVariant().
  * @param {string} unitId - The unit ID
  * @param {string} variantName - The variant name
  * @returns {Object|null} Cached variant data or null
  */
 export function getCachedVariantData(unitId, variantName) {
-  return variantDataCache[`${unitId}-${variantName}`] || null;
+  const key = `${unitId}-${variantName}`;
+  const data = getCachedVariant(key);
+  if (!data) return null;
+  return data.data || data;
 }
 
 /**
@@ -4807,63 +4802,223 @@ function endlessResultHTML() {
   const e = Game.endless;
   if (!e) return '<div class="screen">Loading...</div>';
 
-  const isExit = e.result === 'exit';
-  const hadInsurance = e.insuranceCost > 0;
+  const isDeath = e.result === 'death';
+  const wave = e.exitWave || e.wave;
+  const tab = e._resultTab || 'rank';
+  const prog = e._progressionResults || [];
+
+  // Battle stats from the last battle
+  const b = e.battle || e._lastBattle;
+  const stats = b ? computeBattleStats(b) : null;
+
+  const tabClass = (t) => t === tab ? 'results-tab active' : 'results-tab';
 
   return `
     <div class="screen endless-result-screen">
-      <div class="result-icon">${isExit ? '✓' : '💀'}</div>
-      <div class="result-header ${isExit ? 'exit' : 'death'}">
-        <h2>${isExit ? 'EXTRACTION SUCCESSFUL' : 'RUN ENDED'}</h2>
-        <div class="result-wave">Reached Wave ${e.exitWave || e.wave}</div>
+      <div class="result-header ${isDeath ? 'death' : 'wave-clear'}">
+        <h2>${isDeath ? 'RUN ENDED' : `WAVE ${wave} COMPLETE`}</h2>
       </div>
 
-      <div class="result-loot">
-        <h4>${isExit ? 'Loot Secured' : (hadInsurance ? 'Insurance Claim' : 'Loot Lost')}</h4>
-        ${isExit ? `
-          <div class="loot-item">
-            <span>Scrap</span>
-            <span class="res-scrap">+⬡ ${e.loot.scrap}</span>
-          </div>
-          <div class="loot-item">
-            <span>Parts</span>
-            <span class="res-parts">+◈ ${e.loot.parts.length}</span>
-          </div>
-        ` : hadInsurance ? `
-          <div class="loot-item">
-            <span>Scrap collected</span>
-            <span class="loot-lost">-⬡ ${e.loot.scrap}</span>
-          </div>
-          <div class="loot-item">
-            <span>Vehicle</span>
-            <span style="color: var(--accent-green);">Protected</span>
-          </div>
-          <div class="loot-item">
-            <span>Insurance used</span>
-            <span style="color: var(--accent-yellow);">⬡ ${e.insuranceCost}</span>
-          </div>
-        ` : `
-          <div class="loot-item">
-            <span>Scrap</span>
-            <span class="loot-lost">-⬡ ${e.loot.scrap}</span>
-          </div>
-          <div class="loot-item">
-            <span>Vehicle</span>
-            <span class="loot-lost">Lost</span>
-          </div>
-        `}
+      <div class="results-tab-bar">
+        <button class="${tabClass('rank')}" data-action="results-tab" data-tab="rank">RANK REPORT</button>
+        <button class="${tabClass('battle')}" data-action="results-tab" data-tab="battle">BATTLE REPORT</button>
+      </div>
+
+      <div class="results-content">
+        ${tab === 'rank' ? _rankReportHTML(prog) : _battleReportHTML(stats, prog)}
       </div>
 
       <div class="result-actions">
-        <button class="menu-btn primary" data-action="endless-retry">
-          NEW RUN
-        </button>
-        <button class="menu-btn secondary" data-action="menu">
-          MAIN MENU
-        </button>
+        ${isDeath
+          ? `<button class="menu-btn primary" data-action="endless-retry">NEW RUN</button>`
+          : `<button class="menu-btn primary" data-action="endless-next-wave">NEXT WAVE</button>`
+        }
+        <button class="menu-btn secondary" data-action="menu">MAIN MENU</button>
       </div>
     </div>
   `;
+}
+
+function _battleReportHTML(stats, prog) {
+  if (!stats) return '<div class="results-empty">No battle data</div>';
+
+  const mins = Math.floor(stats.duration / 60);
+  const secs = Math.floor(stats.duration % 60);
+  const durStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+
+  // Team summary boxes (same as fire range)
+  const teamBox = (label, cls, t) => `
+    <div class="fr-team-box ${cls}">
+      <h3>${label}</h3>
+      <div class="fr-tstat">Survivors: <span>${t.survivors} / ${t.total}</span></div>
+      <div class="fr-tstat">Kills: <span>${t.kills}</span></div>
+      <div class="fr-tstat">Damage: <span>${t.damage}</span></div>
+      <div class="fr-tstat">Accuracy: <span>${t.accuracy}%</span></div>
+    </div>`;
+
+  // Per-unit table rows
+  const headerRow = '<tr><th>Unit</th><th>Kills</th><th>Dmg</th><th>Shots</th><th>Hits</th><th>Acc</th><th>Status</th></tr>';
+
+  const blueUnits = stats.units.filter(u => u.team === Team.BLUE);
+  const redUnits = stats.units.filter(u => u.team === Team.RED);
+
+  // Build a lookup from battle unit ID → display name using battle object
+  const b = Game.endless?.battle || Game.endless?._lastBattle;
+  const nameMap = {};
+  if (b) {
+    for (const unit of (b.units || [])) {
+      nameMap[unit.id] = typeof unit.unitName === 'string' ? unit.unitName : (unit.unitName?.display || unit.id);
+    }
+    // Hero
+    if (b.hero) {
+      nameMap[b.hero.id] = typeof b.hero.unitName === 'string' ? b.hero.unitName
+        : (b.hero.unitName?.display || 'Commander');
+    }
+  }
+  // Enemy: show unit type instead of raw ID
+  for (const unit of (b?.enemies || [])) {
+    const unitDef = UNITS.find(ud => ud.id === unit.unitId);
+    nameMap[unit.id] = unitDef?.name || unit.unitId || unit.id;
+  }
+
+  const unitRow = (u, teamCls) => {
+    const isMvp = stats.mvp && u.id === stats.mvp.id && u.kills > 0;
+    const deadCls = u.alive ? '' : ' dead-row';
+    const mvpCls = isMvp ? ' fr-mvp-row' : '';
+    const badge = isMvp ? '<span class="fr-mvp-badge">MVP</span>' : '';
+    const status = u.alive ? 'Alive' : '\u2620 KIA';
+    const displayName = nameMap[u.id] || u.id;
+    const progEntry = prog.find(p => p.soldierId && nameMap[u.id] === p.name);
+    const rankBadge = progEntry?.promoted ? ' <span class="rank-up-badge">\u2191</span>' : '';
+    return `<tr class="${teamCls}${deadCls}${mvpCls}">
+      <td>${displayName}${badge}${rankBadge}</td>
+      <td>${u.kills}</td><td>${u.damage}</td>
+      <td>${u.shots}</td><td>${u.hits}</td>
+      <td>${u.accuracy}%</td><td>${status}</td>
+    </tr>`;
+  };
+
+  return `
+    <div class="battle-report-content">
+      <div class="fr-duration">Battle Duration: ${durStr}</div>
+      <div class="fr-team-summary">
+        ${teamBox('YOUR SQUAD', 'blue', stats.blue)}
+        ${teamBox('ENEMY', 'red', stats.red)}
+      </div>
+      <div class="fr-results-tables">
+        <div class="fr-results-team-table">
+          <h4 class="fr-table-header blue">YOUR SQUAD</h4>
+          <table class="fr-results-table">${headerRow}${blueUnits.map(u => unitRow(u, 'blue-row')).join('')}</table>
+        </div>
+        <div class="fr-results-team-table">
+          <h4 class="fr-table-header red">ENEMY</h4>
+          <table class="fr-results-table">${headerRow}${redUnits.map(u => unitRow(u, 'red-row')).join('')}</table>
+        </div>
+      </div>
+    </div>`;
+}
+
+function _soldierCardContent(p) {
+  const deltaClass = p.mmrDelta > 0 ? 'mmr-up' : p.mmrDelta < 0 ? 'mmr-down' : 'mmr-flat';
+  const deltaSign = p.mmrDelta > 0 ? '+' : '';
+  const rankInfo = RANK_TABLE[p.rankAfter] || RANK_TABLE[0];
+  const nextRank = RANK_TABLE[p.rankAfter + 1];
+  const currentMMR = p.mmrAfter;
+  const currentThreshold = rankInfo.mmr || 0;
+  const nextThreshold = nextRank ? nextRank.mmr : currentThreshold + 100;
+  const progressPct = Math.min(100, Math.max(0,
+    ((currentMMR - currentThreshold) / (nextThreshold - currentThreshold)) * 100
+  ));
+
+  const heroicBadges = (p.heroics || []).map(h => {
+    const info = HEROIC_ACTIONS[h];
+    return info ? `<span class="heroic-badge" title="${info.desc}">${info.label}</span>` : '';
+  }).join('');
+
+  const commBadges = (p.commendationsEarned || []).map(c =>
+    `<span class="comm-badge" title="${c}">\ud83c\udfc5</span>`
+  ).join('');
+
+  const rankChangeHTML = p.promoted
+    ? `<div class="rank-change promoted">\u2191 ${RANK_TABLE[p.rankBefore]?.abbr || '?'} \u2192 ${rankInfo.abbr}</div>`
+    : p.demoted
+    ? `<div class="rank-change demoted">\u2193 ${RANK_TABLE[p.rankBefore]?.abbr || '?'} \u2192 ${rankInfo.abbr}</div>`
+    : '';
+
+  const acc = p.shotsFired > 0 ? Math.round((p.shotsHit / p.shotsFired) * 100) : 0;
+
+  return `
+    <div class="sc-header">
+      <span class="sc-name">${p.name}</span>
+      ${p.streak >= 2 ? `<span class="streak-badge">\ud83d\udd25\u00d7${p.streak}</span>` : ''}
+      ${commBadges}
+      <span class="mmr-delta ${deltaClass}">${deltaSign}${p.mmrDelta.toFixed(1)}</span>
+    </div>
+    <div class="sc-stats">K:${p.kills} H:${p.shotsHit} A:${acc}%</div>
+    ${rankChangeHTML}
+    <div class="rank-progress">
+      <div class="rank-progress-label">${rankInfo.abbr}</div>
+      <div class="rank-progress-bar">
+        <div class="rank-progress-fill" style="width:${progressPct.toFixed(0)}%"></div>
+      </div>
+      <div class="rank-progress-label">${nextRank ? nextRank.abbr : 'MAX'}</div>
+    </div>
+    ${heroicBadges ? `<div class="rank-heroics">${heroicBadges}</div>` : ''}
+  `;
+}
+
+function _rankReportHTML(prog) {
+  if (!prog || prog.length === 0) return '<div class="results-empty">No progression data</div>';
+
+  // Separate infantry from vehicle crew
+  const infantry = prog.filter(p => !p.vehicleId);
+  const vehicleGroups = {};
+  for (const p of prog) {
+    if (p.vehicleId) {
+      if (!vehicleGroups[p.vehicleId]) vehicleGroups[p.vehicleId] = { unitId: p.vehicleUnitId, crew: [] };
+      vehicleGroups[p.vehicleId].crew.push(p);
+    }
+  }
+
+  let cards = '';
+
+  // Infantry cards
+  for (const p of infantry) {
+    const statusCls = p.died ? ' sc-kia' : (p.hpPercent < 0.3 ? ' sc-knocked-out' : '');
+    const statusLabel = p.died ? '<span class="sc-status-badge sc-kia-badge">\u2620 KIA</span>'
+      : (p.hpPercent < 0.3 ? '<span class="sc-status-badge sc-ko-badge">KNOCKED OUT</span>' : '');
+    const roleLabel = { rifleman: 'RIFLE', medic: 'MEDIC', engineer: 'ENGR', heavy_gunner: 'HVY' }[p.role] || p.role;
+
+    cards += `<div class="soldier-card${statusCls}">
+      <div class="sc-role-badge">${roleLabel}</div>
+      ${statusLabel}
+      ${_soldierCardContent(p)}
+    </div>`;
+  }
+
+  // Vehicle cards (crew grouped inside)
+  for (const [vehId, veh] of Object.entries(vehicleGroups)) {
+    const unitDef = UNITS.find(u => u.id === veh.unitId);
+    const vehName = unitDef?.name || veh.unitId;
+    const allDead = veh.crew.every(c => c.died);
+    const vehCls = allDead ? ' sc-kia' : '';
+    const slotLabels = { tc: 'TC', gunner: 'GNR', driver: 'DRV' };
+
+    cards += `<div class="soldier-card vehicle-card${vehCls}">
+      <div class="sc-vehicle-name">${vehName}</div>
+      ${allDead ? '<span class="sc-status-badge sc-kia-badge">\u2620 DESTROYED</span>' : ''}
+      ${veh.crew.map(c => {
+        const slotLabel = slotLabels[c.crewSlot] || c.crewSlot;
+        const crewCls = c.died ? ' sc-crew-dead' : (c.hpPercent < 0.3 ? ' sc-crew-ko' : '');
+        return `<div class="sc-crew-row${crewCls}">
+          <div class="sc-crew-slot">${slotLabel}</div>
+          ${_soldierCardContent(c)}
+        </div>`;
+      }).join('<div class="sc-crew-divider"></div>')}
+    </div>`;
+  }
+
+  return `<div class="rank-report-grid">${cards}</div>`;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -4945,6 +5100,15 @@ function frSlotRow(slot, i, team, typeField, typeOptions, squadIdx) {
       <button class="fr-remove" data-action="fr-remove" data-team="${team}" data-idx="${i}" data-squad="${squadIdx}">x</button>
     </div>
     <div class="fr-slot-detail" style="${slot._expanded ? '' : 'display:none'}">
+      <div class="fr-personality-row">
+        <span class="fr-slider-label" title="Personality preset — fills trait sliders">PRESET</span>
+        <select class="fr-select fr-personality-preset" data-field="personalityPreset" data-team="${team}" data-idx="${i}" data-squad="${squadIdx}">
+          ${Object.entries(PERSONALITY_PRESETS).map(([k, v]) =>
+            `<option value="${k}" ${(slot.personalityPreset || 'random') === k ? 'selected' : ''}>${v.label}</option>`
+          ).join('')}
+          <option value="custom" ${slot.personalityPreset === 'custom' ? 'selected' : ''}>Custom</option>
+        </select>
+      </div>
       <div class="fr-slider-grid">${sliders}</div>
       <div class="fr-tgt-label">TARGETING</div>
       <div class="fr-slider-grid">${tgtSliders}</div>
@@ -4956,9 +5120,10 @@ const SGT_TRAITS = [
   { key: 'aggression',   label: 'AGG', title: 'Aggression — push vs hold' },
   { key: 'patience',     label: 'PAT', title: 'Patience — wait to assess before acting' },
   { key: 'courage',      label: 'CRG', title: 'Courage — tolerance for casualties before fallback' },
-  { key: 'discipline',   label: 'DIS', title: 'Discipline — tighter formations, longer regroup' },
-  { key: 'initiative',   label: 'INI', title: 'Initiative — flanking, improvisation' },
-  { key: 'awareness', label: 'AWR', title: 'Awareness — how often sergeant re-evaluates + death response speed' }
+  { key: 'discipline',   label: 'DIS', title: 'Discipline — commit to decisions, tighter formations' },
+  { key: 'initiative',   label: 'INI', title: 'Initiative — flanking, improvisation, faster adaptation' },
+  { key: 'awareness',    label: 'AWR', title: 'Awareness — how often sergeant re-evaluates + death response speed' },
+  { key: 'adaptability', label: 'ADP', title: 'Adaptability — willingness to change plans mid-fight' }
 ];
 
 function sgtSliders(sgt, team, squadIdx) {
@@ -4968,6 +5133,27 @@ function sgtSliders(sgt, team, squadIdx) {
     return `<div class="fr-slider-item" title="${t.title}">
       <span class="fr-slider-label">${t.label}</span>
       <input type="range" class="fr-slider fr-sgt-slider" data-sgt-trait="${t.key}" data-sgt-team="${team}"${sqAttr} min="0" max="1" step="0.05" value="${val}">
+      <span class="fr-slider-val">${val.toFixed(2)}</span>
+    </div>`;
+  }).join('');
+}
+
+const CMD_TRAITS = [
+  { key: 'aggression',   label: 'AGG', title: 'Aggression — offensive pressure vs caution' },
+  { key: 'patience',     label: 'PAT', title: 'Patience — wait before reassigning squads' },
+  { key: 'courage',      label: 'CRG', title: 'Courage — risk tolerance for objectives' },
+  { key: 'discipline',   label: 'DIS', title: 'Discipline — adherence to battle plan' },
+  { key: 'initiative',   label: 'INI', title: 'Initiative — evaluation frequency' },
+  { key: 'adaptability', label: 'ADP', title: 'Adaptability — willingness to change plans' }
+];
+
+function cmdSliders(cmdConfig, team) {
+  const p = cmdConfig?.personality || {};
+  return CMD_TRAITS.map(t => {
+    const val = p[t.key] ?? 0.5;
+    return `<div class="fr-slider-item" title="${t.title}">
+      <span class="fr-slider-label">${t.label}</span>
+      <input type="range" class="fr-slider fr-cmd-slider" data-cmd-trait="${t.key}" data-cmd-team="${team}" min="0" max="1" step="0.05" value="${val}">
       <span class="fr-slider-val">${val.toFixed(2)}</span>
     </div>`;
   }).join('');
@@ -5005,15 +5191,17 @@ export function replayTheaterHTML(replays, activeFilter = 'all') {
   } else {
     for (const r of filtered) {
       const waveMatch = r.result?.match(/^wave_(\d+)_complete$/);
-      const resultColor = r.result === 'blue_wins' ? '#4a9eff' : r.result === 'red_wins' ? '#ff4444' : r.result === 'victory' ? '#4a9eff' : r.result === 'defeat' ? '#ff4444' : r.result === 'draw' ? '#fbbf24' : r.result === 'exit' ? '#94a3b8' : waveMatch ? '#4ade80' : '#888';
-      const resultText = r.result === 'blue_wins' ? 'Blue Wins' : r.result === 'red_wins' ? 'Red Wins' : r.result === 'victory' ? 'Victory' : r.result === 'defeat' ? 'Defeat' : r.result === 'draw' ? 'Draw' : r.result === 'exit' ? 'Exited' : waveMatch ? `Wave ${waveMatch[1]}` : r.result || 'Unknown';
+      const resultColor = r.result === 'in_progress' ? '#fb923c' : r.result === 'blue_wins' ? '#4a9eff' : r.result === 'red_wins' ? '#ff4444' : r.result === 'victory' ? '#4a9eff' : r.result === 'defeat' ? '#ff4444' : r.result === 'draw' ? '#fbbf24' : r.result === 'exit' ? '#94a3b8' : waveMatch ? '#4ade80' : '#888';
+      const resultText = r.result === 'in_progress' ? 'In Progress' : r.result === 'blue_wins' ? 'Blue Wins' : r.result === 'red_wins' ? 'Red Wins' : r.result === 'victory' ? 'Victory' : r.result === 'defeat' ? 'Defeat' : r.result === 'draw' ? 'Draw' : r.result === 'exit' ? 'Exited' : waveMatch ? `Wave ${waveMatch[1]}` : r.result || 'Unknown';
       const modeLabel = r.mode === 'fire_range' ? 'Fire Range' : r.mode === 'campaign' ? 'Campaign' : r.mode === 'endless' ? 'Endless' : r.mode || 'Fire Range';
+      const debugTag = r.debugSave ? '<span class="replay-debug-tag">DEBUG</span>' : '';
       const duration = r.duration ? `${Math.floor(r.duration / 60)}m ${Math.floor(r.duration % 60)}s` : '?';
       const date = r.recordedAt ? new Date(r.recordedAt).toLocaleString() : '?';
       const unitCount = r.unitDefs ? r.unitDefs.length : '?';
-      cards += `<div class="replay-card">
+      cards += `<div class="replay-card${r.debugSave ? ' debug-save' : ''}">
         <div class="replay-card-header">
           <span class="replay-result" style="color:${resultColor}">${resultText}</span>
+          ${debugTag}
           <span class="replay-mode">${modeLabel}</span>
           <span class="replay-seed">Seed: ${r.seed || '?'}</span>
         </div>
@@ -5062,6 +5250,8 @@ export function replayPlaybackHTML() {
             <button data-action="replay-speed" data-speed="2">2x</button>
             <button data-action="replay-speed" data-speed="4">4x</button>
             <button data-action="replay-toggle-overlay">Overlay</button>
+            <button data-action="replay-toggle-vision">Vision</button>
+            <button data-action="replay-toggle-terrain-grid">Map</button>
             <button data-action="replay-exit" class="replay-exit-btn">Exit</button>
           </div>
         </div>
@@ -5093,9 +5283,14 @@ function fireRangeConfigHTML() {
 
   function teamPanel(team, squads, color, label, typeField, typeOptions) {
     const teamKey = team;
+    const cmdConfig = team === Team.BLUE ? cfg.blueCommander : cfg.redCommander;
     return `
       <div class="fr-team-panel fr-${teamKey}">
         <h2 class="fr-team-title" style="color:${color}">${label}</h2>
+        <div class="fr-cmd-section">
+          <span class="fr-label">Commander</span>
+          ${cmdSliders(cmdConfig, team)}
+        </div>
         ${squads.map((sq, si) => {
           const sqName = sq.name || SQUAD_NAMES[si] || ('Squad ' + (si + 1));
           const isExpanded = sq._expanded !== false;
@@ -5206,7 +5401,7 @@ function fireRangeBattleHTML() {
       <div class="fr-battle-hud">
         <div class="hud-left">
           <span class="fr-team-count blue">${blueAlive} / ${blueTotal} Blue</span>
-          <span class="fr-sgt-phase blue">${b._sergeants?.blue?.phase ?? '—'}</span>
+          <span class="fr-sgt-phase blue">${(b._squads || []).filter(s => s.team === 'blue').map(s => s.sergeant?.phase || '—').join(' | ')}</span>
         </div>
         <div class="hud-center">
           <span class="fr-status">${b.result ? (b.result === 'blue_wins' ? 'BLUE WINS' : b.result === 'draw' ? 'DRAW' : 'RED WINS') : 'BATTLE'}</span>
@@ -5214,7 +5409,7 @@ function fireRangeBattleHTML() {
           <span class="fr-zoom-display" title="Scroll wheel to zoom, M = fit map, F = follow leader"></span>
         </div>
         <div class="hud-right">
-          <span class="fr-sgt-phase red">${b._sergeants?.red?.phase ?? '—'}</span>
+          <span class="fr-sgt-phase red">${(b._squads || []).filter(s => s.team === 'red').map(s => s.sergeant?.phase || '—').join(' | ')}</span>
           <span class="fr-team-count red">${redAlive} / ${redTotal} Red</span>
         </div>
       </div>
@@ -5236,7 +5431,7 @@ function fireRangeBattleHTML() {
               }).join('')}
             </div>
             <button class="control-btn ${b.debugOverlay ? 'active' : ''}" data-action="fr-toggle-overlay">Overlay</button>
-            <button class="control-btn ${b.showTerrainGrid >= 1 ? 'active' : ''}" data-action="fr-toggle-terrain-grid">${b.showTerrainGrid === 1 ? 'Map:D' : b.showTerrainGrid === 2 ? 'Map:A*' : 'Map'}</button>
+            <button class="control-btn ${b.showTerrainGrid >= 1 ? 'active' : ''}" data-action="fr-toggle-terrain-grid">${['Map','Map:D','Map:A*','Map:W'][b.showTerrainGrid || 0]}</button>
             <button class="control-btn" data-action="fr-copy-log">Copy Log</button>
             <button class="control-btn" data-action="fr-toggle-report">Report</button>
             <button class="control-btn" data-action="fr-toggle-panel">Debug</button>
@@ -5320,6 +5515,8 @@ function computeBattleStats(b) {
       who.damage += (evt.dmg || 0);
     } else if (evt.type === 'kill') {
       who.kills++;
+      who.hits++;  // A kill IS a hit
+      who.damage += (evt.dmg || 0);
     }
   }
 
@@ -5457,4 +5654,91 @@ export function drawCommandUI(bf, b) {
       feedbackEl.style.opacity = 1 - (age / 2000);
     }
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// COMMANDER OVERLAY — in-battle squad selection + orders
+// ═══════════════════════════════════════════════════════════════
+
+const CMD_ORDERS = [
+  { type: Objective.ATTACK,     label: 'ATK', title: 'Attack — Search and destroy', icon: '\u2694' },
+  { type: Objective.DEFEND,     label: 'DEF', title: 'Defend — Hold position',       icon: '\u{1F6E1}' },
+  { type: Objective.ADVANCE_TO, label: 'ADV', title: 'Advance — Move to location',   icon: '\u2191' },
+  { type: Objective.FALL_BACK,  label: 'FLB', title: 'Fall back — Retreat to location', icon: '\u2193' },
+  { type: Objective.SUPPORT,    label: 'SUP', title: 'Support — Assist another squad',  icon: '\u271A' }
+];
+
+let _lastCmdrOverlayUpdate = 0;
+
+/**
+ * Draw/update the commander overlay panel (DOM-based, called per frame from game.js).
+ * Shows squad list + order buttons when a squad is selected.
+ * Throttled to ~4fps to avoid excessive DOM updates.
+ */
+export function drawCommanderOverlay(bf, b) {
+  const ui = b._commanderUI;
+  if (!ui || !ui.visible) {
+    const existing = bf.parentElement?.querySelector('.cmdr-overlay');
+    if (existing) existing.style.display = 'none';
+    return;
+  }
+
+  const now = performance.now();
+  if (now - _lastCmdrOverlayUpdate < 250) return;
+  _lastCmdrOverlayUpdate = now;
+
+  const squads = b._squads;
+  if (!squads || squads.length === 0) return;
+
+  // Get or create the overlay container (attached to fr-main-area, not battlefield)
+  const mainArea = bf.parentElement;
+  let overlay = mainArea.querySelector('.cmdr-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.className = 'cmdr-overlay';
+    mainArea.appendChild(overlay);
+  }
+  overlay.style.display = '';
+
+  // Build squad list HTML
+  const selected = ui.selectedSquadId;
+  let html = '<div class="cmdr-squad-list">';
+  for (const sq of squads) {
+    const alive = sq.members.filter(u => !u.dead).length;
+    const total = sq.members.length;
+    if (total === 0) continue;
+    const teamColor = sq.team === 'blue' ? '#4a9eff' : '#ff4444';
+    const sel = sq.id === selected ? ' cmdr-sq-selected' : '';
+    const phase = sq.sergeant?.phase || '—';
+    const obj = sq.sergeant?.objective?.type || '—';
+    html += `<div class="cmdr-sq-row${sel}" data-action="cmdr-select-squad" data-squad-id="${sq.id}" style="border-left:3px solid ${teamColor}">
+      <span class="cmdr-sq-name">${sq.team[0].toUpperCase()}${sq.id}</span>
+      <span class="cmdr-sq-strength">${alive}/${total}</span>
+      <span class="cmdr-sq-phase">${phase}</span>
+      <span class="cmdr-sq-obj">${obj}</span>
+    </div>`;
+  }
+  html += '</div>';
+
+  // Order buttons (shown when a squad is selected)
+  if (selected !== null) {
+    const sq = squads.find(s => s.id === selected);
+    if (sq) {
+      const currentObj = sq.sergeant?.objective?.type;
+      html += '<div class="cmdr-orders">';
+      for (const ord of CMD_ORDERS) {
+        const active = currentObj === ord.type ? ' cmdr-ord-active' : '';
+        const pending = ui.pendingOrder === ord.type ? ' cmdr-ord-pending' : '';
+        html += `<button class="cmdr-ord-btn${active}${pending}" data-action="cmdr-order" data-order="${ord.type}" title="${ord.title}">${ord.icon} ${ord.label}</button>`;
+      }
+      html += '</div>';
+    }
+  }
+
+  // Targeting indicator
+  if (ui.pendingOrder) {
+    html += `<div class="cmdr-targeting">Click map to set target for ${ui.pendingOrder.toUpperCase()}</div>`;
+  }
+
+  overlay.innerHTML = html;
 }

@@ -63,7 +63,7 @@ import { drawMinimap } from './minimap.js';
 import { toggleDebugPanel, debugInspectAt, isDebugPanelVisible, destroyDebugPanel } from './debug-panel.js';
 import { logEvent, EventCategory, EventSeverity } from './battle-log.js';
 import { isCrewMode, drawCrewLineup, drawCrewAvailable, drawCrewCard, handleLineupClick, handleSectionHeaderClick, handleCrewAvailableClick, handleCrewAddClick, handlePoolTabClick, handleMotorPoolClick, handleCrewTransfer, clearCrewSelection } from './deploy-crew.js';
-import { getSoldier, getCrewForVehicle, saveRoster, saveVehicles, getVehicle, healAllSoldiers, repairAllVehicles, computeBattleScore, detectHeroics, recordBattleScore, applyPromotion, applyDemotion } from './roster.js';
+import { getSoldier, getCrewForVehicle, saveRoster, saveVehicles, getVehicle, healAllSoldiers, repairAllVehicles, computeBattleScore, detectHeroics, recordBattleScore, applyPromotion, applyDemotion, getRankName, getMMR } from './roster.js';
 import { getEffectivePersonality } from './crew.js';
 import { initCMDMode, updateCMDCamera, drawCMDOverlay, handleCMDClick, handleCMDRightClick, handleCMDKey, shouldHeroRunAI } from './cmd-mode.js';
 import { drawPresetPanel, applyPreset } from './loadouts.js';
@@ -2575,7 +2575,7 @@ function updateEndlessBattle(dt) {
     // Post-battle: update roster durability + progression
     _processPostBattle(b, 'win');
 
-    // Short delay then go to between screen
+    // Short delay then go to results screen
     setTimeout(() => {
       if (Game.state === State.ENDLESS_BATTLE) {
         // Save replay before clearing battle for next wave
@@ -2584,8 +2584,11 @@ function updateEndlessBattle(dt) {
           ob.result = ob.result || `wave_${Game.endless.wave}_complete`;
           saveReplay(ob);
         }
+        // Keep battle ref for results screen stats
+        Game.endless._lastBattle = Game.endless.battle;
         Game.endless.battle = null;
-        goto(State.ENDLESS_BETWEEN);
+        Game.endless._resultTab = 'rank'; // Default to rank report tab
+        goto(State.ENDLESS_RESULT);
       }
     }, 1500);
   }
@@ -4588,10 +4591,15 @@ function _processPostBattle(b, result) {
   const lastManStanding = blueAlive.length === 1 && result === 'win' ? _findSoldierId(allUnits, blueAlive[0].id) : null;
 
   const battleContext = { firstKillerId, lastManStanding, result };
+  const progressionResults = [];
 
-  // Process each soldier's metrics
-  function _processSoldier(soldier, metrics, unit) {
+  // Process each soldier's metrics and capture before/after for results screen
+  function _processSoldier(soldier, metrics, unit, vehicleContext) {
     if (!soldier || !metrics) return;
+
+    // Capture before state
+    const mmrBefore = soldier.mmr || 0;
+    const rankBefore = soldier.rankIndex || 0;
 
     // Durability
     if (unit?.dead || metrics.died) {
@@ -4612,8 +4620,9 @@ function _processPostBattle(b, result) {
     }
 
     // Compute battle score and update MMR
-    const score = computeBattleScore(metrics, result);
-    recordBattleScore(soldier, score, metrics);
+    const battleScore = computeBattleScore(metrics, result);
+    const commsBefore = [...(soldier.commendations || [])];
+    recordBattleScore(soldier, battleScore, metrics);
 
     // Update lifetime stats
     soldier.kills = (soldier.kills || 0) + (metrics.kills || 0);
@@ -4622,6 +4631,40 @@ function _processPostBattle(b, result) {
     // Check promotion/demotion
     applyPromotion(soldier);
     applyDemotion(soldier);
+
+    // Capture after state and build result entry
+    const commsAfter = soldier.commendations || [];
+    const newComms = commsAfter.filter(c => !commsBefore.includes(c));
+
+    progressionResults.push({
+      soldierId: soldier.id,
+      name: getRankName(soldier),
+      role: soldier.role,
+      unitType: vehicleContext ? vehicleContext.unitId : (unit?.unitId || 'infantry'),
+      // Battle stats
+      kills: metrics.kills || 0,
+      shotsHit: metrics.shotsHit || 0,
+      shotsFired: metrics.shotsFired || 0,
+      damageDealt: metrics.damageDealt || 0,
+      died: !!metrics.died || !!unit?.dead,
+      hpPercent: soldier.hpPercent,
+      // Progression
+      battleScore,
+      mmrBefore,
+      mmrAfter: soldier.mmr || 0,
+      mmrDelta: (soldier.mmr || 0) - mmrBefore,
+      streak: soldier.streak || 0,
+      rankBefore,
+      rankAfter: soldier.rankIndex || 0,
+      promoted: soldier.rankIndex > rankBefore,
+      demoted: soldier.rankIndex < rankBefore,
+      heroics,
+      commendationsEarned: newComms,
+      // Vehicle context (for crew grouping in results)
+      vehicleId: vehicleContext?.vehicleId || null,
+      vehicleUnitId: vehicleContext?.unitId || null,
+      crewSlot: vehicleContext?.slot || null
+    });
   }
 
   for (const unit of allUnits) {
@@ -4629,7 +4672,7 @@ function _processPostBattle(b, result) {
     if (unit._soldierId) {
       const soldier = getSoldier(unit._soldierId);
       const metrics = b._soldierMetrics.get(unit._soldierId);
-      _processSoldier(soldier, metrics, unit);
+      _processSoldier(soldier, metrics, unit, null);
     }
 
     // Vehicle durability + crew
@@ -4647,22 +4690,42 @@ function _processPostBattle(b, result) {
 
         // Process each crew member
         if (unit._crewSoldierIds) {
+          const vehCtx = { vehicleId: unit._vehicleId, unitId: unit.unitId };
           for (const [slot, soldierId] of Object.entries(unit._crewSoldierIds)) {
             const crewSoldier = getSoldier(soldierId);
             const metrics = b._soldierMetrics.get(soldierId);
             if (unit.dead) {
-              // Vehicle destroyed — crew KIA
+              // Vehicle destroyed — crew is knocked out, not KIA
+              // They survive but are wounded (hpPercent set low)
               if (crewSoldier) {
-                crewSoldier.status = 'kia';
-                crewSoldier.hpPercent = 0;
+                crewSoldier.status = 'wounded';
+                crewSoldier.hpPercent = Math.max(0.1, (crewSoldier.hpPercent || 1) * 0.3);
               }
+              // Record result for knocked-out crew
+              const crewMmrBefore = crewSoldier?.mmr || 0;
+              progressionResults.push({
+                soldierId, name: crewSoldier ? getRankName(crewSoldier) : soldierId,
+                role: slot, unitType: unit.unitId,
+                kills: metrics?.kills || 0, shotsHit: metrics?.shotsHit || 0,
+                shotsFired: metrics?.shotsFired || 0, damageDealt: metrics?.damageDealt || 0,
+                died: false, hpPercent: crewSoldier?.hpPercent || 0.1,
+                battleScore: 0, mmrBefore: crewMmrBefore, mmrAfter: crewMmrBefore, mmrDelta: 0,
+                streak: 0, rankBefore: crewSoldier?.rankIndex || 0, rankAfter: crewSoldier?.rankIndex || 0,
+                promoted: false, demoted: false, heroics: [], commendationsEarned: [],
+                vehicleId: unit._vehicleId, vehicleUnitId: unit.unitId, crewSlot: slot
+              });
             } else {
-              _processSoldier(crewSoldier, metrics, unit);
+              _processSoldier(crewSoldier, metrics, unit, { ...vehCtx, slot });
             }
           }
         }
       }
     }
+  }
+
+  // Store progression results for the results screen
+  if (Game.endless) {
+    Game.endless._progressionResults = progressionResults;
   }
 
   // Passive healing/repair between waves (on win only)
