@@ -9,7 +9,8 @@ import { hashString } from './world-builder/rng.js';
 import { createSergeant, DEFAULT_SERGEANT } from './sergeant.js';
 import { initBattleAI, applyBrainDefaults } from './ai-pipeline.js';
 import { findValidSpawnPos } from './terrain-utils.js';
-import { getPool, getAvailableVehicles, getRankName, getSoldier, getCrewForVehicle } from './roster.js';
+import { getPool, getAvailableVehicles, getRankName, getSoldier, getCrewForVehicle, assignToVehicle } from './roster.js';
+import { loadLastLoadout } from './storage.js';
 
 export const Game = {
   state: State.MENU,
@@ -1383,6 +1384,8 @@ function buildDeploymentPool() {
       // Display
       unitName: getRankName(soldier),
       displayName: `${getRankName(soldier)} (${(INFANTRY_ARCHETYPES[soldier.role] ? soldier.role : 'rifleman')})`,
+      // Insignia from roster soldier (falls back to global setting)
+      _insigniaSetId: soldier.insigniaSetId || Game.settings?.insigniaSetId || null,
       // Personality from roster soldier (will be stamped by applyBrainDefaults, but seed it)
       personality: { ...soldier.personality }
     }));
@@ -1404,6 +1407,8 @@ function buildDeploymentPool() {
       // Vehicle link
       _vehicleId: vehicle.id,
       _crewSoldierIds: {},
+      // Insignia from vehicle inventory (falls back to global setting)
+      _insigniaSetId: vehicle.insigniaSetId || Game.settings?.insigniaSetId || null,
       // Display
       unitName: vehicle.name || (unitDef?.name || vehicle.unitId),
       displayName: unitDef?.name || vehicle.unitId
@@ -1411,6 +1416,44 @@ function buildDeploymentPool() {
   }
 
   return pool;
+}
+
+/**
+ * Restore the last-used loadout from localStorage.
+ * Moves matching units from reservePool → units[] and re-assigns crew.
+ */
+function _restoreLastLoadout(b) {
+  const saved = loadLastLoadout();
+  if (!saved || !saved.lineup || saved.lineup.length === 0) return;
+
+  if (saved.formation) b._deployFormation = saved.formation;
+  if (saved.presetId) b._selectedPreset = saved.presetId;
+
+  const reserves = b.reservePool || [];
+
+  for (const entry of saved.lineup) {
+    // Find a matching unit in the reserve pool
+    let idx = -1;
+
+    if (entry._soldierId) {
+      // Infantry: match by soldier ID
+      idx = reserves.findIndex(r => r._soldierId === entry._soldierId);
+    } else if (entry._vehicleId) {
+      // Vehicle: match by persistent vehicle ID
+      idx = reserves.findIndex(r => r._vehicleId === entry._vehicleId);
+    } else {
+      // Fallback: match by unitId
+      idx = reserves.findIndex(r => r.unitId === entry.unitId);
+    }
+
+    if (idx >= 0) {
+      const unit = reserves.splice(idx, 1)[0];
+      b.units.push(unit);
+    }
+  }
+
+  // Re-assign crew to vehicles (crew assignments persist in roster via assignedVehicleId)
+  // The crew panel will show them correctly on next render
 }
 
 // Create AI-controlled ally squad for endless mode testing
@@ -1556,9 +1599,9 @@ export function newEndlessBattle(loadout, wave = 1) {
     // Camera - start centered on hero
     camera: { x: 0, y: heroY - 300, lookX: 0, lookY: 0 },
 
-    // Hero (player's tank)
+    // Hero (player's tank) — stable ID so crew assignments persist across battles
     hero: {
-      id: `hero_${Date.now()}`,
+      id: 'hero',
       x: heroX,
       y: heroY,
       angle: -Math.PI / 2,  // Face UP (north)
@@ -1584,11 +1627,11 @@ export function newEndlessBattle(loadout, wave = 1) {
       _awareness: 0.6
     },
 
-    // Test squad — AI-controlled allies (spawned off-map at staging position)
-    units: (resetNameGenerator(), createEndlessSquad(heroX, heroY, mapWidth, mapHeight, CELL_SIZE, terrainMap, stageDepth)),
+    // Player-built squad — starts empty, populated from deploy panel (roster)
+    units: [],
 
-    // Reserve pool — available units for swapping during deployment
-    reservePool: null,  // Populated after object creation (needs name generator state)
+    // Deployment pool — built from persistent roster + vehicle inventory
+    reservePool: null,  // Populated after battle object creation
 
     // Input state
     keys: { w: false, a: false, s: false, d: false },
@@ -1653,16 +1696,22 @@ export function newEndlessBattle(loadout, wave = 1) {
   // Initialize unified AI pipeline
   const blueZone = { x: battle.mapWidth / 2, y: battle.mapHeight - battle.cellSize * 3, radius: 100 };
   const redZone = { x: battle.mapWidth / 2, y: battle.cellSize * 3, radius: 100 };
+  // Init AI pipeline — skip blue squads (units not deployed yet, deploy panel fills them)
+  // Blue squad + sergeant created when player hits DEPLOY via _reinitBlueSquad()
   initBattleAI(battle, {
     allyPreset: 'endlessAlly', enemyPreset: 'endlessEnemy',
     blueSpawnZone: blueZone, redSpawnZone: redZone,
     insigniaSetId: Game.settings.insigniaSetId,
     maxSquads: sizeTier.maxSquads,
-    redCommanderOrigin: Game.settings?.redCommanderOrigin
+    redCommanderOrigin: Game.settings?.redCommanderOrigin,
+    skipBlueSquads: true
   });
 
   // Build deployment pool from persistent roster + vehicle inventory
   battle.reservePool = buildDeploymentPool();
+
+  // Auto-restore last-used loadout if available
+  _restoreLastLoadout(battle);
 
   return battle;
 }

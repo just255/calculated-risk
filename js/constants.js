@@ -1787,19 +1787,54 @@ export const CREW_SCHEMAS = {
   stinger:  ['self']
 };
 
-// Rank progression table — CPL is the first NCO rank (E-4 NCO track)
+// Rank progression table — PPB (Points Per Battle) performance-rate system
+// ppb: minimum rolling average PPB to hold this rank
+// CPL (E-4 NCO) is the sergeant unlock gate
 export const RANK_TABLE = [
-  { grade: 'E-1', abbr: 'PVT', title: 'Private',             xp: 0,    nco: false },
-  { grade: 'E-2', abbr: 'PV2', title: 'Private 2nd Class',   xp: 50,   nco: false },
-  { grade: 'E-3', abbr: 'PFC', title: 'Private First Class', xp: 150,  nco: false },
-  { grade: 'E-4', abbr: 'SPC', title: 'Specialist',          xp: 350,  nco: false },
-  { grade: 'E-4', abbr: 'CPL', title: 'Corporal',            xp: 500,  nco: true  },
-  { grade: 'E-5', abbr: 'SGT', title: 'Sergeant',            xp: 700,  nco: true  },
-  { grade: 'E-6', abbr: 'SSG', title: 'Staff Sergeant',      xp: 1000, nco: true  },
-  { grade: 'E-7', abbr: 'SFC', title: 'Sgt First Class',     xp: 1500, nco: true  },
-  { grade: 'E-8', abbr: 'MSG', title: 'Master Sergeant',     xp: 2200, nco: true  },
-  { grade: 'E-9', abbr: 'SGM', title: 'Sergeant Major',      xp: 3000, nco: true  }
+  { grade: 'E-1', abbr: 'PVT', title: 'Private',             ppb: 0,   nco: false },
+  { grade: 'E-2', abbr: 'PV2', title: 'Private 2nd Class',   ppb: 8,   nco: false },
+  { grade: 'E-3', abbr: 'PFC', title: 'Private First Class', ppb: 14,  nco: false },
+  { grade: 'E-4', abbr: 'SPC', title: 'Specialist',          ppb: 20,  nco: false },
+  { grade: 'E-4', abbr: 'CPL', title: 'Corporal',            ppb: 28,  nco: true  },
+  { grade: 'E-5', abbr: 'SGT', title: 'Sergeant',            ppb: 36,  nco: true  },
+  { grade: 'E-6', abbr: 'SSG', title: 'Staff Sergeant',      ppb: 46,  nco: true  },
+  { grade: 'E-7', abbr: 'SFC', title: 'Sgt First Class',     ppb: 58,  nco: true  },
+  { grade: 'E-8', abbr: 'MSG', title: 'Master Sergeant',     ppb: 72,  nco: true  },
+  { grade: 'E-9', abbr: 'SGM', title: 'Sergeant Major',      ppb: 90,  nco: true  }
 ];
+
+// PPB scoring weights — how combat actions contribute to Points Per Battle
+export const PPB_WEIGHTS = {
+  kill: 5,
+  hit: 2,
+  damageDealt: 0.1,    // per point of damage
+  shotFired: 0.5,
+  survived: 3,         // bonus for surviving the battle
+  waveCleared: 2       // bonus if the wave was won
+};
+
+// Heroic action bonuses — one-time PPB boosts for exceptional performance in a single battle
+export const HEROIC_ACTIONS = {
+  firstBlood:      { ppb: 5,  label: 'First Blood',      desc: 'First kill of the battle' },
+  multiKill:       { ppb: 4,  label: 'Multi-Kill',        desc: '3+ kills in one battle' },
+  sharpshooter:    { ppb: 3,  label: 'Sharpshooter',      desc: '70%+ accuracy with 5+ shots' },
+  ironWill:        { ppb: 4,  label: 'Iron Will',         desc: 'Survived below 20% HP' },
+  allyProtector:   { ppb: 3,  label: 'Ally Protector',    desc: 'Killed enemy targeting a wounded ally' },
+  untouchable:     { ppb: 3,  label: 'Untouchable',       desc: 'Took 0 damage in a battle with combat' },
+  lastStand:       { ppb: 5,  label: 'Last Stand',        desc: 'Last unit alive, won the battle' }
+};
+
+// Commendations — permanent PPB floor boosts (ratchet, never lost)
+export const COMMENDATIONS = {
+  bronzeStar:     { floorBoost: 2,  label: 'Bronze Star',     desc: 'Consistent above-average performance', requirement: 'PPB > rank+10 for 5 battles' },
+  silverStar:     { floorBoost: 4,  label: 'Silver Star',     desc: 'Exceptional combat performance', requirement: 'PPB > rank+20 for 3 battles' },
+  purpleHeart:    { floorBoost: 1,  label: 'Purple Heart',    desc: 'Wounded in combat', requirement: 'Survived below 30% HP' },
+  combatAction:   { floorBoost: 1,  label: 'Combat Action',   desc: 'Engaged in direct combat', requirement: '10+ shots fired in one battle' },
+  veteranService: { floorBoost: 3,  label: 'Veteran Service', desc: 'Extended service record', requirement: '20+ battles served' }
+};
+
+// Rolling window size for PPB average
+export const PPB_WINDOW = 8;
 
 // Infantry specializations
 export const INFANTRY_MOS = {

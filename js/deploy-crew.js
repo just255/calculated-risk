@@ -459,10 +459,14 @@ export function drawCrewAvailable(ctx, b, zone, x3, colW_3, ry, bodyBottom, resR
 
   // ── Barracks tab: crew soldiers ──
   if (b._poolTab === 'barracks') {
+    // Clear stale motor pool scroll region so it doesn't intercept wheel events
+    if (b._panelScroll?.regions?.motorpool) delete b._panelScroll.regions.motorpool;
     return _drawBarracksTab(ctx, b, zone, x3, colW_3, ry, bodyBottom, resRowH);
   }
 
   // ── Motor Pool tab: reserve vehicles/infantry ──
+  // Clear stale barracks scroll region
+  if (b._panelScroll?.regions?.pool) delete b._panelScroll.regions.pool;
   return _drawMotorPoolTab(ctx, b, zone, x3, colW_3, ry, bodyBottom, resRowH);
 }
 
@@ -694,8 +698,6 @@ function _drawMotorPoolTab(ctx, b, zone, x3, colW_3, ry, bodyBottom, resRowH) {
 
   const clipH = bodyBottom - ry;
   return drawScrollableTree(ctx, x3, ry, colW_3, clipH, tree, shared, b, 'motorpool');
-
-  return ry + clipH;
 }
 
 // ─── Col 4: Crew card overlay ───────────────────────────────

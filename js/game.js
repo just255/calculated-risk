@@ -6,7 +6,7 @@ import { State, SubState, HQTab, UNITS, ENEMIES, getTypeMultiplier, UNIT_COSTS, 
 import { renderBaseTerrainToCanvas, renderCanopyToCanvas } from './world-builder/terrain-renderer.js';
 import { Game, newBattle, newH2H, newCampaign, newCampaignBattle, newEndlessBattle, newFireRangeRun, newFireRangeBattle, createUnit } from './state.js';
 import { sound } from './audio.js';
-import { save } from './storage.js';
+import { save, saveLastLoadout, loadLastLoadout } from './storage.js';
 import { render, setSubState, getCustomizedSvg, getCustomizedSvgFrames, getEntitySvg, getEntitySvgFrames, drawCommandUI, drawCommanderOverlay, getUnitVisual, getUnitShadow, fireRangeResultsHTML } from './ui.js';
 import * as sprites from './sprites.js';
 import { BattleRenderer } from './battle-renderer.js';
@@ -54,7 +54,7 @@ import {
   applyTankMovementExtended
 } from './movement.js';
 import { rollModifier, applyModifier, getModifiedDamage } from './elite-modifiers.js';
-import { runBattleAI, spawnSquad, applyBrainDefaults, scaleBrainByWave, BRAIN_PRESETS } from './ai-pipeline.js';
+import { runBattleAI, spawnSquad, createSquad, applyBrainDefaults, scaleBrainByWave, BRAIN_PRESETS } from './ai-pipeline.js';
 import { planDeployment, scaleCommanderByWave, assignObjective } from './commander.js';
 import { createRecorder, recordFrame, finalizeRecording, isRecording, saveReplay } from './replay-recorder.js';
 import { updateFireRangeCamera, updateHeroCamera, cameraKeyDown, cameraKeyUp, cameraZoom, cameraFitMap, cameraFitMapImmediate } from './camera.js';
@@ -63,7 +63,7 @@ import { drawMinimap } from './minimap.js';
 import { toggleDebugPanel, debugInspectAt, isDebugPanelVisible, destroyDebugPanel } from './debug-panel.js';
 import { logEvent, EventCategory, EventSeverity } from './battle-log.js';
 import { isCrewMode, drawCrewLineup, drawCrewAvailable, drawCrewCard, handleLineupClick, handleSectionHeaderClick, handleCrewAvailableClick, handleCrewAddClick, handlePoolTabClick, handleMotorPoolClick, handleCrewTransfer, clearCrewSelection } from './deploy-crew.js';
-import { getSoldier, getCrewForVehicle, saveRoster, saveVehicles, getVehicle, healAllSoldiers, repairAllVehicles } from './roster.js';
+import { getSoldier, getCrewForVehicle, saveRoster, saveVehicles, getVehicle, healAllSoldiers, repairAllVehicles, computePPB, detectHeroics, recordBattlePPB, applyPromotion, applyDemotion } from './roster.js';
 import { getEffectivePersonality } from './crew.js';
 import { initCMDMode, updateCMDCamera, drawCMDOverlay, handleCMDClick, handleCMDRightClick, handleCMDKey, shouldHeroRunAI } from './cmd-mode.js';
 import { drawPresetPanel, applyPreset } from './loadouts.js';
@@ -4487,6 +4487,39 @@ function _stampRosterData(b) {
   const allUnits = [...(b.units || [])];
   if (b.hero && !b.hero.observer) allUnits.push(b.hero);
 
+  // Create blue squad + sergeant now that units are deployed
+  // (skipped during initBattleAI because units weren't placed yet)
+  if (b.mode === 'endless' && allUnits.length > 0) {
+    // Remove any stale blue squads
+    b._squads = (b._squads || []).filter(s => s.team !== 'blue');
+
+    // Stamp brain defaults + insignia on all blue units
+    const insigniaSetId = b._insigniaSetId || Game?.settings?.insigniaSetId || null;
+    for (const u of allUnits) {
+      applyBrainDefaults(u, 'endlessAlly');
+      u.team = 'blue';
+      if (insigniaSetId) u._insigniaSetId = insigniaSetId;
+    }
+
+    // Create the blue squad with a sergeant
+    const blueSpawnZone = { x: b.mapWidth / 2, y: b.mapHeight - (b.cellSize || 64) * 3, radius: 100 };
+    const redSpawnZone = { x: b.mapWidth / 2, y: (b.cellSize || 64) * 3, radius: 100 };
+    const squad = createSquad('blue', allUnits.filter(u => !u.isHero), {
+      spawnZone: blueSpawnZone,
+      enemyZone: redSpawnZone
+    });
+    b._squads.push(squad);
+
+    // Assign ATTACK objective to the new sergeant
+    if (squad.sergeant) {
+      squad.sergeant.objective = { type: 'attack' };
+    }
+
+    // Re-sync sergeant lookup
+    if (!b._teamWaypoints) b._teamWaypoints = {};
+    if (!b._squadWaypoints) b._squadWaypoints = {};
+  }
+
   // Initialize metrics map for post-battle progression
   b._soldierMetrics = new Map();
 
@@ -4546,29 +4579,60 @@ function _processPostBattle(b, result) {
   const allUnits = [...(b.units || [])];
   if (b.hero && !b.hero.observer) allUnits.push(b.hero);
 
-  for (const unit of allUnits) {
-    // Update soldier durability
-    if (unit._soldierId) {
-      const soldier = getSoldier(unit._soldierId);
-      if (soldier) {
-        if (unit.dead) {
-          soldier.status = 'kia';
-          soldier.hpPercent = 0;
-        } else {
-          soldier.hpPercent = Math.max(0, unit.hp / (unit.maxHp || 1));
-          if (soldier.hpPercent < 0.3) soldier.status = 'wounded';
-        }
-        // XP: base 10 + 5 per kill + 2 per shot hit
-        const metrics = b._soldierMetrics.get(soldier.id);
-        if (metrics) {
-          soldier.experience += 10 + (metrics.kills * 5) + (metrics.shotsHit * 2);
-          soldier.kills += metrics.kills;
-          soldier.battlesServed++;
-        }
-      }
+  // Determine first killer for heroic action detection
+  const firstKill = b._debugLog?.find(e => e.type === 'kill' && e.team === 'blue');
+  const firstKillerId = firstKill ? _findSoldierId(allUnits, firstKill.who) : null;
+
+  // Check for last-man-standing
+  const blueAlive = allUnits.filter(u => !u.dead);
+  const lastManStanding = blueAlive.length === 1 && result === 'win' ? _findSoldierId(allUnits, blueAlive[0].id) : null;
+
+  const battleContext = { firstKillerId, lastManStanding, result };
+
+  // Process each soldier's metrics
+  function _processSoldier(soldier, metrics, unit) {
+    if (!soldier || !metrics) return;
+
+    // Durability
+    if (unit?.dead || metrics.died) {
+      soldier.status = 'kia';
+      soldier.hpPercent = 0;
+    } else if (unit) {
+      soldier.hpPercent = Math.max(0, unit.hp / (unit.maxHp || 1));
+      if (soldier.hpPercent < 0.3) soldier.status = 'wounded';
+      metrics.hpPercent = soldier.hpPercent;
     }
 
-    // Update vehicle durability
+    // Detect heroic actions
+    const heroics = detectHeroics(metrics, battleContext);
+    metrics._heroics = heroics;
+    if (!soldier.heroicActions) soldier.heroicActions = [];
+    for (const h of heroics) {
+      if (!soldier.heroicActions.includes(h)) soldier.heroicActions.push(h);
+    }
+
+    // Compute PPB and record
+    const ppb = computePPB(metrics, result);
+    recordBattlePPB(soldier, ppb, metrics);
+
+    // Update lifetime stats
+    soldier.kills = (soldier.kills || 0) + (metrics.kills || 0);
+    soldier.battlesServed = (soldier.battlesServed || 0) + 1;
+
+    // Check promotion/demotion
+    applyPromotion(soldier);
+    applyDemotion(soldier);
+  }
+
+  for (const unit of allUnits) {
+    // Infantry soldiers
+    if (unit._soldierId) {
+      const soldier = getSoldier(unit._soldierId);
+      const metrics = b._soldierMetrics.get(unit._soldierId);
+      _processSoldier(soldier, metrics, unit);
+    }
+
+    // Vehicle durability + crew
     if (unit._vehicleId) {
       const vehicle = getVehicle(unit._vehicleId);
       if (vehicle) {
@@ -4581,26 +4645,20 @@ function _processPostBattle(b, result) {
         }
         vehicle.battlesServed++;
 
-        // Mark crew as KIA if vehicle was destroyed
-        if (unit.dead && unit._crewSoldierIds) {
-          for (const soldierId of Object.values(unit._crewSoldierIds)) {
-            const crewSoldier = getSoldier(soldierId);
-            if (crewSoldier) {
-              crewSoldier.status = 'kia';
-              crewSoldier.hpPercent = 0;
-            }
-          }
-        } else if (unit._crewSoldierIds) {
-          // Award XP to crew members
+        // Process each crew member
+        if (unit._crewSoldierIds) {
           for (const [slot, soldierId] of Object.entries(unit._crewSoldierIds)) {
             const crewSoldier = getSoldier(soldierId);
-            if (!crewSoldier) continue;
             const metrics = b._soldierMetrics.get(soldierId);
-            if (metrics) {
-              crewSoldier.experience += 10 + (metrics.kills * 5) + (metrics.shotsHit * 2);
-              crewSoldier.kills += metrics.kills;
+            if (unit.dead) {
+              // Vehicle destroyed — crew KIA
+              if (crewSoldier) {
+                crewSoldier.status = 'kia';
+                crewSoldier.hpPercent = 0;
+              }
+            } else {
+              _processSoldier(crewSoldier, metrics, unit);
             }
-            crewSoldier.battlesServed++;
           }
         }
       }
@@ -4609,13 +4667,21 @@ function _processPostBattle(b, result) {
 
   // Passive healing/repair between waves (on win only)
   if (result === 'win') {
-    healAllSoldiers(0.2);   // 20% HP recovery
-    repairAllVehicles(0.15); // 15% HP recovery
+    healAllSoldiers(0.2);
+    repairAllVehicles(0.15);
   }
 
-  // Save everything
   saveRoster();
   saveVehicles();
+}
+
+/** Find the soldier ID linked to a battle unit ID. */
+function _findSoldierId(allUnits, unitId) {
+  const unit = allUnits.find(u => u.id === unitId);
+  if (!unit) return null;
+  if (unit._soldierId) return unit._soldierId;
+  if (unit._crewSoldierIds?.gunner) return unit._crewSoldierIds.gunner;
+  return null;
 }
 
 // ── Deployment click handler ────────────────────────────────
@@ -4665,6 +4731,9 @@ export function handleDeployClick(b, screenX, screenY, ctrlKey) {
     }
     // Stamp roster personality onto battle units at deploy time
     _stampRosterData(b);
+
+    // Save loadout for next battle auto-restore
+    saveLastLoadout(b);
 
     b.deployReady.blue = true;
     return true;

@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { Game } from './state.js';
-import { RANK_TABLE, CREW_SCHEMAS, VEHICLE_ROLES } from './constants.js';
+import { RANK_TABLE, CREW_SCHEMAS, VEHICLE_ROLES, PPB_WEIGHTS, PPB_WINDOW, HEROIC_ACTIONS, COMMENDATIONS } from './constants.js';
 
 // ─── Name pools ───────────────────────────────────────────────
 
@@ -79,6 +79,7 @@ export function createSoldier(opts) {
 
     pool: opts.pool,
     role: opts.role,
+    insigniaSetId: opts.insigniaSetId || null,
     vehicleExpertise: opts.vehicleExpertise || {},
 
     status: 'active',        // 'active'|'wounded'|'kia'
@@ -89,7 +90,10 @@ export function createSoldier(opts) {
     woundedBattlesLeft: 0,
 
     traits: [],
-    commendations: [],
+    commendations: [],      // earned commendation IDs (permanent PPB floor boosts)
+    ppbHistory: [],          // rolling window of PPB scores (last N battles)
+    ppbFloor: 0,             // permanent minimum PPB from commendations (ratchet)
+    heroicActions: [],       // lifetime heroic action IDs earned
     bonds: {},
 
     assignedVehicleId: null,
@@ -245,14 +249,47 @@ export function getRankName(soldier) {
 }
 
 /**
+ * Get the soldier's rolling average PPB (Points Per Battle).
+ * Floored by commendation bonus (can never drop below ppbFloor).
+ */
+export function getRollingPPB(soldier) {
+  const history = soldier.ppbHistory || [];
+  if (history.length === 0) return soldier.ppbFloor || 0;
+  const window = history.slice(-PPB_WINDOW);
+  const avg = window.reduce((sum, v) => sum + v, 0) / window.length;
+  return Math.max(avg, soldier.ppbFloor || 0);
+}
+
+/**
  * Check if a soldier is eligible for promotion.
+ * Requires rolling PPB to meet next rank threshold.
  * Returns the new rank index if eligible, or null.
  */
 export function checkPromotion(soldier) {
   const nextIndex = soldier.rankIndex + 1;
   if (nextIndex >= RANK_TABLE.length) return null;
   const nextRank = RANK_TABLE[nextIndex];
-  return soldier.experience >= nextRank.xp ? nextIndex : null;
+  const ppb = getRollingPPB(soldier);
+  return ppb >= nextRank.ppb ? nextIndex : null;
+}
+
+/**
+ * Check if a soldier should be demoted.
+ * Demotes if rolling PPB drops below current rank threshold.
+ * Returns the new (lower) rank index, or null if no demotion.
+ */
+export function checkDemotion(soldier) {
+  if (soldier.rankIndex <= 0) return null;
+  const currentRank = RANK_TABLE[soldier.rankIndex];
+  const ppb = getRollingPPB(soldier);
+  if (ppb < currentRank.ppb) {
+    // Find the highest rank this PPB still qualifies for
+    for (let i = soldier.rankIndex - 1; i >= 0; i--) {
+      if (ppb >= RANK_TABLE[i].ppb) return i;
+    }
+    return 0; // Demote to PVT
+  }
+  return null;
 }
 
 /**
@@ -263,6 +300,172 @@ export function applyPromotion(soldier) {
   if (newIndex == null) return false;
   soldier.rankIndex = newIndex;
   return true;
+}
+
+/**
+ * Demote a soldier if performance dropped. Returns true if demoted.
+ */
+export function applyDemotion(soldier) {
+  const newIndex = checkDemotion(soldier);
+  if (newIndex == null) return false;
+  soldier.rankIndex = newIndex;
+  return true;
+}
+
+/**
+ * Record a battle's PPB score for a soldier.
+ * Also checks and awards commendations.
+ */
+export function recordBattlePPB(soldier, ppbScore, battleMetrics) {
+  if (!soldier.ppbHistory) soldier.ppbHistory = [];
+  soldier.ppbHistory.push(ppbScore);
+  // Trim to 2x window to keep history manageable
+  if (soldier.ppbHistory.length > PPB_WINDOW * 2) {
+    soldier.ppbHistory = soldier.ppbHistory.slice(-PPB_WINDOW);
+  }
+
+  // Check commendations
+  _checkCommendations(soldier, ppbScore, battleMetrics);
+}
+
+/**
+ * Check and award commendations based on performance.
+ */
+function _checkCommendations(soldier, ppbScore, metrics) {
+  if (!soldier.commendations) soldier.commendations = [];
+  const earned = new Set(soldier.commendations);
+
+  const currentRankPPB = RANK_TABLE[soldier.rankIndex]?.ppb || 0;
+  const history = soldier.ppbHistory || [];
+
+  // Combat Action: 10+ shots in one battle
+  if (!earned.has('combatAction') && (metrics?.shotsFired || 0) >= 10) {
+    soldier.commendations.push('combatAction');
+    soldier.ppbFloor = (soldier.ppbFloor || 0) + (COMMENDATIONS.combatAction?.floorBoost || 1);
+  }
+
+  // Purple Heart: survived below 30% HP
+  if (!earned.has('purpleHeart') && !metrics?.died && (metrics?.hpPercent || 1) < 0.3) {
+    soldier.commendations.push('purpleHeart');
+    soldier.ppbFloor = (soldier.ppbFloor || 0) + (COMMENDATIONS.purpleHeart?.floorBoost || 1);
+  }
+
+  // Veteran Service: 20+ battles
+  if (!earned.has('veteranService') && (soldier.battlesServed || 0) >= 20) {
+    soldier.commendations.push('veteranService');
+    soldier.ppbFloor = (soldier.ppbFloor || 0) + (COMMENDATIONS.veteranService?.floorBoost || 3);
+  }
+
+  // Bronze Star: PPB > rank+10 for last 5 battles
+  if (!earned.has('bronzeStar') && history.length >= 5) {
+    const last5 = history.slice(-5);
+    if (last5.every(p => p > currentRankPPB + 10)) {
+      soldier.commendations.push('bronzeStar');
+      soldier.ppbFloor = (soldier.ppbFloor || 0) + (COMMENDATIONS.bronzeStar?.floorBoost || 2);
+    }
+  }
+
+  // Silver Star: PPB > rank+20 for last 3 battles
+  if (!earned.has('silverStar') && history.length >= 3) {
+    const last3 = history.slice(-3);
+    if (last3.every(p => p > currentRankPPB + 20)) {
+      soldier.commendations.push('silverStar');
+      soldier.ppbFloor = (soldier.ppbFloor || 0) + (COMMENDATIONS.silverStar?.floorBoost || 4);
+    }
+  }
+}
+
+/**
+ * Compute PPB score from battle metrics.
+ */
+export function computePPB(metrics, result) {
+  let ppb = 0;
+  ppb += (metrics.kills || 0) * PPB_WEIGHTS.kill;
+  ppb += (metrics.shotsHit || 0) * PPB_WEIGHTS.hit;
+  ppb += (metrics.damageDealt || 0) * PPB_WEIGHTS.damageDealt;
+  ppb += (metrics.shotsFired || 0) * PPB_WEIGHTS.shotFired;
+  if (!metrics.died) ppb += PPB_WEIGHTS.survived;
+  if (result === 'win') ppb += PPB_WEIGHTS.waveCleared;
+
+  // Heroic action bonuses
+  if (metrics._heroics) {
+    for (const actionId of metrics._heroics) {
+      ppb += HEROIC_ACTIONS[actionId]?.ppb || 0;
+    }
+  }
+
+  return Math.round(ppb * 10) / 10; // One decimal
+}
+
+/**
+ * Detect heroic actions from battle metrics.
+ * Returns array of heroic action IDs earned this battle.
+ */
+export function detectHeroics(metrics, battleContext) {
+  const heroics = [];
+
+  // First Blood
+  if (battleContext?.firstKillerId === metrics.soldierId) {
+    heroics.push('firstBlood');
+  }
+
+  // Multi-Kill (3+ kills)
+  if ((metrics.kills || 0) >= 3) {
+    heroics.push('multiKill');
+  }
+
+  // Sharpshooter (70%+ accuracy with 5+ shots)
+  if ((metrics.shotsFired || 0) >= 5) {
+    const acc = metrics.shotsHit / metrics.shotsFired;
+    if (acc >= 0.7) heroics.push('sharpshooter');
+  }
+
+  // Iron Will (survived below 20% HP)
+  if (!metrics.died && (metrics.hpPercent || 1) < 0.2) {
+    heroics.push('ironWill');
+  }
+
+  // Untouchable (0 damage taken in combat)
+  if ((metrics.damageTaken || 0) === 0 && (metrics.shotsFired || 0) > 0) {
+    heroics.push('untouchable');
+  }
+
+  // Last Stand (last unit alive, won)
+  if (battleContext?.lastManStanding === metrics.soldierId && battleContext?.result === 'win') {
+    heroics.push('lastStand');
+  }
+
+  return heroics;
+}
+
+// ── Debug: manual rank control ───────────────────────────────
+
+/** Force promote a soldier by 1 rank. */
+export function debugPromote(soldier) {
+  if (soldier.rankIndex < RANK_TABLE.length - 1) {
+    soldier.rankIndex++;
+    return true;
+  }
+  return false;
+}
+
+/** Force demote a soldier by 1 rank. */
+export function debugDemote(soldier) {
+  if (soldier.rankIndex > 0) {
+    soldier.rankIndex--;
+    return true;
+  }
+  return false;
+}
+
+/** Reset a soldier's rank, PPB history, and commendations. */
+export function debugClearRank(soldier) {
+  soldier.rankIndex = 0;
+  soldier.ppbHistory = [];
+  soldier.ppbFloor = 0;
+  soldier.commendations = [];
+  soldier.heroicActions = [];
+  soldier.experience = 0;
 }
 
 /** Check if a soldier is an NCO (eligible for TC). */
@@ -418,6 +621,7 @@ export function createVehicle(unitId, opts = {}) {
     hpPercent: opts.hpPercent ?? 1.0,
     condition: opts.condition ?? 1.0,  // Long-term durability (degrades over many battles)
     status: opts.status || 'active',   // 'active'|'damaged'|'destroyed'
+    insigniaSetId: opts.insigniaSetId || null,
     battlesServed: 0,
     totalDamageTaken: 0
   };

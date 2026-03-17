@@ -2157,21 +2157,72 @@ export function updateFormation(b, friendlies, hostiles, now) {
 // Returns true if the unit should halt (skip movement this frame).
 // ═══════════════════════════════════════════════════════════════
 function shouldHaltToFire(unit, target, targetDist, range) {
-  if (!target || target.dead) return false;
-  // Only halt when target is within weapon range
-  if (targetDist > range * 1.1) return false;
-  // Don't halt if already stable enough
-  const p = unit.personality || {};
-  const minStab = (p.discipline ?? 0.5) * 0.4 + (p.patience ?? 0.5) * 0.2;
-  if ((unit.stability ?? 0) >= minStab) {
+  if (!target || target.dead) {
     unit._haltingToFire = false;
+    unit._aimWindowUntil = 0;
     return false;
   }
-  // Halt probability: patient units halt more readily, aggressive less
-  // Once halted, stay halted until stable (via _haltingToFire flag)
-  if (unit._haltingToFire) return true;
-  const haltDrive = (p.patience ?? 0.5) * 0.6 + (p.discipline ?? 0.5) * 0.4;
-  if (haltDrive > 0.3) {
+  if (targetDist > range * 1.1) return false;
+
+  const p = unit.personality || {};
+  const discipline = p.discipline ?? 0.5;
+  const courage = p.courage ?? 0.5;
+  const patience = p.patience ?? 0.5;
+  const initiative = p.initiative ?? 0.5;
+  const now = Date.now();
+
+  // Initiative: don't halt if target is retreating (chase instead)
+  if (initiative > 0.4 && target._actionVerb === 'falling_back') {
+    // Roll: high initiative = more likely to chase
+    if (Math.random() < initiative * 0.8) {
+      unit._haltingToFire = false;
+      unit._aimWindowUntil = 0;
+      return false;
+    }
+  }
+
+  // Courage: determines preferred halt range
+  // Courageous units push to close range before stopping (40-70% of max range)
+  // Cautious units halt at max range (80-100% of max range)
+  const haltRangeRatio = 0.4 + (1 - courage) * 0.6; // courage 1→0.4, courage 0→1.0
+  const preferredHaltDist = range * haltRangeRatio;
+  // Don't halt if we're farther than preferred halt distance (keep advancing)
+  if (targetDist > preferredHaltDist && !unit._haltingToFire) return false;
+
+  // Already in aim window — stay halted until it expires
+  if (unit._aimWindowUntil && now < unit._aimWindowUntil) {
+    return true;
+  }
+
+  // Aim window expired — resume movement with cooldown
+  if (unit._aimWindowUntil && now >= unit._aimWindowUntil) {
+    unit._haltingToFire = false;
+    unit._aimWindowUntil = 0;
+    // Cooldown before next halt: courageous units resume faster (want to close)
+    // Patient units pause longer between advances
+    const cooldown = 800 + courage * 800 + (1 - patience) * 600;
+    unit._nextHaltAllowed = now + cooldown;
+    return false;
+  }
+
+  // Cooldown active — keep moving
+  if (unit._nextHaltAllowed && now < unit._nextHaltAllowed) return false;
+
+  // Already halting, waiting for stability
+  if (unit._haltingToFire) {
+    const minStab = discipline * 0.4 + patience * 0.2;
+    if ((unit.stability ?? 0) >= minStab) {
+      // Stability reached — open aim window
+      // Patience controls duration: 1.2-3.5s (2-4 aimed shots)
+      const windowMs = 1200 + patience * 2300;
+      unit._aimWindowUntil = now + windowMs;
+    }
+    return true;
+  }
+
+  // Discipline roll: decide whether to halt
+  // High discipline = almost always halts. Low = rarely.
+  if (Math.random() < discipline) {
     unit._haltingToFire = true;
     return true;
   }

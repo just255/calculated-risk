@@ -6,13 +6,15 @@ import { State, SubState, HQTab, UNITS, PROJECTILES, UNIT_PROJECTILES, SquadOrde
 import { Game, newBattlePlan, newCampaign, createAdvancingScenario, createFrontlineScenario, newZoneBattle, newEndlessRun, newFireRangeRun } from './state.js';
 import { initAudio, sound } from './audio.js';
 import { save, load, saveFRConfig, loadFRConfig, saveFRNamedConfig, loadFRNamedConfigs, deleteFRNamedConfig, migrateFRConfig } from './storage.js';
-import { goto, deploy, switchUnit, stopLoop, stopFireRangeLoop, formatFireRangeLog, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, campaignMouseDown, campaignMouseUp, campaignSetAimAngle, campaignClearAimAngle, campaignSetJoystick, campaignClearJoystick, endlessKeyDown, endlessKeyUp, endlessMouseMove, endlessMouseDown, endlessMouseUp, fireRangeKeyDown, fireRangeKeyUp, fireRangeWheel, updateEventLog } from './game.js';
+import { goto, deploy, switchUnit, stopLoop, stopFireRangeLoop, formatFireRangeLog, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, campaignMouseDown, campaignMouseUp, campaignSetAimAngle, campaignClearAimAngle, campaignSetJoystick, campaignClearJoystick, endlessKeyDown, endlessKeyUp, endlessMouseMove, endlessMouseDown, endlessMouseUp, handleDeployClick, fireRangeKeyDown, fireRangeKeyUp, fireRangeWheel, updateEventLog } from './game.js';
 import { FR_PRESETS } from './fire-range-presets.js';
 import { render, setSubState, fetchAvailableVehicles, fetchUnitVariants, fetchVariantData, getUnitVariants, fireRangeResultsHTML, replayTheaterHTML } from './ui.js';
 import { ReplayPlayer } from './replay-player.js';
 import { cameraKeyDown, cameraKeyUp, cameraZoom, cameraPanStart, cameraPanMove, cameraPanEnd } from './camera.js';
 import { initController, getControllerInput, updateButtonStates, setControllerCallbacks, isControllerConnected } from './controller.js';
 import { initGestures, setResetJoysticksCallback } from './gestures.js';
+import { Objective, assignObjective } from './commander.js';
+import { PERSONALITY_PRESETS } from './ai-pipeline.js';
 import { EntityRenderer } from './entity-renderer.js';
 import { moveJoystick, shootJoystick, getNearJoystickAnchor, setJoystickAnchor, getClosestJoystickSide, getDragThreshold } from './joystick.js';
 import * as sprites from './sprites.js';
@@ -20,6 +22,9 @@ const { initSprites } = sprites;
 import { loadTerrainImages } from './world-builder/battle-terrain.js';
 import { initInsigniaTab, handleInsigniaClick, handleInsigniaInput, handleInsigniaKeyDown, handleInsigniaKeyUp } from './insignia-events.js';
 import { cacheInsigniaSet } from './insignia-renderer.js';
+import { handlePanelWheel } from './panel-scroll.js';
+import { logEvent } from './battle-log.js';
+import { handleCMDClick, handleCMDRightClick, handleCMDKey } from './cmd-mode.js';
 
 // Expose sprites module for console testing
 window.sprites = sprites;
@@ -185,13 +190,34 @@ async function initApp() {
   }).catch(err => {
     console.warn('[main] Terrain sprite preload failed (battles will use fallback):', err);
   });
-  // Preload saved insignia set for battle rendering (non-blocking)
-  if (Game.settings.insigniaSetId) {
-    fetch(`/api/insignia/${encodeURIComponent(Game.settings.insigniaSetId)}`)
-      .then(res => res.ok ? res.json() : null)
-      .then(set => { if (set) { cacheInsigniaSet(set); console.log('[main] Insignia set preloaded:', set.name); } })
-      .catch(err => console.warn('[main] Insignia set preload failed:', err));
-  }
+  // Preload insignia set for battle rendering (non-blocking)
+  // If no set is selected, auto-detect the best available set
+  const preloadInsignia = (setId) => {
+    if (setId) {
+      return fetch(`/api/insignia/${encodeURIComponent(setId)}`)
+        .then(res => res.ok ? res.json() : null)
+        .then(set => {
+          if (set) { cacheInsigniaSet(set); console.log('[main] Insignia set preloaded:', set.name); }
+          return set;
+        });
+    }
+    // No set configured — find the best default from server
+    return fetch('/api/insignia')
+      .then(res => res.ok ? res.json() : [])
+      .then(sets => {
+        if (!sets.length) return null;
+        // Prefer set with "US Army" in name, else first available
+        const best = sets.find(s => /us army/i.test(s.name)) || sets[0];
+        Game.settings.insigniaSetId = best.id;
+        return fetch(`/api/insignia/${encodeURIComponent(best.id)}`)
+          .then(r => r.ok ? r.json() : null)
+          .then(set => {
+            if (set) { cacheInsigniaSet(set); console.log('[main] Insignia set auto-selected:', set.name); }
+            return set;
+          });
+      });
+  };
+  preloadInsignia(Game.settings.insigniaSetId).catch(err => console.warn('[main] Insignia preload failed:', err));
   // Render initial state
   render();
   setupEventHandlers();
@@ -449,6 +475,38 @@ document.getElementById('app').addEventListener('click', e => {
     else if (cmd === 'move') campaignKeyDown('4');
     else if (cmd === 'retreat') campaignKeyDown('5');
     return;
+  }
+
+  // Commander map targeting — intercept battlefield clicks when a positional order is pending
+  if (Game.fireRange?.battle?._commanderUI?.pendingOrder) {
+    const b = Game.fireRange.battle;
+    const ui = b._commanderUI;
+    const bf = e.target.closest('.endless-battlefield');
+    if (bf && b.battleRenderer) {
+      const rect = bf.getBoundingClientRect();
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      const world = b.battleRenderer.screenToWorld(sx, sy);
+      if (world) {
+        const sqId = ui.selectedSquadId;
+        const squad = b._squads?.find(s => s.id === sqId);
+        if (squad?.sergeant) {
+          const cmdr = b._teamCommanders?.[squad.team];
+          if (cmdr) {
+            assignObjective(cmdr, squad.sergeant, {
+              type: ui.pendingOrder,
+              target: { x: world.x, y: world.y }
+            }, performance.now(), b);
+          }
+          logEvent(b, {
+            t: performance.now(), type: 'commander', team: squad.team,
+            msg: `Commander orders Squad ${sqId}: ${ui.pendingOrder.toUpperCase()} at (${Math.round(world.x)}, ${Math.round(world.y)})`
+          });
+        }
+        ui.pendingOrder = null;
+        return;
+      }
+    }
   }
 
   // Insignia editor click events (HQ tab) — must be before generic data-action handler
@@ -1508,11 +1566,11 @@ document.getElementById('app').addEventListener('click', e => {
     else if (a === 'fr-toggle-terrain-grid') {
       const b = Game.fireRange?.battle;
       if (b) {
-        // Cycle: 0 (off) → 1 (density) → 2 (A* grid) → 0
-        b.showTerrainGrid = ((b.showTerrainGrid || 0) + 1) % 3;
+        // Cycle: 0 (off) → 1 (density) → 2 (A* grid) → 3 (water depth) → 0
+        b.showTerrainGrid = ((b.showTerrainGrid || 0) + 1) % 4;
         const btn = action;
         btn.classList.toggle('active', b.showTerrainGrid >= 1);
-        const labels = ['Map', 'Map:D', 'Map:A*'];
+        const labels = ['Map', 'Map:D', 'Map:A*', 'Map:W'];
         btn.textContent = labels[b.showTerrainGrid];
       }
     }
@@ -1556,6 +1614,44 @@ document.getElementById('app').addEventListener('click', e => {
         action.textContent = 'Copied!';
         setTimeout(() => { action.textContent = 'Copy Log'; }, 1500);
       });
+    }
+    // ── Commander overlay actions ──
+    else if (a === 'cmdr-select-squad') {
+      const b = Game.fireRange?.battle;
+      if (!b?._commanderUI) return;
+      const sqId = parseInt(action.dataset.squadId, 10);
+      const ui = b._commanderUI;
+      ui.selectedSquadId = ui.selectedSquadId === sqId ? null : sqId;
+      ui.pendingOrder = null;
+    }
+    else if (a === 'cmdr-order') {
+      const b = Game.fireRange?.battle;
+      if (!b?._commanderUI) return;
+      const ui = b._commanderUI;
+      const orderType = action.dataset.order;
+      const sqId = ui.selectedSquadId;
+      if (sqId === null) return;
+
+      const squad = b._squads?.find(s => s.id === sqId);
+      if (!squad?.sergeant) return;
+
+      // Positional orders need a map click target
+      if (orderType === Objective.ADVANCE_TO || orderType === Objective.FALL_BACK || orderType === Objective.SUPPORT) {
+        ui.pendingOrder = orderType;
+        return;
+      }
+
+      // Non-positional: assign immediately
+      const cmdr = b._teamCommanders?.[squad.team];
+      if (cmdr) {
+        assignObjective(cmdr, squad.sergeant, { type: orderType }, performance.now(), b);
+      }
+      // Radio log
+      logEvent(b, {
+        t: performance.now(), type: 'commander', team: squad.team,
+        msg: `Commander orders Squad ${sqId}: ${orderType.toUpperCase()}`
+      });
+      ui.pendingOrder = null;
     }
     // Toggle collapsible panels
     else if (a === 'toggle-panel') {
@@ -1682,6 +1778,20 @@ document.getElementById('app').addEventListener('click', e => {
       if (replayPlayer?.battle) {
         replayPlayer.battle.debugOverlay = !replayPlayer.battle.debugOverlay;
         action.classList.toggle('active', replayPlayer.battle.debugOverlay);
+      }
+    }
+    else if (a === 'replay-toggle-vision') {
+      if (replayPlayer?.battle) {
+        replayPlayer.battle.showVision = !replayPlayer.battle.showVision;
+        action.classList.toggle('active', replayPlayer.battle.showVision);
+      }
+    }
+    else if (a === 'replay-toggle-terrain-grid') {
+      const b = replayPlayer?.battle;
+      if (b) {
+        b.showTerrainGrid = ((b.showTerrainGrid || 0) + 1) % 4;
+        action.classList.toggle('active', b.showTerrainGrid >= 1);
+        action.textContent = ['Map', 'Map:D', 'Map:A*', 'Map:W'][b.showTerrainGrid];
       }
     }
     else if (a === 'replay-exit') {
@@ -2070,6 +2180,29 @@ document.getElementById('app').addEventListener('change', e => {
       if (squads && squads[si] && squads[si].units[idx]) {
         squads[si].units[idx][field] = sel.value;
         if (field === 'unitId') delete squads[si].units[idx].enemyType;
+
+        // Personality preset selected — fill trait sliders with preset values
+        if (field === 'personalityPreset' && sel.value !== 'custom') {
+          const preset = PERSONALITY_PRESETS[sel.value];
+          if (preset) {
+            const slot = squads[si].units[idx];
+            for (const [k, v] of Object.entries(preset.traits)) {
+              slot[k] = v;
+            }
+            // Update slider UI without full re-render
+            const detail = sel.closest('.fr-slot-detail');
+            if (detail) {
+              detail.querySelectorAll('.fr-slider').forEach(s => {
+                const f = s.dataset.field;
+                if (preset.traits[f] !== undefined) {
+                  s.value = preset.traits[f];
+                  const valSpan = s.parentElement.querySelector('.fr-slider-val');
+                  if (valSpan) valSpan.textContent = preset.traits[f].toFixed(2);
+                }
+              });
+            }
+          }
+        }
       }
     }
     if (cnt) {
@@ -2101,6 +2234,21 @@ document.getElementById('app').addEventListener('input', e => {
   // Fire Range slider + count inputs
   if (Game.state === State.FIRE_RANGE && Game.fireRange) {
     const cfg = Game.fireRange.config;
+    // Commander trait sliders
+    const cmdSlider = e.target.closest('.fr-cmd-slider');
+    if (cmdSlider) {
+      const team = cmdSlider.dataset.cmdTeam;
+      const trait = cmdSlider.dataset.cmdTrait;
+      const val = parseFloat(cmdSlider.value);
+      const cmdConfig = team === Team.BLUE ? cfg.blueCommander : cfg.redCommander;
+      if (cmdConfig) {
+        if (!cmdConfig.personality) cmdConfig.personality = {};
+        cmdConfig.personality[trait] = val;
+      }
+      const valSpan = cmdSlider.parentElement.querySelector('.fr-slider-val');
+      if (valSpan) valSpan.textContent = val.toFixed(2);
+      return;
+    }
     // Sergeant trait sliders
     const sgtSlider = e.target.closest('.fr-sgt-slider');
     if (sgtSlider) {
@@ -2130,6 +2278,13 @@ document.getElementById('app').addEventListener('input', e => {
         squads[si].units[idx][field] = val;
         const valSpan = slider.parentElement.querySelector('.fr-slider-val');
         if (valSpan) valSpan.textContent = val.toFixed(2);
+        // If user manually changes a personality trait, switch preset to Custom
+        const traitKeys = ['aggression','patience','courage','discipline','initiative','awareness'];
+        if (traitKeys.includes(field)) {
+          squads[si].units[idx].personalityPreset = 'custom';
+          const presetSel = slider.closest('.fr-slot-detail')?.querySelector('.fr-personality-preset');
+          if (presetSel) presetSel.value = 'custom';
+        }
       }
       return;
     }
@@ -2174,6 +2329,11 @@ document.addEventListener('keydown', e => {
   }
   // Endless mode keyboard
   if (Game.state === State.ENDLESS_BATTLE) {
+    // Prevent Tab from switching focus in CMD mode
+    const eb = Game.endless?.battle;
+    if (eb?.playMode === 'cmd' && (e.key === 'Tab' || e.key === 'Escape')) {
+      e.preventDefault();
+    }
     endlessKeyDown(e.key);
   }
   // Fire Range keyboard (camera pan)
@@ -2232,7 +2392,24 @@ document.addEventListener('mousedown', e => {
   }
   // Endless mode mouse
   if (Game.state === State.ENDLESS_BATTLE && e.button === 0) {
-    endlessMouseDown();
+    const eb = Game.endless?.battle;
+    if (eb?.phase === 'deploying') {
+      // Deployment phase: route clicks to zone selection
+      const bf = document.querySelector('.endless-battlefield');
+      if (bf) {
+        const rect = bf.getBoundingClientRect();
+        handleDeployClick(eb, e.clientX - rect.left, e.clientY - rect.top, e.ctrlKey);
+      }
+    } else if (eb?.playMode === 'cmd' && eb?.phase === 'active') {
+      // CMD mode: route clicks to squad selection / commands
+      const bf = document.querySelector('.endless-battlefield');
+      if (bf) {
+        const rect = bf.getBoundingClientRect();
+        handleCMDClick(eb, e.clientX - rect.left, e.clientY - rect.top, e.ctrlKey);
+      }
+    } else {
+      endlessMouseDown();
+    }
   }
 });
 
@@ -2253,6 +2430,28 @@ document.addEventListener('mouseup', e => {
 
 // Mouse wheel zoom for fire range and replay
 document.addEventListener('wheel', e => {
+  // Scrollable panel regions — works in any battle mode
+  {
+    const bf = document.querySelector('.endless-battlefield');
+    if (bf && bf.contains(e.target)) {
+      let b = null;
+      if (Game.state === State.FIRE_RANGE_BATTLE) b = Game.fireRange?.battle;
+      else if (Game.state === State.ENDLESS_BATTLE) b = Game.endless?.battle;
+      else if (Game.state === State.CAMPAIGN_BATTLE) b = Game.campaign?.heroBattle;
+      if (b) {
+        const rect = bf.getBoundingClientRect();
+        const canvas = bf.querySelector('canvas') || bf;
+        const scaleX = (canvas.width || rect.width) / rect.width;
+        const scaleY = (canvas.height || rect.height) / rect.height;
+        const cx = (e.clientX - rect.left) * scaleX;
+        const cy = (e.clientY - rect.top) * scaleY;
+        if (handlePanelWheel(b, cx, cy, e.deltaY)) {
+          e.preventDefault();
+          return;
+        }
+      }
+    }
+  }
   if (Game.state === State.FIRE_RANGE_BATTLE) {
     const bf = document.querySelector('.endless-battlefield');
     if (bf && bf.contains(e.target)) {
@@ -2669,8 +2868,21 @@ setResetJoysticksCallback(resetAllJoysticks);
 // PLANNING GRID - ZOOM & PAN
 // ═══════════════════════════════════════════════════════════════
 
-// Prevent context menu on planning grid (for right-click waypoint selection)
+// Prevent context menu on planning grid / CMD mode battlefield
 document.addEventListener('contextmenu', e => {
+  // CMD mode right-click: advance to position
+  if (Game.state === State.ENDLESS_BATTLE) {
+    const eb = Game.endless?.battle;
+    if (eb?.playMode === 'cmd' && eb?.phase === 'active') {
+      e.preventDefault();
+      const bf = document.querySelector('.endless-battlefield');
+      if (bf) {
+        const rect = bf.getBoundingClientRect();
+        handleCMDRightClick(eb, e.clientX - rect.left, e.clientY - rect.top);
+      }
+      return;
+    }
+  }
   if (Game.state !== State.CAMPAIGN_PLANNING) return;
   const cell = e.target.closest('.plan-cell');
   if (cell) {

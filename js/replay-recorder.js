@@ -31,7 +31,7 @@ export function createRecorder(b, mode) {
   }
 
   const recorder = {
-    version: 1,
+    version: 2,
     mode: mode || (b.fireRange ? 'fire_range' : 'unknown'),
     seed: b.terrainSeed || null,
     mapWidth: b.mapWidth,
@@ -49,6 +49,55 @@ export function createRecorder(b, mode) {
 
   b._recorder = recorder;
   return recorder;
+}
+
+/**
+ * Snapshot a single unit with full telemetry.
+ */
+function _snapshotUnit(u) {
+  const snap = {
+    x: Math.round(u.x),
+    y: Math.round(u.y),
+    ang: +((u.angle || 0).toFixed(2)),
+    hull: +((u.hullAngle ?? u.angle ?? 0).toFixed(2)),
+    hp: u.hp,
+    dead: u.dead || false,
+    anim: u.animId || null,
+    st: u._dbg?.state || '',
+    // Telemetry additions
+    stab: +((u.stability ?? 0).toFixed(2)),
+    sup: +((u._suppression ?? 0).toFixed(2)),
+    mor: +((u.morale ?? 1).toFixed(2)),
+    sqd: u._squadId ?? -1,
+    cmd: u._dbg?.command || '',
+    tgt: u._dbg?.targetId || '',
+    slotDev: Math.round(u._dbg?.slotDev ?? 0),
+    fmt: u._dbg?.formation || ''
+  };
+  return snap;
+}
+
+/**
+ * Snapshot sergeant telemetry from all squads.
+ * Only included when a sergeant has fresh telemetry (on eval tick, not every frame).
+ */
+function _snapshotSergeants(b, startTime) {
+  if (!b._squads) return null;
+  const sgts = [];
+  for (const sq of b._squads) {
+    const sgt = sq.sergeant;
+    if (!sgt?._telemetry) continue;
+    const tel = sgt._telemetry;
+    // Only include if this telemetry is fresh (within this frame interval)
+    sgts.push({
+      sqId: sq.id,
+      team: sq.team,
+      ...tel,
+      t: Math.round(tel.t - startTime)
+    });
+    sgt._telemetry = null; // Clear so we don't re-record
+  }
+  return sgts.length > 0 ? sgts : null;
 }
 
 /**
@@ -86,15 +135,7 @@ export function recordFrame(b, now) {
   const units = [];
   if (b.units) {
     for (const u of b.units) {
-      units.push({
-        x: Math.round(u.x),
-        y: Math.round(u.y),
-        ang: +((u.angle || 0).toFixed(2)),
-        hp: u.hp,
-        dead: u.dead || false,
-        anim: u.animId || null,
-        st: u._dbg?.state || ''
-      });
+      units.push(_snapshotUnit(u));
     }
   }
 
@@ -102,15 +143,7 @@ export function recordFrame(b, now) {
   const enemies = [];
   if (b.enemies) {
     for (const e of b.enemies) {
-      enemies.push({
-        x: Math.round(e.x),
-        y: Math.round(e.y),
-        ang: +((e.angle || 0).toFixed(2)),
-        hp: e.hp,
-        dead: e.dead || false,
-        anim: e.animId || null,
-        st: e._dbg?.state || ''
-      });
+      enemies.push(_snapshotUnit(e));
     }
   }
 
@@ -132,6 +165,11 @@ export function recordFrame(b, now) {
 
   const frameData = { t, units, enemies, projectiles };
   if (hero) frameData.hero = hero;
+
+  // Sergeant telemetry (only present on eval ticks)
+  const sgtSnap = _snapshotSergeants(b, rec._startTime);
+  if (sgtSnap) frameData.sgts = sgtSnap;
+
   rec.frames.push(frameData);
 }
 
@@ -190,6 +228,8 @@ function computeStats(b) {
     else if (ev.type === 'hit') { who.hits++; who.damage += (ev.dmg || 0); }
     else if (ev.type === 'kill') {
       who.kills++;
+      who.hits++;  // A kill IS a hit
+      who.damage += (ev.dmg || 0);
       const victim = unitMap[ev.target];
       if (victim) who.killDetails.push({ unitId: victim.unitId, tier: getTier(victim.unitId) });
     }
@@ -312,7 +352,13 @@ export function finalizeRecording(b) {
         action: ev.action || '',
         target: ev.target || '',
         detail: ev.detail || '',
-        dmg: ev.dmg || 0
+        dmg: ev.dmg || 0,
+        source: ev.source || '',
+        category: ev.category || '',
+        severity: ev.severity || '',
+        x: ev.x || 0,
+        y: ev.y || 0,
+        acc: ev.acc || 0
       });
     }
   }
@@ -364,4 +410,78 @@ export function saveReplay(b) {
   .then(r => r.json())
   .then(res => { if (res.success) console.log('Replay saved:', res.name); })
   .catch(err => console.warn('Failed to save replay:', err));
+}
+
+/**
+ * Save a mid-battle snapshot replay without stopping the recorder.
+ * Marked with debugSave: true so it shows differently in the theater.
+ * @param {object} b - Battle object
+ * @returns {Promise<boolean>} true if saved successfully
+ */
+export function saveDebugReplay(b) {
+  const rec = b._recorder;
+  if (!rec) return Promise.resolve(false);
+
+  // Build a snapshot of the current recording state
+  const unitDefs = [];
+  if (b.hero && !b.hero.observer) {
+    unitDefs.push({ id: 'hero', team: 'blue', unitId: b.hero.unitId, maxHp: b.hero.maxHp, isHero: true });
+  }
+  if (b.units) {
+    for (const u of b.units) {
+      unitDefs.push({ id: u.id, team: 'blue', unitId: u.unitId, maxHp: u.maxHp, rank: u._rank ?? 0, insigniaSetId: u._insigniaSetId || null });
+    }
+  }
+  if (b.enemies) {
+    for (const e of b.enemies) {
+      unitDefs.push({ id: e.id, team: 'red', unitId: e.unitId, maxHp: e.maxHp, rank: e._rank ?? 0, insigniaSetId: e._insigniaSetId || null });
+    }
+  }
+
+  const startT = rec._startTime || 0;
+  const events = [];
+  if (b._debugLog) {
+    for (const ev of b._debugLog) {
+      events.push({
+        t: ev.t ? ev.t - startT : 0,
+        who: ev.who || '', team: ev.team || '', type: ev.type || '',
+        action: ev.action || '', target: ev.target || '', detail: ev.detail || '',
+        dmg: ev.dmg || 0,
+        source: ev.source || '', category: ev.category || '', severity: ev.severity || '',
+        x: ev.x || 0, y: ev.y || 0, acc: ev.acc || 0
+      });
+    }
+  }
+
+  const stats = computeStats(b);
+  const replay = {
+    version: rec.version,
+    mode: rec.mode,
+    seed: rec.seed,
+    mapWidth: rec.mapWidth,
+    mapHeight: rec.mapHeight,
+    terrainLabel: rec.terrainLabel,
+    result: b.result || 'in_progress',
+    duration: rec.frames.length > 0 ? rec.frames[rec.frames.length - 1].t / 1000 : 0,
+    recordedAt: new Date().toISOString(),
+    debugSave: true,
+    blueSpawnZone: rec.blueSpawnZone,
+    redSpawnZone: rec.redSpawnZone,
+    unitDefs,
+    stats,
+    frames: rec.frames.slice(),
+    events
+  };
+
+  return fetch('/api/replays', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(replay)
+  })
+  .then(r => r.json())
+  .then(res => {
+    if (res.success) console.log('Debug replay saved:', res.name);
+    return res.success;
+  })
+  .catch(err => { console.warn('Failed to save debug replay:', err); return false; });
 }

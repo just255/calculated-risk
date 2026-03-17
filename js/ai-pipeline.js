@@ -385,7 +385,7 @@ export function initBattleAI(b, opts = {}) {
 
   if (!opts.skipSquads) {
     // Group units by _squadId
-    const blueGroups = _groupBySquadId(blueUnits);
+    const blueGroups = opts.skipBlueSquads ? new Map() : _groupBySquadId(blueUnits);
     const redGroups = _groupBySquadId(redUnits);
 
     for (const [, members] of blueGroups) {

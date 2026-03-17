@@ -8,6 +8,46 @@ import { loadRoster, saveRoster, seedStarterRoster, loadVehicles, saveVehicles, 
 const SAVE_KEY = 'cr_save';
 const FR_LAST_KEY = 'cr_fr_last_config';
 const FR_SAVES_KEY = 'cr_fr_saves';
+const LOADOUT_KEY = 'cr_last_loadout';
+
+// ── Loadout persistence ──────────────────────────────────────
+
+/**
+ * Save the current deployment lineup so it auto-loads next battle.
+ * Stores unit types + soldier/vehicle IDs (not positions or battle state).
+ */
+export function saveLastLoadout(b) {
+  try {
+    const lineup = (b.units || []).map(u => ({
+      unitId: u.unitId,
+      _soldierId: u._soldierId || null,
+      _vehicleId: u._vehicleId || null,
+      _role: u._role || null
+    }));
+    const data = {
+      presetId: b._selectedPreset || null,
+      formation: b._deployFormation || 'line',
+      lineup
+    };
+    localStorage.setItem(LOADOUT_KEY, JSON.stringify(data));
+  } catch (e) {
+    console.warn('Failed to save loadout:', e);
+  }
+}
+
+/**
+ * Load the last-used deployment lineup.
+ * Returns { presetId, formation, lineup[] } or null.
+ */
+export function loadLastLoadout() {
+  try {
+    const raw = localStorage.getItem(LOADOUT_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    console.warn('Failed to load loadout:', e);
+    return null;
+  }
+}
 
 export function save() {
   try {
