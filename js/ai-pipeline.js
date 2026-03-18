@@ -8,6 +8,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { Team, UNIT_COMBAT_STATS } from './constants.js';
+import { updateStability } from './fire-decision.js';
 import { Objective, Play, COMMANDER_PRESETS, COMMANDER_TRAIT_PRESETS, createCommander, updateCommander, assignObjective, scaleCommanderByWave, planDeployment, getEdgeSpawnZones, initDefenseZones } from './commander.js';
 import { createSergeant, updateSergeant } from './sergeant.js';
 import {
@@ -592,6 +593,10 @@ export function runBattleAI(b, now, dtSec) {
     // Share hero intel with all blue allies (hero acts as scout for the team)
     _shareHeroIntel(b, hero, allUnits, now);
   }
+
+  // 3.5c. Hero stability — NOT updated here. The game loop calls
+  // updateHeroStability() AFTER hero movement so _movedThisFrame is accurate.
+  // See game.js heroFire/movement sections.
 
   // 3.6. Track whether hero is spotted by any red unit (for UI alert)
   if (hero && !hero.dead) {

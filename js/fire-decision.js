@@ -69,6 +69,45 @@ export function updateStability(unit, dtSec, typeKey) {
     const posBonus = unit._isProne ? 1.5 : (unit._isHullDown ? 1.3 : 1.0);
     unit.stability = Math.min(1.0, unit.stability + (dtSec / zeroIn) * posBonus);
   }
+
+  // Suppression bleeds stability (replaces separate accuracy penalty)
+  const suppression = unit._suppression ?? 0;
+  if (suppression > 0.05) {
+    const supBleed = suppression * 0.4 * dtSec; // Max 0.4/s at full suppression
+    unit.stability = Math.max(0, unit.stability - supBleed);
+  }
+}
+
+/**
+ * Apply stability drop from getting hit.
+ * Scaled by damage relative to maxHp — rifle vs tank barely registers,
+ * tank-on-tank rocks the whole vehicle.
+ * Call from projectile resolver when a unit takes damage.
+ *
+ * @param {object} unit - The unit that was hit
+ * @param {number} damage - Damage dealt
+ */
+export function applyHitStabilityDrop(unit, damage) {
+  if (!unit || unit.stability === undefined) return;
+  const maxHp = unit.maxHp || 100;
+  const impactRatio = damage / maxHp; // 0-1: how hard the hit was relative to unit size
+  const drop = impactRatio * 1.5; // Scale: 10% hp hit = 0.15 stability drop
+  unit.stability = Math.max(0, unit.stability - drop);
+}
+
+/**
+ * Apply post-fire recoil stability drop.
+ * Scaled by weapon damage (bigger gun = more recoil).
+ * Call from tryShoot/heroFire after creating a projectile.
+ *
+ * @param {object} unit - The unit that fired
+ */
+export function applyRecoilDrop(unit) {
+  if (!unit || unit.stability === undefined) return;
+  const damage = unit.damage || 10;
+  // Light weapons (10 dmg): 0.05 drop. Heavy (60 dmg): 0.30 drop.
+  const drop = Math.min(0.4, damage * 0.005);
+  unit.stability = Math.max(0, unit.stability - drop);
 }
 
 /**
@@ -128,24 +167,15 @@ export function computeShotAccuracy(unit, target, opts = {}) {
   let accuracy = baseAcc;
   factors.push({ name: 'base', value: baseAcc });
 
-  // STABILITY — moving units are inaccurate (band: 0.15–1.0)
+  // STABILITY — single readiness measure. All disruptions (movement, turret slew,
+  // suppression, hits, recoil) feed INTO stability. Accuracy reads FROM stability.
+  // No separate penalties here for things that already affect stability.
   const stability = unit.stability ?? 0.5;
-  const stabilityWeight = 0.15 + stability * 0.85;
+  const stabilityWeight = 0.15 + stability * 0.85; // Band: 0.15–1.0
   accuracy *= stabilityWeight;
   factors.push({ name: 'stability', value: stabilityWeight });
 
-  // TURRET TRAVERSAL — rotating turret reduces accuracy
-  const turretAngVel = unit._turretAngVel ?? 0;
-  if (turretAngVel > 0.1) {
-    const patience = unit._personality?.patience ?? unit.personality?.patience ?? 0.5;
-    const maxPenalty = 0.3 * (1.0 - patience * 0.5);
-    const floor = 1.0 - maxPenalty;
-    const turretWeight = Math.max(floor, 1.0 - Math.min(maxPenalty, turretAngVel / (Math.PI * 2)));
-    accuracy *= turretWeight;
-    factors.push({ name: 'turretTraversal', value: turretWeight });
-  }
-
-  // RANGE
+  // RANGE — distance falloff
   const dx = target.x - unit.x;
   const dy = target.y - unit.y;
   const dist = Math.sqrt(dx * dx + dy * dy);
@@ -165,14 +195,6 @@ export function computeShotAccuracy(unit, target, opts = {}) {
     const speedWeight = Math.max(0.3, 1.0 - speedRatio * 0.6);
     accuracy *= speedWeight;
     factors.push({ name: 'targetSpeed', value: speedWeight });
-  }
-
-  // SUPPRESSION — affects everyone (hero and AI)
-  const suppression = unit._suppression ?? 0;
-  if (suppression > 0) {
-    const suppressionWeight = 1 - suppression * 0.55;
-    accuracy *= suppressionWeight;
-    factors.push({ name: 'suppression', value: suppressionWeight });
   }
 
   return { accuracy, damageMod, factors, dist, range, stability };

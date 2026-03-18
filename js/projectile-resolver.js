@@ -5,6 +5,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { Team, Owner, getStanceModifier, getEnemyStance } from './constants.js';
+import { applyHitStabilityDrop } from './fire-decision.js';
 import { isTerrainBlocked } from './terrain-utils.js';
 import { getBridgeCoverMult, isBridgeDeckBlocking } from './terrain-query.js';
 import {
@@ -140,6 +141,7 @@ export function resolveProjectiles(b, now, dtSec, opts = {}) {
           e.hp -= dmg;
           if (e.hp < 0) e.hp = 0;
           p.dead = true;
+          applyHitStabilityDrop(e, dmg);
 
           // Combat effects
           e._shockTimer = 2;
@@ -186,6 +188,7 @@ export function resolveProjectiles(b, now, dtSec, opts = {}) {
         if (hdx * hdx + hdy * hdy < heroHitRadiusSq) {
           heroRef.hp -= p.damage;
           p.dead = true;
+          applyHitStabilityDrop(heroRef, p.damage);
           if (onHeroHit) onHeroHit(heroRef, p.damage, p);
         }
       }
@@ -214,6 +217,7 @@ export function resolveProjectiles(b, now, dtSec, opts = {}) {
 
             unit.hp -= dmg;
             p.dead = true;
+            applyHitStabilityDrop(unit, dmg);
 
             // Combat effects
             unit._shockTimer = 2;

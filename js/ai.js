@@ -6,7 +6,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { UNITS, UNIT_PROJECTILES, UNIT_COMBAT_STATS, Formation, FORMATION_OFFSETS, Team, Owner } from './constants.js';
-import { updateStability, shouldFire, getDamageFalloff } from './fire-decision.js';
+import { updateStability, shouldFire, getDamageFalloff, applyRecoilDrop } from './fire-decision.js';
 import {
   isTerrainBlocked, getTerrainSpeedMod, getTerrainAt, isInCover,
   TERRAIN_COVER_SCORE, getWaterDepth, isTerrainPassable,
@@ -4640,6 +4640,9 @@ export function tryShoot(b, unit, targetX, targetY, now, targetEntity) {
     type: projType,
     _bridgeElevation: unit._bridgeElevation || null
   });
+
+  // Post-fire recoil — bigger guns drop more stability
+  applyRecoilDrop(unit);
 
   // Track shotsFired for roster metrics
   if (b._soldierMetrics) {

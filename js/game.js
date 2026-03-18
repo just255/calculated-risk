@@ -55,9 +55,8 @@ import {
 } from './movement.js';
 import { rollModifier, applyModifier, getModifiedDamage } from './elite-modifiers.js';
 import { runBattleAI, spawnSquad, createSquad, applyBrainDefaults, scaleBrainByWave, BRAIN_PRESETS } from './ai-pipeline.js';
-import { getArmorTier } from './ai.js';
 import { planDeployment, scaleCommanderByWave, assignObjective } from './commander.js';
-import { computeShotAccuracy } from './fire-decision.js';
+import { computeShotAccuracy, applyRecoilDrop, updateStability } from './fire-decision.js';
 import { createRecorder, recordFrame, finalizeRecording, isRecording, saveReplay } from './replay-recorder.js';
 import { updateFireRangeCamera, updateHeroCamera, cameraKeyDown, cameraKeyUp, cameraZoom, cameraFitMap, cameraFitMapImmediate } from './camera.js';
 import { resolveProjectiles } from './projectile-resolver.js';
@@ -2378,6 +2377,9 @@ function updateEndlessBattle(dt) {
   const velDy = hero.y - (hero.lastY || hero.y);
   hero.velocity = dtSec > 0 ? Math.sqrt(velDx * velDx + velDy * velDy) / dtSec : 0;
 
+  // Stability — must run AFTER movement so position delta is accurate
+  updateHeroStability(hero, dtSec);
+
   // Update movement animation
   if (useCanvasRendering && hero.animId) {
     if (isMoving !== hero.isMoving) {
@@ -2414,28 +2416,8 @@ function updateEndlessBattle(dt) {
   while (aimDiff < -Math.PI) aimDiff += Math.PI * 2;
   const turretAligned = Math.abs(aimDiff) < 0.17;
 
-  if (b.mouse.down && turretAligned && now - hero.lastShot > hero.fireRate) {
-    hero.lastShot = now;
-
-    const projSpeed = 500;
-    b.projectiles.push({
-      x: hero.x,
-      y: hero.y,
-      originX: hero.x,
-      originY: hero.y,
-      vx: Math.cos(hero.angle) * projSpeed,
-      vy: Math.sin(hero.angle) * projSpeed,
-      damage: hero.damage,
-      owner: Owner.PLAYER,
-      sourceId: hero.id,
-      type: 'bullet'
-    });
-
-    if (useCanvasRendering && hero.animId) {
-      sprites.triggerUnitAnim(hero.animId, 'fire');
-    }
-
-    sound('shoot');
+  if (b.mouse.down && turretAligned) {
+    heroFire(b, hero, now);
   }
 
   // --- UPDATE CAMERA (unit mode only — CMD camera handled in drawHeroBattle) ---
@@ -4796,6 +4778,109 @@ function _findSoldierId(allUnits, unitId) {
   return null;
 }
 
+// ── Hero stability — call AFTER hero movement each frame ─────
+
+/**
+ * Track hero movement and update stability.
+ * Must be called AFTER the hero position is updated (not in the AI pipeline,
+ * which runs before hero movement).
+ */
+function updateHeroStability(hero, dtSec) {
+  if (!hero || hero.dead || hero.observer) return;
+
+  // Track movement from position delta
+  const dx = hero.x - (hero._prevPhysX ?? hero.x);
+  const dy = hero.y - (hero._prevPhysY ?? hero.y);
+  const moveDist = Math.sqrt(dx * dx + dy * dy);
+  hero._movedThisFrame = moveDist > 0.5;
+  hero._moveDistThisFrame = moveDist;
+  hero._prevPhysX = hero.x;
+  hero._prevPhysY = hero.y;
+
+  // Same stability function as AI units
+  updateStability(hero, dtSec, hero.unitId);
+}
+
+// ── Hero fire — shared by endless + campaign ─────────────────
+
+/**
+ * Hero fire: player controls WHEN, physics controls accuracy.
+ * No AI gates (stability threshold, acquisition delay, fire probability).
+ * @param {object} b - Battle state
+ * @param {object} hero - Hero unit
+ * @param {number} now - Current timestamp
+ * @param {object} [targetEntity] - Auto-attack target entity (for range calc)
+ * @returns {boolean} true if shot was fired
+ */
+function heroFire(b, hero, now, targetEntity) {
+  if (now - hero.lastShot <= hero.fireRate) return false;
+
+  // Use actual target position for range calculation, or mouse aim in world space
+  let aimTarget;
+  if (targetEntity && !targetEntity.dead) {
+    aimTarget = { x: targetEntity.x, y: targetEntity.y };
+  } else {
+    // Fall back to world-space aim point from mouse + camera
+    const zoom = b.camera?.zoom || 1;
+    const camX = b.camera?.x || 0;
+    const camY = b.camera?.y || 0;
+    const worldX = (b.mouse?.x || 0) / zoom + camX;
+    const worldY = (b.mouse?.y || 0) / zoom + camY;
+    aimTarget = { x: worldX, y: worldY };
+  }
+  const shot = computeShotAccuracy(hero, aimTarget);
+
+  hero.lastShot = now;
+  const baseAngle = hero.angle;
+  const maxSpread = Math.PI / 12;
+  const spread = (1.0 - shot.accuracy) * maxSpread;
+  const angle = baseAngle + (Math.random() - 0.5) * 2 * spread;
+
+  const damage = hero.damage || 40;
+  const finalDamage = Math.round(damage * (shot.damageMod ?? 1.0));
+  const projSpeed = hero.projectileSpeed || 500;
+  const projType = UNIT_PROJECTILES[hero.unitId] || 'bullet';
+
+  b.projectiles.push({
+    x: hero.x, y: hero.y,
+    originX: hero.x, originY: hero.y,
+    vx: Math.cos(angle) * projSpeed,
+    vy: Math.sin(angle) * projSpeed,
+    damage: finalDamage,
+    owner: Owner.PLAYER,
+    sourceId: hero.id,
+    attackerTier: getArmorTier(hero),
+    type: projType,
+    _bridgeElevation: hero._bridgeElevation || null
+  });
+
+  // Log fire event
+  const factorStr = shot.factors.map(f => `${f.name}:${f.value.toFixed(2)}`).join(' ');
+  logEvent(b, {
+    t: now, who: hero.id, team: 'blue', type: 'fire',
+    x: Math.round(hero.x), y: Math.round(hero.y),
+    action: 'fire', target: hero.autoAttackTarget || '?',
+    acc: shot.accuracy.toFixed(2), dmg: finalDamage,
+    detail: `${factorStr} dist:${Math.round(shot.dist)} falloff:${(shot.damageMod ?? 1).toFixed(2)}`
+  });
+
+  // Post-fire recoil
+  applyRecoilDrop(hero);
+
+  // Track metrics for roster progression
+  if (b._soldierMetrics && hero._crewSoldierIds?.gunner) {
+    const m = b._soldierMetrics.get(hero._crewSoldierIds.gunner);
+    if (m) m.shotsFired++;
+  }
+
+  // Fire animation
+  if (useCanvasRendering && hero.animId) {
+    sprites.triggerUnitAnim(hero.animId, 'fire');
+  }
+  sound('shoot');
+  return true;
+}
+
 // ── Deployment click handler ────────────────────────────────
 
 export function handleDeployClick(b, screenX, screenY, ctrlKey) {
@@ -6325,6 +6410,9 @@ function updateCampaignBattle(dt) {
   hero.x = Math.max(30, Math.min(b.mapWidth - 30, hero.x));
   hero.y = Math.max(30, Math.min(b.mapHeight - 30, hero.y));
 
+  // Stability — must run AFTER movement so position delta is accurate
+  updateHeroStability(hero, dtSec);
+
   // --- HERO ANIMATION ---
   if (useCanvasRendering && hero.animId) {
     // Update movement animation trigger
@@ -6382,65 +6470,9 @@ function updateCampaignBattle(dt) {
   const turretAligned = Math.abs(aimDiff) < 0.17; // ~10 degrees
 
   // Fire if: (manual shooting OR auto-attacking) AND turret is aligned with target
-  if ((b.mouse.down || autoAttacking) && turretAligned && now - hero.lastShot > hero.fireRate) {
-    // Hero fire: player controls WHEN to fire, physics controls accuracy
-    // No AI gates (stability threshold, acquisition delay, fire probability)
-    // Yes to: stability spread, range falloff, suppression penalty, turret traversal
-
-    const aimDist = 600;
-    const aimTarget = {
-      x: hero.x + Math.cos(hero.angle) * aimDist,
-      y: hero.y + Math.sin(hero.angle) * aimDist
-    };
-    const shot = computeShotAccuracy(hero, aimTarget);
-
-    hero.lastShot = now;
-    const baseAngle = hero.angle;
-    const maxSpread = Math.PI / 12;
-    const spread = (1.0 - shot.accuracy) * maxSpread;
-    const angle = baseAngle + (Math.random() - 0.5) * 2 * spread;
-
-    const damage = hero.damage || 40;
-    const finalDamage = Math.round(damage * (shot.damageMod ?? 1.0));
-    const projSpeed = hero.projectileSpeed || 500;
-    const projType = UNIT_PROJECTILES[hero.unitId] || 'bullet';
-
-    b.projectiles.push({
-      x: hero.x, y: hero.y,
-      originX: hero.x, originY: hero.y,
-      vx: Math.cos(angle) * projSpeed,
-      vy: Math.sin(angle) * projSpeed,
-      damage: finalDamage,
-      owner: Owner.PLAYER,
-      sourceId: hero.id,
-      attackerTier: getArmorTier(hero),
-      type: projType,
-      _bridgeElevation: hero._bridgeElevation || null
-    });
-
-    // Log fire event (same format as AI units)
-    const factorStr = shot.factors.map(f => `${f.name}:${f.value.toFixed(2)}`).join(' ');
-    logEvent(b, {
-      t: now, who: hero.id, team: 'blue', type: 'fire',
-      x: Math.round(hero.x), y: Math.round(hero.y),
-      action: 'fire', target: hero.autoAttackTarget || '?',
-      acc: shot.accuracy.toFixed(2), dmg: finalDamage,
-      detail: `${factorStr} dist:${Math.round(shot.dist)} falloff:${(shot.damageMod ?? 1).toFixed(2)}`
-    });
-
-    // Track metrics for roster progression
-    if (b._soldierMetrics) {
-      if (hero._crewSoldierIds?.gunner && b._soldierMetrics.has(hero._crewSoldierIds.gunner)) {
-        b._soldierMetrics.get(hero._crewSoldierIds.gunner).shotsFired++;
-      }
-    }
-
-    // Trigger fire animation
-    if (useCanvasRendering && hero.animId) {
-      sprites.triggerUnitAnim(hero.animId, 'fire');
-    }
-
-    sound('shoot');
+  if ((b.mouse.down || autoAttacking) && turretAligned) {
+    const autoTarget = hero.autoAttackTarget ? b.enemies.find(e => e.id === hero.autoAttackTarget && !e.dead) : null;
+    heroFire(b, hero, now, autoTarget);
   }
 
   // --- UPDATE CAMERA WITH LOOK-AHEAD ---

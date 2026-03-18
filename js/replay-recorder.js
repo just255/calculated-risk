@@ -127,7 +127,9 @@ export function recordFrame(b, now) {
       ang: +((b.hero.angle || 0).toFixed(2)),
       hull: +((b.hero.hullAngle || 0).toFixed(2)),
       hp: b.hero.hp,
-      dead: b.hero.dead || false
+      dead: b.hero.dead || false,
+      stab: +((b.hero.stability ?? 0).toFixed(2)),
+      sup: +((b.hero._suppression ?? 0).toFixed(2))
     };
   }
 
