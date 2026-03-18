@@ -1523,7 +1523,7 @@ export function newEndlessBattle(loadout, wave = 1) {
   const terrain = generateEndlessTerrain(gridWidth, gridHeight, wave, seed);
 
   // Staging depth for off-map spawn (wave 1 only)
-  const stageDepth = wave === 1 ? Math.round(mapHeight * 0.1) : 0;
+  const stageDepth = Math.round(mapHeight * 0.1); // Always have staging area for blue march-in
 
   // Hero position: wave 1 starts off-map (behind bottom edge), later waves on-map
   const heroX = mapWidth / 2;

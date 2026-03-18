@@ -55,7 +55,9 @@ import {
 } from './movement.js';
 import { rollModifier, applyModifier, getModifiedDamage } from './elite-modifiers.js';
 import { runBattleAI, spawnSquad, createSquad, applyBrainDefaults, scaleBrainByWave, BRAIN_PRESETS } from './ai-pipeline.js';
+import { getArmorTier } from './ai.js';
 import { planDeployment, scaleCommanderByWave, assignObjective } from './commander.js';
+import { computeShotAccuracy } from './fire-decision.js';
 import { createRecorder, recordFrame, finalizeRecording, isRecording, saveReplay } from './replay-recorder.js';
 import { updateFireRangeCamera, updateHeroCamera, cameraKeyDown, cameraKeyUp, cameraZoom, cameraFitMap, cameraFitMapImmediate } from './camera.js';
 import { resolveProjectiles } from './projectile-resolver.js';
@@ -487,6 +489,11 @@ export function goto(newState, data = {}) {
         if (Game.endless.playMode) {
           Game.endless.battle.playMode = Game.endless.playMode;
         }
+        // Edit Deployment: force deploy phase so deploy panel shows
+        if (Game.endless._editDeployment) {
+          Game.endless._editDeployment = false;
+          Game.endless.battle.phase = 'deploying';
+        }
         // For wave 2+ in CMD mode, init immediately (no countdown phase)
         if (Game.endless.battle.playMode === 'cmd' && Game.endless.battle.phase === 'active') {
           initCMDMode(Game.endless.battle);
@@ -496,6 +503,38 @@ export function goto(newState, data = {}) {
           if (!hero.id) hero.id = `hero_${Date.now()}`;
         }
         console.log('[game] Created endless battle for wave', Game.endless.wave, 'mode:', Game.endless.battle.playMode);
+
+        // Auto-deploy for wave 2+ — position in staging area and skip deploy phase
+        if (Game.endless._autoDeployNextWave) {
+          Game.endless._autoDeployNextWave = false;
+          const b = Game.endless.battle;
+          const stageDepth = b.stageDepth || Math.round(b.mapHeight * 0.1);
+
+          // Position blue in off-map staging area (same as wave 1 deploy)
+          const spawnX = b.mapWidth / 2;
+          const stageY = b.mapHeight + stageDepth / 2;
+          const units = b.units || [];
+
+          // Hero at center of staging area
+          b.hero.x = spawnX;
+          b.hero.y = stageY;
+
+          // Squad in formation around hero in staging area
+          const spacing = 60;
+          for (let i = 0; i < units.length; i++) {
+            const offset = (i - units.length / 2) * spacing;
+            units[i].x = spawnX + offset;
+            units[i].y = stageY + (Math.random() - 0.5) * 40;
+          }
+
+          // Stamp roster data + create blue squad (same as deploy button)
+          _stampRosterData(b);
+
+          // Mark as deployed — skip deploy phase
+          if (!b.deployReady) b.deployReady = {};
+          b.deployReady.blue = true;
+          b.phase = 'active';
+        }
       }
 
       // Initialize hero sprite animation
@@ -2439,6 +2478,10 @@ function updateEndlessBattle(dt) {
     }
     if (readyEntries.length > 0) {
       for (const entry of readyEntries) {
+        // Stamp insignia on late-spawned reinforcements
+        if (b._insigniaSetId && !entry.enemy._insigniaSetId) {
+          entry.enemy._insigniaSetId = b._insigniaSetId;
+        }
         b.enemies.push(entry.enemy);
       }
 
@@ -2769,18 +2812,23 @@ function spawnEndlessWave(b) {
 
     let enemyIndex = 0;
 
-    // Always spawn red off the top edge so they march in (like blue rolls in from bottom)
-    const offMapY = -(b.stageDepth || 100) / 2;
+    // First group spawns at 25% from red edge (on-map), reinforcements from off-map edge
+    const onMapY = b.mapHeight * 0.25;  // 25% from top = initial enemy position
+    const offMapY = -(b.stageDepth || 100) / 2;  // Off-map for reinforcements
+    let isFirstGroup = true;
 
     for (const plan of plans) {
       const squadEnemies = [];
       const zone = plan.spawnZone;
+      // First group spawns on-map at 25%, subsequent groups from edge
+      const groupY = isFirstGroup ? onMapY : offMapY;
+      isFirstGroup = false;
 
       for (const unitDef of plan.units) {
-        // Spawn position: use zone X spread, but off-map Y
+        // Spawn position: use zone X spread, group-appropriate Y
         const offsetX = (Math.random() - 0.5) * zone.radius * 2;
         const offsetY = (Math.random() - 0.5) * 40;
-        const pos = { x: zone.x + offsetX, y: offMapY + offsetY };
+        const pos = { x: zone.x + offsetX, y: groupY + offsetY };
 
         const enemy = createEndlessEnemy(b, unitDef.type, pos.x, pos.y, wave, sizeMult, enemyIndex++);
 
@@ -6335,22 +6383,57 @@ function updateCampaignBattle(dt) {
 
   // Fire if: (manual shooting OR auto-attacking) AND turret is aligned with target
   if ((b.mouse.down || autoAttacking) && turretAligned && now - hero.lastShot > hero.fireRate) {
-    hero.lastShot = now;
+    // Hero fire: player controls WHEN to fire, physics controls accuracy
+    // No AI gates (stability threshold, acquisition delay, fire probability)
+    // Yes to: stability spread, range falloff, suppression penalty, turret traversal
 
-    // Create projectile moving in aim direction
-    const projSpeed = 500;
+    const aimDist = 600;
+    const aimTarget = {
+      x: hero.x + Math.cos(hero.angle) * aimDist,
+      y: hero.y + Math.sin(hero.angle) * aimDist
+    };
+    const shot = computeShotAccuracy(hero, aimTarget);
+
+    hero.lastShot = now;
+    const baseAngle = hero.angle;
+    const maxSpread = Math.PI / 12;
+    const spread = (1.0 - shot.accuracy) * maxSpread;
+    const angle = baseAngle + (Math.random() - 0.5) * 2 * spread;
+
+    const damage = hero.damage || 40;
+    const finalDamage = Math.round(damage * (shot.damageMod ?? 1.0));
+    const projSpeed = hero.projectileSpeed || 500;
+    const projType = UNIT_PROJECTILES[hero.unitId] || 'bullet';
+
     b.projectiles.push({
-      x: hero.x,
-      y: hero.y,
-      originX: hero.x,
-      originY: hero.y,
-      vx: Math.cos(hero.angle) * projSpeed,
-      vy: Math.sin(hero.angle) * projSpeed,
-      damage: hero.damage,
+      x: hero.x, y: hero.y,
+      originX: hero.x, originY: hero.y,
+      vx: Math.cos(angle) * projSpeed,
+      vy: Math.sin(angle) * projSpeed,
+      damage: finalDamage,
       owner: Owner.PLAYER,
       sourceId: hero.id,
-      type: 'bullet'
+      attackerTier: getArmorTier(hero),
+      type: projType,
+      _bridgeElevation: hero._bridgeElevation || null
     });
+
+    // Log fire event (same format as AI units)
+    const factorStr = shot.factors.map(f => `${f.name}:${f.value.toFixed(2)}`).join(' ');
+    logEvent(b, {
+      t: now, who: hero.id, team: 'blue', type: 'fire',
+      x: Math.round(hero.x), y: Math.round(hero.y),
+      action: 'fire', target: hero.autoAttackTarget || '?',
+      acc: shot.accuracy.toFixed(2), dmg: finalDamage,
+      detail: `${factorStr} dist:${Math.round(shot.dist)} falloff:${(shot.damageMod ?? 1).toFixed(2)}`
+    });
+
+    // Track metrics for roster progression
+    if (b._soldierMetrics) {
+      if (hero._crewSoldierIds?.gunner && b._soldierMetrics.has(hero._crewSoldierIds.gunner)) {
+        b._soldierMetrics.get(hero._crewSoldierIds.gunner).shotsFired++;
+      }
+    }
 
     // Trigger fire animation
     if (useCanvasRendering && hero.animId) {

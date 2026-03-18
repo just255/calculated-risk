@@ -4616,9 +4616,8 @@ export function tryShoot(b, unit, targetX, targetY, now, targetEntity) {
 
   unit.lastShot = now;
   const baseAngle = Math.atan2(dy, dx);
-  // Suppression reduces accuracy (max 55% penalty at full suppression)
-  const suppressionAccPenalty = 1 - (unit._suppression ?? 0) * 0.55;
-  const accuracy = fireDecision.accuracy * suppressionAccPenalty;
+  // Suppression is now included in computeShotAccuracy — no separate penalty here
+  const accuracy = fireDecision.accuracy;
   const maxSpread = Math.PI / 12;
   const spread = (1.0 - accuracy) * maxSpread;
   const angle = baseAngle + (Math.random() - 0.5) * 2 * spread;

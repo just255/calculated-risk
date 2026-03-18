@@ -1259,10 +1259,20 @@ document.getElementById('app').addEventListener('click', e => {
       fetchUnitVariants().then(() => { goto(State.ENDLESS_LOADOUT); render(); });
     }
     else if (a === 'endless-next-wave') {
-      // Advance to next wave — reuse existing between→battle flow
+      // Advance to next wave — auto-deploy surviving squad on new map
       if (Game.endless) {
         Game.endless.wave++;
         Game.endless.battle = null;
+        Game.endless._autoDeployNextWave = true;
+        goto(State.ENDLESS_BATTLE);
+      }
+    }
+    else if (a === 'endless-edit-deploy') {
+      // Advance to next wave — open deploy panel for squad modification
+      if (Game.endless) {
+        Game.endless.wave++;
+        Game.endless.battle = null;
+        Game.endless._editDeployment = true;  // Force deploy phase on next battle
         goto(State.ENDLESS_BATTLE);
       }
     }

@@ -4831,7 +4831,8 @@ function endlessResultHTML() {
       <div class="result-actions">
         ${isDeath
           ? `<button class="menu-btn primary" data-action="endless-retry">NEW RUN</button>`
-          : `<button class="menu-btn primary" data-action="endless-next-wave">NEXT WAVE</button>`
+          : `<button class="menu-btn primary" data-action="endless-next-wave">NEXT WAVE</button>
+             <button class="menu-btn secondary" data-action="endless-edit-deploy">EDIT DEPLOYMENT</button>`
         }
         <button class="menu-btn secondary" data-action="menu">MAIN MENU</button>
       </div>

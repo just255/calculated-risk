@@ -103,10 +103,24 @@ export function getDamageFalloff(dist, range) {
  * @param {object} opts - Optional overrides { heroVelocity }
  * @returns {{ canFire: boolean, accuracy: number, damageMod: number }}
  */
-export function shouldFire(unit, target, b, now, opts = {}) {
+// ═══════════════════════════════════════════════════════════════
+// SHOT ACCURACY — Pure physics, no AI gates.
+// Used by both AI (via shouldFire) and hero (directly).
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Compute accuracy and damage modifier for a shot.
+ * No cooldowns, no personality gates, no fire probability — just physics.
+ *
+ * @param {object} unit   - The firing unit
+ * @param {object} target - Target { x, y } or entity
+ * @param {object} [opts] - { heroVelocity, heroMaxSpeed }
+ * @returns {{ accuracy, damageMod, factors, dist, range, stability }}
+ */
+export function computeShotAccuracy(unit, target, opts = {}) {
   const factors = [];
 
-  // 0. BASE ACCURACY — weapon system ceiling (upgrades/crew can push higher, cap at 1.0)
+  // BASE ACCURACY — weapon system ceiling
   const combatStats = unit.unitId ? UNIT_COMBAT_STATS[unit.unitId] : null;
   const baseAcc = Math.min(1.0, unit._accuracyBonus
     ? (combatStats?.baseAccuracy ?? 0.80) + unit._accuracyBonus
@@ -114,6 +128,62 @@ export function shouldFire(unit, target, b, now, opts = {}) {
   let accuracy = baseAcc;
   factors.push({ name: 'base', value: baseAcc });
 
+  // STABILITY — moving units are inaccurate (band: 0.15–1.0)
+  const stability = unit.stability ?? 0.5;
+  const stabilityWeight = 0.15 + stability * 0.85;
+  accuracy *= stabilityWeight;
+  factors.push({ name: 'stability', value: stabilityWeight });
+
+  // TURRET TRAVERSAL — rotating turret reduces accuracy
+  const turretAngVel = unit._turretAngVel ?? 0;
+  if (turretAngVel > 0.1) {
+    const patience = unit._personality?.patience ?? unit.personality?.patience ?? 0.5;
+    const maxPenalty = 0.3 * (1.0 - patience * 0.5);
+    const floor = 1.0 - maxPenalty;
+    const turretWeight = Math.max(floor, 1.0 - Math.min(maxPenalty, turretAngVel / (Math.PI * 2)));
+    accuracy *= turretWeight;
+    factors.push({ name: 'turretTraversal', value: turretWeight });
+  }
+
+  // RANGE
+  const dx = target.x - unit.x;
+  const dy = target.y - unit.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const range = unit.range || 150;
+  const rangeRatio = Math.min(1.0, dist / range);
+  const rangeWeight = 1.0 - rangeRatio * 0.45;
+  accuracy *= rangeWeight;
+  factors.push({ name: 'range', value: rangeWeight });
+
+  const damageMod = getDamageFalloff(dist, range);
+
+  // TARGET SPEED (for enemies shooting at the moving hero)
+  const heroVelocity = opts.heroVelocity || 0;
+  if (heroVelocity > 0) {
+    const heroMaxSpeed = opts.heroMaxSpeed || 120;
+    const speedRatio = Math.min(1.0, heroVelocity / heroMaxSpeed);
+    const speedWeight = Math.max(0.3, 1.0 - speedRatio * 0.6);
+    accuracy *= speedWeight;
+    factors.push({ name: 'targetSpeed', value: speedWeight });
+  }
+
+  // SUPPRESSION — affects everyone (hero and AI)
+  const suppression = unit._suppression ?? 0;
+  if (suppression > 0) {
+    const suppressionWeight = 1 - suppression * 0.55;
+    accuracy *= suppressionWeight;
+    factors.push({ name: 'suppression', value: suppressionWeight });
+  }
+
+  return { accuracy, damageMod, factors, dist, range, stability };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// AI FIRE DECISION — Gates + accuracy physics.
+// AI units call this. Hero calls computeShotAccuracy directly.
+// ═══════════════════════════════════════════════════════════════
+
+export function shouldFire(unit, target, b, now, opts = {}) {
   // 1. COOLDOWN — hard gate
   const fireRate = unit.fireRate || 2000;
   const lastAttack = unit.lastAttack || unit.lastShot || 0;
@@ -121,79 +191,40 @@ export function shouldFire(unit, target, b, now, opts = {}) {
     return { canFire: false, accuracy: 0, damageMod: 0 };
   }
 
-  // 2. STABILITY — moving units are inaccurate (wider band: 0.15–1.0)
-  const stability = unit.stability ?? 0.5;
-  const stabilityWeight = 0.15 + stability * 0.85; // Range: 0.15 – 1.0
-  accuracy *= stabilityWeight;
-  factors.push({ name: 'stability', value: stabilityWeight });
-
-  // 2b. TURRET TRAVERSAL — rotating turret reduces accuracy (counts as movement)
-  // Patient units handle turret rotation better (reduced penalty)
-  const turretAngVel = unit._turretAngVel ?? 0;
-  if (turretAngVel > 0.1) {
-    const patience = unit._personality?.patience ?? 0.5;
-    const maxPenalty = 0.3 * (1.0 - patience * 0.5); // patience 0→0.30, patience 1→0.15
-    const floor = 1.0 - maxPenalty;                    // patience 0→0.70, patience 1→0.85
-    const turretWeight = Math.max(floor, 1.0 - Math.min(maxPenalty, turretAngVel / (Math.PI * 2)));
-    accuracy *= turretWeight;
-    factors.push({ name: 'turretTraversal', value: turretWeight });
-  }
-
-  // 3. RANGE — unit.range is the single source of truth
+  // 2. RANGE CUTOFF — hard gate
   const dx = target.x - unit.x;
   const dy = target.y - unit.y;
   const dist = Math.sqrt(dx * dx + dy * dy);
   const range = unit.range || 150;
-
-  // Hard cutoff: nothing fires beyond range × 1.1
   if (dist > range * 1.1) {
     return { canFire: false, accuracy: 0, damageMod: 0 };
   }
 
-  // Accuracy falloff — noticeable at range (wider band: 0.55–1.0)
-  const rangeRatio = Math.min(1.0, dist / range);
-  const rangeWeight = 1.0 - rangeRatio * 0.45; // 1.0 at close range, 0.55 at max range
-  accuracy *= rangeWeight;
-  factors.push({ name: 'range', value: rangeWeight });
+  // 3. Accuracy physics (shared with hero)
+  const shot = computeShotAccuracy(unit, target, opts);
 
-  // Damage falloff (steep beyond 60% of range)
-  const damageMod = getDamageFalloff(dist, range);
-
-  // 4. TARGET SPEED — faster target = lower accuracy
-  const heroVelocity = opts.heroVelocity || 0;
-  if (heroVelocity > 0) {
-    const heroMaxSpeed = opts.heroMaxSpeed || 120;
-    const speedRatio = Math.min(1.0, heroVelocity / heroMaxSpeed);
-    const speedWeight = Math.max(0.3, 1.0 - speedRatio * 0.6); // 1.0 stationary, 0.4 full speed
-    accuracy *= speedWeight;
-    factors.push({ name: 'targetSpeed', value: speedWeight });
-  }
-
-  // 5. STABILITY THRESHOLD — personality-driven minimum stability to fire
-  // Disciplined/patient units wait for a stable shot; aggressive/impatient units snap-fire
+  // 4. STABILITY THRESHOLD — personality gate
   const personality = unit._personality || unit.personality || {};
   const discipline = personality.discipline ?? 0.5;
   const patience = personality.patience ?? 0.5;
-  const minStability = discipline * 0.4 + patience * 0.2; // 0.0 – 0.6
-  if (stability < minStability) {
-    return { canFire: false, accuracy, damageMod, factors, reason: 'stability' };
+  const minStability = discipline * 0.4 + patience * 0.2;
+  if (shot.stability < minStability) {
+    return { canFire: false, accuracy: shot.accuracy, damageMod: shot.damageMod, factors: shot.factors, reason: 'stability' };
   }
 
-  // 6. TARGET ACQUISITION DELAY — awareness + initiative gate
-  // Units need time to identify and lock onto a new target before firing
+  // 5. TARGET ACQUISITION DELAY — awareness + initiative gate
   const awareness = unit._awareness ?? (personality.awareness ?? 0.5);
   const initiative = personality.initiative ?? 0.5;
-  const acquireTime = (0.3 + (1 - awareness) * 0.5 + (1 - initiative) * 0.4) * 1000; // ms
+  const acquireTime = (0.3 + (1 - awareness) * 0.5 + (1 - initiative) * 0.4) * 1000;
   const timeSinceAcquired = now - (unit._targetAcquiredAt || 0);
   if (timeSinceAcquired < acquireTime) {
-    return { canFire: false, accuracy, damageMod, factors, reason: 'acquiring' };
+    return { canFire: false, accuracy: shot.accuracy, damageMod: shot.damageMod, factors: shot.factors, reason: 'acquiring' };
   }
 
-  // 7. FIRE PROBABILITY — low-accuracy units sometimes skip firing entirely
-  // At very low accuracy (<0.3), have a chance to not fire at all (suppression feel)
-  if (accuracy < 0.3 && Math.random() > accuracy * 2) {
-    return { canFire: false, accuracy, damageMod, factors };
+  // 6. FIRE PROBABILITY — low-accuracy suppression skip
+  if (shot.accuracy < 0.3 && Math.random() > shot.accuracy * 2) {
+    return { canFire: false, accuracy: shot.accuracy, damageMod: shot.damageMod, factors: shot.factors };
   }
 
-  return { canFire: true, accuracy, damageMod, factors };
+  return { canFire: true, accuracy: shot.accuracy, damageMod: shot.damageMod, factors: shot.factors };
 }
