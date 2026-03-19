@@ -99,6 +99,98 @@ function _applyEnemyHitToBlue(b, p, unit, now, opts = {}) {
 }
 
 /**
+ * Detonate an AOE projectile at an impact point.
+ * Damages units within blast radius, suppresses units in near-miss range.
+ */
+function _detonateProjectile(b, p, impactX, impactY, now, opts = {}) {
+  const { useTierDamage, debugInvincible, onEnemyKill, onAllyKill, onHeroHit, heroRef } = opts;
+  const blastR = p.blastRadius;
+  const nearMissR = blastR * 1.5; // Suppression-only zone beyond blast
+
+  // Determine which units to check based on projectile owner
+  const isBlueShot = p.owner === Owner.PLAYER || p.owner === Owner.ALLY;
+  const targets = isBlueShot ? (b.enemies || []) : (b.units || []);
+
+  // Check hero as a target for enemy AOE
+  if (!isBlueShot && heroRef && !heroRef.dead) {
+    const hd = Math.sqrt((impactX - heroRef.x) ** 2 + (impactY - heroRef.y) ** 2);
+    if (hd < blastR) {
+      const falloff = 1.0 - (hd / blastR);
+      const blastDmg = Math.round(p.damage * falloff);
+      if (blastDmg > 0) {
+        _applyEnemyHitToBlue(b, { ...p, damage: blastDmg }, heroRef, now, {
+          useTierDamage, debugInvincible: debugInvincible?.blueInvincible, onKill: onHeroHit
+        });
+      }
+    } else if (hd < nearMissR) {
+      applySuppression(heroRef, 0.15);
+      applyHitStabilityDrop(heroRef, 1); // Small stability jolt
+    }
+  }
+
+  for (const unit of targets) {
+    if (unit.dead) continue;
+    const dist = Math.sqrt((impactX - unit.x) ** 2 + (impactY - unit.y) ** 2);
+
+    if (dist < blastR) {
+      // In blast radius — deal falloff damage
+      const falloff = 1.0 - (dist / blastR);
+      const blastDmg = Math.round(p.damage * falloff);
+      if (blastDmg <= 0) continue;
+
+      if (isBlueShot) {
+        // Blue shooting red
+        let dmg = blastDmg;
+        if (useTierDamage) {
+          dmg = Math.round(dmg * getTierDamageMultiplier(p.attackerTier ?? 0, getArmorTier(unit)));
+        }
+        unit.hp -= dmg;
+        if (unit.hp < 0) unit.hp = 0;
+        applyHitStabilityDrop(unit, dmg);
+        unit._shockTimer = 2;
+        applySuppression(unit, 0.3);
+        recordDamage(unit, p.sourceId || '?', dmg);
+
+        if (unit.hp <= 0) {
+          unit.dead = true;
+          logEvent(b, { t: now, who: p.sourceId || '?', team: Team.BLUE, type: 'kill',
+            x: Math.round(unit.x), y: Math.round(unit.y), action: 'kill',
+            target: unit.id, dmg, detail: `hp:0/${unit.maxHp} blast` });
+          _trackHitMetric(b, p.sourceId, dmg, true);
+          const killer = (b.units || []).find(u => u.id === p.sourceId) || heroRef;
+          if (killer && !killer.dead) applyMoraleEvent(killer, MoraleEvent.LANDED_KILL, 0.5);
+          if (onEnemyKill) onEnemyKill(unit, dmg, killer);
+        } else {
+          logEvent(b, { t: now, who: p.sourceId || '?', team: Team.BLUE, type: 'hit',
+            x: Math.round(unit.x), y: Math.round(unit.y), action: 'hit',
+            target: unit.id, dmg, detail: `hp:${unit.hp}/${unit.maxHp} blast` });
+          _trackHitMetric(b, p.sourceId, dmg, false);
+        }
+      } else {
+        // Red shooting blue
+        _applyEnemyHitToBlue(b, { ...p, damage: blastDmg }, unit, now, {
+          useTierDamage, debugInvincible: debugInvincible?.blueInvincible,
+          onKill: onAllyKill
+        });
+      }
+    } else if (dist < nearMissR) {
+      // Near miss — suppression only, no damage
+      applySuppression(unit, 0.15);
+      applyHitStabilityDrop(unit, 1);
+    }
+  }
+
+  // Visual explosion effect
+  if (!b.effects) b.effects = [];
+  b.effects.push({ type: 'explosion', x: impactX, y: impactY, radius: blastR, t: now });
+
+  // Log blast event
+  logEvent(b, { t: now, who: p.sourceId || '?', team: isBlueShot ? Team.BLUE : Team.RED,
+    type: 'blast', x: Math.round(impactX), y: Math.round(impactY),
+    action: 'detonate', detail: `radius:${blastR} dmg:${p.damage}` });
+}
+
+/**
  * Resolve all projectile movement, hit detection, damage, and combat effects.
  *
  * @param {object} b - Battle object
@@ -141,6 +233,23 @@ export function resolveProjectiles(b, now, dtSec, opts = {}) {
     if (p.type !== 'artillery' && b.terrainMap && isTerrainBlocked(b, p.x, p.y)) {
       p.dead = true;
       return;
+    }
+
+    // --- AOE DETONATION: shell reaches impact point ---
+    if (!p.dead && p.blastRadius > 0 && p.impactTarget) {
+      const toImpactX = p.impactTarget.x - p.originX;
+      const toImpactY = p.impactTarget.y - p.originY;
+      const totalDist = Math.sqrt(toImpactX * toImpactX + toImpactY * toImpactY);
+      const traveledX = p.x - p.originX;
+      const traveledY = p.y - p.originY;
+      const traveled = Math.sqrt(traveledX * traveledX + traveledY * traveledY);
+
+      if (traveled >= totalDist) {
+        // Shell reached impact point — detonate
+        _detonateProjectile(b, p, p.impactTarget.x, p.impactTarget.y, now, opts);
+        p.dead = true;
+        return;
+      }
     }
 
     if (p.owner === Owner.PLAYER || p.owner === Owner.ALLY) {

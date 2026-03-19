@@ -16,7 +16,13 @@ A military-themed math training game for a 12-year-old struggling with times tab
    - Verify data actually flows where you think it does (check function signatures, property copying, etc.)
    - Ask the user for expected behavior before implementing design decisions
    - When a fix doesn't work, READ the code and investigate - don't guess
-3. **Separation of concerns** - Keep code modular:
+3. **Modular by default** - All systems must be modular and reusable:
+   - Shared logic belongs in shared functions (never duplicate between hero/AI/modes)
+   - Constants and config live in `constants.js` (one source of truth, import everywhere)
+   - Physics/accuracy/stability systems are unit-agnostic (hero and AI use the same functions)
+   - New features should work across all game modes without mode-specific forks
+   - If code is duplicated in 2+ places, extract it into a shared function
+4. **Separation of concerns** - Keep files focused:
    - `constants.js` - Data definitions (units, enemies, state enums)
    - `state.js` - Game state object only
    - `game.js` - Game logic and loop
@@ -24,8 +30,8 @@ A military-themed math training game for a 12-year-old struggling with times tab
    - `audio.js` - Sound only
    - `storage.js` - Persistence only
    - `main.js` - Event handling and initialization
-4. **No monolith files** - If a module grows too large, split it further
-5. **Single responsibility** - Each function/module should do one thing well
+5. **No monolith files** - If a module grows too large, split it further
+6. **Single responsibility** - Each function/module should do one thing well
 
 ## Development Commands
 

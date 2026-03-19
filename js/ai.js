@@ -4627,6 +4627,12 @@ export function tryShoot(b, unit, targetX, targetY, now, targetEntity) {
   const finalDamage = Math.round(damage * (fireDecision.damageMod ?? 1.0));
 
   const projSpeed = unit.projectileSpeed || 400;
+  const blastRadius = UNIT_COMBAT_STATS[unit.unitId]?.blastRadius || 0;
+  // For AOE projectiles, calculate the impact point (where the shell will land)
+  const distToTarget = Math.sqrt(dx * dx + dy * dy);
+  const impactX = unit.x + Math.cos(angle) * distToTarget;
+  const impactY = unit.y + Math.sin(angle) * distToTarget;
+
   b.projectiles.push({
     x: unit.x,
     y: unit.y,
@@ -4639,6 +4645,8 @@ export function tryShoot(b, unit, targetX, targetY, now, targetEntity) {
     sourceId: unit.id,
     attackerTier: getArmorTier(unit),
     type: projType,
+    blastRadius,
+    impactTarget: blastRadius > 0 ? { x: impactX, y: impactY } : null,
     _bridgeElevation: unit._bridgeElevation || null
   });
 

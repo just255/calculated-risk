@@ -4838,6 +4838,11 @@ function heroFire(b, hero, now, targetEntity) {
   const finalDamage = Math.round(damage * (shot.damageMod ?? 1.0));
   const projSpeed = hero.projectileSpeed || 500;
   const projType = UNIT_PROJECTILES[hero.unitId] || 'bullet';
+  const blastRadius = UNIT_COMBAT_STATS[hero.unitId]?.blastRadius || 0;
+  // Impact point: where the shell will land (aim point with spread applied)
+  const aimDist = Math.sqrt((aimTarget.x - hero.x) ** 2 + (aimTarget.y - hero.y) ** 2);
+  const impactX = hero.x + Math.cos(angle) * aimDist;
+  const impactY = hero.y + Math.sin(angle) * aimDist;
 
   b.projectiles.push({
     x: hero.x, y: hero.y,
@@ -4849,6 +4854,8 @@ function heroFire(b, hero, now, targetEntity) {
     sourceId: hero.id,
     attackerTier: getArmorTier(hero),
     type: projType,
+    blastRadius,
+    impactTarget: blastRadius > 0 ? { x: impactX, y: impactY } : null,
     _bridgeElevation: hero._bridgeElevation || null
   });
 
