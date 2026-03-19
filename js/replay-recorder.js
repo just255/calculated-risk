@@ -206,12 +206,21 @@ function computeStats(b) {
   const log = b._debugLog || [];
   const unitMap = {};
 
+  // Include hero in stats (same pipeline as regular units)
+  if (b.hero && !b.hero.observer) {
+    unitMap[b.hero.id] = {
+      id: b.hero.id, team: 'blue', unitId: b.hero.unitId,
+      kills: 0, damage: 0, shots: 0, hits: 0,
+      alive: !b.hero.dead, maxHp: b.hero.maxHp || 200,
+      killDetails: []
+    };
+  }
   for (const u of (b.units || [])) {
     unitMap[u.id] = {
       id: u.id, team: 'blue', unitId: u.unitId,
       kills: 0, damage: 0, shots: 0, hits: 0,
       alive: !u.dead, maxHp: u.maxHp || 100,
-      killDetails: [] // track who they killed
+      killDetails: []
     };
   }
   for (const e of (b.enemies || [])) {

@@ -1663,9 +1663,9 @@ export function newEndlessBattle(loadout, wave = 1) {
     // Command UI feedback
     commandFeedback: null,
 
-    // Deployment phase (wave 1 only — later waves spawn mid-combat)
-    phase: wave === 1 ? 'deploying' : 'active',
-    deployReady: { blue: wave !== 1, red: wave !== 1 },
+    // Deployment phase — caller controls via _autoDeployNextWave or _editDeployment
+    phase: 'deploying',
+    deployReady: { blue: false, red: false },
     countdownStart: null,
     playMode: 'unit',              // 'unit' | 'sgt' | 'cmd' (only 'unit' implemented)
     stageDepth,

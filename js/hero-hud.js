@@ -6,6 +6,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { computeShotAccuracy } from './fire-decision.js';
+import { UNIT_COMBAT_STATS, DEFAULT_MAX_SPREAD_DEG } from './constants.js';
 
 const COLOR_RED = '#f87171';
 const COLOR_GREEN = '#4ade80';
@@ -20,10 +21,11 @@ const ARC_WIDTH = 2;
 const ALIGN_THRESHOLD = 0.17; // ~10 degrees
 const READY_FLASH_MS = 200;
 
-// Accuracy circle — represents spread cone at aim distance
-const SPREAD_MIN_RADIUS = 4;    // Minimum circle at perfect accuracy
-const SPREAD_MAX_RADIUS = 50;   // Maximum circle at worst accuracy
-const SPREAD_LERP = 0.15;       // Smoothing per frame (avoids jitter)
+// Accuracy circle — derived from projectile spread cone at aim distance
+// maxSpread must match heroFire/tryShoot so circle = actual projectile cone
+// Spread cone uses DEFAULT_MAX_SPREAD_DEG from constants.js
+// Per-unit override via UNIT_COMBAT_STATS.maxSpreadDeg
+const SPREAD_LERP = 0.12;               // Smoothing per frame
 
 /**
  * Render the hero crosshair + reload arc in screen space.
@@ -109,8 +111,16 @@ export function renderHeroCrosshair(ctx, b, now) {
     const shot = computeShotAccuracy(hero, aimTarget);
     const accuracy = shot.accuracy;
 
-    // Spread radius: lerp for smooth transitions
-    const targetRadius = SPREAD_MIN_RADIUS + (1 - accuracy) * (SPREAD_MAX_RADIUS - SPREAD_MIN_RADIUS);
+    // Spread radius derived from projectile cone at aim distance
+    // Per-unit max spread from UNIT_COMBAT_STATS, fallback to default
+    const unitStats = UNIT_COMBAT_STATS[hero.unitId];
+    const maxSpreadDeg = unitStats?.maxSpreadDeg ?? DEFAULT_MAX_SPREAD_DEG;
+    const maxSpreadRad = maxSpreadDeg * Math.PI / 180;
+    const aimDistWorld = Math.sqrt((worldAimX - hero.x) ** 2 + (worldAimY - hero.y) ** 2);
+    const spreadAngle = (1 - accuracy) * maxSpreadRad;
+    const worldRadius = aimDistWorld * Math.tan(spreadAngle);
+    const targetRadius = Math.max(3, worldRadius * zoom); // Convert to screen px, min 3px
+
     if (hero._spreadRadius === undefined) hero._spreadRadius = targetRadius;
     hero._spreadRadius += (targetRadius - hero._spreadRadius) * SPREAD_LERP;
     const radius = hero._spreadRadius;

@@ -5,7 +5,7 @@
 // Shared brain for allies AND enemies.
 // ═══════════════════════════════════════════════════════════════
 
-import { UNITS, UNIT_PROJECTILES, UNIT_COMBAT_STATS, Formation, FORMATION_OFFSETS, Team, Owner } from './constants.js';
+import { UNITS, UNIT_PROJECTILES, UNIT_COMBAT_STATS, Formation, FORMATION_OFFSETS, Team, Owner, DEFAULT_MAX_SPREAD_DEG } from './constants.js';
 import { updateStability, shouldFire, getDamageFalloff, applyRecoilDrop } from './fire-decision.js';
 import {
   isTerrainBlocked, getTerrainSpeedMod, getTerrainAt, isInCover,
@@ -4618,7 +4618,8 @@ export function tryShoot(b, unit, targetX, targetY, now, targetEntity) {
   const baseAngle = Math.atan2(dy, dx);
   // Suppression is now included in computeShotAccuracy — no separate penalty here
   const accuracy = fireDecision.accuracy;
-  const maxSpread = Math.PI / 12;
+  const maxSpreadDeg = UNIT_COMBAT_STATS[unit.unitId]?.maxSpreadDeg ?? DEFAULT_MAX_SPREAD_DEG;
+  const maxSpread = maxSpreadDeg * Math.PI / 180;
   const spread = (1.0 - accuracy) * maxSpread;
   const angle = baseAngle + (Math.random() - 0.5) * 2 * spread;
 

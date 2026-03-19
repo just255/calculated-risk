@@ -2,7 +2,7 @@
 // GAME - Battle logic, game loop, update, draw
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, UNITS, ENEMIES, getTypeMultiplier, UNIT_COSTS, H2H_BUDGET, PROJECTILES, UNIT_PROJECTILES, UNIT_COMBAT_STATS, UNIT_DESCRIPTIONS, getTerrainSVG, getStanceModifier, getEnemyStance, ZoneOwner, ScenarioType, SHADOW_CONFIG, Team, Owner, FORMATION_OFFSETS, getFormationPositions, CREW_SCHEMAS, RANK_TABLE } from './constants.js';
+import { State, SubState, HQTab, UNITS, ENEMIES, getTypeMultiplier, UNIT_COSTS, H2H_BUDGET, PROJECTILES, UNIT_PROJECTILES, UNIT_COMBAT_STATS, UNIT_DESCRIPTIONS, getTerrainSVG, getStanceModifier, getEnemyStance, ZoneOwner, ScenarioType, SHADOW_CONFIG, Team, Owner, FORMATION_OFFSETS, getFormationPositions, CREW_SCHEMAS, RANK_TABLE, DEFAULT_MAX_SPREAD_DEG } from './constants.js';
 import { renderBaseTerrainToCanvas, renderCanopyToCanvas } from './world-builder/terrain-renderer.js';
 import { Game, newBattle, newH2H, newCampaign, newCampaignBattle, newEndlessBattle, newFireRangeRun, newFireRangeBattle, createUnit } from './state.js';
 import { sound } from './audio.js';
@@ -488,10 +488,9 @@ export function goto(newState, data = {}) {
         if (Game.endless.playMode) {
           Game.endless.battle.playMode = Game.endless.playMode;
         }
-        // Edit Deployment: force deploy phase so deploy panel shows
+        // Edit Deployment: clear flag (battle already starts in deploy phase)
         if (Game.endless._editDeployment) {
           Game.endless._editDeployment = false;
-          Game.endless.battle.phase = 'deploying';
         }
         // For wave 2+ in CMD mode, init immediately (no countdown phase)
         if (Game.endless.battle.playMode === 'cmd' && Game.endless.battle.phase === 'active') {
@@ -2379,6 +2378,7 @@ function updateEndlessBattle(dt) {
 
   // Stability — must run AFTER movement so position delta is accurate
   updateHeroStability(hero, dtSec);
+
 
   // Update movement animation
   if (useCanvasRendering && hero.animId) {
@@ -4788,14 +4788,11 @@ function _findSoldierId(allUnits, unitId) {
 function updateHeroStability(hero, dtSec) {
   if (!hero || hero.dead || hero.observer) return;
 
-  // Track movement from position delta
-  const dx = hero.x - (hero._prevPhysX ?? hero.x);
-  const dy = hero.y - (hero._prevPhysY ?? hero.y);
-  const moveDist = Math.sqrt(dx * dx + dy * dy);
-  hero._movedThisFrame = moveDist > 0.5;
-  hero._moveDistThisFrame = moveDist;
-  hero._prevPhysX = hero.x;
-  hero._prevPhysY = hero.y;
+  // Use velocity for movement detection — frame-rate independent
+  // (position delta at 140fps is ~0.49px which falls under fixed thresholds)
+  const velocity = hero.velocity ?? 0;
+  hero._movedThisFrame = velocity > 5; // Moving if > 5 px/sec
+  hero._moveDistThisFrame = velocity * dtSec; // Distance this frame
 
   // Same stability function as AI units
   updateStability(hero, dtSec, hero.unitId);
@@ -4832,7 +4829,8 @@ function heroFire(b, hero, now, targetEntity) {
 
   hero.lastShot = now;
   const baseAngle = hero.angle;
-  const maxSpread = Math.PI / 12;
+  const maxSpreadDeg = UNIT_COMBAT_STATS[hero.unitId]?.maxSpreadDeg ?? DEFAULT_MAX_SPREAD_DEG;
+  const maxSpread = maxSpreadDeg * Math.PI / 180;
   const spread = (1.0 - shot.accuracy) * maxSpread;
   const angle = baseAngle + (Math.random() - 0.5) * 2 * spread;
 

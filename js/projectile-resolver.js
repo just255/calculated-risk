@@ -47,6 +47,58 @@ function _trackHitMetric(b, sourceId, dmg, isKill) {
 }
 
 /**
+ * Apply damage from an enemy projectile to a blue unit (hero or ally).
+ * Shared logic: tier scaling, stability drop, suppression, shock, logging.
+ */
+function _applyEnemyHitToBlue(b, p, unit, now, opts = {}) {
+  const { useTierDamage, debugInvincible, onKill } = opts;
+
+  let dmg = p.damage;
+
+  // Tier-based damage scaling
+  if (useTierDamage) {
+    const defTier = getArmorTier(unit);
+    dmg = Math.round(dmg * getTierDamageMultiplier(p.attackerTier ?? 0, defTier));
+  }
+
+  // Bridge truss cover
+  const bridgeMult = getBridgeCoverMult(b.terrainMap?.bridges, unit.x, unit.y, p.vx, p.vy);
+  if (bridgeMult < 1) dmg = Math.round(dmg * bridgeMult);
+
+  unit.hp -= dmg;
+  p.dead = true;
+
+  // Physics: stability drop, shock, suppression
+  applyHitStabilityDrop(unit, dmg);
+  unit._shockTimer = 2;
+  unit._lastAttackerId = p.sourceId || null;
+  applySuppression(unit, 0.25);
+  recordDamage(unit, p.sourceId || '?', dmg);
+
+  // Debug invincibility
+  if (debugInvincible) {
+    unit.hp = unit.maxHp; unit.dead = false;
+  }
+
+  if (unit.hp <= 0) {
+    unit.hp = 0; unit.dead = true;
+    logEvent(b, { t: now, who: p.sourceId || '?', team: Team.RED, type: 'kill',
+      x: Math.round(unit.x), y: Math.round(unit.y), action: 'kill',
+      target: unit.id, dmg, detail: `hp:0/${unit.maxHp}` });
+
+    const killer = b.enemies?.find(en => en.id === p.sourceId);
+    if (killer && !killer.dead) applyMoraleEvent(killer, MoraleEvent.LANDED_KILL, 0.5);
+    if (onKill) onKill(unit, dmg, killer);
+  } else {
+    logEvent(b, { t: now, who: p.sourceId || '?', team: Team.RED, type: 'hit',
+      x: Math.round(unit.x), y: Math.round(unit.y), action: 'hit',
+      target: unit.id, dmg, detail: `hp:${unit.hp}/${unit.maxHp}` });
+  }
+
+  return dmg;
+}
+
+/**
  * Resolve all projectile movement, hit detection, damage, and combat effects.
  *
  * @param {object} b - Battle object
@@ -186,10 +238,13 @@ export function resolveProjectiles(b, now, dtSec, opts = {}) {
         const hdx = p.x - heroRef.x;
         const hdy = p.y - heroRef.y;
         if (hdx * hdx + hdy * hdy < heroHitRadiusSq) {
-          heroRef.hp -= p.damage;
-          p.dead = true;
-          applyHitStabilityDrop(heroRef, p.damage);
-          if (onHeroHit) onHeroHit(heroRef, p.damage, p);
+          // Same damage pipeline as ally units (tier scaling, stability, suppression, logging)
+          _applyEnemyHitToBlue(b, p, heroRef, now, {
+            useTierDamage,
+            debugInvincible: debugInvincible?.blueInvincible,
+            onKill: onHeroHit
+          });
+          if (!heroRef.dead && onHeroHit) onHeroHit(heroRef, p.damage, p);
         }
       }
 
@@ -203,52 +258,16 @@ export function resolveProjectiles(b, now, dtSec, opts = {}) {
             // Bridge deck blocks shots
             if (isBridgeDeckBlocking(b.terrainMap?.bridges, p.originX ?? p.x, p.originY ?? p.y, unit.x, unit.y, p._bridgeElevation, unit._bridgeElevation)) continue;
 
-            let dmg = p.damage;
-
-            // Tier-based damage
-            if (useTierDamage) {
-              const defTier = getArmorTier(unit);
-              dmg = Math.round(dmg * getTierDamageMultiplier(p.attackerTier ?? 0, defTier));
-            }
-
-            // Bridge truss cover
-            const bridgeMult = getBridgeCoverMult(b.terrainMap?.bridges, unit.x, unit.y, p.vx, p.vy);
-            if (bridgeMult < 1) dmg = Math.round(dmg * bridgeMult);
-
-            unit.hp -= dmg;
-            p.dead = true;
-            applyHitStabilityDrop(unit, dmg);
-
-            // Combat effects
-            unit._shockTimer = 2;
-            unit._lastAttackerId = p.sourceId || null;
-            applySuppression(unit, 0.25);
-
-            // Debug invincibility
-            if (debugInvincible?.blueInvincible) {
-              unit.hp = unit.maxHp; unit.dead = false;
-            }
-
-            if (unit.hp <= 0) {
-              unit.hp = 0; unit.dead = true;
-
-              logEvent(b, { t: now, who: p.sourceId || '?', team: Team.RED, type: 'kill', x: Math.round(unit.x), y: Math.round(unit.y), action: 'kill', target: unit.id, dmg, detail: `hp:0/${unit.maxHp}` });
-
-              // Killer morale boost
-              const killer = b.enemies?.find(en => en.id === p.sourceId);
-              if (killer && !killer.dead) applyMoraleEvent(killer, MoraleEvent.LANDED_KILL, 0.5);
-
-              // Commander succession
-              _handleCommanderDeath(b, unit, b.units, Team.BLUE, now);
-
-              // Nearby morale/suppression cascade
-              _cascadeMorale(b.units, unit);
-
-              // Mode-specific ally death callback
-              if (onAllyKill) onAllyKill(unit, dmg, killer);
-            } else {
-              logEvent(b, { t: now, who: p.sourceId || '?', team: Team.RED, type: 'hit', x: Math.round(unit.x), y: Math.round(unit.y), action: 'hit', target: unit.id, dmg, detail: `hp:${unit.hp}/${unit.maxHp}` });
-            }
+            // Same damage pipeline as hero (shared function)
+            _applyEnemyHitToBlue(b, p, unit, now, {
+              useTierDamage,
+              debugInvincible: debugInvincible?.blueInvincible,
+              onKill: (deadUnit, dmg, killer) => {
+                _handleCommanderDeath(b, deadUnit, b.units, Team.BLUE, now);
+                _cascadeMorale(b.units, deadUnit);
+                if (onAllyKill) onAllyKill(deadUnit, dmg, killer);
+              }
+            });
             break;
           }
         }

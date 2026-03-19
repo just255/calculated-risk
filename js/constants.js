@@ -624,6 +624,9 @@ export const UNIT_PROJECTILES = {
 // Unit combat stats: range (pixels), speed (pixels/second), isAir
 // viewRange (pixels): how far the crew can see (independent of fire range)
 // viewCone (degrees): forward vision cone angle (peripheral/rear zones computed from this)
+// Default max spread angle (degrees) — per-unit override via maxSpreadDeg in UNIT_COMBAT_STATS
+export const DEFAULT_MAX_SPREAD_DEG = 7.5;
+
 export const UNIT_COMBAT_STATS = {
   // hullRate/turretRate in deg/s (max), fireTolerance in deg, turretArc in deg
   // turretPivot: {x,y} offset from center in sprite-local coords
