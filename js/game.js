@@ -39,6 +39,7 @@ import {
   issueFrontLineCommand,
   assignSmartPositions,
   applySuppression,
+  updateSuppression,
   getArmorTier,
   getTierDamageMultiplier
 } from './ai.js';
@@ -2377,7 +2378,7 @@ function updateEndlessBattle(dt) {
   hero.velocity = dtSec > 0 ? Math.sqrt(velDx * velDx + velDy * velDy) / dtSec : 0;
 
   // Stability — must run AFTER movement so position delta is accurate
-  updateHeroStability(hero, dtSec);
+  updateHeroStability(b, hero, dtSec);
 
 
   // Update movement animation
@@ -2796,7 +2797,7 @@ function spawnEndlessWave(b) {
 
     // First group spawns at 25% from red edge (on-map), reinforcements from off-map edge
     const onMapY = b.mapHeight * 0.25;  // 25% from top = initial enemy position
-    const offMapY = -(b.stageDepth || 100) / 2;  // Off-map for reinforcements
+    const offMapY = -(b.stageDepth || 100) / 2;  // Off-map — reinforcements march in
     let isFirstGroup = true;
 
     for (const plan of plans) {
@@ -4785,17 +4786,17 @@ function _findSoldierId(allUnits, unitId) {
  * Must be called AFTER the hero position is updated (not in the AI pipeline,
  * which runs before hero movement).
  */
-function updateHeroStability(hero, dtSec) {
+function updateHeroStability(b, hero, dtSec) {
   if (!hero || hero.dead || hero.observer) return;
 
   // Use velocity for movement detection — frame-rate independent
-  // (position delta at 140fps is ~0.49px which falls under fixed thresholds)
   const velocity = hero.velocity ?? 0;
-  hero._movedThisFrame = velocity > 5; // Moving if > 5 px/sec
-  hero._moveDistThisFrame = velocity * dtSec; // Distance this frame
+  hero._movedThisFrame = velocity > 5;
+  hero._moveDistThisFrame = velocity * dtSec;
 
-  // Same stability function as AI units
+  // Same physics as AI units
   updateStability(hero, dtSec, hero.unitId);
+  updateSuppression(hero, dtSec, b);
 }
 
 // ── Hero fire — shared by endless + campaign ─────────────────
@@ -6416,7 +6417,7 @@ function updateCampaignBattle(dt) {
   hero.y = Math.max(30, Math.min(b.mapHeight - 30, hero.y));
 
   // Stability — must run AFTER movement so position delta is accurate
-  updateHeroStability(hero, dtSec);
+  updateHeroStability(b, hero, dtSec);
 
   // --- HERO ANIMATION ---
   if (useCanvasRendering && hero.animId) {

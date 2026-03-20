@@ -76,6 +76,9 @@ export function updateStability(unit, dtSec, typeKey) {
     const supBleed = suppression * 0.4 * dtSec; // Max 0.4/s at full suppression
     unit.stability = Math.max(0, unit.stability - supBleed);
   }
+
+  // Final clamp — multiple effects can stack in one frame and push below 0
+  if (unit.stability < 0) unit.stability = 0;
 }
 
 /**

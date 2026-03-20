@@ -301,7 +301,19 @@ export function resolveProjectiles(b, now, dtSec, opts = {}) {
 
           e.hp -= dmg;
           if (e.hp < 0) e.hp = 0;
-          p.dead = true;
+
+          // AOE shells pass through infantry — only stop on armored targets
+          const targetTier = getArmorTier(e);
+          if (p.blastRadius > 0 && targetTier === 0) {
+            // Shell passes through infantry, continues to impact point
+            // Damage is dealt but shell isn't destroyed
+          } else {
+            p.dead = true;
+            // If AOE shell stops on a vehicle, detonate at that position
+            if (p.blastRadius > 0 && !e.dead) {
+              _detonateProjectile(b, p, e.x, e.y, now, opts);
+            }
+          }
           applyHitStabilityDrop(e, dmg);
 
           // Combat effects

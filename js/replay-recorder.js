@@ -235,11 +235,15 @@ function computeStats(b) {
   for (const ev of log) {
     const who = unitMap[ev.who];
     if (!who) continue;
+    const isBlast = ev.detail?.includes('blast');
     if (ev.type === 'fire') who.shots++;
-    else if (ev.type === 'hit') { who.hits++; who.damage += (ev.dmg || 0); }
+    else if (ev.type === 'hit') {
+      if (!isBlast) who.hits++;  // Only direct hits count for accuracy
+      who.damage += (ev.dmg || 0);
+    }
     else if (ev.type === 'kill') {
       who.kills++;
-      who.hits++;  // A kill IS a hit
+      if (!isBlast) who.hits++;  // Direct kill = hit. Blast kill = bonus, not accuracy.
       who.damage += (ev.dmg || 0);
       const victim = unitMap[ev.target];
       if (victim) who.killDetails.push({ unitId: victim.unitId, tier: getTier(victim.unitId) });

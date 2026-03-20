@@ -1278,15 +1278,32 @@ function executePhase(b, sgt, sitrep, alive, now, phaseChanged) {
     }
 
     case Phase.DISENGAGE: {
-      // Pull back to rally point
+      // Pull back to rally point — clamped to map bounds (never off-map)
       if (phaseChanged) {
-        if (!sgt.rallyPoint) {
-          sgt.rallyPoint = { x: sgt.spawnZone.x, y: sgt.spawnZone.y };
-        }
+        const margin = 100;
+        const rallyX = Math.max(margin, Math.min(b.mapWidth - margin, sgt.spawnZone.x));
+        const rallyY = Math.max(margin, Math.min(b.mapHeight - margin, sgt.spawnZone.y));
+        sgt.rallyPoint = { x: rallyX, y: rallyY };
         setPathWaypoint(b, sgt, sgt.rallyPoint, alive, sitrep.center);
         sgt._formationOverride = Formation.COLUMN;
       }
-      setCommand(sgt, alive, Command.FALL_BACK);
+
+      // If squad reached the rally point (within 150px of map edge), cornered behavior:
+      // Courageous units charge, cautious units dig in
+      const distToRally = distTo(sitrep.center, sgt.rallyPoint || sgt.spawnZone);
+      if (distToRally < 100) {
+        const courage = p.courage ?? 0.5;
+        if (courage > 0.6) {
+          // Desperate charge — switch to PRESS (offensive)
+          setCommand(sgt, alive, Command.ADVANCE);
+          if (sitrep.enemyCenter) setPathWaypoint(b, sgt, sitrep.enemyCenter, alive, sitrep.center);
+        } else {
+          // Find cover and fight — hold position
+          setCommand(sgt, alive, Command.HOLD);
+        }
+      } else {
+        setCommand(sgt, alive, Command.FALL_BACK);
+      }
       break;
     }
 

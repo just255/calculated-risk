@@ -5512,14 +5512,15 @@ function computeBattleStats(b) {
     const who = unitMap[evt.who];
     if (!who) continue;
 
+    const isBlast = evt.detail?.includes('blast');
     if (evt.type === 'fire') {
       who.shots++;
     } else if (evt.type === 'hit') {
-      who.hits++;
+      if (!isBlast) who.hits++;  // Only direct hits count for accuracy
       who.damage += (evt.dmg || 0);
     } else if (evt.type === 'kill') {
       who.kills++;
-      who.hits++;  // A kill IS a hit
+      if (!isBlast) who.hits++;  // Direct kill = hit. Blast kill = bonus.
       who.damage += (evt.dmg || 0);
     }
   }

@@ -1,6 +1,6 @@
 // Service Worker for Calculated Risk PWA
 // Bump CACHE_VERSION to invalidate all caches (e.g., after deploy)
-const CACHE_VERSION = 119;
+const CACHE_VERSION = 126;
 const CACHE_NAME = `calculated-risk-v${CACHE_VERSION}`;
 
 // Critical assets to pre-cache on install (app shell only)

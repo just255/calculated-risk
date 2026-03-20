@@ -833,6 +833,8 @@ function selectBrainTarget(b, unit, hostiles, leader, command) {
     // Vision system active — only target what this unit can see
     for (const s of spotted) {
       if (s.enemy && !s.enemy.dead && s.enemy.hp > 0) {
+        // Skip off-map enemies (stuck behind edges)
+        if (s.enemy.x < 0 || s.enemy.y < 0 || s.enemy.x > (b.mapWidth || 9999) || s.enemy.y > (b.mapHeight || 9999)) continue;
         // Bridge deck blocks targeting between different elevation levels
         if (isBridgeDeckBlocking(bridges, unit.x, unit.y, s.enemy.x, s.enemy.y, unit._bridgeElevation, s.enemy._bridgeElevation)) {
           bridgeBlocked.push(s.enemy);
@@ -846,6 +848,7 @@ function selectBrainTarget(b, unit, hostiles, leader, command) {
     // Fallback: no vision system active (e.g., campaign mode without vision)
     for (const e of hostiles) {
       if (e.dead || (e.hp !== undefined && e.hp <= 0)) continue;
+      if (e.x < 0 || e.y < 0 || e.x > (b.mapWidth || 9999) || e.y > (b.mapHeight || 9999)) continue;
       alive.push(e);
     }
   }
@@ -1552,7 +1555,7 @@ function computeCoverBias(unit, command) {
  * Base decay: 0.08/sec. Discipline bonus: +0.04 * discipline/sec.
  * In cover bonus: +0.03/sec.
  */
-function updateSuppression(unit, dtSec, b) {
+export function updateSuppression(unit, dtSec, b) {
   const sup = unit._suppression ?? 0;
   if (sup <= 0) return;
 
@@ -2347,57 +2350,136 @@ function resolveRetreatObjective(b, unit) {
 }
 
 /**
- * PANIC_FLEE — flee from threat. Awareness scales direction quality:
- * High awareness → runs toward allies. Low awareness → random direction.
- * Recovery time: 2 + (1 - courage) × 3 seconds.
- * Speed: normal base speed (no panic boost).
+ * SHARED RETREAT SYSTEM — used by panic flee, fall_back, and survival actions.
+ * Three outcomes based on personality:
+ *   1. Find cover — scan for terrain cover away from threat, dig in, fight
+ *   2. Charge — brave unit turns and rushes the threat (last stand)
+ *   3. Break — cowardly unit actively evades, bounds away from threat around the map
+ */
+
+/**
+ * Find a retreat position away from a threat, clamped to map bounds.
+ * Scans for terrain cover in the direction away from the threat.
+ * Returns { x, y, type } where type is 'cover', 'charge', or 'break'.
+ *
+ * @param {object} b - Battle state
+ * @param {object} unit - The retreating unit
+ * @param {object|null} threat - The threat position { x, y } or null
+ * @returns {{ x: number, y: number, type: string }}
+ */
+function findRetreatPosition(b, unit, threat) {
+  const mapW = b.mapWidth || 2000;
+  const mapH = b.mapHeight || 2000;
+  const margin = 80;
+  const courage = unit.personality?.courage ?? 0.5;
+  const cellSize = b.terrainMap?.cellSize || b.cellSize || 64;
+
+  // Direction away from threat (or toward map center if no threat)
+  let awayX, awayY;
+  if (threat) {
+    const dx = unit.x - threat.x;
+    const dy = unit.y - threat.y;
+    const d = Math.sqrt(dx * dx + dy * dy) || 1;
+    awayX = dx / d;
+    awayY = dy / d;
+  } else {
+    // No threat — head toward map center
+    const cx = mapW / 2 - unit.x;
+    const cy = mapH / 2 - unit.y;
+    const d = Math.sqrt(cx * cx + cy * cy) || 1;
+    awayX = cx / d;
+    awayY = cy / d;
+  }
+
+  // 1. Scan for terrain cover away from threat (not toward map edges)
+  let bestCover = null;
+  let bestScore = -1;
+  const baseAngle = Math.atan2(awayY, awayX);
+
+  for (let r = 2; r <= 6; r++) {
+    for (let a = -3; a <= 3; a++) {
+      const angle = baseAngle + a * 0.35;
+      const px = unit.x + Math.cos(angle) * r * cellSize;
+      const py = unit.y + Math.sin(angle) * r * cellSize;
+      // Must be well inside map bounds
+      if (px < margin || py < margin || px > mapW - margin || py > mapH - margin) continue;
+      if (isTerrainBlocked(b, px, py)) continue;
+      const terrain = getTerrainAt(b, px, py);
+      const cover = TERRAIN_COVER_SCORE[terrain] || 0;
+      if (cover < 10) continue;
+      // Prefer positions that are away from edges
+      const edgeDist = Math.min(px, py, mapW - px, mapH - py);
+      const score = cover + edgeDist * 0.05;
+      if (score > bestScore) {
+        bestScore = score;
+        bestCover = { x: px, y: py };
+      }
+    }
+  }
+
+  if (bestCover) {
+    return { ...bestCover, type: 'cover' };
+  }
+
+  // 2. No cover found — personality decides
+  if (courage > 0.5 && threat) {
+    // Charge the threat
+    return { x: threat.x, y: threat.y, type: 'charge' };
+  }
+
+  // 3. Break — pick a bound point perpendicular to the threat, away from edges
+  // Like SEARCH but inverted — bound away from known threat position
+  const perpAngle = baseAngle + (Math.random() < 0.5 ? Math.PI / 2 : -Math.PI / 2);
+  const breakDist = 150 + Math.random() * 200;
+  let breakX = unit.x + Math.cos(perpAngle) * breakDist;
+  let breakY = unit.y + Math.sin(perpAngle) * breakDist;
+  // Clamp and push away from edges
+  breakX = Math.max(margin, Math.min(mapW - margin, breakX));
+  breakY = Math.max(margin, Math.min(mapH - margin, breakY));
+  return { x: breakX, y: breakY, type: 'break' };
+}
+
+/**
+ * PANIC_FLEE — flee from threat using shared retreat system.
+ * Finds cover, charges, or breaks depending on personality and terrain.
+ * Recovers from panic when arriving at a defensible position.
  */
 function executePanicFlee(b, unit, ctx, speed, dtSec, friendlies) {
   unit._actionVerb = 'panicking';
 
-  // Compute flee destination (cached once per panic episode)
+  // Compute retreat destination (cached until arrived or invalid)
   if (!unit._panicFleeTarget) {
-    const awareness = unit._awareness ?? 0.5;
-    const isBlue = unit.team === Team.BLUE;
-    const ownZone = isBlue ? b.blueSpawnZone : b.redSpawnZone;
-
-    // Smart direction: toward nearest ally cluster or own spawn
-    let smartX, smartY;
-    if (ctx.nearestAlly) {
-      smartX = ctx.nearestAlly.x;
-      smartY = ctx.nearestAlly.y;
-    } else if (ownZone) {
-      smartX = ownZone.x;
-      smartY = ownZone.y;
-    } else {
-      const mapW = b.mapWidth || 2000;
-      smartX = isBlue ? 50 : mapW - 50;
-      smartY = unit.y;
-    }
-
-    // Random direction: away from threat or random angle
     const threat = ctx.target;
-    let randAngle;
-    if (threat) {
-      randAngle = Math.atan2(unit.y - threat.y, unit.x - threat.x) + (Math.random() - 0.5) * Math.PI;
-    } else {
-      randAngle = Math.random() * Math.PI * 2;
-    }
-    const randDist = 200 + Math.random() * 200;
-    const mapW = b.mapWidth || 2000;
-    const mapH = b.mapHeight || 2000;
-    const randX = Math.max(20, Math.min(mapW - 20, unit.x + Math.cos(randAngle) * randDist));
-    const randY = Math.max(20, Math.min(mapH - 20, unit.y + Math.sin(randAngle) * randDist));
+    const retreat = findRetreatPosition(b, unit, threat);
+    unit._panicFleeTarget = retreat;
 
-    // Blend: awareness scales probability of choosing smart direction
-    if (Math.random() < awareness) {
-      unit._panicFleeTarget = { x: smartX, y: smartY };
-    } else {
-      unit._panicFleeTarget = { x: randX, y: randY };
+    if (retreat.type === 'charge') {
+      unit._panicCharging = true;
     }
   }
 
-  moveBrainUnit(b, unit, unit._panicFleeTarget.x, unit._panicFleeTarget.y, dtSec, friendlies);
+  const target = unit._panicFleeTarget;
+  const arrived = moveBrainUnit(b, unit, target.x, target.y, dtSec, friendlies);
+
+  // Arrived at retreat position — resolve based on type
+  if (arrived || distanceBetween(unit, target) < 30) {
+    if (target.type === 'cover') {
+      // Found cover — recover from panic, fight from here
+      unit._panicking = false;
+      unit._panicFleeTarget = null;
+      unit._panicCharging = false;
+      unit.morale = Math.max(unit.morale, 0.25);
+    } else if (target.type === 'charge') {
+      // Charging — keep going (will resolve via normal combat)
+      unit._panicking = false;
+      unit._panicFleeTarget = null;
+      unit._panicCharging = false;
+      unit.morale = Math.max(unit.morale, 0.3);
+    } else {
+      // Break — pick a new bound point, keep evading
+      unit._panicFleeTarget = null; // Will recompute next frame
+    }
+  }
 }
 
 /**
@@ -2944,25 +3026,29 @@ function executeFallBack(b, unit, target, targetDist, range, speed, now, dtSec, 
   const courage = p.courage ?? 0.5;
   const category = inferCategory(unit);
 
-  // Resolve rally point: sergeant waypoint > own spawn fallback
+  // Resolve rally point: sergeant waypoint > own spawn (clamped to map)
   const wp = getSquadWaypoint(b, unit);
+  const mapW = b.mapWidth || 2000;
+  const mapH = b.mapHeight || 2000;
+  const safeMargin = 80;
   let rallyX, rallyY;
 
   if (wp) {
     rallyX = wp.x;
     rallyY = wp.y;
   } else {
-    // Fallback: pull back toward own spawn zone
     const isBlue = unit.team === Team.BLUE;
     const ownZone = isBlue ? b.blueSpawnZone : b.redSpawnZone;
     if (ownZone) {
       rallyX = ownZone.x; rallyY = ownZone.y;
     } else {
-      const mapW = b.mapWidth || 2000;
       rallyX = isBlue ? 100 : mapW - 100;
       rallyY = unit.y;
     }
   }
+  // Clamp rally point to safe map bounds — never retreat off-map
+  rallyX = Math.max(safeMargin, Math.min(mapW - safeMargin, rallyX));
+  rallyY = Math.max(safeMargin, Math.min(mapH - safeMargin, rallyY));
 
   const distToRally = Math.hypot(rallyX - unit.x, rallyY - unit.y);
 
@@ -3843,24 +3929,32 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
   getAwareness(unit, cohesion);
 
   // 3. Morale panic check — low morale + low courage = forced retreat
-  //    Recovery time: 2 + (1 - courage) × 3 seconds (courage 1.0 = 2s, courage 0.0 = 5s)
+  //    Recovery time: 2 + (1 - courage) × 3 seconds
+  //    Cooldown: 10s after recovery before can re-panic (prevents oscillation)
   let activeCommand = unit.command || Command.ADVANCE;
   const courage = unit.personality?.courage ?? 0.5;
-  if (!unit._panicking && unit.morale < 0.2 && courage < 0.4) {
+  const panicCooldownOver = !unit._panicRecoveryTime || (now - unit._panicRecoveryTime) > 10000;
+  if (!unit._panicking && unit.morale < 0.2 && courage < 0.4 && panicCooldownOver) {
     // Enter panic
     unit._panicking = true;
     unit._panicStartTime = now;
-    unit._panicFleeTarget = null; // Will be computed by executePanicFlee
-    unit._inFormation = false; // Panic breaks formation
+    unit._panicFleeTarget = null;
+    unit._panicCoverTarget = null;
+    unit._panicCharging = false;
+    unit._inFormation = false;
   }
   if (unit._panicking) {
     const panicDuration = (2 + (1 - courage) * 3) * 1000; // 2-5 seconds
     if (now - (unit._panicStartTime || 0) > panicDuration && unit.morale >= 0.15) {
-      // Recovered: timer expired AND morale slightly recovered
+      // Recovered — set cooldown to prevent immediate re-panic
       unit._panicking = false;
       unit._panicFleeTarget = null;
+      unit._panicCoverTarget = null;
+      unit._panicCharging = false;
+      unit._panicRecoveryTime = now;
+      unit.morale = Math.max(unit.morale, 0.3); // Boost morale above re-trigger threshold
     } else {
-      activeCommand = Command.FALL_BACK; // Override command while panicking
+      activeCommand = Command.FALL_BACK;
     }
   }
 

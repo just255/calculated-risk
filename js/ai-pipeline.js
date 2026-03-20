@@ -572,6 +572,24 @@ export function runBattleAI(b, now, dtSec) {
     updateUnitAI(b, u, hero, allEnemies, now, dtSec);
   }
 
+  // Boundary enforcement: units that were on-map can't leave.
+  // Units marching in from off-map are allowed until they enter.
+  // Once _wasOnMap is set, they're clamped forever.
+  const margin = 20;
+  const mapW = b.mapWidth || 1536;
+  const mapH = b.mapHeight || 1536;
+  for (const u of [...allUnits, ...allEnemies]) {
+    if (u.dead) continue;
+    const onMap = u.x >= 0 && u.y >= 0 && u.x <= mapW && u.y <= mapH;
+    if (onMap && !u._wasOnMap) u._wasOnMap = true;
+    if (u._wasOnMap) {
+      if (u.x < margin) u.x = margin;
+      if (u.y < margin) u.y = margin;
+      if (u.x > mapW - margin) u.x = mapW - margin;
+      if (u.y > mapH - margin) u.y = mapH - margin;
+    }
+  }
+
   // 3.5. Hero AI — runs through brain in CMD mode or fire range (when included as combatant)
   const heroAutoFire = b.playMode === 'cmd' || b.fireRange;
   if (hero && !hero.dead && !hero.observer && heroAutoFire) {
