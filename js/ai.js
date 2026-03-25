@@ -2258,6 +2258,14 @@ function executeMovementMode(b, unit, modeResult, ctx, range, speed, now, dtSec,
     unit._coverTarget = null;
   }
 
+  // Clear orphaned hidden/LOS-break latch when no longer in survival
+  if (mode !== MovementMode.SURVIVAL_ACTION && unit._losBreakArrived) {
+    unit._losBreakArrived = false;
+    unit._losBreakArriveTime = null;
+    unit._losBreakTarget = null;
+    unit._isProne = false;
+  }
+
   switch (mode) {
     case MovementMode.PANIC_FLEE:
       executePanicFlee(b, unit, ctx, speed, dtSec, friendlies);
@@ -2452,6 +2460,7 @@ function executePanicFlee(b, unit, ctx, speed, dtSec, friendlies) {
     const threat = ctx.target;
     const retreat = findRetreatPosition(b, unit, threat);
     unit._panicFleeTarget = retreat;
+    unit._panicBreakCount = (unit._panicBreakCount || 0) + (retreat.type === 'break' ? 1 : 0);
 
     if (retreat.type === 'charge') {
       unit._panicCharging = true;
@@ -2468,16 +2477,24 @@ function executePanicFlee(b, unit, ctx, speed, dtSec, friendlies) {
       unit._panicking = false;
       unit._panicFleeTarget = null;
       unit._panicCharging = false;
+      unit._panicBreakCount = 0;
       unit.morale = Math.max(unit.morale, 0.25);
     } else if (target.type === 'charge') {
       // Charging — keep going (will resolve via normal combat)
       unit._panicking = false;
       unit._panicFleeTarget = null;
       unit._panicCharging = false;
+      unit._panicBreakCount = 0;
       unit.morale = Math.max(unit.morale, 0.3);
     } else {
       // Break — pick a new bound point, keep evading
       unit._panicFleeTarget = null; // Will recompute next frame
+      // After 3 break loops, stop panicking — nowhere to go, fight from here
+      if (unit._panicBreakCount >= 3) {
+        unit._panicking = false;
+        unit._panicBreakCount = 0;
+        unit.morale = Math.max(unit.morale, 0.20);
+      }
     }
   }
 }
@@ -3359,7 +3376,52 @@ function findFlankPosition(b, unit, target, range) {
 
 // ── Survival Assessment ─────────────────────────────────────
 
-function assessSurvival(unit, target, hostiles, friendlies, b) {
+/**
+ * Look up the leadership stat of this unit's sergeant.
+ * Cached on the unit as _sgtLeadership to avoid repeated squad lookups.
+ * @returns {number} 0-1 leadership value
+ */
+function _getSquadLeadership(b, unit) {
+  // Return cached value if fresh (recalc every 5s or on squad change)
+  if (unit._sgtLeadership !== undefined && unit._sgtLeadershipSquad === unit._squadId) {
+    return unit._sgtLeadership;
+  }
+  // Look up squad → sergeant unit → leadership
+  const squads = b._squads || [];
+  for (const sq of squads) {
+    if (sq.id !== unit._squadId || !sq.active) continue;
+    const pool = sq.team === 'blue' ? (b.units || []) : (b.enemies || []);
+    const sgtUnit = pool.find(u => u.id === sq.sergeantUnitId);
+    const lead = sgtUnit?.leadership ?? 0;
+    unit._sgtLeadership = lead;
+    unit._sgtLeadershipSquad = unit._squadId;
+    return lead;
+  }
+  unit._sgtLeadership = 0;
+  unit._sgtLeadershipSquad = unit._squadId;
+  return 0;
+}
+
+/**
+ * Command posture multiplier for survival threshold.
+ * Offensive commands suppress self-preservation (unit commits to the fight).
+ * Defensive commands amplify it (unit prioritizes staying alive).
+ * @param {string} command - Active sergeant command
+ * @returns {number} Multiplier for danger threshold (lower = harder to trigger flee)
+ */
+function getCommandPosture(command) {
+  switch (command) {
+    case Command.ADVANCE:    return 0.3;  // Committed to attack — hard to spook
+    case Command.FOCUS_FIRE: return 0.3;  // Locked on target — suppress flee
+    case Command.FOLLOW:     return 0.5;  // Following leader — moderate suppression
+    case Command.HOLD:       return 0.7;  // Defending — some self-preservation
+    case Command.COVER_ME:   return 0.7;  // Supporting — hold your ground
+    case Command.FALL_BACK:  return 1.5;  // Retreating — flee easily
+    default:                 return 1.0;
+  }
+}
+
+function assessSurvival(unit, target, hostiles, friendlies, b, activeCommand) {
   if (!target || target.dead) return { survivalRatio: Infinity, inDanger: false, action: null };
 
   const awareness = unit._awareness ?? 0.5;
@@ -3432,9 +3494,33 @@ function assessSurvival(unit, target, hostiles, friendlies, b) {
   // survivalRatio < 1 means I die first
   const survivalRatio = myTTK > 0 ? theirTTK / myTTK : 0;
 
-  // Danger threshold scaled by courage and awareness
+  // Danger threshold scaled by courage, awareness, HP, and sergeant command
+  // Full-HP units are much harder to spook — need overwhelming odds to flee
+  // Wounded units flee sooner (self-preservation kicks in)
+  // Offensive commands suppress survival instinct; defensive commands amplify it
   const courage = unit.personality?.courage ?? 0.5;
-  const dangerThreshold = (0.3 + courage * 0.5) * awareness;
+  const hpPercent = (unit.hp || 60) / (unit.maxHp || 60);
+  const hpFactor = 0.3 + hpPercent * 0.7; // 0.3 (near-death) → 1.0 (full HP)
+
+  // Command posture: sergeant's orders shape how willing the unit is to flee
+  // Offensive (advance, focus_fire) → suppress survival (lower threshold = harder to trigger)
+  // Neutral (hold, follow, cover_me) → normal
+  // Defensive (fall_back) → amplify survival (higher threshold = easier to trigger)
+  //
+  // Two factors control how strongly the posture applies:
+  // - Sergeant leadership: how compelling the orders are (squad-level)
+  // - Unit discipline: how well the unit follows orders (unit-level)
+  // Blended: avg of both, so a strong leader can compensate for undisciplined troops
+  const discipline = unit.personality?.discipline ?? 0.5;
+  const sgtLeadership = _getSquadLeadership(b, unit);
+  const rawPosture = getCommandPosture(activeCommand);
+  // Blend posture toward 1.0 (neutral) based on leadership + discipline:
+  // Both low → posture has ~30% effect (orders barely matter)
+  // Both high → posture has full effect (unit commits completely)
+  const postureStrength = 0.3 + ((discipline + sgtLeadership) / 2) * 0.7;
+  const commandPosture = 1.0 + (rawPosture - 1.0) * postureStrength;
+
+  const dangerThreshold = (0.3 + courage * 0.5) * awareness * hpFactor * commandPosture;
 
   const inDanger = survivalRatio < dangerThreshold;
 
@@ -3490,7 +3576,42 @@ function clearSurvivalState(unit) {
   unit._repositionDir = null;
   unit._losBreakTarget = null;
   unit._losBreakArrived = false;
+  unit._losBreakArriveTime = null;
   unit._repositionTarget = null;
+  unit._disengageTarget = null;
+}
+
+/**
+ * Check if the survival system is allowed to override sergeant commands.
+ * Courage caps how long survival can override (3s brave → 15s coward).
+ * Discipline sets a cooldown after override expires (5s low → 10s high).
+ * Returns true if survival override is allowed, false if blocked.
+ *
+ * @param {object} unit - The unit to check
+ * @param {number} now - Current timestamp
+ * @returns {boolean} Whether survival can take control
+ */
+function canSurvivalOverride(unit, now) {
+  const courage = unit.personality?.courage ?? 0.5;
+  const discipline = unit.personality?.discipline ?? 0.5;
+
+  // Cooldown active — sergeant has control
+  if (unit._survivalCooldownUntil && now < unit._survivalCooldownUntil) {
+    return false;
+  }
+
+  // Check if current commitment has exceeded courage-driven max duration
+  const commitment = unit._survivalCommitment;
+  if (commitment) {
+    const maxDuration = 8000 - courage * 6000; // 2s (brave) to 8s (coward)
+    if (now - commitment.startTime > maxDuration) {
+      // Expired — enter cooldown, sergeant takes over
+      unit._survivalCooldownUntil = now + 5000 + discipline * 5000; // 5s (undisciplined) to 10s (disciplined)
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /**
@@ -3630,19 +3751,45 @@ function executeDisengage(b, unit, target, dtSec, friendlies) {
   unit._isHullDown = false;
   unit._actionVerb = 'disengaging';
 
+  // Use shared retreat system — boundary-aware, personality-driven
+  if (!unit._disengageTarget) {
+    const retreat = findRetreatPosition(b, unit, target);
+    unit._disengageTarget = retreat;
+    if (unit._survivalCommitment) {
+      unit._survivalCommitment.targetPos = { x: retreat.x, y: retreat.y };
+    }
+  }
+
+  const dest = unit._disengageTarget;
+  const arrived = moveBrainUnit(b, unit, dest.x, dest.y, dtSec, friendlies);
+
+  if (arrived || distanceBetween(unit, dest) < 30) {
+    if (dest.type === 'cover') {
+      // Found cover — hold here, clear disengage
+      unit._disengageTarget = null;
+      unit._survivalAction = null;
+      unit._survivalCommitment = null;
+    } else if (dest.type === 'charge') {
+      // Cornered and brave — switch to fighting
+      unit._disengageTarget = null;
+      unit._survivalAction = null;
+      unit._survivalCommitment = null;
+    } else {
+      // Break — arrived at fallback position. Stop fleeing, fight from here.
+      // Don't clear target — prevents expensive recompute loop
+      // (findRetreatPosition + A* pathfinding every frame)
+      unit._survivalAction = null;
+      unit._survivalCommitment = null;
+    }
+  }
+
+  // Fire while retreating if target in range
   if (target && !target.dead) {
-    const d = distanceBetween(unit, target) || 1;
-    const retreatX = unit.x + ((unit.x - target.x) / d) * 300;
-    const retreatY = unit.y + ((unit.y - target.y) / d) * 300;
-    moveBrainUnit(b, unit, retreatX, retreatY, dtSec, friendlies);
-  } else {
-    // No target — move to waypoint or own spawn
-    const wp = getSquadWaypoint(b, unit);
-    const isBlue = unit.team === Team.BLUE;
-    const ownZone = isBlue ? b.blueSpawnZone : b.redSpawnZone;
-    const dest = wp || ownZone;
-    if (dest) {
-      moveBrainUnit(b, unit, dest.x, dest.y, dtSec, friendlies);
+    const range = unit.range || 300;
+    const dist = distanceBetween(unit, target);
+    if (dist <= range) {
+      turnUnitToward(unit, Math.atan2(target.y - unit.y, target.x - unit.x), dtSec);
+      tryShoot(b, unit, target.x, target.y, b._now || Date.now(), target);
     }
   }
   return true;
@@ -3969,7 +4116,7 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
 
   // 4. Select target (initiative-driven re-evaluation interval + hysteresis)
   const initiative = unit.personality?.initiative ?? 0.5;
-  const reEvalInterval = 1500 - initiative * 1000; // 500ms (high) to 1500ms (low)
+  const reEvalInterval = 2500 - initiative * 1500; // 1000ms (high) to 2500ms (low)
   let target;
   const prevTarget = unit._currentTarget;
   const prevTargetAlive = prevTarget && !prevTarget.dead && prevTarget.hp > 0;
@@ -4026,25 +4173,37 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
     const survivalInterval = 800 - (unit._awareness ?? 0.5) * 300;
     if (now - (unit._lastSurvivalCheck || 0) > survivalInterval) {
       unit._lastSurvivalCheck = now;
-      const survival = assessSurvival(unit, target, hostiles, friendlies, b);
+      const survival = assessSurvival(unit, target, hostiles, friendlies, b, activeCommand);
       unit._lastSurvival = survival;
       // Log survival state changes
       if (survival.inDanger) {
-        // Create commitment on first danger detection
-        if (!unit._survivalCommitment) {
-          unit._survivalCommitment = {
-            action: survival.action,
-            startTime: now,
-            startPos: { x: unit.x, y: unit.y },
-            targetPos: null,
-            completed: false
-          };
+        // Courage/discipline gate — survival can't override commands forever
+        if (!canSurvivalOverride(unit, now)) {
+          // Override expired or in cooldown — clear survival, let sergeant drive
+          if (unit._survivalAction) {
+            logEvent(b, { t: now, who: unit.id, team, type: 'survival',
+              x: Math.round(unit.x), y: Math.round(unit.y),
+              action: 'survival_override_expired',
+              detail: `courage:${(unit.personality?.courage ?? 0.5).toFixed(2)} disc:${(unit.personality?.discipline ?? 0.5).toFixed(2)}` });
+            clearSurvivalState(unit);
+          }
+        } else {
+          // Create commitment on first danger detection
+          if (!unit._survivalCommitment) {
+            unit._survivalCommitment = {
+              action: survival.action,
+              startTime: now,
+              startPos: { x: unit.x, y: unit.y },
+              targetPos: null,
+              completed: false
+            };
+          }
+          unit._survivalAction = unit._survivalCommitment.action;
+          logEvent(b, { t: now, who: unit.id, team, type: 'survival',
+            x: Math.round(unit.x), y: Math.round(unit.y),
+            action: unit._survivalAction,
+            detail: `ratio:${survival.survivalRatio.toFixed(2)} myTTK:${survival.myTTK.toFixed(1)}s theirTTK:${survival.theirTTK.toFixed(1)}s` });
         }
-        unit._survivalAction = unit._survivalCommitment.action;
-        logEvent(b, { t: now, who: unit.id, team, type: 'survival',
-          x: Math.round(unit.x), y: Math.round(unit.y),
-          action: unit._survivalAction,
-          detail: `ratio:${survival.survivalRatio.toFixed(2)} myTTK:${survival.myTTK.toFixed(1)}s theirTTK:${survival.theirTTK.toFixed(1)}s` });
       } else {
         // Danger passed — check commitment before clearing
         const commitment = unit._survivalCommitment;

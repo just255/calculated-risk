@@ -517,24 +517,40 @@ export function runBattleAI(b, now, dtSec) {
 
   b._now = now;
 
+  // Sub-timing accumulator — per-team breakdown, reset by perf logger
+  if (!b._aiPerf) _resetAiPerf(b);
+  const ap = b._aiPerf;
+  ap._count++;
+  let t0;
+
   // Safety: ensure _squads exists (handles stale battle objects)
   if (!b._squads) b._squads = [];
   if (!b._debugLog) b._debugLog = [];
   if (!b._teamWaypoints) b._teamWaypoints = {};
 
   // 1. Update modifier effects (commander aura, berserker rage, etc.)
+  t0 = performance.now();
   updateModifierEffects(allEnemies, dtSec);
+  ap.modifiers += performance.now() - t0;
 
   // 2. Commanders — evaluate battlefield, update objectives
   if (b._teamCommanders) {
     for (const cmdr of Object.values(b._teamCommanders)) {
-      if (cmdr) updateCommander(b, cmdr, now);
+      if (!cmdr) continue;
+      t0 = performance.now();
+      updateCommander(b, cmdr, now);
+      const key = cmdr.team === Team.BLUE ? 'cmdr_blue' : 'cmdr_red';
+      ap[key] += performance.now() - t0;
     }
   }
 
+  // Pre-filter dead units once — avoids redundant dead checks in every downstream function
+  const aliveBlue = allUnits.filter(u => !u.dead);
+  const aliveRed = allEnemies.filter(e => !e.dead);
+
   // Build hostiles pool that includes hero for red sergeant awareness
   const heroAsHostile = (hero && !hero.dead && !hero.observer) ? [hero] : [];
-  const redEnemyPool = allUnits.concat(heroAsHostile);
+  const redEnemyPool = aliveBlue.concat(heroAsHostile);
 
   // 3. Per-squad: Sergeant → Formation
   for (const squad of b._squads) {
@@ -550,27 +566,35 @@ export function runBattleAI(b, now, dtSec) {
       continue;
     }
 
+    const teamSuffix = squad.team === Team.BLUE ? '_blue' : '_red';
+
     // 2a. Sergeant AI — needs ALL members (incl. dead) for casualty rate,
     //     and ALL enemies for enemy casualty rate
     if (squad.sergeant) {
+      t0 = performance.now();
       const allMembers = _getAllSquadMembers(squad, allPool);
       updateSergeant(b, squad.sergeant, allMembers, enemyPool, now);
+      ap['sgt' + teamSuffix] += performance.now() - t0;
     }
 
     // 2b. Formation (alive members only)
+    t0 = performance.now();
     updateFormation(b, aliveMembers, enemyPool, now);
+    ap['fmt' + teamSuffix] += performance.now() - t0;
   }
 
-  // 3. Individual unit brains
-  for (const e of allEnemies) {
-    if (e.dead) continue;
-    updateEnemyAI(b, e, hero, allUnits, now, dtSec);
+  // 3. Individual unit brains — per team (using pre-filtered alive arrays)
+  t0 = performance.now();
+  for (const e of aliveRed) {
+    updateEnemyAI(b, e, hero, aliveBlue, now, dtSec);
   }
+  ap.brains_red += performance.now() - t0;
 
-  for (const u of allUnits) {
-    if (u.dead) continue;
-    updateUnitAI(b, u, hero, allEnemies, now, dtSec);
+  t0 = performance.now();
+  for (const u of aliveBlue) {
+    updateUnitAI(b, u, hero, aliveRed, now, dtSec);
   }
+  ap.brains_blue += performance.now() - t0;
 
   // Boundary enforcement: units that were on-map can't leave.
   // Units marching in from off-map are allowed until they enter.
@@ -604,6 +628,7 @@ export function runBattleAI(b, now, dtSec) {
   }
 
   // 3.5b. Hero spotting — hero doesn't run through updateBrain in unit mode, so build spotted list here
+  t0 = performance.now();
   if (hero && !hero.dead && !hero.observer) {
     if (!heroAutoFire) {
       buildSpottedList(hero, allEnemies, b, now);
@@ -612,19 +637,22 @@ export function runBattleAI(b, now, dtSec) {
     _shareHeroIntel(b, hero, allUnits, now);
   }
 
-  // 3.5c. Hero stability — NOT updated here. The game loop calls
-  // updateHeroStability() AFTER hero movement so _movedThisFrame is accurate.
-  // See game.js heroFire/movement sections.
-
   // 3.6. Track whether hero is spotted by any red unit (for UI alert)
   if (hero && !hero.dead) {
     hero._isSpottedByEnemy = allEnemies.some(e =>
       !e.dead && e._spotted && e._spotted.some(s => s.enemy === hero)
     );
   }
+  ap.vision += performance.now() - t0;
+
+  // 3.5c. Hero stability — NOT updated here. The game loop calls
+  // updateHeroStability() AFTER hero movement so _movedThisFrame is accurate.
+  // See game.js heroFire/movement sections.
 
   // 4. Intel sharing (hierarchical: intra-squad instant, cross-squad delayed)
+  t0 = performance.now();
   shareHierarchicalIntel(b, now);
+  ap.intel += performance.now() - t0;
 
   // 5. Sergeant succession check
   for (const squad of b._squads) {
@@ -646,7 +674,37 @@ export function runBattleAI(b, now, dtSec) {
   }
 
   // 9. Build fog-of-war visibility set for renderer
+  t0 = performance.now();
   buildVisibilitySet(b);
+  ap.fog += performance.now() - t0;
+}
+
+/** Reset AI sub-timing accumulator */
+function _resetAiPerf(b) {
+  b._aiPerf = {
+    modifiers: 0, cmdr_blue: 0, cmdr_red: 0,
+    sgt_blue: 0, sgt_red: 0, fmt_blue: 0, fmt_red: 0,
+    brains_blue: 0, brains_red: 0, vision: 0, intel: 0, fog: 0,
+    _count: 0
+  };
+}
+
+/**
+ * Snapshot and reset AI sub-timing. Called by the perf logger in game.js.
+ * Returns averaged breakdown (ms per frame) or null if no data.
+ */
+export function snapshotAiPerf(b) {
+  const ap = b._aiPerf;
+  if (!ap || ap._count === 0) return null;
+  const n = ap._count;
+  const snap = {};
+  for (const key of Object.keys(ap)) {
+    if (key === '_count') continue;
+    snap[key] = ap[key] / n;
+  }
+  snap.frames = n;
+  _resetAiPerf(b);
+  return snap;
 }
 
 /**

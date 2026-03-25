@@ -8,6 +8,7 @@ import { EntityRenderer } from './entity-renderer.js';
 import { renderBaseTerrainToCanvas, renderCanopyToCanvas } from './world-builder/terrain-renderer.js';
 import { queryTerrain } from './terrain-query.js';
 import { buildCostFn } from './pathfinding.js';
+import { renderHeroCrosshair } from './hero-hud.js';
 
 /**
  * BattleRenderer manages the full canvas rendering pipeline for hero battle mode.
@@ -171,16 +172,35 @@ export class BattleRenderer {
     // Layer 3: Effects (canopy on top, targeting indicator, terrain label)
     this._renderCanopy();
 
-    // Speech bubbles — drawn on effects layer so they appear above canopy
+    // Spotted enemy pings + speech bubbles — drawn on effects layer above canopy
     const effectsCtx = this._viewport.getContext('effects');
     if (effectsCtx) {
+      this._entityRenderer.renderSpottedPings(effectsCtx, b, now);
+      this._entityRenderer.renderHeroSpottedAlert(effectsCtx, b, now);
       this._entityRenderer.renderSpeechBubbles(effectsCtx, b, Date.now());
+    }
+
+    // Hero crosshair + reload arc (screen space, above canopy/effects)
+    if (b.hero && !b.hero.dead && !b.hero.observer && !b.fireRange && !b._isReplay) {
+      const chCtx = this._viewport.getContext('effects');
+      if (chCtx) {
+        chCtx.save();
+        chCtx.setTransform(this._viewport.dpr, 0, 0, this._viewport.dpr, 0, 0);
+        renderHeroCrosshair(chCtx, b, now);
+        chCtx.restore();
+      }
     }
 
     if (b.showTerrainGrid >= 1) this._renderTerrainGrid(b);
     this._renderTargetingOverlay(b);
     this._renderTerrainLabel(b);
     this._renderFPS();
+
+    // Post-render hook for external overlays (deployment zones, etc.)
+    if (this._postRenderHook) {
+      const ctx = this._viewport.getContext('effects');
+      if (ctx) this._postRenderHook(ctx, b);
+    }
   }
 
   _renderTerrain() {
@@ -235,8 +255,8 @@ export class BattleRenderer {
       this._entityRenderer.renderAll(ctx, b, now);
     }
 
-    // Debug overlays (fire range telemetry)
-    if (b.debugOverlay) {
+    // Debug overlays (fire range telemetry) + vision polygon
+    if (b.debugOverlay || b.showVision || b.debug?.showRanges) {
       this._entityRenderer.renderDebugOverlays(ctx, b, now);
     }
   }
@@ -335,9 +355,9 @@ export class BattleRenderer {
     // Cache key includes mode so switching modes regenerates
     const cacheKey = `${mode}_${tm.version || 0}`;
     if (!this._terrainGridCache || this._terrainGridCacheKey !== cacheKey) {
-      this._terrainGridCache = mode === 1
-        ? this._buildDensityHeatmap(b)
-        : this._buildPathGrid(b);
+      if (mode === 1) this._terrainGridCache = this._buildDensityHeatmap(b);
+      else if (mode === 2) this._terrainGridCache = this._buildPathGrid(b);
+      else if (mode === 3) this._terrainGridCache = this._buildWaterDepthTopo(b);
       this._terrainGridCacheKey = cacheKey;
     }
 
@@ -361,15 +381,23 @@ export class BattleRenderer {
           ['#ff2222', 'Blocked'],
           ['#ff8800', 'Bridge'],
         ]
-      : [
+      : mode === 2
+      ? [
           ['#22cc44', 'Fast'],
           ['#cccc22', 'Medium'],
           ['#cc4422', 'Slow'],
           ['#111111', 'Blocked'],
           ['#2266cc', 'Water'],
           ['#ff8800', 'Bridge'],
+        ]
+      : [
+          ['#88ccff', 'Dry/Shore'],
+          ['#4488dd', 'Shallow'],
+          ['#2255aa', 'Medium'],
+          ['#112266', 'Deep'],
+          ['#ff8800', 'Bridge'],
         ];
-    const title = mode === 1 ? 'DENSITY' : 'A* GRID';
+    const title = mode === 1 ? 'DENSITY' : mode === 2 ? 'A* GRID' : 'WATER DEPTH';
     const lx = sw - 90;
     const ly = 8;
     const lh = legendItems.length * 14 + 22;
@@ -399,6 +427,14 @@ export class BattleRenderer {
    */
   _buildDensityHeatmap(b) {
     const tm = b.terrainMap;
+
+    // DEBUG: count boulders in scatter items and spatial hash
+    const boulderItems = (tm.scatterItems || []).filter(it => it.type?.startsWith('boulder-'));
+    console.log(`[DensityOverlay] scatterItems total: ${tm.scatterItems?.length || 0}, boulder items: ${boulderItems.length}`);
+    if (boulderItems.length > 0) {
+      boulderItems.forEach((it, i) => console.log(`  boulder[${i}]: type=${it.type} x=${Math.round(it.x)} y=${Math.round(it.y)} scale=${it.scale?.toFixed(3)}`));
+    }
+
     const mapW = tm.gridWidth * tm.cellSize;
     const mapH = tm.gridHeight * tm.cellSize;
     const step = 8;
@@ -410,6 +446,8 @@ export class BattleRenderer {
     canvas.height = mapH;
     const ctx = canvas.getContext('2d');
 
+    let blockedCount = 0;
+    let boulderBlockedCount = 0;
     for (let row = 0; row < rows; row++) {
       for (let col = 0; col < cols; col++) {
         const wx = (col + 0.5) * step;
@@ -419,6 +457,12 @@ export class BattleRenderer {
         let r, g, bl;
 
         if (result.isBlocked) {
+          blockedCount++;
+          if (result.hasBoulder) boulderBlockedCount++;
+          // Log first few blocked cells for diagnosis
+          if (blockedCount <= 5) {
+            console.log(`  blocked@(${wx},${wy}): boulder=${result.hasBoulder} water=${result.water?.toFixed(2)} depth=${result.depth} speedMod=${result.speedMod?.toFixed(2)} dominant=${result.dominant}`);
+          }
           r = 255; g = 34; bl = 34; // Red — blocked
         } else if (result.isBridge) {
           r = 255; g = 136; bl = 0; // Orange — bridge
@@ -449,6 +493,8 @@ export class BattleRenderer {
         ctx.fillRect(col * step, row * step, step, step);
       }
     }
+
+    console.log(`[DensityOverlay] blocked cells: ${blockedCount}, boulder-blocked: ${boulderBlockedCount}, mode: ${b.mode || 'unknown'}`);
 
     return canvas;
   }
@@ -532,13 +578,109 @@ export class BattleRenderer {
     return canvas;
   }
 
+  /**
+   * Mode 3: Water depth topo map — contour-style visualization.
+   * Only water areas are colored; dry land is transparent.
+   * Color bands match gameplay depth thresholds from computeWaterDepth().
+   */
+  _buildWaterDepthTopo(b) {
+    const tm = b.terrainMap;
+    const mapW = tm.gridWidth * tm.cellSize;
+    const mapH = tm.gridHeight * tm.cellSize;
+    const step = 6; // finer resolution for contour detail
+    const cols = Math.ceil(mapW / step);
+    const rows = Math.ceil(mapH / step);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = mapW;
+    canvas.height = mapH;
+    const ctx = canvas.getContext('2d');
+
+    // Depth thresholds match computeWaterDepth() in terrain-math.js:
+    //   < 0.1 → null (no water), 0.1-0.3 → shallow, 0.3-0.7 → medium, >= 0.7 → deep
+    // We use depthCov (waterDepth stroke coverage) since that now drives gameplay depth.
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const wx = (col + 0.5) * step;
+        const wy = (row + 0.5) * step;
+        const result = queryTerrain(tm, wx, wy);
+
+        if (result.isBridge) {
+          ctx.fillStyle = '#ff8800';
+          ctx.fillRect(col * step, row * step, step, step);
+          continue;
+        }
+
+        // Skip non-water areas
+        if (result.water < 0.1) continue;
+
+        const dc = result.depthCov;
+        let r, g, bl;
+
+        if (dc < 0.1) {
+          // Water present, no depth stroke → shore/dry crossing
+          r = 136; g = 204; bl = 255; // light blue
+        } else if (dc < 0.3) {
+          // Shallow
+          r = 68; g = 136; bl = 221;
+        } else if (dc < 0.7) {
+          // Medium
+          r = 34; g = 85; bl = 170;
+        } else {
+          // Deep — blocks vehicles
+          r = 17; g = 34; bl = 102;
+        }
+
+        ctx.fillStyle = `rgb(${r},${g},${bl})`;
+        ctx.fillRect(col * step, row * step, step, step);
+
+        // Draw contour lines at depth thresholds
+        const thresholds = [0.1, 0.3, 0.7];
+        for (const t of thresholds) {
+          if (Math.abs(dc - t) < 0.03) {
+            ctx.fillStyle = 'rgba(255,255,255,0.6)';
+            ctx.fillRect(col * step, row * step, step, step);
+            break;
+          }
+        }
+      }
+    }
+
+    return canvas;
+  }
+
   _renderFPS() {
     const fps = this._fpsFrames ? this._fpsFrames.length : 0;
     const el = this._container.parentElement?.querySelector('.fps-display');
-    if (el) {
+    if (!el) return;
+
+    const b = this._battleState;
+    const perf = b?._perf;
+
+    if (perf && perf.samples > 0) {
+      const n = perf.samples;
+      const ai = (perf.ai / n).toFixed(1);
+      const proj = (perf.proj / n).toFixed(1);
+      const total = (perf.frame / n).toFixed(1);
+      const blueAlive = b.units?.filter(u => !u.dead).length || 0;
+      const redAlive = b.enemies?.filter(e => !e.dead).length || 0;
+
+      // Show AI breakdown from latest perf snapshot
+      const lastSnap = b._perfLog?.[b._perfLog.length - 1]?.ai;
+      let breakdown = '';
+      if (lastSnap && parseFloat(ai) > 4) {
+        // Show top 2 hottest subsystems
+        const entries = Object.entries(lastSnap).filter(([k]) => k !== 'frames');
+        entries.sort((a, b) => b[1] - a[1]);
+        const top = entries.slice(0, 2).map(([k, v]) => `${k}:${v.toFixed(1)}`);
+        if (top.length) breakdown = ' ' + top.join(' ');
+      }
+
+      el.textContent = `${fps} FPS | AI:${ai}${breakdown} P:${proj} F:${total}ms | ${blueAlive}+${redAlive}u`;
+    } else {
       el.textContent = `${fps} FPS`;
-      el.style.color = fps >= 55 ? '#0f0' : fps >= 30 ? '#ff0' : '#f00';
     }
+    el.style.color = fps >= 55 ? '#0f0' : fps >= 30 ? '#ff0' : '#f00';
   }
 
   // ═══════════════════════════════════════════════════════════════

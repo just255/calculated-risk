@@ -381,6 +381,9 @@ export function finalizeRecording(b) {
   // Compute battle stats
   const stats = computeStats(b);
 
+  // Capture perf snapshots if available
+  const perfLog = b._perfLog && b._perfLog.length > 0 ? b._perfLog : undefined;
+
   return {
     version: rec.version,
     mode: rec.mode,
@@ -395,6 +398,7 @@ export function finalizeRecording(b) {
     redSpawnZone: rec.redSpawnZone,
     unitDefs,
     stats,
+    perfLog,
     frames: rec.frames,
     events
   };

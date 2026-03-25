@@ -379,16 +379,39 @@ export function buildSpottedList(unit, hostiles, b, now) {
   const awareness = unit._awareness ?? 0.5;
   const staleTimeout = 2000 + awareness * 1000; // 2-3s based on awareness
 
-  // Start with existing spotted list, filter out stale entries
+  // Awareness-driven scan throttling: less aware = scan less often
+  // 100ms (awareness 1.0) to 500ms (awareness 0.0)
+  const scanInterval = 500 - awareness * 400;
+  if (now - (unit._lastVisionScan || 0) < scanInterval) return; // Reuse cached spotted list
+  unit._lastVisionScan = now;
+
+  // Awareness-driven perception cap: how many hostiles we can process per scan
+  // 2 (awareness 0.0) to 8 (awareness 1.0)
+  const perceptionCap = 2 + Math.floor(awareness * 6);
+
+  // Sort hostiles by distance (closest = highest priority for scanning)
+  // Reuse a lightweight distance array to avoid sorting the full hostiles array
+  const scanTargets = [];
+  for (let i = 0; i < hostiles.length; i++) {
+    const e = hostiles[i];
+    if (e.dead || (e.hp !== undefined && e.hp <= 0)) continue;
+    const dx = e.x - unit.x;
+    const dy = e.y - unit.y;
+    scanTargets.push({ enemy: e, distSq: dx * dx + dy * dy });
+  }
+  // Partial sort: only need the closest perceptionCap entries
+  // For small arrays, full sort is fine; for large ones this avoids overhead
+  scanTargets.sort((a, b2) => a.distSq - b2.distSq);
+
   const prevSpotted = unit._spotted || [];
   const prevIds = new Set(prevSpotted.map(e => e.enemy?.id));
   const freshMap = new Map(); // enemyId → spotted entry
-  const log = b?._debugLog;
   const logTeam = unit.team || 'blue';
 
-  // Scan all hostiles through vision
-  for (const enemy of hostiles) {
-    if (enemy.dead || (enemy.hp !== undefined && enemy.hp <= 0)) continue;
+  // Visual scan — limited by perception cap (closest first)
+  const visualLimit = Math.min(perceptionCap, scanTargets.length);
+  for (let i = 0; i < visualLimit; i++) {
+    const enemy = scanTargets[i].enemy;
 
     const result = canDetect(unit, enemy, b);
     if (result.detected) {
@@ -412,9 +435,9 @@ export function buildSpottedList(unit, hostiles, b, now) {
     }
   }
 
-  // Sound detection pass — omnidirectional, adds entries not already visually spotted
-  for (const enemy of hostiles) {
-    if (enemy.dead || (enemy.hp !== undefined && enemy.hp <= 0)) continue;
+  // Sound detection pass — passive/cheap, runs on ALL hostiles (no cap)
+  for (let i = 0; i < scanTargets.length; i++) {
+    const enemy = scanTargets[i].enemy;
     if (freshMap.has(enemy.id)) continue; // Already visually spotted
 
     const sound = detectBySound(unit, enemy, now);

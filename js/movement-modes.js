@@ -373,6 +373,21 @@ export function resolveMovementMode(unit, ctx) {
     scores[currentMode] += 15;
   }
 
+  // Minimum mode duration: discipline-driven commitment prevents rapid oscillation
+  // Units stay in their current mode for at least 1.5-3s before switching
+  // Exception: urgent_cover and panic can always override (life-threatening)
+  const discipline = ctx.personality?.discipline ?? 0.5;
+  const minModeDuration = (1.5 + discipline * 1.5) * 1000; // 1.5-3.0s
+  const modeAge = Date.now() - (unit._movementModeStart || 0);
+  if (currentMode && modeAge < minModeDuration
+      && currentMode !== MovementMode.PANIC_FLEE) {
+    // Still in cooldown — only allow urgent_cover to override if score is very high
+    const urgentScore = scores[MovementMode.URGENT_COVER] || 0;
+    if (urgentScore < 60) {
+      return { mode: currentMode, score: scores[currentMode] || 0, scores };
+    }
+  }
+
   // Find highest score
   let bestMode = MovementMode.COMMAND_EXECUTE;
   let bestScore = 0;

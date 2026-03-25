@@ -55,7 +55,7 @@ import {
   applyTankMovementExtended
 } from './movement.js';
 import { rollModifier, applyModifier, getModifiedDamage } from './elite-modifiers.js';
-import { runBattleAI, spawnSquad, createSquad, applyBrainDefaults, scaleBrainByWave, BRAIN_PRESETS } from './ai-pipeline.js';
+import { runBattleAI, snapshotAiPerf, spawnSquad, createSquad, applyBrainDefaults, scaleBrainByWave, BRAIN_PRESETS } from './ai-pipeline.js';
 import { planDeployment, scaleCommanderByWave, assignObjective } from './commander.js';
 import { computeShotAccuracy, applyRecoilDrop, updateStability } from './fire-decision.js';
 import { createRecorder, recordFrame, finalizeRecording, isRecording, saveReplay } from './replay-recorder.js';
@@ -69,6 +69,52 @@ import { getSoldier, getCrewForVehicle, saveRoster, saveVehicles, getVehicle, he
 import { getEffectivePersonality } from './crew.js';
 import { initCMDMode, updateCMDCamera, drawCMDOverlay, handleCMDClick, handleCMDRightClick, handleCMDKey, shouldHeroRunAI } from './cmd-mode.js';
 import { drawPresetPanel, applyPreset } from './loadouts.js';
+
+/** Format top N AI sub-costs for compact console output */
+function _topCosts(ai, n) {
+  const entries = Object.entries(ai).filter(([k]) => k !== 'frames');
+  entries.sort((a, b) => b[1] - a[1]);
+  const top = entries.slice(0, n).map(([k, v]) => `${k}:${v.toFixed(1)}`);
+  return top.length ? ' [' + top.join(' ') + ']' : '';
+}
+
+/**
+ * Shared perf snapshot logger — called once per frame in all modes.
+ * Every 5s: snapshots AI breakdown into b._perfLog ring buffer (max 60 entries).
+ * Console output: one warn line only when frame budget exceeded.
+ */
+function _logPerfSnapshot(b, now) {
+  const perfNow = performance.now();
+  if (perfNow - b._perf.lastLog < 5000 || b._perf.samples === 0) return;
+
+  if (!b._perfLog) b._perfLog = [];
+  const n = b._perf.samples;
+  const avgAi = b._perf.ai / n;
+  const avgProj = b._perf.proj / n;
+  const avgFrame = b._perf.frame / n;
+  const blueAlive = b.units?.filter(u => !u.dead).length || 0;
+  const redAlive = b.enemies?.filter(e => !e.dead).length || 0;
+
+  // Get AI sub-timing breakdown (resets accumulator)
+  const aiBreakdown = snapshotAiPerf(b);
+
+  const snapshot = {
+    t: now,
+    wave: b.wave || 1,
+    fps: +(n / 5).toFixed(0),
+    avgAi: +avgAi.toFixed(2),
+    avgProj: +avgProj.toFixed(2),
+    avgFrame: +avgFrame.toFixed(2),
+    blueAlive, redAlive,
+    proj: b.projectiles?.length || 0,
+    frames: n,
+    ai: aiBreakdown
+  };
+  b._perfLog.push(snapshot);
+  if (b._perfLog.length > 60) b._perfLog.shift();
+
+  b._perf.ai = 0; b._perf.proj = 0; b._perf.frame = 0; b._perf.samples = 0; b._perf.lastLog = perfNow;
+}
 
 // Get effective unit stats with upgrades applied
 function getUnitStats(unitIdx) {
@@ -2551,8 +2597,14 @@ function updateEndlessBattle(dt) {
     redCmdr._pendingDeployments = [];
   }
 
+  // --- PERFORMANCE MONITORING ---
+  if (!b._perf) b._perf = { ai: 0, proj: 0, frame: 0, samples: 0, lastLog: 0 };
+  const _perfFrameStart = performance.now();
+
   // --- UNIFIED AI PIPELINE ---
+  const _perfAiStart = performance.now();
   runBattleAI(b, now, dtSec);
+  b._perf.ai += performance.now() - _perfAiStart;
 
   // --- RECORD REPLAY FRAME ---
   if (b._recorder) recordFrame(b, now);
@@ -2570,6 +2622,7 @@ function updateEndlessBattle(dt) {
   }
 
   // --- UPDATE PROJECTILES ---
+  const _perfProjStart = performance.now();
   resolveProjectiles(b, now, dtSec, {
     heroRef: hero,
     heroHitRadiusSq: 625, // ~25px
@@ -2589,6 +2642,11 @@ function updateEndlessBattle(dt) {
       }
     }
   });
+
+  b._perf.proj += performance.now() - _perfProjStart;
+  b._perf.frame += performance.now() - _perfFrameStart;
+  b._perf.samples++;
+  _logPerfSnapshot(b, now);
 
   // --- CHECK WAVE COMPLETE ---
   const aliveEnemies = b.enemies.filter(e => !e.dead).length;
@@ -5415,18 +5473,25 @@ function updateFireRangeBattle(dt) {
     if (b.enemies) for (const e of b.enemies) { e.lastShot = 0; e.lastAttack = 0; }
   }
 
-  // --- UNIFIED AI PIPELINE ---
-  runBattleAI(b, now, dtSec);
+  // --- PERFORMANCE MONITORING ---
+  if (!b._perf) b._perf = { ai: 0, proj: 0, frame: 0, samples: 0, lastLog: 0 };
+  const _perfFrameStartFR = performance.now();
 
+  // --- UNIFIED AI PIPELINE ---
+  const _perfAiStartFR = performance.now();
+  runBattleAI(b, now, dtSec);
+  b._perf.ai += performance.now() - _perfAiStartFR;
 
   // --- RECORD REPLAY FRAME ---
   if (b._recorder) recordFrame(b, now);
 
   // --- UPDATE PROJECTILES ---
+  const _perfProjStartFR = performance.now();
   resolveProjectiles(b, now, dtSec, {
     useTierDamage: true,
     debugInvincible: b.debug
   });
+  b._perf.proj += performance.now() - _perfProjStartFR;
 
   // --- CLEAN UP EFFECTS ---
   b.effects = b.effects.filter(e => {
@@ -5440,6 +5505,10 @@ function updateFireRangeBattle(dt) {
   if (b._debugLog && b._debugLog.length > 2000) {
     b._debugLog = b._debugLog.slice(-1000);
   }
+
+  b._perf.frame += performance.now() - _perfFrameStartFR;
+  b._perf.samples++;
+  _logPerfSnapshot(b, now);
 
   // --- AUTO-CAMERA: handled in drawHeroBattle (fit-to-view) ---
 
@@ -6528,8 +6597,14 @@ function updateCampaignBattle(dt) {
     }
   }
 
+  // --- PERFORMANCE MONITORING ---
+  if (!b._perf) b._perf = { ai: 0, proj: 0, frame: 0, samples: 0, lastLog: 0 };
+  const _perfFrameStartCmp = performance.now();
+
   // --- UNIFIED AI PIPELINE ---
+  const _perfAiStartCmp = performance.now();
   runBattleAI(b, now, dtSec);
+  b._perf.ai += performance.now() - _perfAiStartCmp;
 
   // --- RECORD REPLAY FRAME ---
   if (b._recorder) recordFrame(b, now);
@@ -6543,6 +6618,7 @@ function updateCampaignBattle(dt) {
   }
 
   // --- UPDATE PROJECTILES ---
+  const _perfProjStartCmp = performance.now();
   resolveProjectiles(b, now, dtSec, {
     heroRef: hero,
     heroHitRadiusSq: (ENTITY_RADIUS.projectile + ENTITY_RADIUS.enemy) ** 2,
@@ -6552,6 +6628,10 @@ function updateCampaignBattle(dt) {
       sound('explosion');
     }
   });
+  b._perf.proj += performance.now() - _perfProjStartCmp;
+  b._perf.frame += performance.now() - _perfFrameStartCmp;
+  b._perf.samples++;
+  _logPerfSnapshot(b, now);
 
   // Clear concentrate target if enemy is dead
   if (b.squad?.concentrateTarget) {

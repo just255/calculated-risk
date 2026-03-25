@@ -1067,6 +1067,56 @@ function distTo(a, b) {
  *
  * On each call: if we've arrived at _searchTarget, pick a new one. Otherwise keep going.
  */
+/**
+ * Generate a systematic map sweep waypoint. Divides the map into a 3x3 grid
+ * and visits sectors in order of nearest-unvisited. Resets after all visited.
+ * @returns {{ x: number, y: number }} Next sector center to sweep
+ */
+function _pickSweepWaypoint(b, sgt, origin) {
+  const mapW = b.mapWidth || 1600;
+  const mapH = b.mapHeight || 1600;
+  const margin = 120;
+  const cols = 3, rows = 3;
+  const cellW = (mapW - margin * 2) / cols;
+  const cellH = (mapH - margin * 2) / rows;
+
+  // Init sweep state
+  if (!sgt._sweepVisited) sgt._sweepVisited = new Set();
+
+  // Build sector centers
+  const sectors = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const id = r * cols + c;
+      const x = margin + (c + 0.5) * cellW;
+      const y = margin + (r + 0.5) * cellH;
+      sectors.push({ id, x, y });
+    }
+  }
+
+  // Mark current sector as visited if squad is within it
+  for (const s of sectors) {
+    if (Math.abs(origin.x - s.x) < cellW * 0.6 && Math.abs(origin.y - s.y) < cellH * 0.6) {
+      sgt._sweepVisited.add(s.id);
+    }
+  }
+
+  // Reset if all visited
+  if (sgt._sweepVisited.size >= sectors.length) {
+    sgt._sweepVisited.clear();
+  }
+
+  // Pick nearest unvisited sector
+  let best = null, bestDist = Infinity;
+  for (const s of sectors) {
+    if (sgt._sweepVisited.has(s.id)) continue;
+    const d = Math.hypot(s.x - origin.x, s.y - origin.y);
+    if (d < bestDist) { bestDist = d; best = s; }
+  }
+
+  return best || sectors[0];
+}
+
 function pickSearchBound(b, sgt, squadCenter, leaderPos) {
   const p = sgt.personality;
   const mapW = b.mapWidth || 1600;
@@ -1095,6 +1145,14 @@ function pickSearchBound(b, sgt, squadCenter, leaderPos) {
   const adaptAfter = Math.round(2 + (1 - awareness) * 3); // 2 (aware) to 5 (clueless)
   const adapting = bounds > adaptAfter;
 
+  // After adapting threshold: switch to systematic map sweep
+  // instead of rotating around the suspected enemy zone
+  if (adapting) {
+    const sweepTarget = _pickSweepWaypoint(b, sgt, origin);
+    sgt._searchTarget = sweepTarget;
+    return sweepTarget;
+  }
+
   // Bound distance: initiative controls how far we leap (150-400px)
   const boundDist = 150 + initiative * 250;
 
@@ -1108,20 +1166,8 @@ function pickSearchBound(b, sgt, squadCenter, leaderPos) {
     dirX = 0; dirY = -1; // Default: advance north
   }
 
-  // Low awareness → drift off the direct line; high awareness → straight at them
-  // Adapting → rotate search direction to sweep new areas
-  let spreadAngle;
-  if (adapting) {
-    // Rotate progressively: perpendicular, then behind, then back around
-    const baseAngle = Math.atan2(dirY, dirX);
-    const rotateAngle = baseAngle + (Math.PI / 3) * (bounds - adaptAfter);
-    dirX = Math.cos(rotateAngle);
-    dirY = Math.sin(rotateAngle);
-    spreadAngle = 0.3; // Moderate spread while adapting
-  } else {
-    // Normal: awareness controls angular spread (0 = ±45°, 1 = ±5°)
-    spreadAngle = (1 - awareness) * 0.8; // radians: 0 to ~45°
-  }
+  // Normal: awareness controls angular spread (0 = ±45°, 1 = ±5°)
+  const spreadAngle = (1 - awareness) * 0.8; // radians: 0 to ~45°
 
   // Apply spread
   const angle = Math.atan2(dirY, dirX) + (Math.random() - 0.5) * 2 * spreadAngle;
