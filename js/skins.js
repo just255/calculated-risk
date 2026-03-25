@@ -6,6 +6,7 @@ import { renderShapesToCanvas } from './sprite-parser.js';
 // Cache for loaded variants
 let variantsCache = null;
 let variantDataCache = new Map();
+const variantMisses = new Set();  // variantIds confirmed missing — never retry
 
 // Player's skin preferences (stored in localStorage)
 const PREFS_KEY = 'calculatedRisk_skinPrefs';
@@ -51,16 +52,27 @@ export async function loadVariantData(variantId) {
   if (variantDataCache.has(variantId)) {
     return variantDataCache.get(variantId);
   }
+  if (variantMisses.has(variantId)) return null;
+
+  // Check against known variant list first (avoids 404s)
+  const variants = await loadVariants();
+  if (variants.length > 0 && !variants.some(v => v.id === variantId)) {
+    variantMisses.add(variantId);
+    return null;
+  }
 
   try {
     const res = await fetch(`/api/variants/${variantId}`);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      variantMisses.add(variantId);
+      return null;
+    }
 
     const data = await res.json();
     variantDataCache.set(variantId, data);
     return data;
   } catch (err) {
-    console.warn(`Failed to load variant ${variantId}:`, err);
+    variantMisses.add(variantId);
     return null;
   }
 }
@@ -207,11 +219,21 @@ export function createVariantPreview(variantData, size = 64) {
 }
 
 /**
+ * Get cached variant data synchronously (no fetch). Returns null if not yet loaded.
+ * @param {string} variantId
+ * @returns {Object|null}
+ */
+export function getCachedVariant(variantId) {
+  return variantDataCache.get(variantId) || null;
+}
+
+/**
  * Clear variant caches (useful after editor updates)
  */
 export function clearCache() {
   variantsCache = null;
   variantDataCache.clear();
+  variantMisses.clear();
 }
 
 /**

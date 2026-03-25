@@ -878,13 +878,25 @@ function placePaths(rng, params, bounds, spawnZones, allForest, allBrush, riverD
       }
 
       // Derive bridge geometry from actual spine-based endpoints
-      const finalDx = deckEnd.x - deckStart.x;
-      const finalDy = deckEnd.y - deckStart.y;
-      const bridgeLength = Math.hypot(finalDx, finalDy);
-      const finalLen = bridgeLength || 1;
-      const finalDirX = finalDx / finalLen;
-      const finalDirY = finalDy / finalLen;
+      let finalDx = deckEnd.x - deckStart.x;
+      let finalDy = deckEnd.y - deckStart.y;
+      let bridgeLength = Math.hypot(finalDx, finalDy);
+      let finalLen = bridgeLength || 1;
+      let finalDirX = finalDx / finalLen;
+      let finalDirY = finalDy / finalLen;
       const isWood = style === 'wood';
+
+      // Enforce minimum deck length so it's always longer than the truss body.
+      // Truss snaps to whole tiles (aspect-ratio dependent), so deck must be
+      // long enough to fit at least 1 tile + visible end caps on each side.
+      const deckWidth = baseWidth * 3.5;
+      const minLength = deckWidth * (PCG_RULES.bridge.minLengthMult || 1.4);
+      if (bridgeLength < minLength) {
+        const extend = (minLength - bridgeLength) / 2;
+        deckStart = { x: deckStart.x - finalDirX * extend, y: deckStart.y - finalDirY * extend };
+        deckEnd = { x: deckEnd.x + finalDirX * extend, y: deckEnd.y + finalDirY * extend };
+        bridgeLength = minLength;
+      }
 
       riverData.bridge = {
         x: (deckStart.x + deckEnd.x) / 2,

@@ -229,7 +229,7 @@ export function findValidSpawnPos(zone, offsetX, offsetY, terrainMap) {
   if (!terrainMap) return { x, y };
 
   const result = queryTerrain(terrainMap, x, y);
-  if (!result.isBlocked && !result.depth) return { x, y };
+  if (!result.isBlocked && !result.depth && result.water < 0.1) return { x, y };
 
   // Spiral search within the zone for dry, unblocked land
   const maxAttempts = 20;
@@ -245,7 +245,7 @@ export function findValidSpawnPos(zone, offsetX, offsetY, terrainMap) {
     if (dx * dx + dy * dy > zone.radius * zone.radius) continue;
 
     const r = queryTerrain(terrainMap, sx, sy);
-    if (!r.isBlocked && !r.depth) return { x: sx, y: sy };
+    if (!r.isBlocked && !r.depth && r.water < 0.1) return { x: sx, y: sy };
   }
 
   return { x, y };

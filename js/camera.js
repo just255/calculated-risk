@@ -45,25 +45,11 @@ export function updateFireRangeCamera(b, screenW, screenH) {
     b.camera.y += panY;
     b.camera._manualPan = true;
   } else if (!b.camera._manualPan) {
-    // Auto-follow blue leader
+    // Auto-follow blue leader — centered, no clamping
     const targetX = leader.x - viewW / 2;
     const targetY = leader.y - viewH / 2;
-    const clampX = Math.max(0, Math.min(b.mapWidth - viewW, targetX));
-    const clampY = Math.max(0, Math.min(b.mapHeight - viewH, targetY));
-    b.camera.x += (clampX - b.camera.x) * 0.08;
-    b.camera.y += (clampY - b.camera.y) * 0.08;
-  }
-
-  // Clamp camera within map bounds (center if view is larger than map)
-  if (viewW >= b.mapWidth) {
-    b.camera.x = (b.mapWidth - viewW) / 2;
-  } else {
-    b.camera.x = Math.max(0, Math.min(b.mapWidth - viewW, b.camera.x));
-  }
-  if (viewH >= b.mapHeight) {
-    b.camera.y = (b.mapHeight - viewH) / 2;
-  } else {
-    b.camera.y = Math.max(0, Math.min(b.mapHeight - viewH, b.camera.y));
+    b.camera.x += (targetX - b.camera.x) * 0.08;
+    b.camera.y += (targetY - b.camera.y) * 0.08;
   }
 
   b.camera.zoom = zoom;
@@ -106,21 +92,9 @@ export function updateHeroCamera(b, screenW, screenH) {
   }
 
   if (!b.camera._manualPan) {
-    // Auto-follow hero
+    // Auto-follow hero — always centered, no clamping
     b.camera.x = b.hero.x - viewW / 2;
-    b.camera.y = b.hero.y - viewH * 0.65;
-  }
-
-  // Clamp within map bounds
-  if (viewW >= b.mapWidth) {
-    b.camera.x = (b.mapWidth - viewW) / 2;
-  } else {
-    b.camera.x = Math.max(0, Math.min(b.mapWidth - viewW, b.camera.x));
-  }
-  if (viewH >= b.mapHeight) {
-    b.camera.y = (b.mapHeight - viewH) / 2;
-  } else {
-    b.camera.y = Math.max(0, Math.min(b.mapHeight - viewH, b.camera.y));
+    b.camera.y = b.hero.y - viewH / 2;
   }
 
   b.camera.zoom = zoom;
@@ -230,7 +204,12 @@ export function cameraPanMove(b, mx, my) {
  * @param {object} b - Battle object
  */
 export function cameraPanEnd(b) {
-  if (b.camera._dragPan) b.camera._dragPan = null;
+  if (b.camera._dragPan) {
+    b.camera._dragPan = null;
+    // Resume auto-follow after drag release (hero modes)
+    // WASD pan keeps _manualPan true until F is pressed
+    b.camera._manualPan = false;
+  }
 }
 
 /**
@@ -260,4 +239,25 @@ export function cameraFitMap(b, screenW, screenH) {
     b.camera.y = (b.mapHeight - viewH) / 2;
     b.camera._manualPan = true;
   }
+}
+
+/**
+ * Set camera to fit the entire map instantly (no toggle behavior).
+ * Used at battle start for deployment overview.
+ */
+export function cameraFitMapImmediate(b, screenW, screenH) {
+  const TACTICAL_RADIUS = 600;
+  const baseZoom = Math.min(screenW, screenH) / (TACTICAL_RADIUS * 2);
+
+  const fitZoomX = screenW / (b.mapWidth * baseZoom);
+  const fitZoomY = screenH / (b.mapHeight * baseZoom);
+  const fitZoom = Math.min(fitZoomX, fitZoomY);
+
+  b.camera.userZoom = fitZoom;
+  const zoom = baseZoom * fitZoom;
+  const viewW = screenW / zoom;
+  const viewH = screenH / zoom;
+  b.camera.x = (b.mapWidth - viewW) / 2;
+  b.camera.y = (b.mapHeight - viewH) / 2;
+  b.camera._manualPan = true;
 }

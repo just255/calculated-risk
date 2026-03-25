@@ -2,7 +2,7 @@
 // UI - HTML rendering functions
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, UnitType, UNITS, ENEMIES, UNIT_COSTS, H2H_BUDGET, VEHICLE_UNITS, TYPE_CHART, UNIT_PROJECTILES, PROJECTILES, UNIT_DESCRIPTIONS, CAMPAIGN_ERAS, CAMPAIGN_MOS, SquadOrder, TargetPriority, Formation, VEHICLE_CATEGORIES, ENDLESS_VEHICLES, PART_CATEGORY_CONFIG, SYSTEM_DEFINITIONS, UNIT_PART_SLOTS, UNIT_TYPE_MAP, Team, RANK_NAMES, INSIGNIA_SHAPE_TYPES, RANK_TABLE, HEROIC_ACTIONS } from './constants.js';
+import { State, SubState, HQTab, UnitType, UNITS, ENEMIES, UNIT_COSTS, H2H_BUDGET, VEHICLE_UNITS, TYPE_CHART, UNIT_PROJECTILES, PROJECTILES, UNIT_DESCRIPTIONS, CAMPAIGN_ERAS, CAMPAIGN_MOS, SquadOrder, TargetPriority, Formation, VEHICLE_CATEGORIES, ENDLESS_VEHICLES, PART_CATEGORY_CONFIG, SYSTEM_DEFINITIONS, UNIT_PART_SLOTS, UNIT_TYPE_MAP, Team, RANK_NAMES, INSIGNIA_SHAPE_TYPES, RANK_TABLE, HEROIC_ACTIONS, GAME_VERSION_STRING } from './constants.js';
 import { Game } from './state.js';
 import { save } from './storage.js';
 import { getSkinSelectorData, setSkinPref, clearCache as clearSkinCache, loadVariantData, getCachedVariant } from './skins.js';
@@ -152,8 +152,7 @@ export function render() {
 // SCREEN TEMPLATES
 // ═══════════════════════════════════════════════════════════════
 
-// Game version - update this when making changes
-const GAME_VERSION = '0.5.0';
+// Game version imported from constants.js (single source of truth)
 
 function menuHTML() {
   return `
@@ -181,7 +180,7 @@ function menuHTML() {
           <button class="menu-btn secondary" data-action="terrain-editor">Terrain Editor</button>
         </div>
       </div>
-      <div class="menu-version">v${GAME_VERSION}</div>
+      <div class="menu-version">v${GAME_VERSION_STRING}</div>
     </div>
   `;
 }

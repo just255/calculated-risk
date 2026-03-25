@@ -2,7 +2,7 @@
 // MAIN - Entry point, event handlers, initialization
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, UNITS, PROJECTILES, UNIT_PROJECTILES, SquadOrder, ENDLESS_VEHICLES, Team } from './constants.js';
+import { State, SubState, HQTab, UNITS, PROJECTILES, UNIT_PROJECTILES, SquadOrder, ENDLESS_VEHICLES, Team, GAME_VERSION_STRING } from './constants.js';
 import { Game, newBattlePlan, newCampaign, createAdvancingScenario, createFrontlineScenario, newZoneBattle, newEndlessRun, newFireRangeRun } from './state.js';
 import { initAudio, sound } from './audio.js';
 import { save, load, saveFRConfig, loadFRConfig, saveFRNamedConfig, loadFRNamedConfigs, deleteFRNamedConfig, migrateFRConfig } from './storage.js';
@@ -3574,4 +3574,4 @@ document.addEventListener('touchend', e => {
 if (checkAuth()) {
   initApp();
 }
-console.log('Calculated Risk v3 - Modular');
+console.log(`Calculated Risk v${GAME_VERSION_STRING}`);

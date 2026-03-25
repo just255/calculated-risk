@@ -83,6 +83,7 @@ export const PCG_RULES = {
     deckTexture: 'bridge-wood',        // default deck ground texture
     overhang: 0.5,                     // fraction of path width added to each end past shore edge
     stoneAnchor: 1.5,                  // extra overhang multiplier for stone (simulates abutments)
+    minLengthMult: 1.4,               // minimum deck length as multiple of deck width (ensures deck > truss)
   },
 
   // ── Path routing (river interaction) ─────────────────────────

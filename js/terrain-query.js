@@ -64,15 +64,28 @@ export function queryTerrain(terrainMap, x, y, radius) {
   // ── 1. Bridge check (overrides water) ──────────────────────
   const bridge = queryBridge(terrainMap.bridges, x, y);
 
-  // ── 2. Water coverage from strokes ─────────────────────────
+  // ── 2. Stroke coverage (all types) ─────────────────────────
+  // Water: presence from 'water' strokes, depth from 'waterDepth' strokes.
+  // Forest/brush: stroke coverage provides a density floor — ensures LOS
+  // is reduced even between individual scatter items within a painted area.
   let waterCov = 0;
+  let depthCov = 0;
+  let forestStrokeCov = 0;
+  let brushStrokeCov = 0;
   if (!bridge) {
     for (const stroke of terrainMap.strokes) {
-      if (stroke.type !== 'water') continue;
-      const cov = calcStrokeCoverage(stroke, x, y);
-      if (cov > 0) {
-        // Water doesn't stack — take max
-        waterCov = Math.max(waterCov, cov);
+      if (stroke.type === 'water') {
+        const cov = calcStrokeCoverage(stroke, x, y);
+        if (cov > waterCov) waterCov = cov;
+      } else if (stroke.type === 'waterDepth') {
+        const cov = calcStrokeCoverage(stroke, x, y);
+        if (cov > depthCov) depthCov = cov;
+      } else if (stroke.type === 'forest') {
+        const cov = calcStrokeCoverage(stroke, x, y);
+        if (cov > forestStrokeCov) forestStrokeCov = cov;
+      } else if (stroke.type === 'brush') {
+        const cov = calcStrokeCoverage(stroke, x, y);
+        if (cov > brushStrokeCov) brushStrokeCov = cov;
       }
     }
   }
@@ -119,9 +132,10 @@ export function queryTerrain(terrainMap, x, y, radius) {
     // floor, particle categories: visual only, no gameplay effect
   }
 
-  // Clamp density values to 0-1 range for coverage computation
-  const forestCov = Math.min(forestWeight, 1.0);
-  const brushCov = Math.min(brushWeight, 1.0);
+  // Combine scatter density with stroke coverage (stroke acts as density floor).
+  // This prevents LOS gaps between individual tree positions within a painted forest.
+  const forestCov = Math.min(Math.max(forestWeight, forestStrokeCov * 0.6), 1.0);
+  const brushCov = Math.min(Math.max(brushWeight, brushStrokeCov * 0.5), 1.0);
 
   // ── 4. Compute gameplay properties ─────────────────────────
   const coverage = {
@@ -144,7 +158,9 @@ export function queryTerrain(terrainMap, x, y, radius) {
     speedMod = computeSpeedMod(coverage);
     cover = computeCoverBonus(coverage);
     vis = computeVisibility(coverage);
-    depth = computeWaterDepth(waterCov);
+    // Gameplay depth driven by waterDepth strokes (visual = gameplay).
+    // If water exists but no waterDepth stroke covers this point → shallow.
+    depth = waterCov >= 0.1 ? computeWaterDepth(depthCov) : null;
     isBlocked = hasBoulder || (depth === 'deep' && speedMod === 0);
 
     // Determine dominant feature
@@ -170,6 +186,7 @@ export function queryTerrain(terrainMap, x, y, radius) {
     speedMod,
     visibility: vis,
     water: waterCov,
+    depthCov,         // raw waterDepth stroke coverage (0-1) for overlays
     depth,
     dominant,
     isBlocked,
@@ -476,6 +493,7 @@ function _emptyResult() {
     speedMod: 1.0,
     visibility: 1.0,
     water: 0,
+    depthCov: 0,
     depth: null,
     dominant: 'open',
     isBlocked: false,

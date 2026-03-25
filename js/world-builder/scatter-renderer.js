@@ -86,8 +86,8 @@ export function renderScatterItem(ctx, item, images, options = {}) {
   const spriteKey = getSpriteKey(item);
   const categoryImages = images[config.category];
   if (!categoryImages) {
-    if (config.category === 'tree') {
-      console.error(`[Render] No categoryImages for tree, category=${config.category}`);
+    if (config.category === 'tree' || config.category === 'boulder') {
+      console.error(`[Render] No categoryImages for ${config.category}, available keys:`, Object.keys(images));
     }
     return;
   }
@@ -96,7 +96,7 @@ export function renderScatterItem(ctx, item, images, options = {}) {
   if (!img || !img.complete) {
     // Log missing sprites (only once per key)
     if (!_loggedWarnings.has(spriteKey)) {
-      console.warn(`[ScatterRenderer] Missing sprite: ${spriteKey} (category: ${config.category}, actualKey from getSpriteKey)`);
+      console.warn(`[ScatterRenderer] Missing sprite: ${spriteKey} (category: ${config.category}), available:`, Object.keys(categoryImages).slice(0, 10));
       if (config.category === 'tree') {
         console.warn(`[Render] Tree item details:`, { type: item.type, age: item.age, variant: item.variant, isDead: item.isDead });
         console.warn(`[Render] Available tree keys sample:`, Object.keys(categoryImages).slice(0, 15));

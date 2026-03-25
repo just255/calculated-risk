@@ -85,7 +85,8 @@ export class ReplayPlayer {
       _teamWaypoints: {},
       _sergeants: {},
       debug: {},
-      result: null
+      result: null,
+      _visibleEnemies: null  // Replay = spectator mode, show all enemies
     };
 
     // Create unit objects from unitDefs
@@ -344,10 +345,14 @@ export class ReplayPlayer {
         u.x = f.x + (n.x - f.x) * lerp;
         u.y = f.y + (n.y - f.y) * lerp;
         u.angle = _lerpAngle(f.ang, n.ang, lerp);
+        u.hullAngle = f.hull != null && n.hull != null
+          ? _lerpAngle(f.hull, n.hull, lerp)
+          : u.angle;
       } else {
         u.x = f.x;
         u.y = f.y;
         u.angle = f.ang;
+        u.hullAngle = f.hull ?? f.ang;
       }
       u.hp = f.hp;
       u.dead = f.dead;
@@ -365,10 +370,14 @@ export class ReplayPlayer {
         e.x = f.x + (n.x - f.x) * lerp;
         e.y = f.y + (n.y - f.y) * lerp;
         e.angle = _lerpAngle(f.ang, n.ang, lerp);
+        e.hullAngle = f.hull != null && n.hull != null
+          ? _lerpAngle(f.hull, n.hull, lerp)
+          : e.angle;
       } else {
         e.x = f.x;
         e.y = f.y;
         e.angle = f.ang;
+        e.hullAngle = f.hull ?? f.ang;
       }
       e.hp = f.hp;
       e.dead = f.dead;

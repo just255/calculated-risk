@@ -5,8 +5,138 @@
 // ═══════════════════════════════════════════════════════════════
 
 import * as sprites from './sprites.js';
-import { Owner } from './constants.js';
+import { Owner, UNITS, UNIT_COMBAT_STATS } from './constants.js';
 import { getCachedInsignia, cacheInsigniaSet } from './insignia-renderer.js';
+import { buildVisionPolygon } from './vision.js';
+import { queryTerrain } from './terrain-query.js';
+
+// ── SVG-to-canvas fallback cache ─────────────────────────────
+// Renders SVG strings from UNITS definitions to Image objects for canvas drawing
+const _svgImageCache = {};  // keyed by `${unitId}-${team}` or `${unitId}-${team}-hull`/`-turret`
+
+/** Apply red team recolor to SVG string */
+function _recolorRed(svgStr) {
+  return svgStr
+    .replace(/#2d4a2d/g, '#4a2d2d')
+    .replace(/#3d5c3d/g, '#5c3d3d')
+    .replace(/#4a6b4a/g, '#6b4a4a')
+    .replace(/#5a7d5a/g, '#7d5a5a')
+    .replace(/#1a1a1a/g, '#1a1a1a')
+    .replace(/#333/g, '#433')
+    .replace(/#2b3d2b/g, '#3d2b2b')
+    .replace(/#3a5a3a/g, '#5a3a3a')
+    .replace(/#4a7a4a/g, '#7a4a4a')
+    .replace(/#2a4a3a/g, '#4a2a2a')
+    .replace(/#3a6a4a/g, '#6a3a3a')
+    .replace(/#5a8a5a/g, '#8a5a5a');
+}
+
+/** Convert SVG string to cached Image via Blob URL */
+function _svgToImage(svgStr, cacheKey) {
+  if (_svgImageCache[cacheKey]) return _svgImageCache[cacheKey];
+
+  // Ensure xmlns is present (required for Blob → Image rendering)
+  if (!svgStr.includes('xmlns=')) {
+    svgStr = svgStr.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ');
+  }
+
+  const blob = new Blob([svgStr], { type: 'image/svg+xml' });
+  const url = URL.createObjectURL(blob);
+  const img = new Image();
+  img._loaded = false;
+  img.onload = () => { img._loaded = true; URL.revokeObjectURL(url); };
+  img.onerror = () => { URL.revokeObjectURL(url); };
+  img.src = url;
+
+  _svgImageCache[cacheKey] = img;
+  return img;
+}
+
+function _getSvgImage(unitId, team) {
+  const key = `${unitId}-${team || 'blue'}`;
+  if (_svgImageCache[key]) return _svgImageCache[key];
+
+  const unitDef = UNITS.find(u => u.id === unitId);
+  if (!unitDef?.svg) return null;
+
+  let svgStr = unitDef.svg;
+  if (team === 'red') svgStr = _recolorRed(svgStr);
+
+  return _svgToImage(svgStr, key);
+}
+
+/**
+ * Split an SVG string into hull and turret layer SVGs by data-part attribute.
+ * Returns { hullSvg, turretSvg } — each is a complete SVG string with same viewBox.
+ */
+function _splitSvgLayers(svgStr, hullParts, turretParts) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(svgStr, 'image/svg+xml');
+  const svg = doc.documentElement;
+  const viewBox = svg.getAttribute('viewBox') || '';
+  const width = svg.getAttribute('width') || '50';
+  const height = svg.getAttribute('height') || '50';
+
+  const hullSet = new Set(hullParts);
+  const turretSet = new Set(turretParts);
+
+  const hullEls = [];
+  const turretEls = [];
+
+  for (const child of Array.from(svg.children)) {
+    const part = child.getAttribute('data-part');
+    if (part && turretSet.has(part)) {
+      turretEls.push(child.outerHTML);
+    } else if (part && hullSet.has(part)) {
+      hullEls.push(child.outerHTML);
+    } else if (part) {
+      // Unknown part — put in hull by default
+      hullEls.push(child.outerHTML);
+    } else {
+      // No data-part — put in hull (background elements)
+      hullEls.push(child.outerHTML);
+    }
+  }
+
+  const svgOpen = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" width="${width}" height="${height}">`;
+  return {
+    hullSvg: `${svgOpen}${hullEls.join('')}</svg>`,
+    turretSvg: `${svgOpen}${turretEls.join('')}</svg>`
+  };
+}
+
+/**
+ * Get hull and turret Image objects for a unit, splitting SVG on first access.
+ * Returns { hull: Image|null, turret: Image|null, pivot: {x,y} } or null if no SVG.
+ */
+function _getUnitLayers(unitId, team) {
+  const hullKey = `${unitId}-${team || 'blue'}-hull`;
+  const turretKey = `${unitId}-${team || 'blue'}-turret`;
+
+  // Already cached?
+  if (_svgImageCache[hullKey] && _svgImageCache[turretKey]) {
+    return { hull: _svgImageCache[hullKey], turret: _svgImageCache[turretKey] };
+  }
+
+  const unitDef = UNITS.find(u => u.id === unitId);
+  if (!unitDef?.svg) return null;
+
+  const combatStats = UNIT_COMBAT_STATS[unitId];
+  if (!combatStats?.hullParts || !combatStats?.turretParts ||
+      combatStats.hullParts.length === 0 || combatStats.turretParts.length === 0) {
+    return null; // No layer config — use single-image fallback
+  }
+
+  let svgStr = unitDef.svg;
+  if (team === 'red') svgStr = _recolorRed(svgStr);
+
+  const { hullSvg, turretSvg } = _splitSvgLayers(svgStr, combatStats.hullParts, combatStats.turretParts);
+
+  return {
+    hull: _svgToImage(hullSvg, hullKey),
+    turret: _svgToImage(turretSvg, turretKey)
+  };
+}
 
 // Entity sizes (matching current DOM div sizes)
 const HERO_SIZE = 40;
@@ -17,6 +147,14 @@ const PROJ_SIZE = 8;
 // Animation timing
 const PULSE_PERIOD = 1000; // ms for selection pulse
 const TARGET_PULSE_PERIOD = 800; // ms for concentrate-target pulse
+
+/**
+ * Get a cached Image object for a unit's SVG (for canvas drawImage).
+ * Exported for use by deployment panel card rendering.
+ */
+export function getUnitSvgImage(unitId, team) {
+  return _getSvgImage(unitId, team || 'blue');
+}
 
 export class EntityRenderer {
 
@@ -81,35 +219,63 @@ export class EntityRenderer {
       if (isSelected) {
         this._drawSelectionGlow(ctx, unit.x, unit.y, UNIT_SIZE / 2, now);
       }
-      const rotation = (unit.angle * 180 / Math.PI) + 90;
+      const hullAng = unit.hullAngle ?? unit.angle;
+      const rotation = (hullAng * 180 / Math.PI) + 90;
       sprites.renderAnimatedUnit(ctx, unit.animId, unit.x, unit.y, rotation, 0.5, now);
     } else {
-      // Fallback: colored rounded rect
+      // Try two-layer SVG rendering (hull + turret)
+      const layers = _getUnitLayers(unit.unitId, unit.team);
       const half = UNIT_SIZE / 2;
-      ctx.save();
-      ctx.translate(unit.x, unit.y);
-      ctx.rotate(unit.angle + Math.PI / 2);
 
-      this._roundedRect(ctx, -half, -half, UNIT_SIZE, UNIT_SIZE, 5);
-      ctx.fillStyle = isSelected ? '#7ab87a' : '#5a8a5a';
-      ctx.fill();
+      if (layers?.hull?._loaded && layers?.turret?._loaded) {
+        const hullAng = unit.hullAngle ?? unit.angle;
+        const combatStats = UNIT_COMBAT_STATS[unit.unitId];
+        const pivot = combatStats?.turretPivot || { x: 0, y: 0 };
 
-      if (isSelected) {
-        ctx.strokeStyle = '#4a9eff';
-        ctx.lineWidth = 3;
-        ctx.stroke();
-        // Glow effect
-        ctx.shadowColor = '#4a9eff';
-        ctx.shadowBlur = 15;
-        ctx.stroke();
-        ctx.shadowBlur = 0;
+        if (isSelected) {
+          this._drawSelectionGlow(ctx, unit.x, unit.y, half, now);
+        }
+
+        // Draw hull at hullAngle
+        ctx.save();
+        ctx.translate(unit.x, unit.y);
+        ctx.rotate(hullAng + Math.PI / 2);
+        ctx.drawImage(layers.hull, -half, -half, UNIT_SIZE, UNIT_SIZE);
+        ctx.restore();
+
+        // Draw turret at turret angle, pivoted relative to hull
+        ctx.save();
+        ctx.translate(unit.x, unit.y);
+        ctx.rotate(hullAng + Math.PI / 2);   // align to hull
+        ctx.translate(pivot.x, pivot.y);       // offset to turret pivot in hull-local coords
+        ctx.rotate(unit.angle - hullAng);      // relative turret rotation
+        ctx.drawImage(layers.turret, -half - pivot.x, -half - pivot.y, UNIT_SIZE, UNIT_SIZE);
+        ctx.restore();
       } else {
-        ctx.strokeStyle = '#3a6a3a';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
+        // Single SVG fallback (while layers load or no layer config)
+        const svgImg = _getSvgImage(unit.unitId, unit.team);
 
-      ctx.restore();
+        ctx.save();
+        ctx.translate(unit.x, unit.y);
+        ctx.rotate((unit.hullAngle ?? unit.angle) + Math.PI / 2);
+
+        if (svgImg?._loaded) {
+          if (isSelected) {
+            this._drawSelectionGlow(ctx, 0, 0, half, now);
+          }
+          ctx.drawImage(svgImg, -half, -half, UNIT_SIZE, UNIT_SIZE);
+        } else {
+          // Ultimate fallback: colored rect while SVG loads
+          this._roundedRect(ctx, -half, -half, UNIT_SIZE, UNIT_SIZE, 5);
+          ctx.fillStyle = isSelected ? '#7ab87a' : '#5a8a5a';
+          ctx.fill();
+          ctx.strokeStyle = isSelected ? '#4a9eff' : '#3a6a3a';
+          ctx.lineWidth = isSelected ? 3 : 2;
+          ctx.stroke();
+        }
+
+        ctx.restore();
+      }
     }
 
     // Rank chevrons (pop-in + fade) and promotion highlight
@@ -157,30 +323,75 @@ export class EntityRenderer {
       const rotation = (hullAngle * 180 / Math.PI) + 90;
       sprites.renderAnimatedUnit(ctx, enemy.animId, enemy.x, enemy.y, rotation, 0.4, now);
     } else {
-      // Fallback: red circle
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(enemy.x, enemy.y, r, 0, Math.PI * 2);
+      // Try two-layer SVG rendering (hull + turret)
+      const layers = _getUnitLayers(enemy.unitId, 'red');
 
-      ctx.fillStyle = '#ff4444';
-      ctx.fill();
+      if (layers?.hull?._loaded && layers?.turret?._loaded) {
+        const hullAng = enemy.hullAngle ?? enemy.angle;
+        const combatStats = UNIT_COMBAT_STATS[enemy.unitId];
+        const pivot = combatStats?.turretPivot || { x: 0, y: 0 };
 
-      if (isConcentrateTarget) {
-        const pulse = 0.7 + 0.3 * Math.sin(now * Math.PI * 2 / TARGET_PULSE_PERIOD);
-        ctx.strokeStyle = '#ffff00';
-        ctx.lineWidth = 3;
-        ctx.stroke();
-        ctx.shadowColor = '#ffff00';
-        ctx.shadowBlur = 15 * pulse;
-        ctx.stroke();
-        ctx.shadowBlur = 0;
+        if (isConcentrateTarget) {
+          const pulse = 0.7 + 0.3 * Math.sin(now * Math.PI * 2 / TARGET_PULSE_PERIOD);
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(enemy.x, enemy.y, r + 4, 0, Math.PI * 2);
+          ctx.strokeStyle = '#ffff00';
+          ctx.lineWidth = 3;
+          ctx.shadowColor = '#ffff00';
+          ctx.shadowBlur = 15 * pulse;
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+          ctx.restore();
+        }
+
+        // Draw hull at hullAngle
+        ctx.save();
+        ctx.translate(enemy.x, enemy.y);
+        ctx.rotate(hullAng + Math.PI / 2);
+        ctx.drawImage(layers.hull, -r, -r, ENEMY_SIZE, ENEMY_SIZE);
+        ctx.restore();
+
+        // Draw turret at turret angle, pivoted relative to hull
+        ctx.save();
+        ctx.translate(enemy.x, enemy.y);
+        ctx.rotate(hullAng + Math.PI / 2);
+        ctx.translate(pivot.x, pivot.y);
+        ctx.rotate(enemy.angle - hullAng);
+        ctx.drawImage(layers.turret, -r - pivot.x, -r - pivot.y, ENEMY_SIZE, ENEMY_SIZE);
+        ctx.restore();
       } else {
-        ctx.strokeStyle = '#aa0000';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
+        // Single SVG fallback
+        const svgImg = _getSvgImage(enemy.unitId, 'red');
 
-      ctx.restore();
+        ctx.save();
+        if (svgImg?._loaded) {
+          ctx.translate(enemy.x, enemy.y);
+          ctx.rotate((enemy.hullAngle ?? enemy.angle ?? 0) + Math.PI / 2);
+          if (isConcentrateTarget) {
+            const pulse = 0.7 + 0.3 * Math.sin(now * Math.PI * 2 / TARGET_PULSE_PERIOD);
+            ctx.shadowColor = '#ffff00';
+            ctx.shadowBlur = 15 * pulse;
+          }
+          ctx.drawImage(svgImg, -r, -r, ENEMY_SIZE, ENEMY_SIZE);
+          ctx.shadowBlur = 0;
+        } else {
+          ctx.beginPath();
+          ctx.arc(enemy.x, enemy.y, r, 0, Math.PI * 2);
+          ctx.fillStyle = '#ff4444';
+          ctx.fill();
+          if (isConcentrateTarget) {
+            ctx.strokeStyle = '#ffff00';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+          } else {
+            ctx.strokeStyle = '#aa0000';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+      }
     }
 
     // Elite modifier glow ring (pulsing colored ring)
@@ -257,9 +468,17 @@ export class EntityRenderer {
     }
 
     if (b.enemies) {
+      const fogSet = b._visibleEnemies;
       for (const enemy of b.enemies) {
         if (!filterFn(enemy)) continue;
+        if (enemy.dead) continue;
+        const fogAlpha = this._updateFogAlpha(enemy, fogSet);
+        if (fogAlpha < 0.02) continue;
+
+        const prevAlpha = ctx.globalAlpha;
+        if (fogAlpha < 1.0) ctx.globalAlpha *= fogAlpha;
         this.renderEnemy(ctx, enemy, enemy.id === concentrateTargetId, now);
+        if (fogAlpha < 1.0) ctx.globalAlpha = prevAlpha;
       }
     }
 
@@ -293,10 +512,19 @@ export class EntityRenderer {
       this.renderHero(ctx, b.hero, now);
     }
 
-    // Enemies
+    // Enemies (filtered by fog of war)
     if (b.enemies) {
+      const fogSet = b._visibleEnemies; // null = show all (fire range or no fog)
       for (const enemy of b.enemies) {
+        if (enemy.dead) continue;
+        // Fog of war fade
+        const fogAlpha = this._updateFogAlpha(enemy, fogSet);
+        if (fogAlpha < 0.02) continue; // Fully invisible, skip render
+
+        const prevAlpha = ctx.globalAlpha;
+        if (fogAlpha < 1.0) ctx.globalAlpha *= fogAlpha;
         this.renderEnemy(ctx, enemy, enemy.id === concentrateTargetId, now);
+        if (fogAlpha < 1.0) ctx.globalAlpha = prevAlpha;
       }
     }
 
@@ -318,8 +546,11 @@ export class EntityRenderer {
   hitTest(worldX, worldY, b) {
     // Check enemies first (higher priority for targeting)
     if (b.enemies) {
+      const fogSet = b._visibleEnemies;
       for (const enemy of b.enemies) {
         if (enemy.dead) continue;
+        // Can't click on fogged enemies
+        if (fogSet && !fogSet.has(enemy.id)) continue;
         const dx = enemy.x - worldX;
         const dy = enemy.y - worldY;
         if (dx * dx + dy * dy < (ENEMY_SIZE / 2) * (ENEMY_SIZE / 2)) {
@@ -350,8 +581,305 @@ export class EntityRenderer {
   }
 
   // ═══════════════════════════════════════════════════════════════
+  // SPOTTED PINGS — Above-canopy enemy markers
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Render pulsing silhouette pings for spotted enemies above the canopy.
+   * Shows a filled diamond marker + unit outline so enemies under trees are visible.
+   * @param {CanvasRenderingContext2D} ctx - Effects layer context (above canopy)
+   * @param {object} b - Battle state
+   * @param {number} now - performance.now()
+   */
+  renderSpottedPings(ctx, b, now) {
+    const fogSet = b._visibleEnemies;
+    // Only show pings when fog of war is active (fogSet is a Set, not null)
+    if (!fogSet || !b.enemies) return;
+
+    const PING_DURATION = 1500; // ms — initial flash on first spot
+    const LINGER_DURATION = 3000; // ms — marker fades out after losing contact
+    let anyDrawn = false;
+
+    for (const enemy of b.enemies) {
+      if (enemy.dead) continue;
+
+      const isVisible = fogSet.has(enemy.id);
+
+      // Track spot/unspot transitions
+      if (isVisible) {
+        if (!enemy._pingStart) {
+          enemy._pingStart = now;
+          // Determine who spotted this enemy — check hero first, then allies
+          enemy._spottedByHero = !!(b.hero && b.hero._spotted &&
+            b.hero._spotted.some(s => s.enemy === enemy && s.direct));
+        }
+        enemy._lastSpotted = now;
+        enemy._lastSpotX = enemy.x;
+        enemy._lastSpotY = enemy.y;
+      } else if (!enemy._lastSpotted) {
+        continue; // Never been spotted
+      } else {
+        const lostAge = now - enemy._lastSpotted;
+        if (lostAge > LINGER_DURATION) {
+          enemy._pingStart = 0; // Reset for fresh ping on re-spot
+          continue;
+        }
+      }
+
+      if (!anyDrawn) { ctx.save(); anyDrawn = true; }
+
+      const age = now - enemy._pingStart;
+      // Use last known position if no longer visible
+      const x = isVisible ? enemy.x : enemy._lastSpotX;
+      const y = isVisible ? enemy.y : enemy._lastSpotY;
+      // Fade multiplier when contact is lost
+      const lingerFade = isVisible ? 1.0 : Math.max(0, 1.0 - (now - enemy._lastSpotted) / LINGER_DURATION);
+
+      // Color by who spotted: hero = cyan, ally = red
+      const heroSpot = enemy._spottedByHero;
+      const colorMain = heroSpot ? '#44ddff' : '#ff4444';
+      const colorBright = heroSpot ? '#88eeff' : '#ff8888';
+      const colorFade = heroSpot ? '#44bbdd' : '#ff6644';
+
+      if (age <= PING_DURATION) {
+        // Phase 1: Initial spot flash — bright, expanding diamond
+        const t = age / PING_DURATION;
+        const fade = (1.0 - t * t) * lingerFade;
+        const scale = 1.0 + t * 0.5;
+        const size = 12 * scale;
+
+        ctx.globalAlpha = fade * 0.7;
+        ctx.fillStyle = colorMain;
+        ctx.beginPath();
+        ctx.moveTo(x, y - size * 1.3);
+        ctx.lineTo(x + size * 0.8, y);
+        ctx.lineTo(x, y + size * 1.3);
+        ctx.lineTo(x - size * 0.8, y);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.globalAlpha = fade * 0.9;
+        ctx.fillStyle = colorBright;
+        const inner = size * 0.4;
+        ctx.beginPath();
+        ctx.moveTo(x, y - inner * 1.3);
+        ctx.lineTo(x + inner * 0.8, y);
+        ctx.lineTo(x, y + inner * 1.3);
+        ctx.lineTo(x - inner * 0.8, y);
+        ctx.closePath();
+        ctx.fill();
+      } else {
+        // Phase 2: Persistent tracking marker — pulsing pip above unit
+        const pulse = 0.5 + 0.5 * Math.sin(now * 0.004);
+        const markerY = y - 18;
+        const baseAlpha = isVisible ? (0.35 + pulse * 0.25) : (0.25 + pulse * 0.15) * lingerFade;
+
+        ctx.globalAlpha = baseAlpha;
+        ctx.fillStyle = isVisible ? colorMain : colorFade;
+        const s = 4;
+        ctx.beginPath();
+        ctx.moveTo(x, markerY - s);
+        ctx.lineTo(x + s * 0.7, markerY);
+        ctx.lineTo(x, markerY + s);
+        ctx.lineTo(x - s * 0.7, markerY);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+
+    if (anyDrawn) ctx.restore();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // HERO SPOTTED ALERT — Diamond above hero when enemy has LOS
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Render a warning diamond above the hero when spotted by enemy units.
+   * Pulses brightly on initial detection, then stays subdued while spotted.
+   */
+  renderHeroSpottedAlert(ctx, b, now) {
+    const hero = b.hero;
+    if (!hero || hero.dead || hero.observer) return;
+
+    const isSpotted = hero._isSpottedByEnemy;
+
+    // Track spot/unspot transitions
+    if (isSpotted) {
+      if (!hero._spottedPingStart) {
+        hero._spottedPingStart = now; // Fresh spot — start pulse
+      }
+      hero._spottedLastSeen = now;
+    } else if (!hero._spottedLastSeen) {
+      return; // Never been spotted
+    } else {
+      const lostAge = now - hero._spottedLastSeen;
+      if (lostAge > 1500) {
+        hero._spottedPingStart = 0; // Reset for fresh ping on re-spot
+        return;
+      }
+    }
+
+    const PING_DURATION = 800;
+    const age = now - hero._spottedPingStart;
+    const x = hero.x;
+    const y = hero.y - 30; // Above the tank
+    // Fade out when no longer spotted
+    const lingerFade = isSpotted ? 1.0 : Math.max(0, 1.0 - (now - hero._spottedLastSeen) / 1500);
+
+    ctx.save();
+
+    if (age <= PING_DURATION) {
+      // Phase 1: Initial alert flash — bright expanding diamond
+      const t = age / PING_DURATION;
+      const fade = (1.0 - t * t) * lingerFade;
+      const scale = 1.0 + t * 0.6;
+      const size = 14 * scale;
+
+      ctx.globalAlpha = fade * 0.8;
+      ctx.fillStyle = '#ffaa22';
+      ctx.beginPath();
+      ctx.moveTo(x, y - size * 1.3);
+      ctx.lineTo(x + size * 0.8, y);
+      ctx.lineTo(x, y + size * 1.3);
+      ctx.lineTo(x - size * 0.8, y);
+      ctx.closePath();
+      ctx.fill();
+
+      // Bright inner core
+      ctx.globalAlpha = fade * 0.95;
+      ctx.fillStyle = '#ffdd66';
+      const inner = size * 0.4;
+      ctx.beginPath();
+      ctx.moveTo(x, y - inner * 1.3);
+      ctx.lineTo(x + inner * 0.8, y);
+      ctx.lineTo(x, y + inner * 1.3);
+      ctx.lineTo(x - inner * 0.8, y);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      // Phase 2: Subdued persistent indicator — gentle pulse
+      const pulse = 0.5 + 0.5 * Math.sin(now * 0.003);
+      const baseAlpha = (0.2 + pulse * 0.15) * lingerFade;
+
+      ctx.globalAlpha = baseAlpha;
+      ctx.fillStyle = '#ffaa22';
+      const s = 5;
+      ctx.beginPath();
+      ctx.moveTo(x, y - s);
+      ctx.lineTo(x + s * 0.7, y);
+      ctx.lineTo(x, y + s);
+      ctx.lineTo(x - s * 0.7, y);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   // HELPERS
   // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Render a live vision polygon for the hero or selected unit.
+   * Shows how far the unit can see in each direction, shrinking around terrain.
+   */
+  _renderVisionPolygon(ctx, b) {
+    if (!b.debugOverlay && !b.showVision) return;
+
+    // Pick unit to show vision for: hero first, then selected ally
+    const unit = (b.hero && !b.hero.dead && !b.hero.observer)
+      ? b.hero
+      : b.units?.find(u => u.isSelected && !u.dead) || null;
+    if (!unit) return;
+
+    // Throttle: rebuild polygon every 200ms (5fps), cache between frames
+    const now = performance.now();
+    if (!this._visionCache || this._visionCache.unitId !== (unit.id || 'hero') ||
+        now - this._visionCache.t > 200 ||
+        Math.abs(unit.x - this._visionCache.x) > 5 ||
+        Math.abs(unit.y - this._visionCache.y) > 5) {
+      this._visionCache = {
+        unitId: unit.id || 'hero',
+        t: now,
+        x: unit.x,
+        y: unit.y,
+        points: buildVisionPolygon(b, unit, 90)
+      };
+    }
+
+    const points = this._visionCache.points;
+    if (points.length < 3) return;
+
+    ctx.save();
+
+    // Draw filled polygon with soft gradient
+    const maxR = unit.viewRange || 400;
+    const gradient = ctx.createRadialGradient(unit.x, unit.y, 0, unit.x, unit.y, maxR);
+    gradient.addColorStop(0, 'rgba(74, 158, 255, 0.22)');
+    gradient.addColorStop(0.6, 'rgba(74, 158, 255, 0.12)');
+    gradient.addColorStop(1, 'rgba(74, 158, 255, 0.03)');
+
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) {
+      ctx.lineTo(points[i].x, points[i].y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = gradient;
+    ctx.fill();
+
+    // Draw edge line
+    ctx.strokeStyle = 'rgba(74, 158, 255, 0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Draw max range circle (dashed)
+    ctx.setLineDash([4, 8]);
+    ctx.strokeStyle = 'rgba(74, 158, 255, 0.2)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(unit.x, unit.y, maxR, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.restore();
+  }
+
+  /**
+   * Update fog-of-war alpha on an enemy for smooth fade in/out.
+   * Returns the current fog alpha (0 = invisible, 1 = fully visible).
+   * @param {object} enemy - Enemy entity
+   * @param {Set|null} fogSet - Set of visible enemy IDs, or null to show all
+   * @returns {number} Current fog alpha
+   */
+  _updateFogAlpha(enemy, fogSet) {
+    // No fog of war — fully visible
+    if (!fogSet) {
+      enemy._fogAlpha = 1.0;
+      return 1.0;
+    }
+
+    const isVisible = fogSet.has(enemy.id);
+    const target = isVisible ? 1.0 : 0.0;
+
+    if (enemy._fogAlpha === undefined) {
+      enemy._fogAlpha = isVisible ? 1.0 : 0.0;
+    }
+
+    // Fade speed: ~0.3s fade in, ~1s fade out (per-frame lerp at ~60fps)
+    const fadeSpeed = isVisible ? 3.0 : 1.0;
+    const dt = 0.016;
+    enemy._fogAlpha += (target - enemy._fogAlpha) * Math.min(1, fadeSpeed * dt);
+
+    // Snap to target when very close
+    if (Math.abs(enemy._fogAlpha - target) < 0.01) {
+      enemy._fogAlpha = target;
+    }
+
+    return enemy._fogAlpha;
+  }
 
   _roundedRect(ctx, x, y, w, h, r) {
     ctx.beginPath();
@@ -638,6 +1166,9 @@ export class EntityRenderer {
   // ═══════════════════════════════════════════════════════════════
 
   renderDebugOverlays(ctx, b, now) {
+    // Vision polygon for hero or selected unit
+    this._renderVisionPolygon(ctx, b);
+
     // Show range circles even without full debug overlay
     if (b.debug?.showRanges && !b.debugOverlay) {
       ctx.save();
@@ -654,7 +1185,13 @@ export class EntityRenderer {
         ctx.setLineDash([]);
       };
       if (b.units) for (const u of b.units) drawRange(u, '#4a9eff');
-      if (b.enemies) for (const e of b.enemies) drawRange(e, '#ff4444');
+      if (b.enemies) {
+        const fogSet = b._visibleEnemies;
+        for (const e of b.enemies) {
+          if (fogSet && !fogSet.has(e.id)) continue;
+          drawRange(e, '#ff4444');
+        }
+      }
       ctx.restore();
     }
     if (!b.debugOverlay) return;
@@ -671,19 +1208,30 @@ export class EntityRenderer {
       }
     }
 
-    // Draw enemy debug overlays
+    // Draw enemy debug overlays (respect fog of war)
     if (b.enemies) {
+      const fogSet = b._visibleEnemies;
       for (const enemy of b.enemies) {
         if (enemy.dead) continue;
+        if (fogSet && !fogSet.has(enemy.id)) continue;
         this._drawUnitDebug(ctx, enemy, b, '#ff4444', false);
       }
     }
 
-    // Show all rank insignia in debug mode
-    const allUnits = [...(b.units || []), ...(b.enemies || [])];
-    for (const u of allUnits) {
-      if (u.dead) continue;
-      this._drawRankChevrons(ctx, u.x, u.y, u, now, true);
+    // Show all rank insignia in debug mode (respect fog for enemies)
+    const fogSet = b._visibleEnemies;
+    if (b.units) {
+      for (const u of b.units) {
+        if (u.dead) continue;
+        this._drawRankChevrons(ctx, u.x, u.y, u, now, true);
+      }
+    }
+    if (b.enemies) {
+      for (const u of b.enemies) {
+        if (u.dead) continue;
+        if (fogSet && !fogSet.has(u.id)) continue;
+        this._drawRankChevrons(ctx, u.x, u.y, u, now, true);
+      }
     }
 
     ctx.restore();
@@ -823,10 +1371,14 @@ export class EntityRenderer {
   renderSpeechBubbles(ctx, b, now) {
     const BUBBLE_DURATION = 2500;
     const allUnits = [...(b.units || []), ...(b.enemies || [])];
+    const fogSet = b._visibleEnemies;
+    const enemySet = b.enemies ? new Set(b.enemies.map(e => e.id)) : null;
 
     for (const unit of allUnits) {
       const bubble = unit._speechBubble;
       if (!bubble || unit.dead) continue;
+      // Hide speech bubbles for fogged enemies
+      if (fogSet && enemySet?.has(unit.id) && !fogSet.has(unit.id)) continue;
 
       const age = now - bubble.t;
       if (age < 0 || age > BUBBLE_DURATION) continue;

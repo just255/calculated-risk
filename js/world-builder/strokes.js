@@ -10,7 +10,7 @@ export const FEATURE_DEFS = {
   forest: {
     speedMod: 0.7,             // 70% movement speed
     coverBonus: 0.25,          // 25% defense at full coverage
-    visibility: 0.5,           // 50% visibility (concealment)
+    losRange: 250,             // LOS blocked after ~250px through dense forest
     isBlocker: false,
     isCanopy: true,            // Renders above units
     minCoverageForEffect: 0.3, // Need 30% coverage for effects
@@ -20,7 +20,7 @@ export const FEATURE_DEFS = {
   brush: {
     speedMod: 0.9,             // 90% movement speed
     coverBonus: 0.10,          // 10% defense at full coverage
-    visibility: 0.8,           // 80% visibility
+    losRange: 1500,            // Brush barely blocks LOS
     isBlocker: false,
     isCanopy: true,
     minCoverageForEffect: 0.2, // Need 20% coverage for effects
@@ -30,7 +30,7 @@ export const FEATURE_DEFS = {
   water: {
     speedMod: 0.5,             // 50% movement speed
     coverBonus: 0.0,           // No defense bonus
-    visibility: 1.0,           // Full visibility
+    losRange: null,            // Water doesn't block LOS
     isBlocker: false,          // Passable but slow
     isCanopy: false,           // Renders on base layer
     minCoverageForEffect: 0.3,

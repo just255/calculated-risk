@@ -5,11 +5,11 @@
 
 export const VEHICLE_TURN_RATES = {
   tank: {
-    hull: Math.PI * 0.8,    // ~144 deg/sec - tanks turn slowly
+    hull: Math.PI * 0.6,    // ~108 deg/sec - tanks turn slowly
     turret: Math.PI * 1.5   // ~270 deg/sec - turrets turn faster
   },
   light: {
-    hull: Math.PI * 1.2,    // ~216 deg/sec - light vehicles turn faster
+    hull: Math.PI * 1.0,    // ~180 deg/sec - light vehicles turn visibly
     turret: Math.PI * 2.0   // ~360 deg/sec
   }
 };

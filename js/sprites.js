@@ -5,30 +5,24 @@ import { UNITS } from './constants.js';
 import * as animRuntime from './animation-runtime.js';
 import * as spriteRenderer from './sprite-renderer.js';
 import { getWorldTransform } from './transforms.js';
+import { loadVariantData } from './skins.js';
 
 const spriteCache = new Map();  // unitId → { img, frameCount, frameWidth, frameHeight, loaded }
 const partCache = new Map();    // "unitId:partId:variant" → { img, loaded }
+const spriteMisses = new Set();  // unitIds confirmed missing — never retry
+const pendingLoads = new Map();  // unitId → Promise (dedup concurrent requests)
 let manifestData = null;        // Cached manifest from server
+let availableUnits = null;      // Set of unitIds that have sprites on disk
 
 /**
- * Preload all PNG sprites defined in UNITS[].sprite
- * Call this during game initialization
+ * Initialize sprite system — fetches manifest to know what exists.
+ * Does NOT preload any sprites. They load on-demand via getSprite().
  * @returns {Promise<void>}
  */
 export async function initSprites() {
-  const loadPromises = [];
-
-  for (const unit of UNITS) {
-    if (unit.sprite && unit.sprite.src) {
-      const promise = loadSprite(unit.id, unit.sprite);
-      loadPromises.push(promise);
-    }
-  }
-
-  // Wait for all sprites to load (or fail gracefully)
-  await Promise.allSettled(loadPromises);
-
-  console.log(`[sprites] Loaded ${spriteCache.size} sprites`);
+  const manifest = await fetchManifest();
+  availableUnits = manifest ? new Set(Object.keys(manifest.units || {})) : null;
+  console.log(`[sprites] Manifest loaded, ${availableUnits ? availableUnits.size : 0} units available`);
 }
 
 /**
@@ -54,8 +48,7 @@ function loadSprite(unitId, spriteConfig) {
     };
 
     img.onerror = () => {
-      // Sprite not found - game will use SVG fallback
-      console.log(`[sprites] Not found: ${unitId} (will use SVG fallback)`);
+      spriteMisses.add(unitId);
       resolve();
     };
 
@@ -64,12 +57,35 @@ function loadSprite(unitId, spriteConfig) {
 }
 
 /**
- * Get cached sprite data for a unit
+ * Get cached sprite data for a unit. Triggers lazy load if not yet loaded.
+ * Returns undefined on first call for a new unit (sprite loads async in background).
  * @param {string} unitId
  * @returns {{ img: HTMLImageElement, frameCount: number, frameWidth: number, frameHeight: number } | undefined}
  */
 export function getSprite(unitId) {
-  return spriteCache.get(unitId);
+  const cached = spriteCache.get(unitId);
+  if (cached) return cached;
+
+  // Don't retry known misses or units not in manifest
+  if (spriteMisses.has(unitId)) return undefined;
+  if (availableUnits && !availableUnits.has(unitId)) return undefined;
+
+  // Find sprite config from UNITS
+  const unitDef = UNITS.find(u => u.id === unitId);
+  if (!unitDef?.sprite?.src) {
+    spriteMisses.add(unitId);
+    return undefined;
+  }
+
+  // Kick off async load (dedup if already in flight)
+  if (!pendingLoads.has(unitId)) {
+    const promise = loadSprite(unitId, unitDef.sprite).then(() => {
+      pendingLoads.delete(unitId);
+    });
+    pendingLoads.set(unitId, promise);
+  }
+
+  return undefined; // Not ready yet — caller uses SVG fallback, next frame it's available
 }
 
 /**
@@ -79,7 +95,13 @@ export function getSprite(unitId) {
  */
 export function hasSprite(unitId) {
   const sprite = spriteCache.get(unitId);
-  return sprite && sprite.loaded;
+  if (sprite && sprite.loaded) return true;
+
+  // Trigger lazy load if eligible
+  if (!spriteMisses.has(unitId) && (!availableUnits || availableUnits.has(unitId))) {
+    getSprite(unitId); // kicks off load
+  }
+  return false;
 }
 
 // ========================================
@@ -272,61 +294,44 @@ export function compositeUnitSprite(unitDef, selections, canvas) {
 // Variant Hierarchy Rendering
 // ========================================
 
-const variantCache = new Map();  // "unitId-variantName" → variant data (or null for failed)
-const variantPending = new Map(); // "unitId-variantName" → in-flight Promise (dedup concurrent calls)
+const variantCache = new Map();  // "unitId-variantName" → transformed variant data (or null)
 
 /**
- * Load a variant configuration from the server
+ * Load a variant configuration. Delegates fetching to skins.js (single source of truth),
+ * then transforms the raw API data into the shape sprites.js consumers expect.
  * @param {string} unitId - e.g., "abrams"
  * @param {string} variantName - e.g., "default" or "woodland_camo"
  * @returns {Promise<Object|null>} - Variant data including parts with hierarchy
  */
-export function loadVariant(unitId, variantName) {
-  // Variant ID format is "unitId-variantName"
+export async function loadVariant(unitId, variantName) {
   const variantId = `${unitId}-${variantName}`;
-  const cacheKey = variantId;
 
-  // Check cache first (includes cached failures)
-  if (variantCache.has(cacheKey)) {
-    return Promise.resolve(variantCache.get(cacheKey));
+  // Check local transform cache
+  if (variantCache.has(variantId)) {
+    return variantCache.get(variantId);
   }
 
-  // Deduplicate in-flight requests
-  if (variantPending.has(cacheKey)) {
-    return variantPending.get(cacheKey);
+  // Delegate fetch + miss tracking + dedup to skins.js
+  const raw = await loadVariantData(variantId);
+  if (!raw) {
+    variantCache.set(variantId, null);
+    return null;
   }
 
-  const promise = fetch(`/api/variants/${variantId}`)
-    .then(response => {
-      if (!response.ok) {
-        variantCache.set(cacheKey, null);
-        return null;
-      }
-      return response.json().then(result => {
-        const variantData = {
-          id: variantId,
-          unitId,
-          canvasSize: {
-            width: result.data.canvasWidth || 256,
-            height: result.data.canvasHeight || 256
-          },
-          parts: result.data.parts || []
-        };
-        variantCache.set(cacheKey, variantData);
-        console.log(`[sprites] Loaded variant: ${cacheKey}`);
-        return variantData;
-      });
-    })
-    .catch(() => {
-      variantCache.set(cacheKey, null);
-      return null;
-    })
-    .finally(() => {
-      variantPending.delete(cacheKey);
-    });
-
-  variantPending.set(cacheKey, promise);
-  return promise;
+  // Transform raw API response into the shape sprites.js consumers expect
+  const data = raw.data || raw;
+  const variantData = {
+    id: variantId,
+    unitId,
+    canvasSize: {
+      width: data.canvasWidth || 256,
+      height: data.canvasHeight || 256
+    },
+    parts: data.parts || []
+  };
+  variantCache.set(variantId, variantData);
+  console.log(`[sprites] Loaded variant: ${variantId}`);
+  return variantData;
 }
 
 /**

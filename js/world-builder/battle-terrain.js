@@ -389,7 +389,8 @@ export function generateBattleTerrain(config) {
     }
   }
 
-  console.log(`[battle-terrain] Scatter: ${scatterCount} items in ${(performance.now() - t1).toFixed(0)}ms`);
+  const boulderCount = (terrainMap.scatterItems || []).filter(it => it.type?.startsWith('boulder-')).length;
+  console.log(`[battle-terrain] Scatter: ${scatterCount} items (${boulderCount} boulders) in ${(performance.now() - t1).toFixed(0)}ms`);
 
   // ── Step 4: Clear scatter along path spines ──
   if (pathData?.spines?.length > 0) {
@@ -480,6 +481,16 @@ export function generateBattleTerrain(config) {
 
   const totalMs = performance.now() - t0;
   console.log(`[battle-terrain] Total pipeline: ${totalMs.toFixed(0)}ms`);
+
+  // DEBUG: Scan for boulder-blocked cells at generation time
+  const finalBoulders = (terrainMap.scatterItems || []).filter(it => it.type?.startsWith('boulder-'));
+  if (finalBoulders.length > 0) {
+    console.log(`[battle-terrain] POST-PIPELINE boulder scan: ${finalBoulders.length} boulders`);
+    finalBoulders.forEach((b, i) => {
+      const collR = 256 * b.scale * 0.4;
+      console.log(`  boulder[${i}]: type=${b.type} pos=(${Math.round(b.x)},${Math.round(b.y)}) scale=${b.scale?.toFixed(3)} collisionR=${collR.toFixed(1)}px`);
+    });
+  }
 
   // Render bridge trusses (canopy overlay — above entities)
   if (terrainMap.bridges?.length > 0 && images.bridge) {

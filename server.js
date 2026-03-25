@@ -17,6 +17,12 @@ const ACCESS_PASSWORD = 'simmons1986';
 // JSON body parsing for API
 app.use(express.json({ limit: '10mb' }));
 
+// Disable caching for JS files during development
+app.use('/js', (req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
+
 // Serve static files from current directory
 app.use(express.static(__dirname));
 
@@ -293,7 +299,8 @@ app.get('/api/replays', (req, res) => {
           mapWidth: data.mapWidth,
           mapHeight: data.mapHeight,
           unitDefs: data.unitDefs,
-          stats: data.stats || null
+          stats: data.stats || null,
+          debugSave: data.debugSave || false
         });
       } catch (e) {
         // Skip files that can't be parsed

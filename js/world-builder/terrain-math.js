@@ -112,23 +112,31 @@ export function computeCoverBonus(coverage) {
 }
 
 /**
- * Compute visibility from coverage values
+ * Compute per-step visibility from coverage values.
+ * Derived from losRange (how far you can see through terrain at full density).
+ * Formula: perStepVis = 0.1^(stepSize / effectiveLosRange)
+ * This means after losRange pixels of travel, visibility drops to 0.1 (blocked).
+ * Coverage scales the effective range: sparser terrain = farther LOS.
  * @param {object} coverage - Object with feature coverages
- * @returns {number} Visibility multiplier (0-1, lower = more concealed)
+ * @param {number} [stepSize=16] - LOS raycast step size in pixels
+ * @returns {number} Per-step visibility multiplier (0-1)
  */
-export function computeVisibility(coverage) {
+export function computeVisibility(coverage, stepSize = 16) {
   let minVis = 1.0;
 
   for (const [type, cov] of Object.entries(coverage)) {
     if (cov <= 0 || !FEATURE_DEFS[type]) continue;
 
     const def = FEATURE_DEFS[type];
-    if (cov >= def.minCoverageForEffect) {
-      // Blend visibility based on coverage
-      const effectiveCov = Math.min(cov, 1.0);
-      const vis = 1.0 - (1.0 - def.visibility) * effectiveCov;
-      minVis = Math.min(minVis, vis);
-    }
+    if (!def.losRange || cov < def.minCoverageForEffect) continue;
+
+    // Effective LOS range scales inversely with coverage:
+    // full coverage (1.0) = base losRange, half coverage = 2x losRange
+    const effectiveCov = Math.min(cov, 1.0);
+    const effectiveRange = def.losRange / effectiveCov;
+    // Derive per-step visibility: after effectiveRange px, visibility = 0.1
+    const vis = Math.pow(0.1, stepSize / effectiveRange);
+    minVis = Math.min(minVis, vis);
   }
 
   return minVis;
