@@ -1244,8 +1244,59 @@ function _findCoverNear(b, cx, cy, cellSize, dirX, dirY, courage, mapW, mapH) {
 // PHASE EXECUTION — issues commands, sets waypoints/formations
 // ═══════════════════════════════════════════════════════════════
 
+/**
+ * Pick offensive command based on SGT discipline + situation.
+ * Disciplined SGTs call FOCUS_FIRE to concentrate firepower.
+ * Mop-up (few enemies) always focuses regardless of discipline.
+ */
+function _pickOffensiveCommand(sgt, sitrep) {
+  const discipline = sgt.personality.discipline ?? 0.5;
+  const enemiesAlive = sitrep.enemyAliveCount || 0;
+
+  // Mop-up: always focus fire on remaining enemies
+  if (enemiesAlive > 0 && enemiesAlive <= 3) return Command.FOCUS_FIRE;
+
+  // Disciplined SGT: coordinate fire
+  if (discipline > 0.5) return Command.FOCUS_FIRE;
+
+  // Undisciplined: units pick own targets
+  return Command.ADVANCE;
+}
+
+/**
+ * Determine movement posture for current phase + personality.
+ * Sets sgt._movementPosture which propagates to unit scoring.
+ */
+function _setMovementPosture(sgt, phase) {
+  const p = sgt.personality;
+  let posture = 'normal';
+
+  switch (phase) {
+    case Phase.SEARCH:    posture = (p.aggression ?? 0.5) > 0.6 ? 'normal' : 'bound'; break;
+    case Phase.CONTACT:   posture = (p.aggression ?? 0.5) > 0.7 ? 'normal' : 'bound'; break;
+    case Phase.ENGAGE:    posture = (p.patience ?? 0.5) > 0.6 ? 'bound' : 'normal'; break;
+    case Phase.PRESS:     posture = (p.courage ?? 0.5) < 0.4 ? 'normal' : 'rush'; break;
+    case Phase.PURSUE:    posture = (p.patience ?? 0.5) > 0.6 ? 'normal' : 'rush'; break;
+    case Phase.FLANK:     posture = (p.aggression ?? 0.5) > 0.7 ? 'rush' : 'bound'; break;
+    case Phase.DISENGAGE: posture = (p.discipline ?? 0.5) > 0.6 ? 'bound' : 'rush'; break;
+    case Phase.REGROUP:   posture = (p.discipline ?? 0.5) > 0.6 ? 'bound' : 'normal'; break;
+    case Phase.AMBUSH:    posture = 'bound'; break;
+    case Phase.HOLD:      posture = (p.patience ?? 0.5) > 0.6 ? 'bound' : 'normal'; break;
+  }
+
+  sgt._movementPosture = posture;
+}
+
 function executePhase(b, sgt, sitrep, alive, now, phaseChanged) {
   const p = sgt.personality;
+
+  // Set movement posture for this phase (propagates to unit scoring)
+  _setMovementPosture(sgt, sgt.phase);
+
+  // Propagate SGT posture to all alive squad members
+  for (const u of alive) {
+    u._sgtPosture = sgt._movementPosture;
+  }
 
   switch (sgt.phase) {
     case Phase.SEARCH: {
@@ -1292,11 +1343,12 @@ function executePhase(b, sgt, sitrep, alive, now, phaseChanged) {
     }
 
     case Phase.ENGAGE: {
-      // Fight from current position
+      // Fight from current position — discipline-driven focus fire
       const closeRange = sitrep.distToEnemy < (sitrep.maxRange || 400) * 0.5;
-      setCommand(sgt, alive, closeRange ? Command.ADVANCE : Command.HOLD);
+      const engageCmd = _pickOffensiveCommand(sgt, sitrep);
+      // If not focusing fire, use positional command (close → advance, far → hold)
+      setCommand(sgt, alive, engageCmd === Command.FOCUS_FIRE ? engageCmd : (closeRange ? Command.ADVANCE : Command.HOLD));
       if (phaseChanged) sgt._formationOverride = Formation.LINE;
-      // Move waypoint toward enemy if advancing
       if (closeRange && sitrep.enemyCenter) {
         setPathWaypoint(b, sgt, sitrep.enemyCenter, alive, sitrep.center);
       }
@@ -1304,21 +1356,21 @@ function executePhase(b, sgt, sitrep, alive, now, phaseChanged) {
     }
 
     case Phase.PRESS: {
-      // Push toward enemy aggressively
+      // Push toward enemy aggressively — disciplined SGTs focus fire while pressing
       if (sitrep.enemyCenter) {
         setPathWaypoint(b, sgt, sitrep.enemyCenter, alive, sitrep.center);
       }
-      setCommand(sgt, alive, Command.ADVANCE);
+      setCommand(sgt, alive, _pickOffensiveCommand(sgt, sitrep));
       if (phaseChanged) sgt._formationOverride = Formation.WEDGE;
       break;
     }
 
     case Phase.PURSUE: {
-      // Chase retreating enemy
+      // Chase retreating enemy — focus fire to finish them off
       if (sitrep.enemyCenter) {
         setPathWaypoint(b, sgt, sitrep.enemyCenter, alive, sitrep.center);
       }
-      setCommand(sgt, alive, Command.ADVANCE);
+      setCommand(sgt, alive, _pickOffensiveCommand(sgt, sitrep));
       if (phaseChanged) sgt._formationOverride = Formation.COLUMN;
       break;
     }
@@ -1381,17 +1433,18 @@ function executePhase(b, sgt, sitrep, alive, now, phaseChanged) {
     }
 
     case Phase.FLANK: {
-      // Maneuver around enemy
+      // Maneuver around enemy — issue FLANK_LEFT or FLANK_RIGHT based on flank side
       if (phaseChanged && sitrep.enemyCenter) {
         const flankPt = computeFlankPoint(b, sgt, sitrep);
         if (flankPt) {
           setPathWaypoint(b, sgt, flankPt, alive, sitrep.center);
+          sgt._flankSide = flankPt.side || 'left';
         }
       } else if (sgt.waypoint) {
-        // Continue advancing along existing flank path
         setPathWaypoint(b, sgt, sgt.pathGoal || sgt.waypoint, alive, sitrep.center);
       }
-      setCommand(sgt, alive, Command.ADVANCE);
+      const flankCmd = sgt._flankSide === 'right' ? Command.FLANK_RIGHT : Command.FLANK_LEFT;
+      setCommand(sgt, alive, flankCmd);
       if (phaseChanged) sgt._formationOverride = Formation.COLUMN;
       break;
     }

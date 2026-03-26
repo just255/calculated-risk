@@ -186,6 +186,14 @@ export function applyBrainDefaults(unit, presetOrName) {
   // Suppression init
   if (unit._suppression === undefined) unit._suppression = 0;
 
+  // Cache detection signatures (avoids UNIT_COMBAT_STATS lookup per vision scan)
+  if (unit._moveSignature === undefined) {
+    const stats = UNIT_COMBAT_STATS[unit.unitId || 'infantry'];
+    unit._moveSignature = stats?.moveSignature ?? 1.2;
+    unit._fireSignature = stats?.fireSignature ?? 1.4;
+    unit._proneSignature = stats?.proneSignature ?? 0.5;
+  }
+
   // Personality-driven timer stagger — desynchronize units within a squad
   // Uses deterministic hash so behavior is reproducible, not random
   const hash = hashUnitId(unit.id);
@@ -375,10 +383,12 @@ export function initBattleAI(b, opts = {}) {
     if (!u.team) u.team = Team.BLUE;
     if (insigniaSetId) u._insigniaSetId = insigniaSetId;
   }
+  const wave = b.wave || 1;
   for (const e of redUnits) {
     applyBrainDefaults(e, enemyPreset);
     if (!e.team) e.team = Team.RED;
     if (insigniaSetId) e._insigniaSetId = insigniaSetId;
+    if (!b.fireRange) applyRedDisciplineFloor(e, wave);
   }
 
   // Create squads
@@ -703,6 +713,20 @@ export function snapshotAiPerf(b) {
     snap[key] = ap[key] / n;
   }
   snap.frames = n;
+
+  // Include brain sub-timing if available (vision, targeting, survival, movement, flank)
+  const bp = b._brainPerf;
+  if (bp && bp._count > 0) {
+    const bn = bp._count;
+    snap.b_vision = bp.vision / bn;
+    snap.b_targeting = bp.targeting / bn;
+    snap.b_survival = bp.survival / bn;
+    snap.b_movement = bp.movement / bn;
+    snap.b_flank = bp.flank / bn;
+    // Reset brain perf
+    bp.vision = 0; bp.targeting = 0; bp.survival = 0; bp.movement = 0; bp.flank = 0; bp._count = 0;
+  }
+
   _resetAiPerf(b);
   return snap;
 }
@@ -742,10 +766,12 @@ export function spawnSquad(b, team, units, spawnZone, opts = {}) {
   // Stamp brain defaults
   const preset = opts.preset || (team === Team.BLUE ? 'endlessAlly' : 'endlessEnemy');
   const insigniaSetId = opts.insigniaSetId || b._insigniaSetId || null;
+  const wave = b.wave || 1;
   for (const u of units) {
     applyBrainDefaults(u, preset);
     if (!u.team) u.team = team;
     if (insigniaSetId) u._insigniaSetId = insigniaSetId;
+    if (team === Team.RED && !b.fireRange) applyRedDisciplineFloor(u, wave);
   }
 
   // Determine enemy zone (opposite side of map from this team)
@@ -1068,6 +1094,23 @@ function buildVisibilitySet(b) {
 // ═══════════════════════════════════════════════════════════════
 // UTILITIES
 // ═══════════════════════════════════════════════════════════════
+
+/**
+ * Apply wave-scaled discipline and courage floors for red units.
+ * Asymptotic curve — fast early improvement, plateaus at high waves.
+ * Mode-agnostic: uses wave number directly.
+ *
+ * @param {object} unit - Unit to apply floors to (must have .personality)
+ * @param {number} wave - Current wave number (1-based)
+ */
+export function applyRedDisciplineFloor(unit, wave) {
+  if (!unit.personality) return;
+  const w = Math.max(1, wave);
+  const discFloor = 0.20 + 0.60 * (1 - 1 / (1 + w * 0.15));
+  const courageFloor = discFloor * 0.70;
+  unit.personality.discipline = Math.max(unit.personality.discipline ?? 0, discFloor);
+  unit.personality.courage = Math.max(unit.personality.courage ?? 0, courageFloor);
+}
 
 /**
  * Reset the squad ID counter (for testing or fresh sessions).

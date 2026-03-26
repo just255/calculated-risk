@@ -187,16 +187,16 @@ export function getConcealment(b, unit) {
   }
 
   // State modifier: what is the unit doing?
-  // Uses unit.lastShot (set by tryShoot) to detect recent firing
+  // Per-unit signatures cached from UNIT_COMBAT_STATS (set in initBrain)
   let stateMod = 1.0;
   const now = Date.now();
   const recentlyFired = unit.lastShot && (now - unit.lastShot < 500);
   if (recentlyFired) {
-    stateMod = 1.5; // Muzzle flash — very visible
+    stateMod = unit._fireSignature ?? 1.4;
   } else if (unit._movedThisFrame) {
-    stateMod = unit._isSprinting ? 1.6 : 1.3; // Moving is visible
-  } else if (unit._isProne) {
-    stateMod = 0.4; // Prone + still = nearly invisible
+    stateMod = unit._moveSignature ?? 1.2;
+  } else if (unit._isProne || unit._isHullDown) {
+    stateMod = unit._proneSignature ?? 0.5;
   }
 
   return terrainMod * stateMod;
@@ -275,8 +275,9 @@ export function canDetect(detector, target, b) {
   }
 
   // Effective range: concealment < 1.0 shrinks range (hidden target),
-  // but never extends beyond base viewRange (firing doesn't make you visible from farther)
-  const effectiveRange = viewRange * zoneMult * Math.min(concealment, 1.0);
+  // concealment > 1.0 extends range (moving/firing targets are more visible from farther).
+  // Capped at 1.5x to prevent cross-map omniscience.
+  const effectiveRange = viewRange * zoneMult * Math.min(concealment, 1.5);
 
   // Distance check
   if (dist > effectiveRange) {

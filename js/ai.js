@@ -740,6 +740,48 @@ function turnUnitToward(unit, targetAngle, dtSec) {
 /**
  * First-frame initialization. Sets personality, morale, command, team.
  */
+// ── Effective Morale System ──────────────────────────────────
+
+/**
+ * Compute effective morale — the single number that drives all behavior decisions.
+ * Raw morale is the stress meter (decays/recovers). Effective morale adds modifiers
+ * from discipline, sergeant leadership, and veterancy.
+ *
+ * @param {object} unit - The unit (reads morale, personality.discipline, veterancy)
+ * @param {number} sgtLeadership - Sergeant's leadership stat (0-1)
+ * @returns {number} Effective morale (can exceed 1.0 with high modifiers)
+ */
+function computeEffectiveMorale(unit, sgtLeadership) {
+  const morale = unit.morale ?? 0.8;
+  const discipline = unit.personality?.discipline ?? 0.5;
+  const veterancy = unit.veterancy ?? 0;
+  return morale + discipline * 0.3 + sgtLeadership * 0.2 + veterancy * 0.1;
+}
+
+/**
+ * Compute personality-driven band thresholds for behavior transitions.
+ * Cached on brain init — only changes if personality changes.
+ *
+ * Bands (low to high effectiveMorale):
+ *   below routThreshold     → rout (blue only: break from squad)
+ *   rout..survival          → survival dominates (self-preservation)
+ *   survival..obey          → competition (orders vs instinct)
+ *   above obeyThreshold     → follows orders reliably
+ */
+function _computeBandThresholds(unit) {
+  const courage = unit.personality?.courage ?? 0.5;
+  const aggression = unit.personality?.aggression ?? 0.5;
+  const patience = unit.personality?.patience ?? 0.5;
+
+  const routThreshold = 0.10 + (1 - courage) * 0.15;
+  const survivalThreshold = routThreshold + 0.15 + (1 - aggression) * 0.15;
+  const obeyThreshold = survivalThreshold + 0.10 + patience * 0.10;
+
+  unit._routThreshold = routThreshold;
+  unit._survivalThreshold = survivalThreshold;
+  unit._obeyThreshold = obeyThreshold;
+}
+
 function initBrain(unit, team) {
   if (unit._brainInit) return;
 
@@ -770,6 +812,15 @@ function initBrain(unit, team) {
         unit.command = Command.ADVANCE;
     }
   }
+
+  // Cache personality-driven band thresholds (rout/survival/obey)
+  _computeBandThresholds(unit);
+
+  // Cache detection signatures from UNIT_COMBAT_STATS (avoids lookup per vision scan)
+  const stats = UNIT_COMBAT_STATS[unit.unitId || 'infantry'];
+  unit._moveSignature = stats?.moveSignature ?? 1.2;
+  unit._fireSignature = stats?.fireSignature ?? 1.4;
+  unit._proneSignature = stats?.proneSignature ?? 0.5;
 
   unit._brainInit = true;
 }
@@ -831,10 +882,18 @@ function selectBrainTarget(b, unit, hostiles, leader, command) {
   const bridgeBlocked = [];
   if (Array.isArray(spotted)) {
     // Vision system active — only target what this unit can see
+    const unitRange = unit.range || 150;
     for (const s of spotted) {
       if (s.enemy && !s.enemy.dead && s.enemy.hp > 0) {
         // Skip off-map enemies (stuck behind edges)
         if (s.enemy.x < 0 || s.enemy.y < 0 || s.enemy.x > (b.mapWidth || 9999) || s.enemy.y > (b.mapHeight || 9999)) continue;
+        // Shared intel (hero/sergeant relay) gives awareness, not a firing solution.
+        // Unit must be within its own range to engage — intel tells you where to look,
+        // not where to shoot. Direct sightings are always targetable.
+        if (!s.direct) {
+          const d = distanceBetween(unit, s.enemy);
+          if (d > unitRange * 1.2) continue; // Too far to engage on intel alone
+        }
         // Bridge deck blocks targeting between different elevation levels
         if (isBridgeDeckBlocking(bridges, unit.x, unit.y, s.enemy.x, s.enemy.y, unit._bridgeElevation, s.enemy._bridgeElevation)) {
           bridgeBlocked.push(s.enemy);
@@ -3421,7 +3480,7 @@ function getCommandPosture(command) {
   }
 }
 
-function assessSurvival(unit, target, hostiles, friendlies, b, activeCommand) {
+function assessSurvival(unit, target, hostiles, friendlies, b) {
   if (!target || target.dead) return { survivalRatio: Infinity, inDanger: false, action: null };
 
   const awareness = unit._awareness ?? 0.5;
@@ -3502,25 +3561,11 @@ function assessSurvival(unit, target, hostiles, friendlies, b, activeCommand) {
   const hpPercent = (unit.hp || 60) / (unit.maxHp || 60);
   const hpFactor = 0.3 + hpPercent * 0.7; // 0.3 (near-death) → 1.0 (full HP)
 
-  // Command posture: sergeant's orders shape how willing the unit is to flee
-  // Offensive (advance, focus_fire) → suppress survival (lower threshold = harder to trigger)
-  // Neutral (hold, follow, cover_me) → normal
-  // Defensive (fall_back) → amplify survival (higher threshold = easier to trigger)
-  //
-  // Two factors control how strongly the posture applies:
-  // - Sergeant leadership: how compelling the orders are (squad-level)
-  // - Unit discipline: how well the unit follows orders (unit-level)
-  // Blended: avg of both, so a strong leader can compensate for undisciplined troops
-  const discipline = unit.personality?.discipline ?? 0.5;
-  const sgtLeadership = _getSquadLeadership(b, unit);
-  const rawPosture = getCommandPosture(activeCommand);
-  // Blend posture toward 1.0 (neutral) based on leadership + discipline:
-  // Both low → posture has ~30% effect (orders barely matter)
-  // Both high → posture has full effect (unit commits completely)
-  const postureStrength = 0.3 + ((discipline + sgtLeadership) / 2) * 0.7;
-  const commandPosture = 1.0 + (rawPosture - 1.0) * postureStrength;
-
-  const dangerThreshold = (0.3 + courage * 0.5) * awareness * hpFactor * commandPosture;
+  // Danger threshold: courage, awareness, and HP determine when survival instinct triggers.
+  // Command authority (discipline + leadership) is now handled by the effectiveMorale band
+  // system in movement-modes.js — even if assessSurvival flags danger, the band gating
+  // prevents survival from overriding orders when effectiveMorale is high.
+  const dangerThreshold = (0.3 + courage * 0.5) * awareness * hpFactor;
 
   const inDanger = survivalRatio < dangerThreshold;
 
@@ -4075,13 +4120,17 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
   if (unit._shockTimer > 0) unit._shockTimer = Math.max(0, unit._shockTimer - dtSec);
   getAwareness(unit, cohesion);
 
-  // 3. Morale panic check — low morale + low courage = forced retreat
+  // 2.1. Compute effective morale — single number driving all behavior decisions
+  const sgtLeadership = _getSquadLeadership(b, unit);
+  unit._effectiveMorale = computeEffectiveMorale(unit, sgtLeadership);
+
+  // 3. Morale panic check — uses effectiveMorale so discipline/leadership help resist panic
   //    Recovery time: 2 + (1 - courage) × 3 seconds
   //    Cooldown: 10s after recovery before can re-panic (prevents oscillation)
   let activeCommand = unit.command || Command.ADVANCE;
   const courage = unit.personality?.courage ?? 0.5;
   const panicCooldownOver = !unit._panicRecoveryTime || (now - unit._panicRecoveryTime) > 10000;
-  if (!unit._panicking && unit.morale < 0.2 && courage < 0.4 && panicCooldownOver) {
+  if (!unit._panicking && unit._effectiveMorale < unit._routThreshold && panicCooldownOver) {
     // Enter panic
     unit._panicking = true;
     unit._panicStartTime = now;
@@ -4092,7 +4141,7 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
   }
   if (unit._panicking) {
     const panicDuration = (2 + (1 - courage) * 3) * 1000; // 2-5 seconds
-    if (now - (unit._panicStartTime || 0) > panicDuration && unit.morale >= 0.15) {
+    if (now - (unit._panicStartTime || 0) > panicDuration && unit._effectiveMorale >= unit._routThreshold + 0.05) {
       // Recovered — set cooldown to prevent immediate re-panic
       unit._panicking = false;
       unit._panicFleeTarget = null;
@@ -4108,13 +4157,22 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
   // 2.4. Decay suppression
   updateSuppression(unit, dtSec, b);
 
+  // Brain sub-timing — accumulates into b._brainPerf for the perf snapshot system
+  if (!b._brainPerf) b._brainPerf = { vision: 0, targeting: 0, survival: 0, movement: 0, flank: 0, _count: 0 };
+  const _bp = b._brainPerf;
+  _bp._count++;
+  let _bt;
+
   // 2.5. Build spotted list — vision scan of all hostiles
+  _bt = performance.now();
   buildSpottedList(unit, hostiles, b, now);
+  _bp.vision += performance.now() - _bt;
 
   // 2.6. Compute cover bias — how much this unit prefers cover-to-cover movement
   unit._coverBias = computeCoverBias(unit, activeCommand);
 
   // 4. Select target (initiative-driven re-evaluation interval + hysteresis)
+  _bt = performance.now();
   const initiative = unit.personality?.initiative ?? 0.5;
   const reEvalInterval = 2500 - initiative * 1500; // 1000ms (high) to 2500ms (low)
   let target;
@@ -4147,6 +4205,7 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
     }
     unit._targetLockedUntil = now + reEvalInterval;
   }
+  _bp.targeting += performance.now() - _bt;
   // Clear flank target and stamp acquisition time when switching targets
   if (target !== prevTarget) {
     unit._flankTarget = null;
@@ -4169,26 +4228,31 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
   }
 
   // 5.5. Survival assessment — update survival state (used by mode scoring)
+  _bt = performance.now();
   if (target && !unit._panicking) {
     const survivalInterval = 800 - (unit._awareness ?? 0.5) * 300;
     if (now - (unit._lastSurvivalCheck || 0) > survivalInterval) {
       unit._lastSurvivalCheck = now;
-      const survival = assessSurvival(unit, target, hostiles, friendlies, b, activeCommand);
+      const survival = assessSurvival(unit, target, hostiles, friendlies, b);
       unit._lastSurvival = survival;
       // Log survival state changes
       if (survival.inDanger) {
-        // Courage/discipline gate — survival can't override commands forever
-        if (!canSurvivalOverride(unit, now)) {
-          // Override expired or in cooldown — clear survival, let sergeant drive
+        // Band-based gate: survival can only set _survivalAction when
+        // effectiveMorale is below the obey threshold. Above it, the scoring
+        // system caps survival score so it can't override commands anyway,
+        // but we also prevent new commitments from forming.
+        const em = unit._effectiveMorale ?? 0.8;
+        if (em > unit._obeyThreshold) {
+          // High effective morale — sergeant has authority, clear survival
           if (unit._survivalAction) {
             logEvent(b, { t: now, who: unit.id, team, type: 'survival',
               x: Math.round(unit.x), y: Math.round(unit.y),
-              action: 'survival_override_expired',
-              detail: `courage:${(unit.personality?.courage ?? 0.5).toFixed(2)} disc:${(unit.personality?.discipline ?? 0.5).toFixed(2)}` });
+              action: 'survival_suppressed',
+              detail: `eMorale:${em.toFixed(2)} obeyThresh:${unit._obeyThreshold.toFixed(2)}` });
             clearSurvivalState(unit);
           }
         } else {
-          // Create commitment on first danger detection
+          // Below obey threshold — survival instinct can engage
           if (!unit._survivalCommitment) {
             unit._survivalCommitment = {
               action: survival.action,
@@ -4202,7 +4266,7 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
           logEvent(b, { t: now, who: unit.id, team, type: 'survival',
             x: Math.round(unit.x), y: Math.round(unit.y),
             action: unit._survivalAction,
-            detail: `ratio:${survival.survivalRatio.toFixed(2)} myTTK:${survival.myTTK.toFixed(1)}s theirTTK:${survival.theirTTK.toFixed(1)}s` });
+            detail: `ratio:${survival.survivalRatio.toFixed(2)} eMorale:${em.toFixed(2)} myTTK:${survival.myTTK.toFixed(1)}s theirTTK:${survival.theirTTK.toFixed(1)}s` });
         }
       } else {
         // Danger passed — check commitment before clearing
@@ -4253,7 +4317,10 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
     unit._lastSurvival = null;
   }
 
+  _bp.survival += performance.now() - _bt;
+
   // 6. Unified movement — build context, resolve mode, execute
+  _bt = performance.now();
   const moveCtx = buildMovementContext(b, unit, target, targetDist, hostiles, friendlies, now, leader);
   unit._moveCtx = moveCtx; // Cache for moveBrainUnit threat speed calculation
   const modeResult = resolveMovementMode(unit, moveCtx);
@@ -4276,8 +4343,12 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
 
   executeMovementMode(b, unit, modeResult, moveCtx, range, speed, now, dtSec, friendlies);
 
+  _bp.movement += performance.now() - _bt;
+
   // 6.7. Flank detection (awareness + initiative gated) — read-only, no movement
+  _bt = performance.now();
   checkFlankThreats(b, unit, hostiles, now, dtSec);
+  _bp.flank += performance.now() - _bt;
 
   // 7. Track movement and update stability
   // Use a threshold so micro-adjustments (separation steering, float drift) don't count as movement

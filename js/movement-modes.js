@@ -125,6 +125,16 @@ export function buildMovementContext(b, unit, target, targetDist, hostiles, frie
   }
   const isolated = friendliesNearby === 0;
 
+  // Effective morale band (computed in updateBrain, cached on unit)
+  const effectiveMorale = unit._effectiveMorale ?? 0.8;
+  const routThreshold = unit._routThreshold ?? 0.15;
+  const survivalThreshold = unit._survivalThreshold ?? 0.35;
+  const obeyThreshold = unit._obeyThreshold ?? 0.50;
+  const isRouted = !!unit._routed;
+
+  // Sergeant movement posture (set by executePhase in sergeant.js)
+  const sgtPosture = unit._sgtPosture || 'normal';
+
   return {
     target, targetDist,
     underFire, recentDamageTimeAgo, canSeeShooter,
@@ -140,7 +150,9 @@ export function buildMovementContext(b, unit, target, targetDist, hostiles, frie
     coverBias: unit._coverBias ?? 0.3,
     inCover: coverScore >= 15,
     canUseCover,
-    inWater, waterDepth
+    inWater, waterDepth,
+    effectiveMorale, routThreshold, survivalThreshold, obeyThreshold,
+    isRouted, sgtPosture
   };
 }
 
@@ -197,24 +209,34 @@ function scoreUrgentCover(unit, ctx) {
 
 /**
  * Score whether the unit should execute a survival action.
- * Wraps existing assessSurvival() — only scores high when losing the fight.
+ * Band-gated: above obeyThreshold, survival is capped at 20 (orders dominate).
+ * In the survival band, normal competition. Below routThreshold, survival dominates.
  */
 function scoreSurvival(unit, ctx) {
   if (!ctx.target || ctx.target.dead) return 0;
+  if (ctx.isRouted) return 70; // Routed units are pure survival
 
   const survival = unit._lastSurvival;
   if (!survival || !survival.inDanger) return 0;
 
-  let score = 50;  // Danger is serious
+  let score = 50;
 
-  // Can see shooter = can respond tactically
   if (ctx.canSeeShooter) score += 20;
-
-  // Personality modulation
   score -= ctx.personality.courage * 15;
-
-  // Disciplined units in formation resist breaking for survival
   if (ctx.inFormation && ctx.personality.discipline > 0.6) score -= 10;
+
+  // Band-based gating: effectiveMorale suppresses survival when following orders
+  const em = ctx.effectiveMorale;
+  if (em > ctx.obeyThreshold) {
+    // Above obey band — orders dominate, cap survival
+    // Lerp cap from 20 (well above) to uncapped (at threshold)
+    const t = Math.min((em - ctx.obeyThreshold) / 0.05, 1);
+    const cap = 100 - t * 80; // 100 at threshold → 20 well above
+    score = Math.min(score, cap);
+  } else if (em < ctx.routThreshold) {
+    // Below rout — survival dominates
+    score += 20;
+  }
 
   return Math.max(0, score);
 }
@@ -225,6 +247,9 @@ function scoreSurvival(unit, ctx) {
  * Low when: aggressive + no enemies spotted
  */
 function scoreTacticalBound(unit, ctx) {
+  // SGT posture override: rush = no bounding, bound = encourage bounding
+  if (ctx.sgtPosture === 'rush') return 0;
+
   // Must have an objective to bound toward and some cover preference
   if (ctx.coverBias <= 0.2) return 0;
   const cmd = ctx.command;
@@ -243,6 +268,9 @@ function scoreTacticalBound(unit, ctx) {
   // In water — don't linger to bound, keep moving through
   if (ctx.inWater) score -= 20;
 
+  // SGT posture: bound encourages tactical movement
+  if (ctx.sgtPosture === 'bound') score += 20;
+
   return Math.max(0, score);
 }
 
@@ -251,6 +279,8 @@ function scoreTacticalBound(unit, ctx) {
  * Baseline mode — always available, boosted by discipline and valid commander.
  */
 function scoreCommand(unit, ctx) {
+  if (ctx.isRouted) return 0; // Routed units don't follow orders
+
   let score = 25;  // Baseline — orders matter
 
   if (ctx.commanderAlive) score += 15;
@@ -264,6 +294,18 @@ function scoreCommand(unit, ctx) {
 
   // In water — don't stop to execute commands, push through
   if (ctx.inWater) score -= 15;
+
+  // Band-based bonus: effectiveMorale above obeyThreshold = strong command authority
+  const em = ctx.effectiveMorale;
+  if (em > ctx.obeyThreshold) {
+    // Lerp bonus from 0 (at threshold) to +30 (well above)
+    const t = Math.min((em - ctx.obeyThreshold) / 0.05, 1);
+    score += t * 30;
+  } else if (em < ctx.survivalThreshold) {
+    // Below survival band — commands lose authority
+    const t = Math.min((ctx.survivalThreshold - em) / 0.10, 1);
+    score -= t * 15;
+  }
 
   return Math.max(0, score);
 }
