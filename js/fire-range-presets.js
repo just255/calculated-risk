@@ -301,6 +301,55 @@ export const FR_PRESETS = {
     blueSergeant: { aggression: 0.5, patience: 0.5, courage: 0.5, discipline: 0.5, initiative: 0.5, awareness: 0.9 },
     redSergeant:  { aggression: 0.5, patience: 0.5, courage: 0.5, discipline: 0.5, initiative: 0.5, awareness: 0.1 },
     mapSize: 'medium', debug: DBG_OFF
+  },
+
+  // ═══════════════ PERFORMANCE STRESS TESTS ═══════════════
+
+  'perf-20v20-infantry': {
+    blueTeam: [
+      slot({ unitId: 'infantry', count: 20, discipline: 0.5, courage: 0.5 })
+    ],
+    redTeam: [
+      slot({ unitId: 'infantry', count: 20, discipline: 0.5, courage: 0.5 })
+    ],
+    mapSize: 'large', debug: DBG_OFF
+  },
+
+  'perf-30v30-mixed': {
+    blueTeam: [
+      slot({ unitId: 'infantry', count: 15, discipline: 0.5 }),
+      slot({ unitId: 'sherman', count: 5, discipline: 0.6 }),
+      slot({ unitId: 'jeep', count: 5, aggression: 0.6 }),
+      slot({ unitId: 'humvee', count: 5, discipline: 0.5 })
+    ],
+    redTeam: [
+      slot({ unitId: 'infantry', count: 15, discipline: 0.5 }),
+      slot({ unitId: 'sherman', count: 5, discipline: 0.6 }),
+      slot({ unitId: 'jeep', count: 5, aggression: 0.6 }),
+      slot({ unitId: 'humvee', count: 5, discipline: 0.5 })
+    ],
+    mapSize: 'large', debug: DBG_OFF
+  },
+
+  'perf-50v50-infantry': {
+    blueTeam: [
+      slot({ unitId: 'infantry', count: 50, discipline: 0.5, courage: 0.5 })
+    ],
+    redTeam: [
+      slot({ unitId: 'infantry', count: 50, discipline: 0.5, courage: 0.5 })
+    ],
+    mapSize: 'large', debug: DBG_OFF
+  },
+
+  'perf-10v50-defense': {
+    blueTeam: [
+      slot({ unitId: 'sherman', count: 3, command: 'hold', discipline: 0.7, patience: 0.7 }),
+      slot({ unitId: 'infantry', count: 7, command: 'hold', discipline: 0.6 })
+    ],
+    redTeam: [
+      slot({ unitId: 'infantry', count: 50, aggression: 0.7, courage: 0.6, discipline: 0.4 })
+    ],
+    mapSize: 'large', debug: DBG_OFF
   }
 };
 
@@ -346,5 +395,11 @@ export const FR_PRESET_LIST = [
     { id: 'sgt-flanker-vs-line',        name: 'Flanker vs Line',        desc: 'High initiative flanker vs rigid line defense' },
     { id: 'sgt-brave-vs-coward',        name: 'Brave vs Coward',        desc: 'Courageous sergeant vs one who retreats early' },
     { id: 'sgt-adaptive-vs-rigid',      name: 'Adaptive vs Rigid',      desc: 'Fast re-eval (1s) vs slow (3s) — awareness test' }
+  ]},
+  { category: 'Performance', presets: [
+    { id: 'perf-20v20-infantry',  name: '20v20 Infantry',  desc: '40 total units — baseline stress test' },
+    { id: 'perf-30v30-mixed',     name: '30v30 Mixed',     desc: '60 total units — mixed armor, vehicles, infantry' },
+    { id: 'perf-50v50-infantry',  name: '50v50 Infantry',  desc: '100 total units — maximum stress test' },
+    { id: 'perf-10v50-defense',   name: '10v50 Defense',   desc: '10 defenders vs 50 attackers — asymmetric wave' }
   ]}
 ];

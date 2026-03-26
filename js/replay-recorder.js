@@ -417,18 +417,24 @@ export function isRecording(b) {
  * @param {object} b - Battle object
  */
 export function saveReplay(b) {
-  if (!b._recorder || b._replaySaved) return;
+  if (!b._recorder) { console.warn('[replay] No recorder on battle object'); return; }
+  if (b._replaySaved) { console.warn('[replay] Already saved, skipping'); return; }
   b._replaySaved = true;
   const replay = finalizeRecording(b);
-  if (!replay) return;
+  if (!replay) { console.warn('[replay] finalizeRecording returned null'); return; }
+  const body = JSON.stringify(replay);
+  console.log(`[replay] Saving ${replay.mode} replay: ${replay.frames?.length} frames, ${(body.length / 1024 / 1024).toFixed(1)}MB`);
   fetch('/api/replays', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(replay)
+    body
   })
-  .then(r => r.json())
-  .then(res => { if (res.success) console.log('Replay saved:', res.name); })
-  .catch(err => console.warn('Failed to save replay:', err));
+  .then(r => {
+    if (!r.ok) { console.error(`[replay] Server error: ${r.status} ${r.statusText}`); return null; }
+    return r.json();
+  })
+  .then(res => { if (res?.success) console.log('Replay saved:', res.name); else if (res) console.warn('[replay] Save failed:', res); })
+  .catch(err => console.warn('[replay] Failed to save:', err));
 }
 
 /**

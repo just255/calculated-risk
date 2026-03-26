@@ -15,7 +15,7 @@ const PORT = 3000;
 const ACCESS_PASSWORD = 'simmons1986';
 
 // JSON body parsing for API
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
 
 // Disable caching for JS files during development
 app.use('/js', (req, res, next) => {
