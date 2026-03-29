@@ -1629,9 +1629,20 @@ export function updateSuppression(unit, dtSec, b) {
 
 /**
  * Apply suppression from an external event.
- * Called by game.js when projectiles pass nearby, explosions happen, allies die.
+ * Amount scales by damage relative to target HP — a hit that takes 25% of your
+ * health is terrifying, a hit that takes 3% is a nuisance.
+ * @param {object} unit - Target unit
+ * @param {number} damage - Damage dealt (0 for near-miss)
+ * @param {number} [maxHp] - Target's max HP (defaults to unit.maxHp)
  */
-export function applySuppression(unit, amount) {
+export function applySuppression(unit, damage, maxHp) {
+  const hp = maxHp || unit.maxHp || 100;
+  const SUPPRESSION_SCALE = 1.5;
+  // Damage-based: proportional to % of HP lost
+  // Near-miss (damage=0): fixed small amount
+  const amount = damage > 0
+    ? (damage / hp) * SUPPRESSION_SCALE
+    : 0.05; // near-miss baseline
   unit._suppression = Math.min(1, (unit._suppression ?? 0) + amount);
 }
 

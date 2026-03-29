@@ -72,7 +72,7 @@ function _applyEnemyHitToBlue(b, p, unit, now, opts = {}) {
   applyHitStabilityDrop(unit, dmg);
   unit._shockTimer = 2;
   unit._lastAttackerId = p.sourceId || null;
-  applySuppression(unit, 0.25);
+  applySuppression(unit, dmg, unit.maxHp);
   recordDamage(unit, p.sourceId || '?', dmg);
 
   // Debug invincibility
@@ -123,8 +123,8 @@ function _detonateProjectile(b, p, impactX, impactY, now, opts = {}) {
         });
       }
     } else if (hd < nearMissR) {
-      applySuppression(heroRef, 0.15);
-      applyHitStabilityDrop(heroRef, 1); // Small stability jolt
+      applySuppression(heroRef, 0, heroRef.maxHp); // near-miss
+      applyHitStabilityDrop(heroRef, 1);
     }
   }
 
@@ -148,7 +148,7 @@ function _detonateProjectile(b, p, impactX, impactY, now, opts = {}) {
         if (unit.hp < 0) unit.hp = 0;
         applyHitStabilityDrop(unit, dmg);
         unit._shockTimer = 2;
-        applySuppression(unit, 0.3);
+        applySuppression(unit, dmg, unit.maxHp);
         recordDamage(unit, p.sourceId || '?', dmg);
 
         if (unit.hp <= 0) {
@@ -175,7 +175,7 @@ function _detonateProjectile(b, p, impactX, impactY, now, opts = {}) {
       }
     } else if (dist < nearMissR) {
       // Near miss — suppression only, no damage
-      applySuppression(unit, 0.15);
+      applySuppression(unit, 0, unit.maxHp); // near-miss
       applyHitStabilityDrop(unit, 1);
     }
   }
@@ -319,7 +319,7 @@ export function resolveProjectiles(b, now, dtSec, opts = {}) {
           // Combat effects
           e._shockTimer = 2;
           e._lastAttackerId = p.sourceId || null;
-          applySuppression(e, 0.25);
+          applySuppression(e, dmg, e.maxHp);
           recordDamage(e, p.sourceId || 'hero', dmg);
 
           // Debug invincibility
@@ -406,7 +406,7 @@ export function resolveProjectiles(b, now, dtSec, opts = {}) {
       if (u.dead || p._suppressedIds.has(u.id)) continue;
       const dx = p.x - u.x, dy = p.y - u.y;
       if (dx * dx + dy * dy < nearMissRadSq) {
-        applySuppression(u, 0.15);
+        applySuppression(u, 0, u.maxHp); // near-miss
         p._suppressedIds.add(u.id);
       }
     }
@@ -445,7 +445,7 @@ function _cascadeMorale(teamUnits, deadUnit) {
     if (distSq < 40000) { // within ~200px
       applyMoraleEvent(ally, MoraleEvent.ALLY_DIED, 0.5);
       if (distSq < 6400) { // within ~80px
-        applySuppression(ally, 0.20);
+        applySuppression(ally, 0, ally.maxHp); // ally death shock — near-miss equivalent
       }
     }
   }

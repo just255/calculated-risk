@@ -1784,23 +1784,12 @@ export function newFireRangeRun() {
 // Combat stats for units in fire range.
 // hp/speed/damage/fireRate are unique here; range/viewRange/viewCone come from
 // UNIT_COMBAT_STATS (single source of truth in constants.js).
-const _FR_BASE = {
-  infantry: { hp: 180, speed: 80,  damage: 10, fireRate: 1000 },
-  medic:    { hp: 135, speed: 75,  damage: 5,  fireRate: 1200 },
-  specops:  { hp: 150, speed: 90,  damage: 18, fireRate: 700  },
-  jeep:     { hp: 240, speed: 120, damage: 15, fireRate: 800  },
-  humvee:   { hp: 300, speed: 100, damage: 20, fireRate: 900  },
-  sherman:  { hp: 450, speed: 60,  damage: 30, fireRate: 1500 },
-  tiger:    { hp: 600, speed: 50,  damage: 45, fireRate: 2000 },
-  abrams:   { hp: 750, speed: 55,  damage: 60, fireRate: 1800 },
-  howitzer: { hp: 240, speed: 30,  damage: 80, fireRate: 3000 },
-  apache:   { hp: 360, speed: 130, damage: 35, fireRate: 1000 }
-};
+// Fire range unit stats — derived from UNIT_COMBAT_STATS (single source of truth)
 const FR_UNIT_STATS = Object.fromEntries(
-  Object.entries(_FR_BASE).map(([id, base]) => [
-    id,
-    { ...base, ...(UNIT_COMBAT_STATS[id] || {}) }
-  ])
+  Object.keys(UNIT_COMBAT_STATS).map(id => {
+    const s = UNIT_COMBAT_STATS[id];
+    return [id, { hp: s.hp, speed: s.speed, damage: s.damage, fireRate: s.fireRate, range: s.range, viewRange: s.viewRange, viewCone: s.viewCone }];
+  })
 );
 
 const FR_MAP_SIZES = {

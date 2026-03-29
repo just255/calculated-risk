@@ -250,6 +250,9 @@ function scoreTacticalBound(unit, ctx) {
   // SGT posture override: rush = no bounding, bound = encourage bounding
   if (ctx.sgtPosture === 'rush') return 0;
 
+  // No cover nearby = no point bounding. Don't stop in the open.
+  if (!ctx.nearestCover && !ctx.inCover) return 0;
+
   // Must have an objective to bound toward and some cover preference
   if (ctx.coverBias <= 0.2) return 0;
   const cmd = ctx.command;
