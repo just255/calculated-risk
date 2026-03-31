@@ -2803,7 +2803,9 @@ function buildWaveBudget(b, wave, sizeMult) {
   for (const template of templates) {
     for (const group of template.groups) {
       const count = group.count[0] + Math.floor(Math.random() * (group.count[1] - group.count[0] + 1));
-      const scaledCount = Math.round(count * sizeMult);
+      // Wave scaling: +10% more enemies per wave (asymptotic, caps at +100%)
+      const waveMult = 1 + Math.min(1.0, (wave - 1) * 0.1);
+      const scaledCount = Math.round(count * sizeMult * waveMult);
 
       for (let i = 0; i < scaledCount; i++) {
         const enemyDef = ENEMIES.find(e => e.id === group.type) || ENEMIES.find(e => e.id === 'grunt');

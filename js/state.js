@@ -12,6 +12,14 @@ import { findValidSpawnPos } from './terrain-utils.js';
 import { getPool, getAvailableVehicles, getRankName, getSoldier, getCrewForVehicle, assignToVehicle } from './roster.js';
 import { loadLastLoadout } from './storage.js';
 
+// Endless mode map sizes — user-chosen before starting, fixed for the entire run.
+// Small = 1 blue squad, Medium = 2, Large = 3. enemyMult scales red count per wave.
+export const ENDLESS_MAP_SIZES = {
+  small:  { grid: 24, label: 'Small',  maxSquads: 1, enemyMult: 1.0 },
+  medium: { grid: 32, label: 'Medium', maxSquads: 2, enemyMult: 1.5 },
+  large:  { grid: 42, label: 'Large',  maxSquads: 3, enemyMult: 2.0 }
+};
+
 export const Game = {
   state: State.MENU,
   subState: SubState.PLAYING,
@@ -1507,13 +1515,8 @@ export function newEndlessBattle(loadout, wave = 1) {
 
   // Map size tiers — smaller start, ~50% growth per tier
   // Waves 1-3: small (1 squad max), 4-7: medium (2), 8-12: large (3), 13+: xl (3)
-  const SIZE_TIERS = [
-    { maxWave: 3,  grid: 24, label: 'Patrol',      enemyMult: 1.0, maxSquads: 1 },
-    { maxWave: 7,  grid: 32, label: 'Sortie',      enemyMult: 1.3, maxSquads: 2 },
-    { maxWave: 12, grid: 42, label: 'Operation',   enemyMult: 1.6, maxSquads: 3 },
-    { maxWave: Infinity, grid: 52, label: 'Campaign', enemyMult: 2.0, maxSquads: 3 }
-  ];
-  const sizeTier = SIZE_TIERS.find(t => wave <= t.maxWave) || SIZE_TIERS[SIZE_TIERS.length - 1];
+  const chosenSize = Game.endless?.mapSize || 'small';
+  const sizeTier = ENDLESS_MAP_SIZES[chosenSize] || ENDLESS_MAP_SIZES.small;
   const gridWidth = sizeTier.grid;
   const gridHeight = sizeTier.grid;
   const mapWidth = gridWidth * CELL_SIZE;

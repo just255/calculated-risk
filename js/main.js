@@ -1233,6 +1233,9 @@ document.getElementById('app').addEventListener('click', e => {
         Game.endless.wave = startWave;
         Game.endless.debugWave = startWave;
         Game.endless.runStartTime = Date.now();
+        // Map size: read from selector or default to 'small'
+        const sizeSelect = document.querySelector('.endless-map-size');
+        Game.endless.mapSize = sizeSelect?.value || Game.endless.mapSize || 'small';
         goto(State.ENDLESS_BATTLE);
       }
     }

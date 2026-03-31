@@ -4508,6 +4508,12 @@ function endlessLoadoutHTML() {
             <option value="random" ${!e.seed ? 'selected' : ''}>Random</option>
             <option value="weekly" ${e.seed ? 'selected' : ''}>Weekly</option>
           </select>
+          <span class="header-label">MAP</span>
+          <select class="endless-map-size" style="background:var(--bg-secondary,#1a1a2e); color:var(--text-primary,#eee); border:1px solid var(--border-color,#333); border-radius:4px; font-size:12px; padding:2px;">
+            <option value="small" ${(e.mapSize || 'small') === 'small' ? 'selected' : ''}>Small (1 sqd)</option>
+            <option value="medium" ${e.mapSize === 'medium' ? 'selected' : ''}>Medium (2 sqd)</option>
+            <option value="large" ${e.mapSize === 'large' ? 'selected' : ''}>Large (3 sqd)</option>
+          </select>
           <span class="header-label">WAVE</span>
           <input type="number" class="header-wave-select" min="1" max="99" value="${e.debugWave || 1}" style="width:42px; text-align:center; background:var(--bg-secondary,#1a1a2e); color:var(--text-primary,#eee); border:1px solid var(--border-color,#333); border-radius:4px; font-size:12px; padding:2px;">
           <button class="header-deploy-btn ${!selectedVehicle ? 'disabled' : ''}" data-action="${selectedVehicle ? 'endless-start' : ''}" ${!selectedVehicle ? 'disabled' : ''}>DEPLOY ▶</button>
