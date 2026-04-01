@@ -10,6 +10,22 @@ import { getCachedInsignia, cacheInsigniaSet } from './insignia-renderer.js';
 import { buildVisionPolygon } from './vision.js';
 import { queryTerrain } from './terrain-query.js';
 
+// ── PNG sprite cache (simple single-image sprites, e.g. infantry placeholder) ──
+const _pngSpriteCache = {};
+
+/** Load a PNG sprite from a URL path. Cached by key. */
+function _getPngSprite(unitId) {
+  if (_pngSpriteCache[unitId]) return _pngSpriteCache[unitId];
+  const src = UNIT_COMBAT_STATS[unitId]?.topDownSprite;
+  if (!src) return null;
+  const img = new Image();
+  img._loaded = false;
+  img.onload = () => { img._loaded = true; };
+  img.src = src;
+  _pngSpriteCache[unitId] = img;
+  return img;
+}
+
 // ── SVG-to-canvas fallback cache ─────────────────────────────
 // Renders SVG strings from UNITS definitions to Image objects for canvas drawing
 const _svgImageCache = {};  // keyed by `${unitId}-${team}` or `${unitId}-${team}-hull`/`-turret`
@@ -174,6 +190,78 @@ export class EntityRenderer {
    * @param {object} hero - Hero entity { x, y, hullAngle, angle, animId }
    * @param {number} now - performance.now() for animation timing
    */
+  /**
+   * Shared SVG fallback renderer — used by hero, units, and enemies when no sprite is available.
+   * Renders two-layer SVG (hull + turret) or single SVG, with colored rect as ultimate fallback.
+   */
+  _renderUnitSvgFallback(ctx, entity, size, team, isSelected, now) {
+    const half = size / 2;
+
+    // Try PNG sprite first (simple single-image units like infantry placeholder)
+    const pngSprite = _getPngSprite(entity.unitId);
+    if (pngSprite?._loaded) {
+      if (isSelected) this._drawSelectionGlow(ctx, entity.x, entity.y, half, now);
+      ctx.save();
+      ctx.translate(entity.x, entity.y);
+      ctx.rotate((entity.hullAngle ?? entity.angle) + Math.PI / 2);
+      // Maintain aspect ratio — fit within size × size
+      const imgW = pngSprite.naturalWidth || pngSprite.width;
+      const imgH = pngSprite.naturalHeight || pngSprite.height;
+      const aspect = imgW / imgH || 1;
+      let drawW, drawH;
+      if (aspect > 1) { drawW = size; drawH = size / aspect; }
+      else { drawH = size; drawW = size * aspect; }
+      ctx.drawImage(pngSprite, -drawW / 2, -drawH / 2, drawW, drawH);
+      ctx.restore();
+      return;
+    }
+
+    // Try two-layer SVG (hull + turret)
+    const layers = _getUnitLayers(entity.unitId, team);
+
+    if (layers?.hull?._loaded && layers?.turret?._loaded) {
+      const hullAng = entity.hullAngle ?? entity.angle;
+      const combatStats = UNIT_COMBAT_STATS[entity.unitId];
+      const pivot = combatStats?.turretPivot || { x: 0, y: 0 };
+
+      if (isSelected) this._drawSelectionGlow(ctx, entity.x, entity.y, half, now);
+
+      ctx.save();
+      ctx.translate(entity.x, entity.y);
+      ctx.rotate(hullAng + Math.PI / 2);
+      ctx.drawImage(layers.hull, -half, -half, size, size);
+      ctx.restore();
+
+      ctx.save();
+      ctx.translate(entity.x, entity.y);
+      ctx.rotate(hullAng + Math.PI / 2);
+      ctx.translate(pivot.x, pivot.y);
+      ctx.rotate((entity.angle ?? hullAng) - hullAng);
+      ctx.drawImage(layers.turret, -half - pivot.x, -half - pivot.y, size, size);
+      ctx.restore();
+    } else {
+      const svgImg = _getSvgImage(entity.unitId, team);
+
+      ctx.save();
+      ctx.translate(entity.x, entity.y);
+      ctx.rotate((entity.hullAngle ?? entity.angle) + Math.PI / 2);
+
+      if (svgImg?._loaded) {
+        if (isSelected) this._drawSelectionGlow(ctx, 0, 0, half, now);
+        ctx.drawImage(svgImg, -half, -half, size, size);
+      } else {
+        const isBlue = team === 'blue';
+        this._roundedRect(ctx, -half, -half, size, size, 5);
+        ctx.fillStyle = isBlue ? (isSelected ? '#7ab87a' : '#4a9eff') : '#a04040';
+        ctx.fill();
+        ctx.strokeStyle = isBlue ? '#fff' : '#c06060';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
   renderHero(ctx, hero, now) {
     const hasAnim = hero.animId && sprites.hasAnimatedUnit(hero.animId);
 
@@ -181,18 +269,8 @@ export class EntityRenderer {
       const hullRotation = (hero.hullAngle * 180 / Math.PI) + 90;
       sprites.renderAnimatedUnit(ctx, hero.animId, hero.x, hero.y, hullRotation, 0.5, now);
     } else {
-      // Fallback: blue rounded rect
-      const half = HERO_SIZE / 2;
-      ctx.save();
-      ctx.translate(hero.x, hero.y);
-      ctx.rotate(hero.hullAngle + Math.PI / 2);
-      this._roundedRect(ctx, -half, -half, HERO_SIZE, HERO_SIZE, 5);
-      ctx.fillStyle = '#4a9eff';
-      ctx.fill();
-      ctx.strokeStyle = '#fff';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.restore();
+      // Same SVG fallback chain as regular units
+      this._renderUnitSvgFallback(ctx, hero, HERO_SIZE, 'blue');
     }
   }
 
@@ -223,59 +301,7 @@ export class EntityRenderer {
       const rotation = (hullAng * 180 / Math.PI) + 90;
       sprites.renderAnimatedUnit(ctx, unit.animId, unit.x, unit.y, rotation, 0.5, now);
     } else {
-      // Try two-layer SVG rendering (hull + turret)
-      const layers = _getUnitLayers(unit.unitId, unit.team);
-      const half = UNIT_SIZE / 2;
-
-      if (layers?.hull?._loaded && layers?.turret?._loaded) {
-        const hullAng = unit.hullAngle ?? unit.angle;
-        const combatStats = UNIT_COMBAT_STATS[unit.unitId];
-        const pivot = combatStats?.turretPivot || { x: 0, y: 0 };
-
-        if (isSelected) {
-          this._drawSelectionGlow(ctx, unit.x, unit.y, half, now);
-        }
-
-        // Draw hull at hullAngle
-        ctx.save();
-        ctx.translate(unit.x, unit.y);
-        ctx.rotate(hullAng + Math.PI / 2);
-        ctx.drawImage(layers.hull, -half, -half, UNIT_SIZE, UNIT_SIZE);
-        ctx.restore();
-
-        // Draw turret at turret angle, pivoted relative to hull
-        ctx.save();
-        ctx.translate(unit.x, unit.y);
-        ctx.rotate(hullAng + Math.PI / 2);   // align to hull
-        ctx.translate(pivot.x, pivot.y);       // offset to turret pivot in hull-local coords
-        ctx.rotate(unit.angle - hullAng);      // relative turret rotation
-        ctx.drawImage(layers.turret, -half - pivot.x, -half - pivot.y, UNIT_SIZE, UNIT_SIZE);
-        ctx.restore();
-      } else {
-        // Single SVG fallback (while layers load or no layer config)
-        const svgImg = _getSvgImage(unit.unitId, unit.team);
-
-        ctx.save();
-        ctx.translate(unit.x, unit.y);
-        ctx.rotate((unit.hullAngle ?? unit.angle) + Math.PI / 2);
-
-        if (svgImg?._loaded) {
-          if (isSelected) {
-            this._drawSelectionGlow(ctx, 0, 0, half, now);
-          }
-          ctx.drawImage(svgImg, -half, -half, UNIT_SIZE, UNIT_SIZE);
-        } else {
-          // Ultimate fallback: colored rect while SVG loads
-          this._roundedRect(ctx, -half, -half, UNIT_SIZE, UNIT_SIZE, 5);
-          ctx.fillStyle = isSelected ? '#7ab87a' : '#5a8a5a';
-          ctx.fill();
-          ctx.strokeStyle = isSelected ? '#4a9eff' : '#3a6a3a';
-          ctx.lineWidth = isSelected ? 3 : 2;
-          ctx.stroke();
-        }
-
-        ctx.restore();
-      }
+      this._renderUnitSvgFallback(ctx, unit, UNIT_SIZE, unit.team || 'blue', isSelected, now);
     }
 
     // Rank chevrons (pop-in + fade) and promotion highlight

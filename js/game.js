@@ -249,6 +249,29 @@ function parseTankInput(keys, joystickInput, currentHullAngle = 0) {
 }
 
 /**
+ * Parse WASD input for infantry — absolute cardinal movement, independent of facing.
+ * W=north, S=south, A=west, D=east. Hull angle follows movement direction.
+ * Returns { dx, dy, isMoving, hullAngle }
+ */
+function parseInfantryInput(keys) {
+  let dx = 0, dy = 0;
+  if (keys?.w || keys?.ArrowUp) dy -= 1;
+  if (keys?.s || keys?.ArrowDown) dy += 1;
+  if (keys?.a || keys?.ArrowLeft) dx -= 1;
+  if (keys?.d || keys?.ArrowRight) dx += 1;
+
+  const isMoving = dx !== 0 || dy !== 0;
+  if (isMoving) {
+    const len = Math.sqrt(dx * dx + dy * dy);
+    dx /= len;
+    dy /= len;
+  }
+
+  const hullAngle = isMoving ? Math.atan2(dy, dx) : null;
+  return { dx, dy, isMoving, hullAngle };
+}
+
+/**
  * Apply tank controls to update hull angle and calculate movement
  * Thin wrapper — delegates to shared pure function, then mutates entity
  */
@@ -2357,6 +2380,7 @@ function updateEndlessBattle(dt) {
   // --- CMD MODE: skip hero controls, hero is AI-driven ---
   const hero = b.hero;
   const isCMD = b.playMode === 'cmd';
+  const isInfantryHero = hero.unitId === 'infantry' || hero.unitId === 'medic' || hero.unitId === 'specops' || hero.unitId === 'stinger';
 
   if (isCMD) {
     // Hero movement/aiming/shooting handled by AI brain in runBattleAI
@@ -2369,16 +2393,27 @@ function updateEndlessBattle(dt) {
   }
 
   if (!isCMD) {
-  // --- HERO MOVEMENT (Tank Controls) ---
+  // --- HERO MOVEMENT ---
+  const heroCS = UNIT_COMBAT_STATS[hero.unitId];
 
-  const hullTurnRate = VEHICLE_TURN_RATES.tank.hull;
-  const turretTurnRate = VEHICLE_TURN_RATES.tank.turret;
+  let dx, dy, isMoving;
 
-  // Parse input from keyboard/joystick
-  const { moveInput, turnInput, targetHullAngle } = parseTankInput(b.keys, b.joystickInput, hero.hullAngle);
-
-  // Apply tank movement
-  const { dx, dy, isMoving } = applyTankMovement(hero, moveInput, turnInput, targetHullAngle, hullTurnRate, dtSec);
+  if (isInfantryHero) {
+    // Infantry controls: WASD = absolute cardinal movement, sprite faces mouse
+    const inf = parseInfantryInput(b.keys);
+    dx = inf.dx;
+    dy = inf.dy;
+    isMoving = inf.isMoving;
+    // Hull angle = aim angle (sprite faces mouse, not movement direction)
+  } else {
+    // Vehicle controls: tank-style hull rotation + forward/back
+    const hullTurnRate = VEHICLE_TURN_RATES.tank.hull;
+    const { moveInput, turnInput, targetHullAngle } = parseTankInput(b.keys, b.joystickInput, hero.hullAngle);
+    const result = applyTankMovement(hero, moveInput, turnInput, targetHullAngle, hullTurnRate, dtSec);
+    dx = result.dx;
+    dy = result.dy;
+    isMoving = result.isMoving;
+  }
 
   // Get terrain speed modifier
   const speedMod = getTerrainSpeedMod(b, hero.x, hero.y);
@@ -2386,7 +2421,6 @@ function updateEndlessBattle(dt) {
   // Acceleration/deceleration — per-unit power-to-weight ratio
   const targetSpeed = isMoving ? hero.speed * speedMod : 0;
   if (hero._currentSpeed == null) hero._currentSpeed = 0;
-  const heroCS = UNIT_COMBAT_STATS[hero.unitId];
   const heroAccelRate = targetSpeed >= hero._currentSpeed ? (heroCS?.accel ?? 2.5) : (heroCS?.decel ?? 4.0);
   const heroBlend = 1 - Math.exp(-heroAccelRate * dtSec);
   hero._currentSpeed += (targetSpeed - hero._currentSpeed) * heroBlend;
@@ -2448,8 +2482,15 @@ function updateEndlessBattle(dt) {
     targetAimAngle = calculateAimAngle(hero, b.mouse, b.camera);
   }
 
-  // Apply turret aiming
-  applyTurretAim(hero, targetAimAngle, turretTurnRate, dtSec);
+  if (isInfantryHero) {
+    // Infantry: entire sprite faces the mouse — hull and aim are the same angle
+    hero.angle = targetAimAngle;
+    hero.hullAngle = targetAimAngle;
+  } else {
+    // Vehicle: turret rotates toward mouse independently of hull
+    const turretTurnRate = VEHICLE_TURN_RATES.tank.turret;
+    applyTurretAim(hero, targetAimAngle, turretTurnRate, dtSec);
+  }
 
   // Update aim angle for animation
   if (useCanvasRendering && hero.animId) {
@@ -2625,7 +2666,7 @@ function updateEndlessBattle(dt) {
   const _perfProjStart = performance.now();
   resolveProjectiles(b, now, dtSec, {
     heroRef: hero,
-    heroHitRadiusSq: 625, // ~25px
+    heroHitRadiusSq: (UNIT_COMBAT_STATS[hero.unitId]?.hitRadius || (isInfantryHero ? 12 : 25)) ** 2,
     onEnemyKill(e) {
       Game.endless.kills++;
       Game.endless.score += 100;
@@ -2682,56 +2723,106 @@ function updateEndlessBattle(dt) {
 // WAVE TEMPLATES — Diablo-style composition variety
 // ═══════════════════════════════════════════════════════════════
 
-const WAVE_TEMPLATES = {
-  swarmer_rush: {
-    groups: [
-      { type: 'swarmer', count: [6, 8], delay: 0, cluster: true },
-      { type: 'grunt', count: [2, 3], delay: 2500 }
-    ],
-    minWave: 1
-  },
-  heavy_advance: {
-    groups: [
-      { type: 'heavy', count: [1, 2], delay: 0 },
-      { type: 'grunt', count: [3, 4], delay: 1000 }
-    ],
-    minWave: 3
-  },
-  mixed_assault: {
-    groups: [
-      { type: 'grunt', count: [3, 4], delay: 0 },
-      { type: 'swarmer', count: [3, 5], delay: 1500, cluster: true },
-      { type: 'heavy', count: [1, 1], delay: 3000 }
-    ],
-    minWave: 2
-  },
-  elite_strike: {
-    groups: [
-      { type: 'swarmer', count: [4, 6], delay: 0, cluster: true },
-      { type: 'grunt', count: [2, 2], delay: 1000 },
-      { type: 'elite', count: [1, 1], delay: 2000 }
-    ],
-    minWave: 5
-  },
-  swarm: {
-    groups: [
-      { type: 'swarmer', count: [10, 15], delay: 0, cluster: true }
-    ],
-    minWave: 1
-  }
+// ═══════════════════════════════════════════════════════════════
+// WAVE POWER BUDGET — Replaces fixed templates with budget-based spawning
+// Each wave has a power budget. Commander spends it on enemy units.
+// Unit availability is wave-gated to prevent tanks appearing too early.
+// ═══════════════════════════════════════════════════════════════
+
+const ENEMY_POWER_COSTS = [
+  { type: 'swarmer', cost: 1, minWave: 1, weight: 3, maxPct: 1.0 },
+  { type: 'grunt',   cost: 2, minWave: 1, weight: 5, maxPct: 1.0 },
+  { type: 'heavy',   cost: 5, minWave: 3, weight: 2, maxPct: 0.3 },  // Max 30% of budget on heavies
+  { type: 'scout',   cost: 3, minWave: 4, weight: 2, maxPct: 0.4 },
+  { type: 'elite',   cost: 8, minWave: 6, weight: 1, maxPct: 0.25 }  // Max 25% of budget on elites
+];
+
+/**
+ * Calculate wave power rating — determines enemy budget and loot scaling.
+ * Slow start (infantry-friendly), accelerates at higher waves.
+ * Wave 1: 6, Wave 5: 18, Wave 10: 39, Wave 20: 104, Wave 30: 199
+ */
+function getWavePower(wave) {
+  return WAVE_POWER_CURVE.base + wave * WAVE_POWER_CURVE.linear + Math.floor(wave * wave * WAVE_POWER_CURVE.quadratic);
+}
+
+// Tunable wave power curve — adjust via playtesting
+const WAVE_POWER_CURVE = {
+  base: 4,          // Starting power offset
+  linear: 2,        // Power per wave (early ramp)
+  quadratic: 0.15   // Acceleration at higher waves
 };
 
-// Pick 1-2 templates for a wave based on wave number
-function pickWaveTemplates(wave, sizeMult) {
-  const eligible = Object.entries(WAVE_TEMPLATES)
-    .filter(([, t]) => wave >= t.minWave);
+/**
+ * Spend a power budget on enemy units. Picks randomly from available types
+ * weighted by preference, respecting wave-gated availability and per-type caps.
+ * @param {number} budget - Raw power budget
+ * @param {number} wave - Current wave number
+ * @param {number} sizeMult - Map size multiplier
+ * @param {boolean} playerHasVehicle - Whether player deployed with a vehicle
+ * Returns array of { type, delay } definitions (not spawned yet).
+ */
+function spendPowerBudget(budget, wave, sizeMult, playerHasVehicle) {
+  const available = ENEMY_POWER_COSTS.filter(e => wave >= e.minWave);
+  if (available.length === 0) return [{ type: 'grunt', delay: 0 }];
 
-  if (eligible.length === 0) return [WAVE_TEMPLATES.swarmer_rush];
+  const totalBudget = Math.round(budget * sizeMult);
+  const units = [];
+  let remaining = totalBudget;
 
-  // Shuffle and pick 1-2
-  const shuffled = eligible.sort(() => Math.random() - 0.5);
-  const count = wave >= 4 ? 2 : 1;
-  return shuffled.slice(0, count).map(([, t]) => t);
+  // Track spend per type for cap enforcement
+  const typeSpend = {};
+  for (const e of available) typeSpend[e.type] = 0;
+
+  // If player has no vehicle, reduce weight of armored enemies significantly
+  // They can still appear but rarely — keeps pressure infantry-focused
+  const adjustedAvailable = available.map(e => {
+    let w = e.weight;
+    if (!playerHasVehicle && (e.type === 'heavy' || e.type === 'elite')) {
+      w = Math.max(0.3, w * 0.2); // 80% less likely without player vehicles
+    }
+    return { ...e, weight: w };
+  });
+
+  while (remaining > 0) {
+    // Filter to affordable units within their budget cap
+    const affordable = adjustedAvailable.filter(e => {
+      if (e.cost > remaining) return false;
+      // Check per-type cap: this type can't exceed maxPct of total budget
+      if (typeSpend[e.type] + e.cost > totalBudget * e.maxPct) return false;
+      return true;
+    });
+    if (affordable.length === 0) {
+      // All capped — spend remainder on cheapest uncapped type
+      const fallback = adjustedAvailable.filter(e => e.cost <= remaining);
+      if (fallback.length === 0) break;
+      const cheapest = fallback.reduce((a, b) => a.cost < b.cost ? a : b);
+      units.push({ type: cheapest.type, delay: 0 });
+      remaining -= cheapest.cost;
+      continue;
+    }
+
+    // Weighted random pick
+    const affWeight = affordable.reduce((s, e) => s + e.weight, 0);
+    let roll = Math.random() * affWeight;
+    let picked = affordable[0];
+    for (const entry of affordable) {
+      roll -= entry.weight;
+      if (roll <= 0) { picked = entry; break; }
+    }
+
+    // Stagger spawns: first 60% of budget spawns immediately, rest delayed
+    const spentSoFar = totalBudget - remaining;
+    const delay = spentSoFar > totalBudget * 0.6
+      ? 2000 + Math.random() * 3000
+      : 0;
+
+    units.push({ type: picked.type, delay });
+    typeSpend[picked.type] += picked.cost;
+    remaining -= picked.cost;
+  }
+
+  return units;
 }
 
 // Create a single enemy from definition
@@ -2795,31 +2886,25 @@ function createEndlessEnemy(b, enemyType, spawnX, spawnY, wave, sizeMult, index)
   return enemy;
 }
 
-// Build the wave budget — list of unit definitions from templates (not yet spawned)
+// Build the wave budget — spend power points on enemy units
 function buildWaveBudget(b, wave, sizeMult) {
-  const templates = pickWaveTemplates(wave, sizeMult);
-  const budget = [];
+  const wavePower = getWavePower(wave);
+  const enemyBudget = wavePower * 1.2;
+  // Check if player has a vehicle (hero is a vehicle type, not infantry)
+  const heroUnitId = b.hero?.unitId || 'infantry';
+  const playerHasVehicle = heroUnitId !== 'infantry' && heroUnitId !== 'medic' && heroUnitId !== 'specops';
+  const units = spendPowerBudget(enemyBudget, wave, sizeMult, playerHasVehicle);
 
-  for (const template of templates) {
-    for (const group of template.groups) {
-      const count = group.count[0] + Math.floor(Math.random() * (group.count[1] - group.count[0] + 1));
-      // Wave scaling: +10% more enemies per wave (asymptotic, caps at +100%)
-      const waveMult = 1 + Math.min(1.0, (wave - 1) * 0.1);
-      const scaledCount = Math.round(count * sizeMult * waveMult);
-
-      for (let i = 0; i < scaledCount; i++) {
-        const enemyDef = ENEMIES.find(e => e.id === group.type) || ENEMIES.find(e => e.id === 'grunt');
-        budget.push({
-          type: group.type,
-          unitId: enemyDef.unitId || 'infantry',
-          delay: group.delay || 0,
-          cluster: group.cluster || false
-        });
-      }
-    }
-  }
-
-  return budget;
+  // Convert to the format expected by spawnEndlessWave
+  return units.map(u => {
+    const enemyDef = ENEMIES.find(e => e.id === u.type) || ENEMIES.find(e => e.id === 'grunt');
+    return {
+      type: u.type,
+      unitId: enemyDef.unitId || 'infantry',
+      delay: u.delay,
+      cluster: false
+    };
+  });
 }
 
 // Spawn enemies for endless wave using commander planning system

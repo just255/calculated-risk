@@ -17,8 +17,12 @@ const ACCESS_PASSWORD = 'simmons1986';
 // JSON body parsing for API
 app.use(express.json({ limit: '50mb' }));
 
-// Disable caching for JS files during development
+// Disable caching for JS files and service worker during development
 app.use('/js', (req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
+app.get('/sw.js', (req, res, next) => {
   res.set('Cache-Control', 'no-store');
   next();
 });

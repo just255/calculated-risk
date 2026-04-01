@@ -625,7 +625,7 @@ export const UNIT_PROJECTILES = {
 // viewRange (pixels): how far the crew can see (independent of fire range)
 // viewCone (degrees): forward vision cone angle (peripheral/rear zones computed from this)
 // Game version — single source of truth. Build number tracks iteration.
-export const GAME_VERSION = { major: 0, minor: 7, build: 149 };
+export const GAME_VERSION = { major: 0, minor: 8, build: 169 };
 export const GAME_VERSION_STRING = `${GAME_VERSION.major}.${GAME_VERSION.minor}.${GAME_VERSION.build}`;
 
 // Default max spread angle (degrees) — per-unit override via maxSpreadDeg in UNIT_COMBAT_STATS
@@ -644,18 +644,19 @@ export const UNIT_COMBAT_STATS = {
   // fireSignature: how visible when firing (muzzle flash, smoke). Replaces generic 1.5 hardcode.
   // proneSignature: visibility when prone/stationary in cover (infantry only). Lower = harder to spot.
   // hp/damage/fireRate: single source of truth for combat stats. All systems (deploy, fire range, roster) read from here.
-  infantry:  { hp: 180, damage: 6,  fireRate: 600,  range: 400, speed: 50,  accel: 2.5, decel: 4.0,  isAir: false, viewRange: 550, viewCone: 140, hullRate: 1080, turretRate: 720,  turretAccel: 3600, fireTolerance: 15, turretArc: 360, zeroIn: 2.5, baseAccuracy: 0.82, blastRadius: 0,  moveSignature: 1.1, fireSignature: 1.3, proneSignature: 0.4, turretPivot: { x: 0, y: 0 },  hullParts: ['boots', 'legs'],            turretParts: ['body', 'helmet', 'weapon'] },
-  medic:     { hp: 160, damage: 5,  fireRate: 750,  range: 300, speed: 45,  accel: 2.5, decel: 4.0,  isAir: false, viewRange: 450, viewCone: 150, hullRate: 1080, turretRate: 720,  turretAccel: 3600, fireTolerance: 15, turretArc: 360, zeroIn: 2.8, baseAccuracy: 0.75, blastRadius: 0,  moveSignature: 1.1, fireSignature: 1.3, proneSignature: 0.4, turretPivot: { x: 0, y: 0 },  hullParts: ['boots', 'legs'],            turretParts: ['body', 'helmet', 'weapon'] },
-  specops:   { hp: 150, damage: 12, fireRate: 700,  range: 500, speed: 55,  accel: 3.0, decel: 4.5,  isAir: false, viewRange: 800, viewCone: 130, hullRate: 1080, turretRate: 720,  turretAccel: 3600, fireTolerance: 15, turretArc: 360, zeroIn: 2.0, baseAccuracy: 0.90, blastRadius: 0,  moveSignature: 1.0, fireSignature: 1.2, proneSignature: 0.3, turretPivot: { x: 0, y: 0 },  hullParts: ['boots', 'legs'],            turretParts: ['body', 'helmet', 'weapon'] },
-  stinger:   { hp: 170, damage: 25, fireRate: 2000, range: 550, speed: 45,  accel: 2.5, decel: 4.0,  isAir: false, viewRange: 600, viewCone: 140, hullRate: 1080, turretRate: 720,  turretAccel: 3600, fireTolerance: 15, turretArc: 360, zeroIn: 3.0, baseAccuracy: 0.80, blastRadius: 0,  moveSignature: 1.1, fireSignature: 1.5, proneSignature: 0.4, turretPivot: { x: 0, y: 0 },  hullParts: ['boots', 'legs'],            turretParts: ['body', 'helmet', 'weapon'] },
-  jeep:      { hp: 240, damage: 8,  fireRate: 400,  range: 450, speed: 120, accel: 5.0, decel: 3.5,  isAir: false, viewRange: 700, viewCone: 120, hullRate: 180,  turretRate: 360,  turretAccel: 1200, fireTolerance: 10, turretArc: 360, zeroIn: 3.5, baseAccuracy: 0.72, blastRadius: 0,  moveSignature: 1.4, fireSignature: 1.4, proneSignature: 0.8, turretPivot: { x: 0, y: 2 },  hullParts: ['wheels', 'body', 'hood', 'seats', 'spare', 'detail'], turretParts: ['weapon'] },
-  humvee:    { hp: 300, damage: 10, fireRate: 350,  range: 500, speed: 100, accel: 4.0, decel: 3.5,  isAir: false, viewRange: 700, viewCone: 130, hullRate: 180,  turretRate: 360,  turretAccel: 1200, fireTolerance: 10, turretArc: 360, zeroIn: 3.2, baseAccuracy: 0.78, blastRadius: 8,  moveSignature: 1.4, fireSignature: 1.5, proneSignature: 0.8, turretPivot: { x: 0, y: -2 }, hullParts: ['wheels', 'body', 'hood', 'roof', 'detail'],           turretParts: ['turret', 'gun'] },
-  sherman:   { hp: 450, damage: 30, fireRate: 1500, range: 550, speed: 60,  accel: 2.0, decel: 3.5,  isAir: false, viewRange: 750, viewCone: 100, hullRate: 90,   turretRate: 270,  turretAccel: 540,  fireTolerance: 5,  turretArc: 360, zeroIn: 3.0, baseAccuracy: 0.85, blastRadius: 25, moveSignature: 1.6, fireSignature: 1.8, proneSignature: 0.9, turretPivot: { x: 0, y: 2 },  hullParts: ['tracks', 'hull'],           turretParts: ['turret', 'gun', 'hatches'] },
-  tiger:     { hp: 600, damage: 45, fireRate: 2000, range: 600, speed: 50,  accel: 1.5, decel: 3.0,  isAir: false, viewRange: 800, viewCone: 100, hullRate: 60,   turretRate: 180,  turretAccel: 360,  fireTolerance: 5,  turretArc: 360, zeroIn: 2.5, baseAccuracy: 0.88, blastRadius: 30, moveSignature: 1.7, fireSignature: 1.9, proneSignature: 0.9, turretPivot: { x: 0, y: 2 },  hullParts: ['tracks', 'hull'],           turretParts: ['turret', 'gun', 'hatches'] },
-  abrams:    { hp: 750, damage: 60, fireRate: 1800, range: 700, speed: 55,  accel: 3.0, decel: 4.0,  isAir: false, viewRange: 850, viewCone: 110, hullRate: 108,  turretRate: 270,  turretAccel: 720,  fireTolerance: 5,  turretArc: 360, zeroIn: 2.0, baseAccuracy: 0.92, blastRadius: 35, moveSignature: 1.8, fireSignature: 2.0, proneSignature: 0.9, turretPivot: { x: 0, y: 1 },  hullParts: ['tracks', 'hull'],           turretParts: ['turret', 'gun', 'hatches'] },
-  howitzer:  { hp: 240, damage: 80, fireRate: 3000, range: 900, speed: 30,  accel: 1.2, decel: 2.5,  isAir: false, viewRange: 400, viewCone: 140, hullRate: 45,   turretRate: 120,  turretAccel: 240,  fireTolerance: 3,  turretArc: 360, zeroIn: 4.0, baseAccuracy: 0.70, blastRadius: 50, moveSignature: 1.5, fireSignature: 2.2, proneSignature: 0.9, turretPivot: { x: 0, y: 3 },  hullParts: ['tracks', 'hull'],           turretParts: ['turret', 'gun'] },
-  drone:     { hp: 200, damage: 15, fireRate: 800,  range: 500, speed: 120, accel: 6.0, decel: 6.0,  isAir: true,  viewRange: 900, viewCone: 160, hullRate: 360,  turretRate: 360,  turretAccel: 1800, fireTolerance: 10, turretArc: 360, zeroIn: 1.5, baseAccuracy: 0.80, moveSignature: 1.2, fireSignature: 1.3, proneSignature: 1.0, turretPivot: { x: 0, y: 0 },  hullParts: [],                           turretParts: [] },
-  apache:    { hp: 360, damage: 35, fireRate: 1000, range: 700, speed: 130, accel: 4.0, decel: 5.0,  isAir: true,  viewRange: 900, viewCone: 160, hullRate: 270,  turretRate: 360,  turretAccel: 1440, fireTolerance: 10, turretArc: 360, zeroIn: 1.8, baseAccuracy: 0.85, moveSignature: 1.5, fireSignature: 1.6, proneSignature: 1.0, turretPivot: { x: 0, y: 0 },  hullParts: [],                           turretParts: [] }
+  // hitRadius: projectile collision radius in pixels. Infantry ~10px, vehicles ~18px, tanks ~25px.
+  infantry:  { hp: 180, damage: 6,  fireRate: 600,  range: 400, speed: 50,  accel: 2.5, decel: 4.0,  isAir: false, hitRadius: 10, viewRange: 550, viewCone: 140, hullRate: 1080, turretRate: 720,  turretAccel: 3600, fireTolerance: 15, turretArc: 360, zeroIn: 2.5, baseAccuracy: 0.82, blastRadius: 0,  moveSignature: 1.1, fireSignature: 1.3, proneSignature: 0.4, topDownSprite: '/sprites/units/infantry/soldier.png', turretPivot: { x: 0, y: 0 },  hullParts: ['boots', 'legs'],            turretParts: ['body', 'helmet', 'weapon'] },
+  medic:     { hp: 160, damage: 5,  fireRate: 750,  range: 300, speed: 45,  accel: 2.5, decel: 4.0,  isAir: false, hitRadius: 10, viewRange: 450, viewCone: 150, hullRate: 1080, turretRate: 720,  turretAccel: 3600, fireTolerance: 15, turretArc: 360, zeroIn: 2.8, baseAccuracy: 0.75, blastRadius: 0,  moveSignature: 1.1, fireSignature: 1.3, proneSignature: 0.4, turretPivot: { x: 0, y: 0 },  hullParts: ['boots', 'legs'],            turretParts: ['body', 'helmet', 'weapon'] },
+  specops:   { hp: 150, damage: 12, fireRate: 700,  range: 500, speed: 55,  accel: 3.0, decel: 4.5,  isAir: false, hitRadius: 10, viewRange: 800, viewCone: 130, hullRate: 1080, turretRate: 720,  turretAccel: 3600, fireTolerance: 15, turretArc: 360, zeroIn: 2.0, baseAccuracy: 0.90, blastRadius: 0,  moveSignature: 1.0, fireSignature: 1.2, proneSignature: 0.3, turretPivot: { x: 0, y: 0 },  hullParts: ['boots', 'legs'],            turretParts: ['body', 'helmet', 'weapon'] },
+  stinger:   { hp: 170, damage: 25, fireRate: 2000, range: 550, speed: 45,  accel: 2.5, decel: 4.0,  isAir: false, hitRadius: 10, viewRange: 600, viewCone: 140, hullRate: 1080, turretRate: 720,  turretAccel: 3600, fireTolerance: 15, turretArc: 360, zeroIn: 3.0, baseAccuracy: 0.80, blastRadius: 0,  moveSignature: 1.1, fireSignature: 1.5, proneSignature: 0.4, turretPivot: { x: 0, y: 0 },  hullParts: ['boots', 'legs'],            turretParts: ['body', 'helmet', 'weapon'] },
+  jeep:      { hp: 240, damage: 8,  fireRate: 400,  range: 450, speed: 120, accel: 5.0, decel: 3.5,  isAir: false, hitRadius: 18, viewRange: 700, viewCone: 120, hullRate: 180,  turretRate: 360,  turretAccel: 1200, fireTolerance: 10, turretArc: 360, zeroIn: 3.5, baseAccuracy: 0.72, blastRadius: 0,  moveSignature: 1.4, fireSignature: 1.4, proneSignature: 0.8, turretPivot: { x: 0, y: 2 },  hullParts: ['wheels', 'body', 'hood', 'seats', 'spare', 'detail'], turretParts: ['weapon'] },
+  humvee:    { hp: 300, damage: 10, fireRate: 350,  range: 500, speed: 100, accel: 4.0, decel: 3.5,  isAir: false, hitRadius: 18, viewRange: 700, viewCone: 130, hullRate: 180,  turretRate: 360,  turretAccel: 1200, fireTolerance: 10, turretArc: 360, zeroIn: 3.2, baseAccuracy: 0.78, blastRadius: 8,  moveSignature: 1.4, fireSignature: 1.5, proneSignature: 0.8, turretPivot: { x: 0, y: -2 }, hullParts: ['wheels', 'body', 'hood', 'roof', 'detail'],           turretParts: ['turret', 'gun'] },
+  sherman:   { hp: 450, damage: 30, fireRate: 1500, range: 550, speed: 60,  accel: 2.0, decel: 3.5,  isAir: false, hitRadius: 22, viewRange: 750, viewCone: 100, hullRate: 90,   turretRate: 270,  turretAccel: 540,  fireTolerance: 5,  turretArc: 360, zeroIn: 3.0, baseAccuracy: 0.85, blastRadius: 25, moveSignature: 1.6, fireSignature: 1.8, proneSignature: 0.9, turretPivot: { x: 0, y: 2 },  hullParts: ['tracks', 'hull'],           turretParts: ['turret', 'gun', 'hatches'] },
+  tiger:     { hp: 600, damage: 45, fireRate: 2000, range: 600, speed: 50,  accel: 1.5, decel: 3.0,  isAir: false, hitRadius: 25, viewRange: 800, viewCone: 100, hullRate: 60,   turretRate: 180,  turretAccel: 360,  fireTolerance: 5,  turretArc: 360, zeroIn: 2.5, baseAccuracy: 0.88, blastRadius: 30, moveSignature: 1.7, fireSignature: 1.9, proneSignature: 0.9, turretPivot: { x: 0, y: 2 },  hullParts: ['tracks', 'hull'],           turretParts: ['turret', 'gun', 'hatches'] },
+  abrams:    { hp: 750, damage: 60, fireRate: 1800, range: 700, speed: 55,  accel: 3.0, decel: 4.0,  isAir: false, hitRadius: 25, viewRange: 850, viewCone: 110, hullRate: 108,  turretRate: 270,  turretAccel: 720,  fireTolerance: 5,  turretArc: 360, zeroIn: 2.0, baseAccuracy: 0.92, blastRadius: 35, moveSignature: 1.8, fireSignature: 2.0, proneSignature: 0.9, turretPivot: { x: 0, y: 1 },  hullParts: ['tracks', 'hull'],           turretParts: ['turret', 'gun', 'hatches'] },
+  howitzer:  { hp: 240, damage: 80, fireRate: 3000, range: 900, speed: 30,  accel: 1.2, decel: 2.5,  isAir: false, hitRadius: 22, viewRange: 400, viewCone: 140, hullRate: 45,   turretRate: 120,  turretAccel: 240,  fireTolerance: 3,  turretArc: 360, zeroIn: 4.0, baseAccuracy: 0.70, blastRadius: 50, moveSignature: 1.5, fireSignature: 2.2, proneSignature: 0.9, turretPivot: { x: 0, y: 3 },  hullParts: ['tracks', 'hull'],           turretParts: ['turret', 'gun'] },
+  drone:     { hp: 200, damage: 15, fireRate: 800,  range: 500, speed: 120, accel: 6.0, decel: 6.0,  isAir: true,  hitRadius: 12, viewRange: 900, viewCone: 160, hullRate: 360,  turretRate: 360,  turretAccel: 1800, fireTolerance: 10, turretArc: 360, zeroIn: 1.5, baseAccuracy: 0.80, moveSignature: 1.2, fireSignature: 1.3, proneSignature: 1.0, turretPivot: { x: 0, y: 0 },  hullParts: [],                           turretParts: [] },
+  apache:    { hp: 360, damage: 35, fireRate: 1000, range: 700, speed: 130, accel: 4.0, decel: 5.0,  isAir: true,  hitRadius: 18, viewRange: 900, viewCone: 160, hullRate: 270,  turretRate: 360,  turretAccel: 1440, fireTolerance: 10, turretArc: 360, zeroIn: 1.8, baseAccuracy: 0.85, moveSignature: 1.5, fireSignature: 1.6, proneSignature: 1.0, turretPivot: { x: 0, y: 0 },  hullParts: [],                           turretParts: [] }
 };
 
 // Unit descriptions for details panel
@@ -1553,6 +1554,7 @@ export const SHADOW_CONFIG = {
 
 export const VEHICLE_CATEGORIES = [
   { id: 'all', name: 'All', icon: '★' },
+  { id: 'infantry', name: 'Infantry', icon: '🪖' },
   { id: 'wwii', name: 'WWII', icon: '⭐' },
   { id: 'modern', name: 'Modern', icon: '🛡️' },
   { id: 'recon', name: 'Recon', icon: '👁️' },
@@ -1561,6 +1563,18 @@ export const VEHICLE_CATEGORIES = [
 ];
 
 export const ENDLESS_VEHICLES = [
+  // Infantry (deploy as a soldier)
+  { id: 'infantry', name: 'Rifleman', icon: '🪖', category: 'infantry',
+    desc: 'Standard soldier. Start here, build your army.',
+    stats: { dmg: 6, spd: 5, arm: 5 },
+    variants: [],
+    unlocked: true },
+  { id: 'specops', name: 'Spec Ops', icon: '🎯', category: 'infantry',
+    desc: 'Elite marksman. Longer range, higher accuracy.',
+    stats: { dmg: 12, spd: 6, arm: 5 },
+    variants: [],
+    unlocked: false, unlockReq: 'Reach wave 5 as infantry' },
+
   // WWII Era
   { id: 'sherman', name: 'M4 Sherman', icon: '⭐', category: 'wwii',
     desc: 'WWII workhorse. Balanced all-rounder.',

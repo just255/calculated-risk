@@ -7913,6 +7913,7 @@
       gap: 12px;
       flex: 1;
       min-height: 0; /* Allow shrinking */
+      overflow: hidden; /* Contain inner scrolling to prevent parent overflow */
     }
 
     .asset-selection > * {
@@ -7926,6 +7927,7 @@
       gap: 8px;
       min-height: 0;
       overflow: hidden;
+      flex: 1;
     }
 
     /* Category Tabs */

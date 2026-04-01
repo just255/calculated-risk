@@ -1532,17 +1532,15 @@ export function newEndlessBattle(loadout, wave = 1) {
   const heroX = mapWidth / 2;
   const heroY = wave === 1 ? mapHeight + stageDepth / 2 : mapHeight - CELL_SIZE * 3;
 
-  // Get vehicle stats from loadout
-  const vehicleId = loadout?.vehicle || 'abrams';
-  const vehicleDef = UNITS.find(u => u.id === vehicleId);
-
-  // Default hero stats (heavy tank feel — slow, powerful)
+  // Get hero unit stats from loadout — supports both vehicles and infantry
+  const vehicleId = loadout?.vehicle || 'infantry';
+  const combatStats = UNIT_COMBAT_STATS[vehicleId];
   const heroStats = {
     id: vehicleId,
-    hp: vehicleDef?.hp || 200,
-    speed: 70,         // Slow tank: positioning matters
-    damage: vehicleDef?.damage || 40,
-    fireRate: 3000     // Deliberate shots: every hit counts
+    hp: combatStats?.hp || 180,
+    speed: combatStats?.speed || 50,
+    damage: combatStats?.damage || 6,
+    fireRate: combatStats?.fireRate || 600
   };
 
   // Generate PCG terrain if images are preloaded

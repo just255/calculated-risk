@@ -2,7 +2,7 @@
 // UI - HTML rendering functions
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, UnitType, UNITS, ENEMIES, UNIT_COSTS, H2H_BUDGET, VEHICLE_UNITS, TYPE_CHART, UNIT_PROJECTILES, PROJECTILES, UNIT_DESCRIPTIONS, CAMPAIGN_ERAS, CAMPAIGN_MOS, SquadOrder, TargetPriority, Formation, VEHICLE_CATEGORIES, ENDLESS_VEHICLES, PART_CATEGORY_CONFIG, SYSTEM_DEFINITIONS, UNIT_PART_SLOTS, UNIT_TYPE_MAP, Team, RANK_NAMES, INSIGNIA_SHAPE_TYPES, RANK_TABLE, HEROIC_ACTIONS, GAME_VERSION_STRING } from './constants.js';
+import { State, SubState, HQTab, UnitType, UNITS, ENEMIES, UNIT_COSTS, H2H_BUDGET, VEHICLE_UNITS, TYPE_CHART, UNIT_PROJECTILES, PROJECTILES, UNIT_DESCRIPTIONS, CAMPAIGN_ERAS, CAMPAIGN_MOS, SquadOrder, TargetPriority, Formation, VEHICLE_CATEGORIES, ENDLESS_VEHICLES, PART_CATEGORY_CONFIG, SYSTEM_DEFINITIONS, UNIT_PART_SLOTS, UNIT_TYPE_MAP, Team, RANK_NAMES, INSIGNIA_SHAPE_TYPES, RANK_TABLE, HEROIC_ACTIONS, GAME_VERSION_STRING, UNIT_COMBAT_STATS } from './constants.js';
 import { Game } from './state.js';
 import { save } from './storage.js';
 import { getSkinSelectorData, setSkinPref, clearCache as clearSkinCache, loadVariantData, getCachedVariant } from './skins.js';
@@ -4349,6 +4349,39 @@ function campaignResultHTML() {
  * @param {HTMLCanvasElement} canvas - Target canvas (defaults to .unit-preview-canvas)
  * @returns {Promise<boolean>} - True if rendered successfully
  */
+/**
+ * Render an SVG string to a canvas element. Handles missing xmlns, async image load,
+ * and DOM re-renders during load. Reusable for any SVG-to-canvas preview.
+ * @param {string} svgStr - Raw SVG markup
+ * @param {string} canvasSelector - CSS selector for the target canvas
+ * @param {string} [fallbackSelector] - CSS selector for fallback element to hide on success
+ */
+function renderSvgToCanvas(svgStr, canvasSelector, fallbackSelector) {
+  let svg = svgStr;
+  if (!svg.includes('xmlns=')) {
+    svg = svg.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ');
+  }
+  const img = new Image();
+  img.onload = () => {
+    const c = document.querySelector(canvasSelector);
+    if (!c) return;
+    const ctx = c.getContext('2d');
+    ctx.clearRect(0, 0, c.width, c.height);
+    // Draw SVG small in center — same scale as sprite renderer so CSS zoom/pan works
+    const drawSize = c.width * 0.15; // ~150px in a 1024 canvas, matches sprite render size
+    const ox = (c.width - drawSize) / 2;
+    const oy = (c.height - drawSize) / 2;
+    ctx.drawImage(img, ox, oy, drawSize, drawSize);
+    c.style.display = 'block';
+    if (fallbackSelector) {
+      const fb = document.querySelector(fallbackSelector);
+      if (fb) fb.style.display = 'none';
+    }
+  };
+  img.onerror = (e) => console.warn('[renderSvgToCanvas] Failed:', e);
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+}
+
 export async function renderUnitPreview(unitId, variantName = 'default', options = {}, canvas = null) {
   canvas = canvas || document.querySelector('.unit-preview-canvas');
   const fallback = document.querySelector('.unit-preview-fallback');
@@ -4363,6 +4396,36 @@ export async function renderUnitPreview(unitId, variantName = 'default', options
     let variantData = await loadVariant(unitId, variantName);
 
     if (!variantData) {
+      // No sprite variant — try PNG sprite from UNIT_COMBAT_STATS, then SVG fallback
+      const pngSrc = UNIT_COMBAT_STATS[unitId]?.topDownSprite;
+      if (pngSrc) {
+        const pngImg = new Image();
+        pngImg.onload = () => {
+          const c = document.querySelector('.unit-preview-canvas');
+          const fb = document.querySelector('.unit-preview-fallback');
+          if (!c) return;
+          const ctx = c.getContext('2d');
+          ctx.clearRect(0, 0, c.width, c.height);
+          // Maintain aspect ratio within preview area
+          const maxSize = c.width * 0.15;
+          const aspect = pngImg.naturalWidth / pngImg.naturalHeight || 1;
+          let drawW, drawH;
+          if (aspect > 1) { drawW = maxSize; drawH = maxSize / aspect; }
+          else { drawH = maxSize; drawW = maxSize * aspect; }
+          const ox = (c.width - drawW) / 2;
+          const oy = (c.height - drawH) / 2;
+          ctx.drawImage(pngImg, ox, oy, drawW, drawH);
+          c.style.display = 'block';
+          if (fb) fb.style.display = 'none';
+        };
+        pngImg.src = pngSrc;
+        return true;
+      }
+      const unitDef = UNITS.find(u => u.id === unitId);
+      if (unitDef?.svg) {
+        renderSvgToCanvas(unitDef.svg, '.unit-preview-canvas', '.unit-preview-fallback');
+        return true;
+      }
       canvas.style.display = 'none';
       if (fallback) fallback.style.display = 'block';
       return false;
@@ -4448,6 +4511,9 @@ function endlessLoadoutHTML() {
   const apiVariants = selectedVehicle ? getUnitVariants(selectedVehicle.id) : [];
   const availableVariants = apiVariants.length > 0 ? apiVariants : [];
   const hasVariants = availableVariants.length > 0;
+  // Units without sprite variants can still render their SVG in the preview canvas
+  const unitDef = selectedVehicle ? UNITS.find(u => u.id === selectedVehicle.id) : null;
+  const hasSvgPreview = !hasVariants && unitDef?.svg;
   // Prefer 'default' variant if available
   const defaultVariant = availableVariants.includes('default') ? 'default' : availableVariants[0];
   const currentVariant = e.loadout.variant || defaultVariant || null;
@@ -4567,25 +4633,27 @@ function endlessLoadoutHTML() {
             ${selectedVehicle ? `
               <div class="unit-card-horizontal">
                 <!-- Left: Large Tank Preview -->
-                <div class="unit-preview-large ${!hasVariants ? 'icon-only' : ''}">
-                  ${hasVariants ? `
-                    <canvas class="unit-preview-canvas" data-unit="${selectedVehicle.id}" data-variant="${currentVariant}" width="1024" height="1024" style="transform: scale(${(e.previewScale || 5) / 5}) translate(${e.previewPanX || 0}%, ${e.previewPanY || 8}%)"></canvas>
-                    <div class="preview-zoom-controls">
-                      <button class="ctrl-btn" data-action="preview-zoom" data-dir="out">−</button>
-                      <span class="zoom-level">${e.previewScale || 5}×</span>
-                      <button class="ctrl-btn" data-action="preview-zoom" data-dir="in">+</button>
-                    </div>
-                    <div class="preview-pan-controls">
-                      <button class="ctrl-btn" data-action="preview-pan" data-dir="up">▲</button>
-                      <div class="pan-btn-row">
-                        <button class="ctrl-btn" data-action="preview-pan" data-dir="left">◀</button>
-                        <button class="ctrl-btn" data-action="preview-pan" data-dir="reset">⟲</button>
-                        <button class="ctrl-btn" data-action="preview-pan" data-dir="right">▶</button>
+                <div class="unit-preview-large ${!hasVariants && !hasSvgPreview ? 'icon-only' : ''}">
+                  ${hasVariants || hasSvgPreview ? `
+                    <canvas class="unit-preview-canvas" data-unit="${selectedVehicle.id}" data-variant="${currentVariant || ''}" width="1024" height="1024" style="transform: scale(${(e.previewScale || 5) / 5}) translate(${e.previewPanX || 0}%, ${e.previewPanY || 8}%)"></canvas>
+                    ${hasVariants ? `
+                      <div class="preview-zoom-controls">
+                        <button class="ctrl-btn" data-action="preview-zoom" data-dir="out">−</button>
+                        <span class="zoom-level">${e.previewScale || 5}×</span>
+                        <button class="ctrl-btn" data-action="preview-zoom" data-dir="in">+</button>
                       </div>
-                      <button class="ctrl-btn" data-action="preview-pan" data-dir="down">▼</button>
-                    </div>
+                      <div class="preview-pan-controls">
+                        <button class="ctrl-btn" data-action="preview-pan" data-dir="up">▲</button>
+                        <div class="pan-btn-row">
+                          <button class="ctrl-btn" data-action="preview-pan" data-dir="left">◀</button>
+                          <button class="ctrl-btn" data-action="preview-pan" data-dir="reset">⟲</button>
+                          <button class="ctrl-btn" data-action="preview-pan" data-dir="right">▶</button>
+                        </div>
+                        <button class="ctrl-btn" data-action="preview-pan" data-dir="down">▼</button>
+                      </div>
+                    ` : ''}
                   ` : ''}
-                  <div class="unit-preview-fallback" style="${hasVariants ? 'display:none' : ''}">${selectedVehicle.icon}</div>
+                  <div class="unit-preview-fallback" style="${hasVariants || hasSvgPreview ? 'display:none' : ''}">${selectedVehicle.icon}</div>
                 </div>
 
                 <!-- Right: Info Stack -->
