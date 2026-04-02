@@ -13,7 +13,7 @@ import { ReplayPlayer } from './replay-player.js';
 import { cameraKeyDown, cameraKeyUp, cameraZoom, cameraPanStart, cameraPanMove, cameraPanEnd } from './camera.js';
 import { initController, getControllerInput, updateButtonStates, setControllerCallbacks, isControllerConnected } from './controller.js';
 import { initGestures, setResetJoysticksCallback } from './gestures.js';
-import { generateRecruit, saveRoster } from './roster.js';
+import { generateRecruit, saveRoster, createSoldier } from './roster.js';
 import { Objective, assignObjective } from './commander.js';
 import { PERSONALITY_PRESETS } from './ai-pipeline.js';
 import { EntityRenderer } from './entity-renderer.js';
@@ -549,13 +549,64 @@ document.getElementById('app').addEventListener('click', e => {
       const totalCost = wounded.length * costPer;
       if (wounded.length > 0 && Game.resources.scrap >= totalCost) {
         Game.resources.scrap -= totalCost;
-        for (const s of wounded) {
-          s.status = 'active';
-          s.hpPercent = 1.0;
+        for (const s of wounded) { s.status = 'active'; s.hpPercent = 1.0; }
+        saveRoster(); save(); render();
+      }
+    }
+    else if (a === 'hq-toggle-soldier') {
+      const soldierId = action.dataset.soldier;
+      if (!Game.hqSelectedSoldiers) Game.hqSelectedSoldiers = [];
+      const idx = Game.hqSelectedSoldiers.indexOf(soldierId);
+      if (idx >= 0) {
+        Game.hqSelectedSoldiers.splice(idx, 1);
+      } else {
+        // Max 2 selected for comparison
+        if (Game.hqSelectedSoldiers.length >= 2) Game.hqSelectedSoldiers.shift();
+        Game.hqSelectedSoldiers.push(soldierId);
+      }
+      render();
+    }
+    else if (a === 'hq-toggle-group') {
+      const group = action.dataset.group;
+      if (!Game.hqCollapsedGroups) Game.hqCollapsedGroups = {};
+      Game.hqCollapsedGroups[group] = !Game.hqCollapsedGroups[group];
+      render();
+    }
+    else if (a === 'hq-recruit-specific') {
+      const idx = parseInt(action.dataset.recruit);
+      const pool = Game.hqRecruitPool || [];
+      const recruit = pool[idx];
+      if (recruit && Game.resources.scrap >= recruit.cost) {
+        Game.resources.scrap -= recruit.cost;
+        const soldier = createSoldier({
+          name: recruit.name,
+          pool: 'infantry',
+          role: recruit.role,
+          personality: recruit.personality
+        });
+        Game.roster.push(soldier);
+        pool.splice(idx, 1);
+        saveRoster(); save(); render();
+      }
+    }
+    else if (a === 'hq-heal-soldier') {
+      const soldierId = action.dataset.soldier;
+      const s = (Game.roster || []).find(r => r.id === soldierId);
+      if (s && s.status === 'wounded' && Game.resources.scrap >= 25) {
+        Game.resources.scrap -= 25;
+        s.status = 'active'; s.hpPercent = 1.0;
+        saveRoster(); save(); render();
+      }
+    }
+    else if (a === 'hq-dismiss-soldier') {
+      const soldierId = action.dataset.soldier;
+      const idx = (Game.roster || []).findIndex(r => r.id === soldierId);
+      if (idx >= 0 && !Game.roster[idx].isPlayerCharacter) {
+        Game.roster.splice(idx, 1);
+        if (Game.hqSelectedSoldiers) {
+          Game.hqSelectedSoldiers = Game.hqSelectedSoldiers.filter(id => id !== soldierId);
         }
-        saveRoster();
-        save();
-        render();
+        saveRoster(); save(); render();
       }
     }
     else if (a === 'sprite-editor') window.open('/sprite-editor.html', '_blank');

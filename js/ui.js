@@ -505,53 +505,326 @@ function headquartersHTML() {
 
 function _barracksTabHTML() {
   const roster = Game.roster || [];
-  const infantry = roster.filter(s => s.pool === 'infantry' || !s.pool);
-  const vehicleCrew = roster.filter(s => s.pool === 'vehicle');
-  const wounded = roster.filter(s => s.status === 'wounded');
-  const active = roster.filter(s => s.status === 'active');
-  const kia = roster.filter(s => s.status === 'kia');
+  const selected = Game.hqSelectedSoldiers || [];
+  const hasSelection = selected.length > 0;
+
+  // Group roster by role category
+  const groups = [
+    { key: 'command', label: 'COMMAND', soldiers: roster.filter(s => s.isSquadLeader || s.role === 'commander' || s.isPlayerCharacter) },
+    { key: 'infantry', label: 'INFANTRY', soldiers: roster.filter(s => (s.pool === 'infantry' || !s.pool) && !s.isSquadLeader && !s.isPlayerCharacter) },
+    { key: 'crew', label: 'VEHICLE CREW', soldiers: roster.filter(s => s.pool === 'vehicle') }
+  ];
+
+  // Remove empty groups, handle soldiers that appear in multiple
+  const seenIds = new Set();
+  for (const g of groups) {
+    g.soldiers = g.soldiers.filter(s => {
+      if (seenIds.has(s.id)) return false;
+      seenIds.add(s.id);
+      return true;
+    });
+  }
+
+  const collapsed = Game.hqCollapsedGroups || {};
+
+  const hpSegments = (hp) => {
+    const pct = Math.round((hp || 1) * 100);
+    const segs = 10;
+    const filled = Math.round(segs * pct / 100);
+    let color = pct > 60 ? 'var(--accent-green)' : pct > 30 ? 'var(--accent-yellow)' : 'var(--accent-red)';
+    let bars = '';
+    for (let i = 0; i < segs; i++) {
+      bars += `<span class="hp-seg ${i < filled ? 'filled' : ''}" style="${i < filled ? 'background:' + color : ''}"></span>`;
+    }
+    return `<div class="hp-segments">${bars}</div>`;
+  };
+
+  const statusLabel = (s) => {
+    if (s.status === 'kia') return '<span class="status-label status-kia">KIA</span>';
+    if (s.status === 'wounded') return '<span class="status-label status-wounded">WOUNDED</span>';
+    return '<span class="status-label status-active">READY</span>';
+  };
+
+  const isExpanded = (s) => selected.includes(s.id);
 
   const soldierRow = (s) => {
-    const statusIcon = s.status === 'active' ? '●' : s.status === 'wounded' ? '◐' : '✕';
-    const statusCls = s.status === 'active' ? 'status-active' : s.status === 'wounded' ? 'status-wounded' : 'status-kia';
-    const hpBar = s.status !== 'kia' ? `<div class="soldier-hp-bar"><div class="soldier-hp-fill" style="width:${Math.round((s.hpPercent || 1) * 100)}%"></div></div>` : '';
     const rankName = RANK_NAMES[s.rankIndex] || 'PVT';
     const name = s.name?.last || s.name?.first || 'Unknown';
-    const role = s.role || 'rifleman';
-    const isPC = s.isPlayerCharacter ? ' <span class="pc-badge">YOU</span>' : '';
-    return `<div class="soldier-row ${statusCls}" data-action="hq-soldier-detail" data-soldier="${s.id}">
-      <span class="soldier-status">${statusIcon}</span>
-      <span class="soldier-name">${rankName} ${name}${isPC}</span>
-      <span class="soldier-role">${role}</span>
-      ${hpBar}
+    const role = (s.role || 'rifleman').toUpperCase();
+    const isPC = s.isPlayerCharacter ? '<span class="pc-badge">YOU</span>' : '';
+    const expanded = isExpanded(s);
+
+    let expandedHTML = '';
+    if (expanded) {
+      const battles = s.battlesServed || 0;
+      const kills = s.kills || 0;
+      const streak = s.streak || 0;
+      const heroics = (s.heroicActions || []).length;
+      const comms = (s.commendations || []).length;
+      const vehicle = s.assignedVehicleId ? `Assigned: ${s.assignedVehicleId}` : 'Unassigned';
+
+      expandedHTML = `
+        <div class="soldier-expanded">
+          <div class="soldier-history">
+            <div class="history-stat"><span class="history-label">Battles</span><span class="history-value">${battles}</span></div>
+            <div class="history-stat"><span class="history-label">Kills</span><span class="history-value">${kills}</span></div>
+            <div class="history-stat"><span class="history-label">Streak</span><span class="history-value">${streak}</span></div>
+            <div class="history-stat"><span class="history-label">Heroics</span><span class="history-value">${heroics}</span></div>
+            <div class="history-stat"><span class="history-label">Medals</span><span class="history-value">${comms}</span></div>
+          </div>
+          <div class="soldier-vehicle">${vehicle}</div>
+        </div>`;
+    }
+
+    return `
+      <div class="soldier-row ${expanded ? 'expanded' : ''} ${s.status}" data-action="hq-toggle-soldier" data-soldier="${s.id}">
+        <div class="soldier-main">
+          <span class="soldier-rank-icon">${_rankChevron(s.rankIndex)}</span>
+          <span class="soldier-name">${rankName} ${name} ${isPC}</span>
+          <span class="soldier-role-tag">${role}</span>
+          ${s.status !== 'kia' ? hpSegments(s.hpPercent) : ''}
+          ${statusLabel(s)}
+        </div>
+        ${expandedHTML}
+      </div>`;
+  };
+
+  const groupHTML = (g) => {
+    if (g.soldiers.length === 0) return '';
+    const isCollapsed = collapsed[g.key];
+    const woundedCount = g.soldiers.filter(s => s.status === 'wounded').length;
+    const woundedBadge = woundedCount > 0 ? `<span class="group-wounded-badge">${woundedCount} wounded</span>` : '';
+    return `
+      <div class="roster-group">
+        <div class="roster-group-header" data-action="hq-toggle-group" data-group="${g.key}">
+          <span class="group-chevron">${isCollapsed ? '▶' : '▼'}</span>
+          <span class="group-label">${g.label}</span>
+          <span class="group-count">(${g.soldiers.length})</span>
+          ${woundedBadge}
+        </div>
+        ${isCollapsed ? '' : `<div class="roster-group-list">${g.soldiers.map(soldierRow).join('')}</div>`}
+      </div>`;
+  };
+
+  // Build right panel — soldier card or comparison
+  let rightPanel = '';
+  const selectedSoldiers = selected.map(id => roster.find(s => s.id === id)).filter(Boolean);
+  if (selectedSoldiers.length === 1) {
+    rightPanel = _soldierCardHTML(selectedSoldiers[0]);
+  } else if (selectedSoldiers.length >= 2) {
+    rightPanel = _soldierCompareHTML(selectedSoldiers[0], selectedSoldiers[1]);
+  }
+
+  return `
+    <div class="barracks-tab ${hasSelection ? 'has-panel' : ''}">
+      <div class="barracks-roster">
+        ${groups.map(groupHTML).join('')}
+        ${_recruitmentPanelHTML()}
+      </div>
+      ${hasSelection ? `<div class="barracks-panel">${rightPanel}</div>` : ''}
+    </div>
+  `;
+}
+
+/** Rank chevron as simple text icon */
+function _rankChevron(rankIndex) {
+  const icons = ['', '▪', '▪▪', '◆', '▪▪▪', '★'];
+  return icons[rankIndex] || '';
+}
+
+/** Soldier detail card — shown in right panel when one soldier selected */
+function _soldierCardHTML(s) {
+  const rankName = RANK_NAMES[s.rankIndex] || 'PVT';
+  const name = s.name?.last || s.name?.first || 'Unknown';
+  const firstName = s.name?.first || '';
+  const p = s.personality || {};
+
+  const statBar = (label, val) => {
+    const pct = Math.round((val || 0) * 100);
+    return `<div class="card-stat">
+      <span class="card-stat-label">${label}</span>
+      <div class="card-stat-bar"><div class="card-stat-fill" style="width:${pct}%"></div></div>
+      <span class="card-stat-val">${pct}</span>
     </div>`;
   };
 
-  const recruitCost = 50;
+  const isWounded = s.status === 'wounded';
   const healCost = 25;
-  const canRecruit = Game.resources.scrap >= recruitCost;
-  const canHeal = wounded.length > 0 && Game.resources.scrap >= healCost;
+  const canHeal = isWounded && Game.resources.scrap >= healCost;
 
   return `
-    <div class="barracks-tab">
-      <div class="barracks-summary">
-        <span>${active.length} active</span>
-        <span class="text-wounded">${wounded.length} wounded</span>
-        <span class="text-kia">${kia.length} KIA</span>
-        <span>Total: ${roster.length}</span>
+    <div class="soldier-card">
+      <div class="card-header">
+        <div class="card-rank">${rankName}</div>
+        <div class="card-fullname">${firstName} ${name}</div>
+        <div class="card-role">${(s.role || 'rifleman').toUpperCase()}</div>
       </div>
-      <div class="barracks-actions">
-        <button class="hq-action-btn ${canRecruit ? '' : 'disabled'}" data-action="hq-recruit" ${canRecruit ? '' : 'disabled'}>RECRUIT ⬡${recruitCost}</button>
-        <button class="hq-action-btn ${canHeal ? '' : 'disabled'}" data-action="hq-heal-all" ${canHeal ? '' : 'disabled'}>HEAL ALL ⬡${healCost * wounded.length}</button>
+      <div class="card-personality">
+        <h4>PERSONALITY</h4>
+        ${statBar('AGG', p.aggression)}
+        ${statBar('PAT', p.patience)}
+        ${statBar('CRG', p.courage)}
+        ${statBar('DIS', p.discipline)}
+        ${statBar('INI', p.initiative)}
+        ${statBar('AWR', p.awareness)}
       </div>
-      <div class="soldier-list">
-        ${roster.length === 0
-          ? '<div class="empty-state">No soldiers yet. Recruit your first squad member.</div>'
-          : roster.map(soldierRow).join('')
-        }
+      <div class="card-record">
+        <h4>SERVICE RECORD</h4>
+        <div class="record-grid">
+          <span>Battles: ${s.battlesServed || 0}</span>
+          <span>Kills: ${s.kills || 0}</span>
+          <span>MMR: ${Math.round(s.mmr || 0)}</span>
+          <span>Streak: ${s.streak || 0}</span>
+        </div>
+      </div>
+      <div class="card-actions">
+        ${isWounded ? `<button class="hq-action-btn ${canHeal ? '' : 'disabled'}" data-action="hq-heal-soldier" data-soldier="${s.id}" ${canHeal ? '' : 'disabled'}>HEAL ⬡${healCost}</button>` : ''}
+        <button class="hq-action-btn dismiss-btn" data-action="hq-dismiss-soldier" data-soldier="${s.id}">DISMISS</button>
       </div>
     </div>
   `;
+}
+
+/** Comparison view — two soldiers side by side with stat bars */
+function _soldierCompareHTML(a, b) {
+  const nameA = `${RANK_NAMES[a.rankIndex] || 'PVT'} ${a.name?.last || 'Unknown'}`;
+  const nameB = `${RANK_NAMES[b.rankIndex] || 'PVT'} ${b.name?.last || 'Unknown'}`;
+  const pA = a.personality || {};
+  const pB = b.personality || {};
+
+  const compareStat = (label, valA, valB) => {
+    const pctA = Math.round((valA || 0) * 100);
+    const pctB = Math.round((valB || 0) * 100);
+    const winCls = pctA > pctB ? 'win-a' : pctB > pctA ? 'win-b' : '';
+    return `<div class="compare-stat ${winCls}">
+      <span class="compare-val-a">${pctA}</span>
+      <div class="compare-bar-a"><div class="compare-fill-a" style="width:${pctA}%"></div></div>
+      <span class="compare-label">${label}</span>
+      <div class="compare-bar-b"><div class="compare-fill-b" style="width:${pctB}%"></div></div>
+      <span class="compare-val-b">${pctB}</span>
+    </div>`;
+  };
+
+  return `
+    <div class="soldier-compare">
+      <div class="compare-header">
+        <span class="compare-name-a">${nameA}</span>
+        <span class="compare-vs">VS</span>
+        <span class="compare-name-b">${nameB}</span>
+      </div>
+      <div class="compare-stats">
+        ${compareStat('AGG', pA.aggression, pB.aggression)}
+        ${compareStat('PAT', pA.patience, pB.patience)}
+        ${compareStat('CRG', pA.courage, pB.courage)}
+        ${compareStat('DIS', pA.discipline, pB.discipline)}
+        ${compareStat('INI', pA.initiative, pB.initiative)}
+        ${compareStat('AWR', pA.awareness, pB.awareness)}
+      </div>
+      <div class="compare-record">
+        <div class="compare-record-row">
+          <span>${a.battlesServed || 0}</span><span>Battles</span><span>${b.battlesServed || 0}</span>
+        </div>
+        <div class="compare-record-row">
+          <span>${a.kills || 0}</span><span>Kills</span><span>${b.kills || 0}</span>
+        </div>
+        <div class="compare-record-row">
+          <span>${Math.round(a.mmr || 0)}</span><span>MMR</span><span>${Math.round(b.mmr || 0)}</span>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+/** Recruitment panel — scrollable cards with timer */
+function _recruitmentPanelHTML() {
+  // Generate or retrieve recruit pool
+  if (!Game.hqRecruitPool || Game.hqRecruitPool.length === 0) {
+    Game.hqRecruitPool = _generateRecruitPool(5);
+    Game.hqRecruitRefreshIn = 3; // refreshes in 3 runs
+  }
+
+  const pool = Game.hqRecruitPool;
+  const refreshIn = Game.hqRecruitRefreshIn || 3;
+  const collapsed = Game.hqCollapsedGroups?.recruitment;
+
+  const recruitCard = (r, i) => {
+    const canAfford = Game.resources.scrap >= r.cost;
+    const traits = _describePersonality(r.personality);
+    return `
+      <div class="recruit-card ${canAfford ? '' : 'cant-afford'}">
+        <div class="recruit-portrait"></div>
+        <div class="recruit-name">${r.name?.first || ''} ${r.name?.last || 'Unknown'}</div>
+        <span class="recruit-role-badge">${(r.role || 'rifleman').toUpperCase()}</span>
+        <div class="recruit-desc">${traits}</div>
+        <div class="recruit-cost">⬡ ${r.cost}</div>
+        <button class="recruit-btn ${canAfford ? '' : 'disabled'}" data-action="hq-recruit-specific" data-recruit="${i}" ${canAfford ? '' : 'disabled'}>RECRUIT</button>
+      </div>`;
+  };
+
+  return `
+    <div class="roster-group recruitment-group">
+      <div class="roster-group-header" data-action="hq-toggle-group" data-group="recruitment">
+        <span class="group-chevron">${collapsed ? '▶' : '▼'}</span>
+        <span class="group-label">RECRUITMENT OFFICE</span>
+        <span class="group-count">(${pool.length} available)</span>
+        <span class="recruit-timer">Refreshes in ${refreshIn} runs</span>
+      </div>
+      ${collapsed ? '' : `
+        <div class="recruit-scroll">
+          ${pool.map((r, i) => recruitCard(r, i)).join('')}
+        </div>
+      `}
+    </div>
+  `;
+}
+
+/** Generate a pool of recruits with varying stats and costs */
+function _generateRecruitPool(count) {
+  const roles = ['rifleman', 'rifleman', 'medic', 'engineer', 'heavy_gunner'];
+  const pool = [];
+  for (let i = 0; i < count; i++) {
+    const role = roles[Math.floor(Math.random() * roles.length)];
+    // Random quality: 0.2-0.5 for cheap recruits, 0.4-0.7 for expensive ones
+    const quality = 0.2 + Math.random() * 0.5;
+    const spread = 0.15;
+    const personality = {
+      aggression: Math.max(0, Math.min(1, quality + (Math.random() - 0.5) * spread * 2)),
+      patience: Math.max(0, Math.min(1, quality + (Math.random() - 0.5) * spread * 2)),
+      courage: Math.max(0, Math.min(1, quality + (Math.random() - 0.5) * spread * 2)),
+      discipline: Math.max(0, Math.min(1, quality + (Math.random() - 0.5) * spread * 2)),
+      initiative: Math.max(0, Math.min(1, quality + (Math.random() - 0.5) * spread * 2)),
+      awareness: Math.max(0, Math.min(1, quality + (Math.random() - 0.5) * spread * 2))
+    };
+    // Cost scales with quality
+    const baseCost = 30 + Math.round(quality * 120);
+    const cost = baseCost + Math.floor(Math.random() * 20 - 10);
+
+    const FIRST = ['Ryan', 'Kelly', 'Tom', 'Dana', 'Nick', 'Sam', 'Alex', 'Jordan', 'Casey', 'Morgan', 'Eric', 'Pat', 'Jamie', 'Riley', 'Quinn'];
+    const LAST = ['Fisher', 'Harris', 'Silva', 'Stone', 'Morgan', 'Kelly', 'Holt', 'Kerr', 'Freeman', 'Webb', 'Reyes', 'Chen', 'Okafor', 'Brooks', 'Tanaka'];
+
+    pool.push({
+      name: { first: FIRST[Math.floor(Math.random() * FIRST.length)], last: LAST[Math.floor(Math.random() * LAST.length)] },
+      role, personality, cost
+    });
+  }
+  return pool;
+}
+
+/** Generate a 1-line personality description from traits */
+function _describePersonality(p) {
+  if (!p) return 'Unknown temperament';
+  const traits = [];
+  if (p.aggression > 0.6) traits.push('Aggressive');
+  else if (p.aggression < 0.3) traits.push('Passive');
+  if (p.courage > 0.6) traits.push('Fearless');
+  else if (p.courage < 0.3) traits.push('Cautious');
+  if (p.discipline > 0.6) traits.push('Disciplined');
+  else if (p.discipline < 0.3) traits.push('Undisciplined');
+  if (p.patience > 0.6) traits.push('Patient');
+  if (p.initiative > 0.6) traits.push('Quick-thinking');
+  if (p.awareness > 0.6) traits.push('Observant');
+  if (traits.length === 0) traits.push('Average temperament');
+  return traits.slice(0, 2).join(' and ');
 }
 
 function _armoryTabHTML() {
