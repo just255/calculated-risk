@@ -2,7 +2,7 @@
 // GAME - Battle logic, game loop, update, draw
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, UNITS, ENEMIES, getTypeMultiplier, UNIT_COSTS, H2H_BUDGET, PROJECTILES, UNIT_PROJECTILES, UNIT_COMBAT_STATS, UNIT_DESCRIPTIONS, getTerrainSVG, getStanceModifier, getEnemyStance, ZoneOwner, ScenarioType, SHADOW_CONFIG, Team, Owner, FORMATION_OFFSETS, getFormationPositions, CREW_SCHEMAS, RANK_TABLE, DEFAULT_MAX_SPREAD_DEG } from './constants.js';
+import { State, SubState, HQTab, UNITS, ENEMIES, getTypeMultiplier, UNIT_COSTS, H2H_BUDGET, PROJECTILES, UNIT_PROJECTILES, UNIT_COMBAT_STATS, UNIT_DESCRIPTIONS, getTerrainSVG, getStanceModifier, getEnemyStance, ZoneOwner, ScenarioType, SHADOW_CONFIG, Team, Owner, FORMATION_OFFSETS, getFormationPositions, CREW_SCHEMAS, RANK_TABLE, DEFAULT_MAX_SPREAD_DEG, isInfantryUnit, WAVE_POWER_CURVE, ENEMY_POWER_COSTS } from './constants.js';
 import { renderBaseTerrainToCanvas, renderCanopyToCanvas } from './world-builder/terrain-renderer.js';
 import { Game, newBattle, newH2H, newCampaign, newCampaignBattle, newEndlessBattle, newFireRangeRun, newFireRangeBattle, createUnit } from './state.js';
 import { sound } from './audio.js';
@@ -386,6 +386,37 @@ function createShadowElement(x, y, rotation = 0) {
 // ═══════════════════════════════════════════════════════════════
 // STATE TRANSITIONS
 // ═══════════════════════════════════════════════════════════════
+
+/**
+ * Extract from the current endless run. Banks all loot, processes soldier
+ * progression/damage, saves replay, returns to menu.
+ */
+export function extractFromRun() {
+  const e = Game.endless;
+  if (!e) return;
+
+  e.result = 'extract';
+  e.exitWave = e.wave;
+
+  // Bank all loot — extract keeps everything
+  Game.resources.scrap += e.loot?.scrap || 0;
+  if (e.loot?.parts) {
+    Game.resources.parts = (Game.resources.parts || 0) + e.loot.parts.length;
+  }
+
+  // Process soldier progression/damage
+  const b = e.battle;
+  if (b) {
+    _processPostBattle(b, 'extract');
+    if (isRecording(b)) {
+      b.result = `extract_wave_${e.wave}`;
+      saveReplay(b);
+    }
+  }
+
+  save();
+  goto(State.MENU);
+}
 
 export function goto(newState, data = {}) {
   console.log(`[State] ${Game.state} → ${newState}`);
@@ -2380,7 +2411,7 @@ function updateEndlessBattle(dt) {
   // --- CMD MODE: skip hero controls, hero is AI-driven ---
   const hero = b.hero;
   const isCMD = b.playMode === 'cmd';
-  const isInfantryHero = hero.unitId === 'infantry' || hero.unitId === 'medic' || hero.unitId === 'specops' || hero.unitId === 'stinger';
+  const isInfantryHero = isInfantryUnit(hero.unitId);
 
   if (isCMD) {
     // Hero movement/aiming/shooting handled by AI brain in runBattleAI
@@ -2729,13 +2760,7 @@ function updateEndlessBattle(dt) {
 // Unit availability is wave-gated to prevent tanks appearing too early.
 // ═══════════════════════════════════════════════════════════════
 
-const ENEMY_POWER_COSTS = [
-  { type: 'swarmer', cost: 1, minWave: 1, weight: 3, maxPct: 1.0 },
-  { type: 'grunt',   cost: 2, minWave: 1, weight: 5, maxPct: 1.0 },
-  { type: 'heavy',   cost: 5, minWave: 3, weight: 2, maxPct: 0.3 },  // Max 30% of budget on heavies
-  { type: 'scout',   cost: 3, minWave: 4, weight: 2, maxPct: 0.4 },
-  { type: 'elite',   cost: 8, minWave: 6, weight: 1, maxPct: 0.25 }  // Max 25% of budget on elites
-];
+// ENEMY_POWER_COSTS and WAVE_POWER_CURVE imported from constants.js
 
 /**
  * Calculate wave power rating — determines enemy budget and loot scaling.
@@ -2746,12 +2771,6 @@ function getWavePower(wave) {
   return WAVE_POWER_CURVE.base + wave * WAVE_POWER_CURVE.linear + Math.floor(wave * wave * WAVE_POWER_CURVE.quadratic);
 }
 
-// Tunable wave power curve — adjust via playtesting
-const WAVE_POWER_CURVE = {
-  base: 4,          // Starting power offset
-  linear: 2,        // Power per wave (early ramp)
-  quadratic: 0.15   // Acceleration at higher waves
-};
 
 /**
  * Spend a power budget on enemy units. Picks randomly from available types
@@ -2892,7 +2911,7 @@ function buildWaveBudget(b, wave, sizeMult) {
   const enemyBudget = wavePower * 1.2;
   // Check if player has a vehicle (hero is a vehicle type, not infantry)
   const heroUnitId = b.hero?.unitId || 'infantry';
-  const playerHasVehicle = heroUnitId !== 'infantry' && heroUnitId !== 'medic' && heroUnitId !== 'specops';
+  const playerHasVehicle = !isInfantryUnit(heroUnitId);
   const units = spendPowerBudget(enemyBudget, wave, sizeMult, playerHasVehicle);
 
   // Convert to the format expected by spawnEndlessWave

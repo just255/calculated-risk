@@ -6,7 +6,7 @@ import { State, SubState, HQTab, UNITS, PROJECTILES, UNIT_PROJECTILES, SquadOrde
 import { Game, newBattlePlan, newCampaign, createAdvancingScenario, createFrontlineScenario, newZoneBattle, newEndlessRun, newFireRangeRun } from './state.js';
 import { initAudio, sound } from './audio.js';
 import { save, load, saveFRConfig, loadFRConfig, saveFRNamedConfig, loadFRNamedConfigs, deleteFRNamedConfig, migrateFRConfig } from './storage.js';
-import { goto, deploy, switchUnit, stopLoop, stopFireRangeLoop, formatFireRangeLog, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, campaignMouseDown, campaignMouseUp, campaignSetAimAngle, campaignClearAimAngle, campaignSetJoystick, campaignClearJoystick, endlessKeyDown, endlessKeyUp, endlessMouseMove, endlessMouseDown, endlessMouseUp, handleDeployClick, fireRangeKeyDown, fireRangeKeyUp, fireRangeWheel, updateEventLog } from './game.js';
+import { goto, deploy, switchUnit, stopLoop, stopFireRangeLoop, formatFireRangeLog, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, campaignMouseDown, campaignMouseUp, campaignSetAimAngle, campaignClearAimAngle, campaignSetJoystick, campaignClearJoystick, endlessKeyDown, endlessKeyUp, endlessMouseMove, endlessMouseDown, endlessMouseUp, handleDeployClick, fireRangeKeyDown, fireRangeKeyUp, fireRangeWheel, updateEventLog, extractFromRun } from './game.js';
 import { FR_PRESETS } from './fire-range-presets.js';
 import { render, setSubState, fetchAvailableVehicles, fetchUnitVariants, fetchVariantData, getUnitVariants, fireRangeResultsHTML, replayTheaterHTML } from './ui.js';
 import { ReplayPlayer } from './replay-player.js';
@@ -1245,15 +1245,9 @@ document.getElementById('app').addEventListener('click', e => {
         goto(State.ENDLESS_BATTLE);
       }
     }
-    else if (a === 'endless-exit') {
+    else if (a === 'endless-extract') {
       if (Game.endless) {
-        Game.endless.result = 'exit';
-        Game.endless.exitWave = Game.endless.wave;
-        // Add loot to player resources
-        Game.resources.scrap += Game.endless.loot.scrap;
-        // TODO: Handle parts properly
-        save();
-        goto(State.ENDLESS_RESULT);
+        extractFromRun();
       }
     }
     else if (a === 'endless-retry') {

@@ -32,6 +32,12 @@ A military-themed math training game for a 12-year-old struggling with times tab
    - `main.js` - Event handling and initialization
 5. **No monolith files** - If a module grows too large, split it further
 6. **Single responsibility** - Each function/module should do one thing well
+7. **Post-change review** - After implementing changes, check for:
+   - Duplicated logic that should be extracted into a shared function
+   - Hardcoded values that should be in `constants.js`
+   - Inline type checks (e.g. `=== 'infantry' || === 'medic'`) that should use a shared utility
+   - Dead code from refactoring (old action names, unused imports, orphaned functions)
+   - Cross-module concerns that should be encapsulated (e.g. don't call private functions across modules)
 
 ## Development Commands
 

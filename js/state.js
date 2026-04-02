@@ -2,14 +2,14 @@
 // STATE - Game state object and battle factory
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, H2H_BUDGET, CAMPAIGN_HERO_UNITS, UNITS, ENEMIES, UNIT_COMBAT_STATS, ZoneOwner, ScenarioType, Biome, BIOME_TERRAIN, Team, INFANTRY_ARCHETYPES, ROLE_TO_UNIT_ID, CREW_SCHEMAS } from './constants.js';
+import { State, SubState, HQTab, H2H_BUDGET, CAMPAIGN_HERO_UNITS, UNITS, ENEMIES, UNIT_COMBAT_STATS, ZoneOwner, ScenarioType, Biome, BIOME_TERRAIN, Team, INFANTRY_ARCHETYPES, ROLE_TO_UNIT_ID, CREW_SCHEMAS, RANK_TABLE, isInfantryUnit } from './constants.js';
 import { WorldBuilder } from './world-builder/index.js';
 import { generateBattleTerrain, randomizeBattleConfig } from './world-builder/battle-terrain.js';
 import { hashString } from './world-builder/rng.js';
 import { createSergeant, DEFAULT_SERGEANT } from './sergeant.js';
 import { initBattleAI, applyBrainDefaults } from './ai-pipeline.js';
 import { findValidSpawnPos } from './terrain-utils.js';
-import { getPool, getAvailableVehicles, getRankName, getSoldier, getCrewForVehicle, assignToVehicle } from './roster.js';
+import { getPool, getAvailableVehicles, getRankName, getSoldier, getCrewForVehicle, assignToVehicle, createSoldier, saveRoster } from './roster.js';
 import { loadLastLoadout } from './storage.js';
 
 // Endless mode map sizes — user-chosen before starting, fixed for the entire run.
@@ -1319,7 +1319,7 @@ export function resetNameGenerator() { _nameIdx = 0; }
 export function createUnit(unitId, overrides = {}) {
   const stats = UNIT_COMBAT_STATS[unitId] || {};
   const unitDef = UNITS.find(u => u.id === unitId);
-  const isInfantryType = unitId === 'infantry' || unitId === 'medic' || unitId === 'specops' || unitId === 'stinger';
+  const isInfantryType = isInfantryUnit(unitId);
 
   const unit = {
     // Identity
@@ -1504,6 +1504,51 @@ function createEndlessSquad(heroX, heroY, mapWidth, mapHeight, cellSize, terrain
   return units;
 }
 
+/**
+ * Get the hero's display name. Infantry heroes use their roster soldier name.
+ * Vehicle heroes use a default commander name.
+ */
+function _getHeroName(unitId) {
+  const isInfantry = isInfantryUnit(unitId);
+  if (isInfantry) {
+    const roster = getPool('infantry');
+    const pc = roster.find(s => s.isPlayerCharacter);
+    if (pc) {
+      const rank = RANK_TABLE[pc.rankIndex]?.abbr || 'PVT';
+      return { rank, surname: pc.name?.last || 'Player', display: `${rank} ${pc.name?.last || 'Player'}` };
+    }
+  }
+  return { rank: 'LT', surname: 'Commander', display: 'LT Commander' };
+}
+
+/**
+ * Get or create the player's hero soldier for infantry deployment.
+ * Returns soldier ID for linking to the hero entity.
+ * For vehicle heroes, returns null (they use crew system instead).
+ */
+function _getOrCreatePlayerSoldier(unitId) {
+  const isInfantry = isInfantryUnit(unitId);
+  if (!isInfantry) return null;
+
+  // Check if player character already exists in roster
+  const roster = getPool('infantry');
+  let pc = roster.find(s => s.isPlayerCharacter);
+  if (pc) return pc.id;
+
+  // Create the player character soldier
+  pc = createSoldier({
+    pool: 'infantry',
+    role: 'rifleman',
+    personality: { aggression: 0.5, patience: 0.5, courage: 0.6, discipline: 0.5, initiative: 0.5, awareness: 0.6 },
+    rankIndex: 1, // PV2 — slightly above raw recruit
+    hpPercent: 1.0
+  });
+  pc.isPlayerCharacter = true;
+  Game.roster.push(pc);
+  saveRoster();
+  return pc.id;
+}
+
 // Endless battle factory - creates a battle instance for endless mode
 export function newEndlessBattle(loadout, wave = 1) {
   const CELL_SIZE = 64;
@@ -1600,7 +1645,8 @@ export function newEndlessBattle(loadout, wave = 1) {
     // Camera - start centered on hero
     camera: { x: 0, y: heroY - 300, lookX: 0, lookY: 0 },
 
-    // Hero (player's tank) — stable ID so crew assignments persist across battles
+    // Hero — stable ID so crew assignments persist across battles
+    // For infantry heroes, link to the player's roster soldier for progression
     hero: {
       id: 'hero',
       x: heroX,
@@ -1613,7 +1659,8 @@ export function newEndlessBattle(loadout, wave = 1) {
       fireRate: heroStats.fireRate,
       lastShot: 0,
       unitId: vehicleId,
-      unitName: { rank: 'LT', surname: 'Commander', display: 'LT Commander' },
+      _soldierId: _getOrCreatePlayerSoldier(vehicleId),
+      unitName: _getHeroName(vehicleId),
       variantId: loadout?.variant || 'default',
       range: UNIT_COMBAT_STATS[vehicleId]?.range || 550,
       stability: 0,

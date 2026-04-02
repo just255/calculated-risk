@@ -4857,8 +4857,8 @@ function endlessBetweenHTML() {
         <button class="menu-btn primary" data-action="endless-continue">
           CONTINUE (Wave ${e.wave + 1})
         </button>
-        <button class="menu-btn exit-btn" data-action="endless-exit">
-          EXIT - Keep All Loot
+        <button class="menu-btn exit-btn" data-action="endless-extract">
+          EXTRACT - Keep All Loot
         </button>
       </div>
 

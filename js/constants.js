@@ -625,11 +625,32 @@ export const UNIT_PROJECTILES = {
 // viewRange (pixels): how far the crew can see (independent of fire range)
 // viewCone (degrees): forward vision cone angle (peripheral/rear zones computed from this)
 // Game version — single source of truth. Build number tracks iteration.
-export const GAME_VERSION = { major: 0, minor: 8, build: 169 };
+export const GAME_VERSION = { major: 0, minor: 8, build: 172 };
 export const GAME_VERSION_STRING = `${GAME_VERSION.major}.${GAME_VERSION.minor}.${GAME_VERSION.build}`;
 
 // Default max spread angle (degrees) — per-unit override via maxSpreadDeg in UNIT_COMBAT_STATS
 export const DEFAULT_MAX_SPREAD_DEG = 7.5;
+
+/** Check if a unitId is an infantry type (foot soldier, not a vehicle). */
+export function isInfantryUnit(unitId) {
+  return unitId === 'infantry' || unitId === 'medic' || unitId === 'specops' || unitId === 'stinger';
+}
+
+// Wave power curve — tunable via playtesting
+export const WAVE_POWER_CURVE = {
+  base: 4,          // Starting power offset
+  linear: 2,        // Power per wave (early ramp)
+  quadratic: 0.15   // Acceleration at higher waves
+};
+
+// Enemy power costs — used by wave budget system to compose enemy waves
+export const ENEMY_POWER_COSTS = [
+  { type: 'swarmer', cost: 1, minWave: 1, weight: 3, maxPct: 1.0 },
+  { type: 'grunt',   cost: 2, minWave: 1, weight: 5, maxPct: 1.0 },
+  { type: 'heavy',   cost: 5, minWave: 3, weight: 2, maxPct: 0.3 },
+  { type: 'scout',   cost: 3, minWave: 4, weight: 2, maxPct: 0.4 },
+  { type: 'elite',   cost: 8, minWave: 6, weight: 1, maxPct: 0.25 }
+];
 
 export const UNIT_COMBAT_STATS = {
   // hullRate/turretRate in deg/s (max), fireTolerance in deg, turretArc in deg
