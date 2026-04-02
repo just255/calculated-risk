@@ -625,7 +625,7 @@ export const UNIT_PROJECTILES = {
 // viewRange (pixels): how far the crew can see (independent of fire range)
 // viewCone (degrees): forward vision cone angle (peripheral/rear zones computed from this)
 // Game version — single source of truth. Build number tracks iteration.
-export const GAME_VERSION = { major: 0, minor: 8, build: 176 };
+export const GAME_VERSION = { major: 0, minor: 8, build: 177 };
 export const GAME_VERSION_STRING = `${GAME_VERSION.major}.${GAME_VERSION.minor}.${GAME_VERSION.build}`;
 
 // Default max spread angle (degrees) — per-unit override via maxSpreadDeg in UNIT_COMBAT_STATS

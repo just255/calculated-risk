@@ -2701,7 +2701,10 @@ function updateEndlessBattle(dt) {
     onEnemyKill(e) {
       Game.endless.kills++;
       Game.endless.score += 100;
-      Game.endless.loot.scrap += 5 + Math.floor(Math.random() * 10);
+      const eDef = ENEMIES.find(ed => ed.id === e.type);
+      const baseScrap = eDef?.scrap || 5;
+      // ±30% random variance
+      Game.endless.loot.scrap += Math.round(baseScrap * (0.7 + Math.random() * 0.6));
     },
     onHeroHit(h, dmg, p) {
       if (useCanvasRendering && h.animId) sprites.triggerUnitAnim(h.animId, 'hit');
