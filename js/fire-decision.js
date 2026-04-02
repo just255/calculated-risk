@@ -49,10 +49,11 @@ export function updateStability(unit, dtSec, typeKey) {
   }
 
   // Turret slew bleeds stability — fast turret rotation destabilizes aim.
-  // This compounds with the accuracy penalty in shouldFire().
+  // Per-unit slewThreshold: infantry can snap-aim without penalty, heavy turrets penalize any rotation.
   const turretAngVel = unit._turretAngVel ?? 0;
-  if (turretAngVel > 0.2) {
-    const slewBleed = Math.min(0.8, turretAngVel / (Math.PI * 1.5)) * dtSec;
+  const slewThreshold = combatStats?.slewThreshold ?? 0.2;
+  if (turretAngVel > slewThreshold) {
+    const slewBleed = Math.min(0.8, (turretAngVel - slewThreshold) / (Math.PI * 1.5)) * dtSec;
     unit.stability = Math.max(0, unit.stability - slewBleed);
   }
 
@@ -228,11 +229,14 @@ export function shouldFire(unit, target, b, now, opts = {}) {
   // 3. Accuracy physics (shared with hero)
   const shot = computeShotAccuracy(unit, target, opts);
 
-  // 4. STABILITY THRESHOLD — personality gate
+  // 4. STABILITY THRESHOLD — personality gate, reduced at close range
   const personality = unit._personality || unit.personality || {};
   const discipline = personality.discipline ?? 0.5;
   const patience = personality.patience ?? 0.5;
-  const minStability = discipline * 0.4 + patience * 0.2;
+  const baseMinStab = discipline * 0.4 + patience * 0.2;
+  // Close range reduces the stability requirement — hip-fire is viable up close
+  const rangeFraction = Math.min(dist / range, 1.0); // 0 at point blank, 1 at max range
+  const minStability = baseMinStab * (0.2 + rangeFraction * 0.8); // 20% of threshold at point blank
   if (shot.stability < minStability) {
     return { canFire: false, accuracy: shot.accuracy, damageMod: shot.damageMod, factors: shot.factors, reason: 'stability' };
   }
