@@ -38,6 +38,23 @@ A military-themed math training game for a 12-year-old struggling with times tab
    - Inline type checks (e.g. `=== 'infantry' || === 'medic'`) that should use a shared utility
    - Dead code from refactoring (old action names, unused imports, orphaned functions)
    - Cross-module concerns that should be encapsulated (e.g. don't call private functions across modules)
+8. **Edit safety** - Verify edits landed correctly:
+   - Re-read files before editing (required by tooling, but also verify context is fresh)
+   - After 10+ messages in a conversation, re-read key files — don't trust stale mental models
+   - Never batch more than 3 edits to the same file without re-reading to verify
+9. **Verify before declaring done** - Don't say "done" until verified:
+   - Confirm the correct version loaded (check console for version string)
+   - Check for errors in console output
+   - If the user reports an issue, gather data first — don't guess at fixes
+   - When a fix doesn't work, investigate the actual code path, not the assumed one
+10. **Learn from mistakes** - When the user corrects an approach:
+    - Understand WHY the correction was needed
+    - Save the lesson to memory if it applies to future work
+    - Update CLAUDE.md if it's a recurring pattern
+11. **Planning vs execution** - Don't jump to code when the user is still exploring ideas:
+    - If the user is asking questions or brainstorming, discuss first
+    - Get explicit approval before implementing design decisions
+    - Present options with pros/cons and a recommendation before building
 
 ## Development Commands
 
