@@ -4877,7 +4877,7 @@ function endlessResultHTML() {
 
   const isDeath = e.result === 'death';
   const wave = e.exitWave || e.wave;
-  const tab = e._resultTab || 'rank';
+  const tab = e._resultTab || 'battle';
   const prog = e._progressionResults || [];
 
   // Battle stats from the last battle
@@ -4893,21 +4893,33 @@ function endlessResultHTML() {
       </div>
 
       <div class="results-tab-bar">
-        <button class="${tabClass('rank')}" data-action="results-tab" data-tab="rank">RANK REPORT</button>
         <button class="${tabClass('battle')}" data-action="results-tab" data-tab="battle">BATTLE REPORT</button>
+        <button class="${tabClass('rank')}" data-action="results-tab" data-tab="rank">RANK REPORT</button>
       </div>
 
       <div class="results-content">
-        ${tab === 'rank' ? _rankReportHTML(prog) : _battleReportHTML(stats, prog)}
+        ${tab === 'battle' ? _battleReportHTML(stats, prog) : _rankReportHTML(prog)}
+      </div>
+
+      <!-- Loot summary — shows what's at stake -->
+      <div class="loot-summary">
+        <div class="loot-haul">
+          <span class="loot-label">RUN HAUL:</span>
+          <span class="loot-scrap">⬡ ${e.loot?.scrap || 0} scrap</span>
+          ${(e.loot?.parts?.length || 0) > 0 ? `<span class="loot-parts">◈ ${e.loot.parts.length} parts</span>` : ''}
+        </div>
+        ${isDeath
+          ? `<div class="loot-lost">All run scrap lost.</div>`
+          : `<div class="loot-risk">Extract to keep. Death = lose all.</div>`
+        }
       </div>
 
       <div class="result-actions">
         ${isDeath
           ? `<button class="menu-btn primary" data-action="endless-retry">NEW RUN</button>`
-          : `<button class="menu-btn primary" data-action="endless-next-wave">NEXT WAVE</button>
-             <button class="menu-btn secondary" data-action="endless-edit-deploy">EDIT DEPLOYMENT</button>`
+          : `<button class="menu-btn primary" data-action="endless-next-wave">CONTINUE (Wave ${wave + 1})</button>
+             <button class="menu-btn extract-btn" data-action="endless-extract">EXTRACT — Keep ⬡ ${e.loot?.scrap || 0}</button>`
         }
-        <button class="menu-btn secondary" data-action="menu">MAIN MENU</button>
       </div>
     </div>
   `;

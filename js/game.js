@@ -2743,7 +2743,7 @@ function updateEndlessBattle(dt) {
         // Keep battle ref for results screen stats
         Game.endless._lastBattle = Game.endless.battle;
         Game.endless.battle = null;
-        Game.endless._resultTab = 'rank'; // Default to rank report tab
+        Game.endless._resultTab = 'battle'; // Default to battle report tab
         goto(State.ENDLESS_RESULT);
       }
     }, 1500);

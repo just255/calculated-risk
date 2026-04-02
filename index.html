@@ -9233,6 +9233,40 @@
     .endless-result-screen .result-actions {
       text-align: center;
       align-self: center;
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .loot-summary {
+      text-align: center;
+      padding: 8px 16px;
+      background: var(--bg-medium, #1a1a2e);
+      border-radius: 8px;
+      margin: 8px auto;
+      max-width: 400px;
+    }
+    .loot-haul {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      align-items: center;
+      font-size: 1.1rem;
+    }
+    .loot-label { color: var(--text-secondary); font-weight: 700; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 1px; }
+    .loot-scrap { color: #f0c040; font-weight: 700; }
+    .loot-parts { color: #60c0f0; font-weight: 700; }
+    .loot-risk { color: var(--text-secondary); font-size: 0.8rem; margin-top: 4px; }
+    .loot-lost { color: #e05050; font-weight: 700; font-size: 0.9rem; margin-top: 4px; }
+
+    .extract-btn {
+      background: linear-gradient(135deg, #2a6a2a, #1a4a1a) !important;
+      border: 1px solid #4a8a4a !important;
+      color: #8f8 !important;
+    }
+    .extract-btn:hover {
+      background: linear-gradient(135deg, #3a8a3a, #2a6a2a) !important;
     }
 
     .result-icon {
