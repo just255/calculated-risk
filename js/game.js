@@ -461,7 +461,7 @@ export function goto(newState, data = {}) {
       break;
 
     case State.HQ:
-      Game.hqTab = Game.hqTab || HQTab.LINEUP;
+      Game.hqTab = Game.hqTab || HQTab.BARRACKS;
       render();
       break;
 

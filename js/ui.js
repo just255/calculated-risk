@@ -475,24 +475,141 @@ function headquartersHTML() {
   return `
     <div class="screen hq-screen">
       <div class="hq-header">
-        <button class="back-btn" data-action="menu">←</button>
         <h2 class="hq-title">HEADQUARTERS</h2>
         <div class="hq-resources">
-          <span style="color:var(--accent-yellow)">⬡ ${Game.resources.scrap}</span>
-          <span style="color:var(--accent-blue)">◈ ${Game.resources.parts}</span>
+          <span class="hq-res-scrap">⬡ ${Game.resources.scrap}</span>
+          <span class="hq-res-parts">◈ ${Game.resources.parts || 0}</span>
+        </div>
+        <div class="hq-header-actions">
+          <button class="hq-header-btn" data-action="hq-replays" title="Replays">▶</button>
+          <button class="hq-header-btn" data-action="hq-settings" title="Settings">⚙</button>
         </div>
       </div>
-      <div class="hq-tabs">
-        <button class="hq-tab ${tab===HQTab.LINEUP?'active':''}" data-hq-tab="${HQTab.LINEUP}">LINEUP</button>
-        <button class="hq-tab ${tab===HQTab.UNITS?'active':''}" data-hq-tab="${HQTab.UNITS}">UNITS</button>
-        <button class="hq-tab ${tab===HQTab.UPGRADES?'active':''}" data-hq-tab="${HQTab.UPGRADES}">UPGRADES</button>
+      <div class="hq-tab-bar">
+        <button class="hq-tab ${tab===HQTab.BARRACKS?'active':''}" data-hq-tab="${HQTab.BARRACKS}">BARRACKS</button>
+        <button class="hq-tab ${tab===HQTab.ARMORY?'active':''}" data-hq-tab="${HQTab.ARMORY}">ARMORY</button>
+        <button class="hq-tab ${tab===HQTab.MOTOR_POOL?'active':''}" data-hq-tab="${HQTab.MOTOR_POOL}">MOTOR POOL</button>
+        <button class="hq-tab ${tab===HQTab.OPERATIONS?'active':''}" data-hq-tab="${HQTab.OPERATIONS}">OPERATIONS</button>
         <button class="hq-tab ${tab===HQTab.INSIGNIA?'active':''}" data-hq-tab="${HQTab.INSIGNIA}">INSIGNIA</button>
       </div>
       <div class="hq-content">
-        ${tab === HQTab.LINEUP ? lineupTabHTML() : ''}
-        ${tab === HQTab.UNITS ? unitsTabHTML() : ''}
-        ${tab === HQTab.UPGRADES ? upgradesTabHTML() : ''}
+        ${tab === HQTab.BARRACKS ? _barracksTabHTML() : ''}
+        ${tab === HQTab.ARMORY ? _armoryTabHTML() : ''}
+        ${tab === HQTab.MOTOR_POOL ? _motorPoolTabHTML() : ''}
+        ${tab === HQTab.OPERATIONS ? _operationsTabHTML() : ''}
         ${tab === HQTab.INSIGNIA ? insigniaTabHTML() : ''}
+      </div>
+    </div>
+  `;
+}
+
+function _barracksTabHTML() {
+  const roster = Game.roster || [];
+  const infantry = roster.filter(s => s.pool === 'infantry' || !s.pool);
+  const vehicleCrew = roster.filter(s => s.pool === 'vehicle');
+  const wounded = roster.filter(s => s.status === 'wounded');
+  const active = roster.filter(s => s.status === 'active');
+  const kia = roster.filter(s => s.status === 'kia');
+
+  const soldierRow = (s) => {
+    const statusIcon = s.status === 'active' ? '●' : s.status === 'wounded' ? '◐' : '✕';
+    const statusCls = s.status === 'active' ? 'status-active' : s.status === 'wounded' ? 'status-wounded' : 'status-kia';
+    const hpBar = s.status !== 'kia' ? `<div class="soldier-hp-bar"><div class="soldier-hp-fill" style="width:${Math.round((s.hpPercent || 1) * 100)}%"></div></div>` : '';
+    const rankName = RANK_NAMES[s.rankIndex] || 'PVT';
+    const name = s.name?.last || s.name?.first || 'Unknown';
+    const role = s.role || 'rifleman';
+    const isPC = s.isPlayerCharacter ? ' <span class="pc-badge">YOU</span>' : '';
+    return `<div class="soldier-row ${statusCls}" data-action="hq-soldier-detail" data-soldier="${s.id}">
+      <span class="soldier-status">${statusIcon}</span>
+      <span class="soldier-name">${rankName} ${name}${isPC}</span>
+      <span class="soldier-role">${role}</span>
+      ${hpBar}
+    </div>`;
+  };
+
+  const recruitCost = 50;
+  const healCost = 25;
+  const canRecruit = Game.resources.scrap >= recruitCost;
+  const canHeal = wounded.length > 0 && Game.resources.scrap >= healCost;
+
+  return `
+    <div class="barracks-tab">
+      <div class="barracks-summary">
+        <span>${active.length} active</span>
+        <span class="text-wounded">${wounded.length} wounded</span>
+        <span class="text-kia">${kia.length} KIA</span>
+        <span>Total: ${roster.length}</span>
+      </div>
+      <div class="barracks-actions">
+        <button class="hq-action-btn ${canRecruit ? '' : 'disabled'}" data-action="hq-recruit" ${canRecruit ? '' : 'disabled'}>RECRUIT ⬡${recruitCost}</button>
+        <button class="hq-action-btn ${canHeal ? '' : 'disabled'}" data-action="hq-heal-all" ${canHeal ? '' : 'disabled'}>HEAL ALL ⬡${healCost * wounded.length}</button>
+      </div>
+      <div class="soldier-list">
+        ${roster.length === 0
+          ? '<div class="empty-state">No soldiers yet. Recruit your first squad member.</div>'
+          : roster.map(soldierRow).join('')
+        }
+      </div>
+    </div>
+  `;
+}
+
+function _armoryTabHTML() {
+  return `
+    <div class="armory-tab">
+      <div class="empty-state">
+        <h3>ARMORY</h3>
+        <p>Weapons and equipment manufacturing coming soon.</p>
+        <p class="text-secondary">Complete runs to earn scrap and unlock manufacturing.</p>
+      </div>
+    </div>
+  `;
+}
+
+function _motorPoolTabHTML() {
+  const vehicles = Game.vehicles || [];
+
+  if (vehicles.length === 0) {
+    return `
+      <div class="motor-pool-tab">
+        <div class="empty-state">
+          <h3>MOTOR POOL</h3>
+          <p>No vehicles yet.</p>
+          <p class="text-secondary">Manufacture your first vehicle at the Armory to see it here.</p>
+        </div>
+      </div>
+    `;
+  }
+
+  const vehicleRow = (v) => {
+    const hpPct = Math.round((v.hpPercent || 1) * 100);
+    const statusCls = v.status === 'destroyed' ? 'status-kia' : v.status === 'damaged' ? 'status-wounded' : 'status-active';
+    return `<div class="vehicle-row ${statusCls}" data-action="hq-vehicle-detail" data-vehicle="${v.id}">
+      <span class="vehicle-name">${v.unitId}</span>
+      <span class="vehicle-status">${v.status || 'active'}</span>
+      <div class="soldier-hp-bar"><div class="soldier-hp-fill" style="width:${hpPct}%"></div></div>
+      <span>${hpPct}%</span>
+    </div>`;
+  };
+
+  return `
+    <div class="motor-pool-tab">
+      <div class="vehicle-list">
+        ${vehicles.map(vehicleRow).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function _operationsTabHTML() {
+  return `
+    <div class="operations-tab">
+      <div class="ops-section">
+        <h3>DEPLOY</h3>
+        <button class="hq-deploy-btn" data-action="hq-deploy-endless">ENDLESS MODE</button>
+      </div>
+      <div class="ops-section">
+        <button class="hq-secondary-btn" data-action="hq-fire-range">FIRE RANGE</button>
       </div>
     </div>
   `;

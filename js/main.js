@@ -13,6 +13,7 @@ import { ReplayPlayer } from './replay-player.js';
 import { cameraKeyDown, cameraKeyUp, cameraZoom, cameraPanStart, cameraPanMove, cameraPanEnd } from './camera.js';
 import { initController, getControllerInput, updateButtonStates, setControllerCallbacks, isControllerConnected } from './controller.js';
 import { initGestures, setResetJoysticksCallback } from './gestures.js';
+import { generateRecruit, saveRoster } from './roster.js';
 import { Objective, assignObjective } from './commander.js';
 import { PERSONALITY_PRESETS } from './ai-pipeline.js';
 import { EntityRenderer } from './entity-renderer.js';
@@ -526,6 +527,37 @@ document.getElementById('app').addEventListener('click', e => {
     else if (a === 'settings') goto(State.SETTINGS);
     else if (a === 'stats') goto(State.STATS);
     else if (a === 'hq') { goto(State.HQ); if (Game.hqTab === HQTab.INSIGNIA) setTimeout(() => initInsigniaTab(), 0); }
+    // HQ actions
+    else if (a === 'hq-deploy-endless') { Game.endless = newEndlessRun(); Game.endless._record = Game.settings?.autoRecord !== false; initAudio(); fetchUnitVariants().then(() => { goto(State.ENDLESS_LOADOUT); render(); }); }
+    else if (a === 'hq-fire-range') { goto(State.FIRE_RANGE); }
+    else if (a === 'hq-replays') { goto(State.REPLAY_THEATER); }
+    else if (a === 'hq-settings') { goto(State.SETTINGS); }
+    else if (a === 'hq-recruit') {
+      const cost = 50;
+      if (Game.resources.scrap >= cost) {
+        Game.resources.scrap -= cost;
+        const recruit = generateRecruit('infantry', 'rifleman');
+        Game.roster.push(recruit);
+        saveRoster();
+        save();
+        render();
+      }
+    }
+    else if (a === 'hq-heal-all') {
+      const wounded = (Game.roster || []).filter(s => s.status === 'wounded');
+      const costPer = 25;
+      const totalCost = wounded.length * costPer;
+      if (wounded.length > 0 && Game.resources.scrap >= totalCost) {
+        Game.resources.scrap -= totalCost;
+        for (const s of wounded) {
+          s.status = 'active';
+          s.hpPercent = 1.0;
+        }
+        saveRoster();
+        save();
+        render();
+      }
+    }
     else if (a === 'sprite-editor') window.open('/sprite-editor.html', '_blank');
     else if (a === 'terrain-editor') window.open('/terrain-editor.html', '_blank');
     else if (a === 'menu') { stopLoop(); Game.h2h = null; Game.h2hDefenseSlot = undefined; Game.h2hWaveLane = undefined; Game.fireRange = null; if (replayPlayer) { replayPlayer.destroy(); replayPlayer = null; } goto(State.MENU); }
