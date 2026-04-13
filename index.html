@@ -1326,6 +1326,18 @@
     /* ── Operations Tab ────────────────────────── */
     .operations-tab { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 
+    /* Operations sub-tabs */
+    .ops-sub-tabs { display: flex; gap: 4px; flex-shrink: 0; margin-bottom: 8px; }
+    .ops-sub-tab { padding: 6px 16px; font-family: 'Oxanium', monospace; font-size: 0.75rem; font-weight: 700; letter-spacing: 1px; background: var(--bg-medium); border: 1px solid var(--bg-light); color: var(--text-secondary); cursor: pointer; }
+    .ops-sub-tab.active { background: var(--bg-light); color: var(--accent-green); border-color: var(--accent-green); }
+
+    /* Leader slot */
+    .ops-leader-slot { display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: rgba(74, 222, 128, 0.08); border: 1px solid rgba(74, 222, 128, 0.2); border-radius: 4px; margin-bottom: 4px; cursor: pointer; }
+    .ops-leader-star { color: var(--accent-yellow); font-size: 1rem; }
+    .ops-leader-label { font-family: 'Oxanium', monospace; font-size: 0.6rem; color: var(--text-secondary); letter-spacing: 1px; }
+    .ops-leader-name { font-family: 'Oxanium', monospace; font-size: 0.75rem; color: var(--text-primary); font-weight: 700; }
+    .ops-step-down-btn { margin-left: auto; padding: 2px 8px; font-size: 0.6rem; font-family: 'Oxanium', monospace; background: transparent; border: 1px solid var(--accent-yellow); color: var(--accent-yellow); cursor: pointer; }
+
     /* Config bar */
     .ops-config-bar { display: flex; align-items: center; gap: 16px; padding: 8px 12px; background: var(--bg-medium); border-radius: 6px; flex-shrink: 0; flex-wrap: wrap; }
     .ops-config-group { display: flex; align-items: center; gap: 6px; }

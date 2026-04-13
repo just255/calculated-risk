@@ -2025,26 +2025,22 @@ function _motorPoolTabHTML() {
   `;
 }
 
-function _operationsTabHTML() {
-  // Initialize ops state if needed
+/** Initialize opsConfig and compute shared state for all Operations sub-views. */
+function _initOpsState() {
   if (!Game.opsConfig) {
     Game.opsConfig = {
       mapSize: 'small',
       startWave: 1,
-      heroUnit: null,        // soldier ID or 'infantry'
-      squads: [{ units: [], vehicleId: null }],
+      heroUnit: null,
+      squads: [{ units: [], vehicleId: null, leaderId: null, formation: { preset: 'wedge', positions: [], spacing: 80, facing: 0 } }],
       record: Game.settings?.autoRecord !== false,
       cmdOfficerId: null
     };
   }
   const ops = Game.opsConfig;
-  const highestWave = Game.stats?.highestWave || 0;
-  const cmdUnlocked = highestWave >= 3;
-
-  // Full roster (active only)
   const roster = getRoster().filter(s => s.status === 'active');
 
-  // Auto-set hero to player character and assign to squad 0 if not already set
+  // Auto-set hero to player character and assign to squad 0
   if (!ops.heroUnit) {
     const pc = roster.find(s => s.isPlayerCharacter);
     if (pc) {
@@ -2054,221 +2050,372 @@ function _operationsTabHTML() {
       }
     }
   }
-  const officers = roster.filter(s => isOfficer(s));
 
-  // CMD effects — gates maxSquads and provides passive bonuses
-  const cmdOfficer = ops.cmdOfficerId ? roster.find(s => s.id === ops.cmdOfficerId) : null;
-  const cmdEffects = computeCmdEffects(cmdOfficer);
-  const mapCfg = ENDLESS_MAP_SIZES[ops.mapSize] || ENDLESS_MAP_SIZES.small;
-  const maxSquads = Math.min(mapCfg.maxSquads, cmdEffects.maxSquads);
+  // Ensure squad 0 has a leader
+  for (const sq of ops.squads) {
+    if (!sq.leaderId && sq.units.length > 0) {
+      // Default leader: hero if in squad, else first unit
+      sq.leaderId = sq.units.includes(ops.heroUnit) ? ops.heroUnit : sq.units[0];
+    }
+    // Ensure formation object exists
+    if (!sq.formation) sq.formation = { preset: 'wedge', positions: [], spacing: 80, facing: 0 };
+  }
 
-  // Wave power calculation
-  const wp = WAVE_POWER_CURVE;
-  const wavePower = Math.round(wp.base + ops.startWave * wp.linear + ops.startWave * ops.startWave * wp.quadratic);
   const assignedIds = new Set();
   for (const sq of ops.squads) {
     for (const u of sq.units) assignedIds.add(u);
   }
   if (ops.heroUnit) assignedIds.add(ops.heroUnit);
-  const available = roster.filter(s => !assignedIds.has(s.id) && !isOfficer(s));
 
-  // Available vehicles
-  const vehicles = getAvailableVehicles();
+  return {
+    ops,
+    roster,
+    officers: roster.filter(s => isOfficer(s)),
+    vehicles: getAvailableVehicles(),
+    available: roster.filter(s => !assignedIds.has(s.id) && !isOfficer(s)),
+    highestWave: Game.stats?.highestWave || 0,
+    assignedIds
+  };
+}
 
-  // Filter state
+function _operationsTabHTML() {
+  const ctx = _initOpsState();
+  const { ops } = ctx;
+  const opsView = Game.opsView || 'squads';
+
+  // Sub-tab bar
+  const subTabs = `
+    <div class="ops-sub-tabs">
+      <button class="ops-sub-tab ${opsView === 'squads' ? 'active' : ''}" data-action="ops-view" data-view="squads">SQUADS</button>
+      <button class="ops-sub-tab ${opsView === 'formation' ? 'active' : ''}" data-action="ops-view" data-view="formation">FORMATION</button>
+    </div>`;
+
+  // Sub-view content
+  let content;
+  if (opsView === 'formation') {
+    content = _opsFormationView(ctx);
+  } else {
+    content = _opsSquadsView(ctx);
+  }
+
+  // Deploy bar (shared across all views)
+  const deployBar = _opsDeployBar(ctx);
+
+  return `
+    <div class="operations-tab">
+      ${subTabs}
+      ${content}
+      ${deployBar}
+    </div>
+  `;
+}
+
+/** Deploy bar — shared footer with map/wave config + deploy button. */
+function _opsDeployBar(ctx) {
+  const { ops, highestWave } = ctx;
+  const wp = WAVE_POWER_CURVE;
+  const wavePower = Math.round(wp.base + ops.startWave * wp.linear + ops.startWave * ops.startWave * wp.quadratic);
+  const totalUnits = ops.squads.reduce((sum, sq) => sum + sq.units.length + (sq.vehicleId ? 1 : 0), 0);
+  const canDeploy = ops.heroUnit && totalUnits > 0;
+
+  const mapSizeButtons = Object.entries(ENDLESS_MAP_SIZES).map(([key, cfg]) =>
+    `<button class="ops-map-btn ${ops.mapSize === key ? 'active' : ''}" data-action="ops-set-map" data-size="${key}">${cfg.label}</button>`
+  ).join('');
+  const waveOptions = [];
+  for (let w = 1; w <= Math.max(1, highestWave || 1); w++) {
+    waveOptions.push(`<option value="${w}" ${w === ops.startWave ? 'selected' : ''}>Wave ${w}</option>`);
+  }
+
+  return `
+    <div class="ops-deploy-bar">
+      <div class="ops-config-group"><span class="ops-config-label">MAP</span><div class="ops-map-buttons">${mapSizeButtons}</div></div>
+      <div class="ops-config-group"><span class="ops-config-label">WAVE</span><select class="ops-wave-select" data-action="ops-set-wave">${waveOptions.join('')}</select></div>
+      <div class="ops-power-display">
+        <span class="ops-power-label">UNITS</span>
+        <span class="ops-power-val">${totalUnits}</span>
+      </div>
+      <div class="ops-power-display">
+        <span class="ops-power-label">POWER</span>
+        <span class="ops-power-val">${wavePower}</span>
+      </div>
+      <button class="ops-deploy-btn ${canDeploy ? '' : 'disabled'}" data-action="ops-deploy" ${canDeploy ? '' : 'disabled'}>
+        ${canDeploy ? 'DEPLOY ▶' : 'ASSIGN HERO'}
+      </button>
+    </div>`;
+}
+
+/** CONFIG sub-view — map size, wave, record toggle. */
+// _opsConfigView removed — map/wave config moved to deploy bar, record in settings
+
+/** FORMATION sub-view — grid editor (placeholder until canvas is built). */
+function _opsFormationView(ctx) {
+  const { ops, roster } = ctx;
+  const sqIdx = Game.opsFormationSquad || 0;
+  const sq = ops.squads[sqIdx];
+  if (!sq) return '<div class="panel-placeholder">No squads</div>';
+
+  const formation = sq.formation || { preset: 'wedge', positions: [], spacing: 80, facing: 0 };
+  const presets = ['wedge', 'line', 'column', 'spread', 'staggered', 'echelon_l', 'echelon_r'];
+  const presetLabels = { wedge: 'Wedge', line: 'Line', column: 'Column', spread: 'Spread', staggered: 'Stagger', echelon_l: 'Echelon L', echelon_r: 'Echelon R' };
+
+  const squadSelector = ops.squads.length > 1 ? `
+    <div style="margin-bottom:8px;">
+      ${ops.squads.map((s, i) => `<button class="ops-filter-btn ${i === sqIdx ? 'active' : ''}" data-action="ops-formation-squad" data-squad="${i}">Squad ${i + 1}</button>`).join('')}
+    </div>` : '';
+
+  const presetButtons = presets.map(p =>
+    `<button class="ops-filter-btn ${formation.preset === p ? 'active' : ''}" data-action="ops-set-formation" data-preset="${p}" data-squad="${sqIdx}">${presetLabels[p]}</button>`
+  ).join('');
+
+  // Member list
+  const members = sq.units.map(uid => {
+    const s = roster.find(r => r.id === uid);
+    if (!s) return '';
+    const isLeader = uid === sq.leaderId;
+    return `<div class="ops-slot filled" style="padding:4px 8px;">${isLeader ? '★ ' : ''}${getRankInfo(s).abbr} ${s.name?.last || ''} <span class="ops-slot-role">${getRoleLabel(s.role)}</span></div>`;
+  }).join('');
+
+  return `
+    <div class="ops-split">
+      <div class="ops-left">
+        ${squadSelector}
+        <canvas class="formation-grid-canvas" width="350" height="350" data-squad="${sqIdx}" style="background:var(--bg-dark);border:1px solid var(--bg-light);border-radius:6px;width:100%;aspect-ratio:1;"></canvas>
+      </div>
+      <div class="ops-right">
+        <h4 class="ops-panel-title">FORMATION</h4>
+        <div class="ops-filter-bar" style="margin-bottom:12px;">${presetButtons}</div>
+        <div style="margin-bottom:12px;">
+          <span class="ops-config-label" style="display:block;margin-bottom:4px;">SPACING: ${formation.spacing}px</span>
+          <input type="range" min="40" max="200" value="${formation.spacing}" data-action="ops-set-spacing" data-squad="${sqIdx}" style="width:100%;">
+        </div>
+        <h4 class="ops-panel-title">MEMBERS</h4>
+        ${members || '<div class="panel-placeholder">No units in this squad</div>'}
+      </div>
+    </div>`;
+}
+
+/** SQUADS sub-view — squad tree + available roster. */
+function _opsSquadsView(ctx) {
+  const { ops, roster, officers, vehicles, available, highestWave } = ctx;
+  const cmdUnlocked = highestWave >= 3;
+  const cmdOfficer = ops.cmdOfficerId ? roster.find(s => s.id === ops.cmdOfficerId) : null;
+  const cmdEffects = computeCmdEffects(cmdOfficer);
+  const mapCfg = ENDLESS_MAP_SIZES[ops.mapSize] || ENDLESS_MAP_SIZES.small;
+  const maxSquads = Math.min(mapCfg.maxSquads, cmdEffects.maxSquads);
+  const selectedSlot = Game.opsSelectedSlot || null;
   const roleFilter = Game.opsRoleFilter || 'all';
   const filteredAvailable = roleFilter === 'all' ? available
     : available.filter(s => s.role === roleFilter || (roleFilter === 'infantry' && s.pool === 'infantry') || (roleFilter === 'vehicle' && s.pool === 'vehicle'));
 
-  // Selected slot for assignment
-  const selectedSlot = Game.opsSelectedSlot || null; // { squad, type, idx }
+  // Squad tree
+  const squadTree = _opsSquadTree(ctx, cmdUnlocked, cmdOfficer, cmdEffects, maxSquads);
 
-  // ── MISSION CONFIG BAR ──
-  const mapSizeButtons = Object.entries(ENDLESS_MAP_SIZES).map(([key, cfg]) =>
-    `<button class="ops-map-btn ${ops.mapSize === key ? 'active' : ''}" data-action="ops-set-map" data-size="${key}">${cfg.label}</button>`
-  ).join('');
+  // Right panel
+  const rightContent = _opsRightPanel(ctx, selectedSlot, roleFilter, filteredAvailable);
 
-  const waveOptions = [];
-  for (let w = 1; w <= Math.max(1, highestWave); w++) {
-    waveOptions.push(`<option value="${w}" ${w === ops.startWave ? 'selected' : ''}>Wave ${w}</option>`);
-  }
+  // Bottom detail panel
+  const bottomPanel = _buildOpsBottomPanel(ops, roster, vehicles);
 
-  const configBar = `
-    <div class="ops-config-bar">
-      <div class="ops-config-group">
-        <span class="ops-config-label">MAP</span>
-        <div class="ops-map-buttons">${mapSizeButtons}</div>
-      </div>
-      <div class="ops-config-group">
-        <span class="ops-config-label">WAVE</span>
-        <select class="ops-wave-select" data-action="ops-set-wave">${waveOptions.join('')}</select>
-      </div>
-      <div class="ops-config-group">
-        <span class="ops-config-label">REC</span>
-        <button class="ops-toggle ${ops.record ? 'active' : ''}" data-action="ops-toggle-record">${ops.record ? '●' : '○'}</button>
-      </div>
-      <div class="ops-config-group">
-        <button class="ops-secondary-btn" data-action="hq-fire-range">FIRE RANGE</button>
-      </div>
-    </div>`;
+  return `
+    <div class="ops-split">
+      <div class="ops-left">${squadTree}</div>
+      <div class="ops-right">${rightContent}</div>
+    </div>
+    ${bottomPanel}
+  `;
+}
 
-  // ── SQUAD TREE ──
-  // Collect all assigned unit IDs for hero star display
-  const allAssignedUnits = [];
-  for (const sq of ops.squads) {
-    for (const uid of sq.units) allAssignedUnits.push({ id: uid, type: 'infantry' });
-    if (sq.vehicleId) allAssignedUnits.push({ id: sq.vehicleId, type: 'vehicle' });
-  }
+/** Squad tree — CMD banner + hero indicator + squad sections. */
+function _opsSquadTree(ctx, cmdUnlocked, cmdOfficer, cmdEffects, maxSquads) {
+  const { ops, roster, officers, vehicles } = ctx;
 
-  const squadSection = (sq, sqIdx) => {
-    const veh = sq.vehicleId ? vehicles.find(v => v.id === sq.vehicleId) : null;
-    const crew = veh ? getCrewForVehicle(veh.id) : {};
-    const schema = veh ? (CREW_SCHEMAS[veh.unitId] || []) : [];
-    const isPreviewingSlot = (type, idx) => Game.opsPreviewUnit?.type === type && Game.opsPreviewUnit?.squad === sqIdx && Game.opsPreviewUnit?.idx === idx;
-
-    // Vehicle row (only if assigned)
-    const vehicleRow = veh ? `
-      <div class="ops-slot filled ${isPreviewingSlot('vehicle', 0) ? 'previewing' : ''}" data-action="ops-preview-unit" data-unit-type="vehicle" data-squad="${sqIdx}" data-unit-idx="0">
-        ${ops.heroUnit === sq.vehicleId ? '<span class="ops-hero-star">★</span>' : ''}
-        <span class="ops-slot-icon">🚗</span>
-        <span class="ops-slot-name">${veh.unitId.toUpperCase()}</span>
-        <span class="ops-veh-hp">${Math.round(veh.hpPercent * 100)}%</span>
-        <button class="ops-slot-remove" data-action="ops-unassign" data-slot-type="vehicle" data-squad="${sqIdx}" title="Remove">✕</button>
-      </div>` : '';
-
-    // Crew slots (only if vehicle assigned)
-    const crewSlots = veh && schema.length > 0 ? schema.map((slot, i) => {
-      const crewMember = crew[slot];
-      const isHero = crewMember && ops.heroUnit === crewMember.id;
-      return `
-        <div class="ops-slot crew-slot ${crewMember ? 'filled' : 'empty'} ${selectedSlot?.type === 'crew' && selectedSlot?.squad === sqIdx && selectedSlot?.idx === i ? 'selecting' : ''}" data-action="${crewMember ? 'ops-preview-unit' : 'ops-select-slot'}" data-unit-type="crew" data-slot-type="crew" data-squad="${sqIdx}" data-slot-idx="${i}" data-unit-idx="${i}" data-crew-role="${slot}" ${crewMember ? `data-soldier="${crewMember.id}"` : ''}>
-          ${isHero ? '<span class="ops-hero-star">★</span>' : ''}
-          <span class="ops-crew-role">${getRoleLabel(slot)}</span>
-          ${crewMember
-            ? `<span class="ops-slot-name">${getRankInfo(crewMember).abbr} ${crewMember.name?.last || ''}</span><button class="ops-slot-remove" data-action="ops-unassign" data-slot-type="crew" data-squad="${sqIdx}" data-slot-idx="${i}" title="Remove">✕</button>`
-            : '<span class="ops-slot-empty">empty</span>'}
-        </div>`;
-    }).join('') : '';
-
-    // Infantry slots
-    const infantrySlots = sq.units.map((soldierId, i) => {
-      const s = roster.find(r => r.id === soldierId);
-      if (!s) return '';
-      const isHero = ops.heroUnit === soldierId;
-      const isPreviewing = isPreviewingSlot('infantry', i);
-      return `
-        <div class="ops-slot filled ${isPreviewing ? 'previewing' : ''}" data-action="ops-preview-unit" data-unit-type="infantry" data-squad="${sqIdx}" data-unit-idx="${i}" data-soldier="${soldierId}">
-          ${isHero ? '<span class="ops-hero-star">★</span>' : ''}
-          <span class="ops-slot-name">${getRankInfo(s).abbr} ${s.name?.last || ''}</span>
-          <span class="ops-slot-role">${getRoleLabel(s.role)}</span>
-          <button class="ops-slot-remove" data-action="ops-unassign" data-slot-type="infantry" data-squad="${sqIdx}" data-slot-idx="${i}" title="Remove">✕</button>
-        </div>`;
-    }).join('');
-
-    return `
-      <div class="ops-squad">
-        <div class="ops-squad-header">
-          <span class="ops-squad-label">SQUAD ${sqIdx + 1}</span>
-          <span class="ops-squad-count">${sq.units.length + (veh ? 1 : 0)} units</span>
-          <div class="ops-squad-actions">
-            ${!veh ? `<button class="ops-header-action" data-action="ops-select-slot" data-slot-type="vehicle" data-squad="${sqIdx}">+ Vehicle</button>` : ''}
-            <button class="ops-header-action" data-action="ops-select-slot" data-slot-type="infantry-add" data-squad="${sqIdx}">+ Infantry</button>
-            ${sqIdx > 0 ? `<button class="ops-squad-remove" data-action="ops-remove-squad" data-squad="${sqIdx}" title="Remove squad">✕</button>` : ''}
-          </div>
-        </div>
-        ${vehicleRow}
-        ${crewSlots ? `<div class="ops-crew-slots">${crewSlots}</div>` : ''}
-        ${infantrySlots}
-      </div>`;
-  };
-
-  // Ensure squad count matches map size
-  while (ops.squads.length < 1) ops.squads.push({ units: [], vehicleId: null });
-
-  const addSquadBtn = ops.squads.length < maxSquads
-    ? `<button class="ops-add-squad-btn" data-action="ops-add-squad">+ ADD SQUAD (${ops.squads.length}/${maxSquads})</button>`
-    : '';
+  // CMD Banner
+  const cmdBanner = _opsCmdBanner(cmdUnlocked, cmdOfficer, cmdEffects, officers);
 
   // Hero indicator
   const heroSoldier = ops.heroUnit ? roster.find(s => s.id === ops.heroUnit) : null;
   const heroVehicle = ops.heroUnit ? vehicles.find(v => v.id === ops.heroUnit) : null;
   const heroLabel = heroSoldier ? `★ ${getRankInfo(heroSoldier).abbr} ${heroSoldier.name?.last}` : heroVehicle ? `★ ${heroVehicle.unitId.toUpperCase()}` : '★ No hero selected';
 
-  // ── CMD BANNER ──
-  let cmdBanner = '';
+  while (ops.squads.length < 1) ops.squads.push({ units: [], vehicleId: null, leaderId: null, formation: { preset: 'wedge', positions: [], spacing: 80, facing: 0 } });
+
+  const addSquadBtn = ops.squads.length < maxSquads
+    ? `<button class="ops-add-squad-btn" data-action="ops-add-squad">+ ADD SQUAD (${ops.squads.length}/${maxSquads})</button>`
+    : '';
+
+  return `
+    <div class="ops-squad-tree">
+      ${cmdBanner}
+      <div class="ops-hero-indicator">${heroLabel}</div>
+      ${ops.squads.map((sq, i) => _opsSquadSection(sq, i, ctx)).join('')}
+      ${addSquadBtn}
+    </div>`;
+}
+
+/** Single squad section with leader slot + vehicle + crew + infantry. */
+function _opsSquadSection(sq, sqIdx, ctx) {
+  const { ops, roster, vehicles } = ctx;
+  const selectedSlot = Game.opsSelectedSlot || null;
+  const veh = sq.vehicleId ? vehicles.find(v => v.id === sq.vehicleId) : null;
+  const crew = veh ? getCrewForVehicle(veh.id) : {};
+  const schema = veh ? (CREW_SCHEMAS[veh.unitId] || []) : [];
+  const isPreviewingSlot = (type, idx) => Game.opsPreviewUnit?.type === type && Game.opsPreviewUnit?.squad === sqIdx && Game.opsPreviewUnit?.idx === idx;
+
+  // Leader slot
+  const leader = sq.leaderId ? roster.find(r => r.id === sq.leaderId) : null;
+  const isHeroLeader = leader && ops.heroUnit === leader.id;
+  const leaderSlot = `
+    <div class="ops-leader-slot" data-action="ops-select-leader" data-squad="${sqIdx}">
+      <span class="ops-leader-star">★</span>
+      <span class="ops-leader-label">LEADER:</span>
+      <span class="ops-leader-name">${leader ? `${getRankInfo(leader).abbr} ${leader.name?.last || ''}` : 'None'}</span>
+      ${isHeroLeader ? '<button class="ops-step-down-btn" data-action="ops-step-down" data-squad="' + sqIdx + '">Step Down</button>' : ''}
+    </div>`;
+
+  // Vehicle row
+  const vehicleRow = veh ? `
+    <div class="ops-slot filled ${isPreviewingSlot('vehicle', 0) ? 'previewing' : ''}" data-action="ops-preview-unit" data-unit-type="vehicle" data-squad="${sqIdx}" data-unit-idx="0">
+      ${ops.heroUnit === sq.vehicleId ? '<span class="ops-hero-star">★</span>' : ''}
+      <span class="ops-slot-icon">🚗</span>
+      <span class="ops-slot-name">${veh.unitId.toUpperCase()}</span>
+      <span class="ops-veh-hp">${Math.round(veh.hpPercent * 100)}%</span>
+      <button class="ops-slot-remove" data-action="ops-unassign" data-slot-type="vehicle" data-squad="${sqIdx}" title="Remove">✕</button>
+    </div>` : '';
+
+  // Crew slots
+  const crewSlots = veh && schema.length > 0 ? schema.map((slot, i) => {
+    const crewMember = crew[slot];
+    const isHero = crewMember && ops.heroUnit === crewMember.id;
+    return `
+      <div class="ops-slot crew-slot ${crewMember ? 'filled' : 'empty'} ${selectedSlot?.type === 'crew' && selectedSlot?.squad === sqIdx && selectedSlot?.idx === i ? 'selecting' : ''}" data-action="${crewMember ? 'ops-preview-unit' : 'ops-select-slot'}" data-unit-type="crew" data-slot-type="crew" data-squad="${sqIdx}" data-slot-idx="${i}" data-unit-idx="${i}" data-crew-role="${slot}" ${crewMember ? `data-soldier="${crewMember.id}"` : ''}>
+        ${isHero ? '<span class="ops-hero-star">★</span>' : ''}
+        <span class="ops-crew-role">${getRoleLabel(slot)}</span>
+        ${crewMember
+          ? `<span class="ops-slot-name">${getRankInfo(crewMember).abbr} ${crewMember.name?.last || ''}</span><button class="ops-slot-remove" data-action="ops-unassign" data-slot-type="crew" data-squad="${sqIdx}" data-slot-idx="${i}" title="Remove">✕</button>`
+          : '<span class="ops-slot-empty">empty</span>'}
+      </div>`;
+  }).join('') : '';
+
+  // Infantry slots (exclude leader from regular list — they show in leader slot)
+  const infantrySlots = sq.units.filter(uid => uid !== sq.leaderId).map((soldierId, i) => {
+    const s = roster.find(r => r.id === soldierId);
+    if (!s) return '';
+    const isHero = ops.heroUnit === soldierId;
+    const realIdx = sq.units.indexOf(soldierId);
+    const isPreviewing = isPreviewingSlot('infantry', realIdx);
+    return `
+      <div class="ops-slot filled ${isPreviewing ? 'previewing' : ''}" data-action="ops-preview-unit" data-unit-type="infantry" data-squad="${sqIdx}" data-unit-idx="${realIdx}" data-soldier="${soldierId}">
+        ${isHero ? '<span class="ops-hero-star">★</span>' : ''}
+        <span class="ops-slot-name">${getRankInfo(s).abbr} ${s.name?.last || ''}</span>
+        <span class="ops-slot-role">${getRoleLabel(s.role)}</span>
+        <button class="ops-slot-remove" data-action="ops-unassign" data-slot-type="infantry" data-squad="${sqIdx}" data-slot-idx="${realIdx}" title="Remove">✕</button>
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="ops-squad">
+      <div class="ops-squad-header">
+        <span class="ops-squad-label">${sqIdx === 0 ? 'HERO SQUAD' : `SQUAD ${sqIdx + 1}`}</span>
+        <span class="ops-squad-count">${sq.units.length + (veh ? 1 : 0)} units</span>
+        <div class="ops-squad-actions">
+          ${!veh ? `<button class="ops-header-action" data-action="ops-select-slot" data-slot-type="vehicle" data-squad="${sqIdx}">+ Vehicle</button>` : ''}
+          <button class="ops-header-action" data-action="ops-select-slot" data-slot-type="infantry-add" data-squad="${sqIdx}">+ Infantry</button>
+          ${sqIdx > 0 ? `<button class="ops-squad-remove" data-action="ops-remove-squad" data-squad="${sqIdx}" title="Remove squad">✕</button>` : ''}
+        </div>
+      </div>
+      ${leaderSlot}
+      ${vehicleRow}
+      ${crewSlots ? `<div class="ops-crew-slots">${crewSlots}</div>` : ''}
+      ${infantrySlots}
+    </div>`;
+}
+
+/** CMD officer banner. */
+function _opsCmdBanner(cmdUnlocked, cmdOfficer, cmdEffects, officers) {
   if (!cmdUnlocked) {
-    cmdBanner = `
+    return `
       <div class="ops-cmd-banner ops-cmd-locked">
         <span class="ops-cmd-label">COMMANDING OFFICER</span>
         <span class="ops-cmd-locked-msg">Unlocks at Wave 3</span>
       </div>`;
-  } else if (!cmdOfficer) {
-    const hasOfficers = officers.length > 0;
-    cmdBanner = `
+  }
+  if (!cmdOfficer) {
+    return `
       <div class="ops-cmd-banner ops-cmd-empty ${Game.opsSelectedSlot?.type === 'cmd' ? 'selecting' : ''}" data-action="ops-select-slot" data-slot-type="cmd">
         <span class="ops-cmd-label">COMMANDING OFFICER</span>
-        <span class="ops-cmd-empty-msg">${hasOfficers ? 'Click to assign an officer' : 'No officers available — promote an NCO in Barracks'}</span>
-      </div>`;
-  } else {
-    const cmdRank = (OFFICER_RANKS[cmdOfficer.rankIndex] || OFFICER_RANKS[0]);
-    const cmdName = `${cmdRank.abbr} ${cmdOfficer.name?.last || 'Unknown'}`;
-    const intelLabel = cmdEffects.intelQuality > 0.6 ? 'High' : cmdEffects.intelQuality > 0.3 ? 'Medium' : 'Low';
-    cmdBanner = `
-      <div class="ops-cmd-banner ops-cmd-filled">
-        <div class="ops-cmd-info">
-          <span class="ops-cmd-label">COMMANDING OFFICER</span>
-          <span class="ops-cmd-name">${cmdName}</span>
-        </div>
-        <div class="ops-cmd-effects">
-          <span class="ops-cmd-effect">Squads: ${cmdEffects.maxSquads}</span>
-          <span class="ops-cmd-effect">Intel: ${intelLabel}</span>
-          <span class="ops-cmd-effect">Morale: ${Math.round(cmdEffects.moraleDegradationResist * 100)}%</span>
-        </div>
-        <button class="ops-cmd-change" data-action="ops-select-slot" data-slot-type="cmd">CHANGE</button>
+        <span class="ops-cmd-empty-msg">${officers.length > 0 ? 'Click to assign an officer' : 'No officers available — promote an NCO in Barracks'}</span>
       </div>`;
   }
-
-  const squadTree = `
-    <div class="ops-squad-tree">
-      ${cmdBanner}
-      <div class="ops-hero-indicator">${heroLabel}</div>
-      ${ops.squads.map((sq, i) => squadSection(sq, i)).join('')}
-      ${addSquadBtn}
+  const cmdRank = (OFFICER_RANKS[cmdOfficer.rankIndex] || OFFICER_RANKS[0]);
+  const cmdName = `${cmdRank.abbr} ${cmdOfficer.name?.last || 'Unknown'}`;
+  const intelLabel = cmdEffects.intelQuality > 0.6 ? 'High' : cmdEffects.intelQuality > 0.3 ? 'Medium' : 'Low';
+  return `
+    <div class="ops-cmd-banner ops-cmd-filled">
+      <div class="ops-cmd-info">
+        <span class="ops-cmd-label">COMMANDING OFFICER</span>
+        <span class="ops-cmd-name">${cmdName}</span>
+      </div>
+      <div class="ops-cmd-effects">
+        <span class="ops-cmd-effect">Squads: ${cmdEffects.maxSquads}</span>
+        <span class="ops-cmd-effect">Intel: ${intelLabel}</span>
+        <span class="ops-cmd-effect">Morale: ${Math.round(cmdEffects.moraleDegradationResist * 100)}%</span>
+      </div>
+      <button class="ops-cmd-change" data-action="ops-select-slot" data-slot-type="cmd">CHANGE</button>
     </div>`;
+}
 
-  // ── AVAILABLE ROSTER (right panel) ──
+/** Right panel — roster list, vehicle picker, or officer picker depending on selected slot. */
+function _opsRightPanel(ctx, selectedSlot, roleFilter, filteredAvailable) {
+  const { ops, roster, officers, vehicles } = ctx;
+  const previewId = Game.opsPreviewSoldier || null;
   const roleFilters = ['all', 'rifleman', 'medic', 'engineer', 'heavy_gunner', 'tc', 'gunner', 'driver'];
+
   const filterBar = `
     <div class="ops-filter-bar">
       ${roleFilters.map(r => `<button class="ops-filter-btn ${roleFilter === r ? 'active' : ''}" data-action="ops-filter-role" data-role="${r}">${r === 'all' ? 'ALL' : getRoleLabel(r)}</button>`).join('')}
     </div>`;
 
-  const previewId = Game.opsPreviewSoldier || null;
-  const opsRow = (s) => {
-    const rankName = getRankInfo(s).abbr;
-    const isPreviewing = previewId === s.id;
-    const cs = getEffectiveCombatStats(s);
-    return `
-      <div class="ops-available-row ${isPreviewing ? 'previewing' : ''}" data-action="ops-preview-soldier" data-soldier="${s.id}">
-        <canvas class="soldier-insignia" data-rank="${s.rankIndex}" width="64" height="64"></canvas>
-        <span class="soldier-name">${rankName} ${s.name?.last || 'Unknown'}</span>
-        <span class="soldier-role-tag">${getRoleLabel(s.role)}</span>
-        ${statRowSummary(cs, s)}
-      </div>`;
-  };
+  if (selectedSlot?.type === 'cmd') {
+    const officerRows = officers.map(o => {
+      const oRank = (OFFICER_RANKS[o.rankIndex] || OFFICER_RANKS[0]);
+      const isCurrent = ops.cmdOfficerId === o.id;
+      const m = o.cmdMetrics || {};
+      const extRate = m.runsCommanded > 0 ? Math.round((m.totalExtractions / m.runsCommanded) * 100) : 0;
+      return `
+        <div class="ops-available-row ops-officer-row ${isCurrent ? 'current-cmd' : ''}" data-action="ops-assign-cmd" data-soldier="${o.id}">
+          <canvas class="soldier-insignia" data-rank="${o.rankIndex}" width="64" height="64"></canvas>
+          <div class="ops-officer-info">
+            <span class="soldier-name">${oRank.abbr} ${o.name?.last || 'Unknown'}</span>
+            <span class="ops-officer-stats">${m.runsCommanded || 0} runs | ${extRate}% ext | ${m.soldiersLost || 0} KIA</span>
+          </div>
+          ${isCurrent ? '<span class="ops-current-badge">ACTIVE</span>' : ''}
+        </div>`;
+    }).join('');
+    return `<h4 class="ops-panel-title">SELECT COMMANDING OFFICER</h4><div class="ops-available-list">${officerRows || '<div class="panel-placeholder">No officers available</div>'}</div>`;
+  }
 
-  // Group available soldiers by pool (same sections as barracks)
+  if (selectedSlot?.type === 'vehicle') {
+    const vehicleRows = vehicles.filter(v =>
+      !ops.squads.some((sq, i) => sq.vehicleId === v.id && i !== selectedSlot.squad)
+    ).map(v => `
+      <div class="ops-available-row" data-action="ops-assign-vehicle" data-vehicle="${v.id}">
+        <span class="ops-veh-icon">🚗</span>
+        <span class="soldier-name">${v.unitId.toUpperCase()}</span>
+        <span class="ops-veh-hp">${Math.round(v.hpPercent * 100)}% HP</span>
+      </div>
+    `).join('');
+    return `<h4 class="ops-panel-title">SELECT VEHICLE</h4>${vehicleRows || '<div class="panel-placeholder">No vehicles available</div>'}`;
+  }
+
+  // Default: available roster
   const opsGroups = [
     { key: 'infantry', label: 'INFANTRY', soldiers: filteredAvailable.filter(s => s.pool === 'infantry' || !s.pool) },
     { key: 'crew', label: 'VEHICLE CREW', soldiers: filteredAvailable.filter(s => s.pool === 'vehicle') }
   ].filter(g => g.soldiers.length > 0);
 
-  // Sort within groups by role then name
   for (const g of opsGroups) {
     g.soldiers.sort((a, b) => {
-      const roleA = a.role || 'rifleman';
-      const roleB = b.role || 'rifleman';
-      if (roleA !== roleB) return roleA.localeCompare(roleB);
+      if (a.role !== b.role) return (a.role || 'rifleman').localeCompare(b.role || 'rifleman');
       return (a.name?.last || '').localeCompare(b.name?.last || '');
     });
   }
@@ -2281,79 +2428,25 @@ function _operationsTabHTML() {
         <span class="group-label">${g.label}</span>
         <span class="group-count">(${g.soldiers.length})</span>
       </div>
-      ${opsCollapsed['ops_' + g.key] ? '' : `<div class="roster-group-list">${g.soldiers.map(opsRow).join('')}</div>`}
+      ${opsCollapsed['ops_' + g.key] ? '' : `<div class="roster-group-list">${g.soldiers.map(s => {
+        const rankName = getRankInfo(s).abbr;
+        const isPreviewing = previewId === s.id;
+        const cs = getEffectiveCombatStats(s);
+        return `
+          <div class="ops-available-row ${isPreviewing ? 'previewing' : ''}" data-action="ops-preview-soldier" data-soldier="${s.id}">
+            <canvas class="soldier-insignia" data-rank="${s.rankIndex}" width="64" height="64"></canvas>
+            <span class="soldier-name">${rankName} ${s.name?.last || 'Unknown'}</span>
+            <span class="soldier-role-tag">${getRoleLabel(s.role)}</span>
+            ${statRowSummary(cs, s)}
+          </div>`;
+      }).join('')}</div>`}
     </div>
   `).join('');
 
-  // Vehicle list (when selecting a vehicle slot)
-  const vehicleRows = selectedSlot?.type === 'vehicle' ? vehicles.filter(v => {
-    // Exclude vehicles already assigned to other squads
-    return !ops.squads.some((sq, i) => sq.vehicleId === v.id && i !== selectedSlot.squad);
-  }).map(v => `
-    <div class="ops-available-row" data-action="ops-assign-vehicle" data-vehicle="${v.id}">
-      <span class="ops-veh-icon">🚗</span>
-      <span class="soldier-name">${v.unitId.toUpperCase()}</span>
-      <span class="ops-veh-hp">${Math.round(v.hpPercent * 100)}% HP</span>
-    </div>
-  `).join('') : '';
-
-  // Officer rows (when CMD slot is selected)
-  const officerRows = selectedSlot?.type === 'cmd' ? officers.map(o => {
-    const oRank = (OFFICER_RANKS[o.rankIndex] || OFFICER_RANKS[0]);
-    const isCurrent = ops.cmdOfficerId === o.id;
-    const m = o.cmdMetrics || {};
-    const extRate = m.runsCommanded > 0 ? Math.round((m.totalExtractions / m.runsCommanded) * 100) : 0;
-    return `
-      <div class="ops-available-row ops-officer-row ${isCurrent ? 'current-cmd' : ''}" data-action="ops-assign-cmd" data-soldier="${o.id}">
-        <canvas class="soldier-insignia" data-rank="${o.rankIndex}" width="64" height="64"></canvas>
-        <div class="ops-officer-info">
-          <span class="soldier-name">${oRank.abbr} ${o.name?.last || 'Unknown'}</span>
-          <span class="ops-officer-stats">${m.runsCommanded || 0} runs | ${extRate}% ext | ${m.soldiersLost || 0} KIA</span>
-        </div>
-        ${isCurrent ? '<span class="ops-current-badge">ACTIVE</span>' : ''}
-      </div>`;
-  }).join('') : '';
-
-  const rightContent = selectedSlot?.type === 'cmd'
-    ? `<h4 class="ops-panel-title">SELECT COMMANDING OFFICER</h4><div class="ops-available-list">${officerRows || '<div class="panel-placeholder">No officers available</div>'}</div>`
-    : selectedSlot?.type === 'vehicle'
-    ? `<h4 class="ops-panel-title">SELECT VEHICLE</h4>${vehicleRows || '<div class="panel-placeholder">No vehicles available</div>'}`
-    : `${filterBar}<div class="ops-available-list">${availableRows || '<div class="panel-placeholder">No soldiers available</div>'}</div>`;
-
-  // ── BOTTOM DETAIL PANEL (extracted to _buildOpsBottomPanel for targeted updates) ──
-  const bottomPanel = _buildOpsBottomPanel(ops, roster, vehicles);
-
-  // ── DEPLOY BAR ──
-  const totalUnits = ops.squads.reduce((sum, sq) => sum + sq.units.length + (sq.vehicleId ? 1 : 0), 0);
-  const canDeploy = ops.heroUnit && totalUnits > 0;
-
-  const deployBar = `
-    <div class="ops-deploy-bar">
-      <div class="ops-power-display">
-        <span class="ops-power-label">UNITS</span>
-        <span class="ops-power-val">${totalUnits}</span>
-      </div>
-      <div class="ops-power-display">
-        <span class="ops-power-label">WAVE ${ops.startWave} POWER</span>
-        <span class="ops-power-val">${wavePower}</span>
-      </div>
-      <button class="ops-deploy-btn ${canDeploy ? '' : 'disabled'}" data-action="ops-deploy" ${canDeploy ? '' : 'disabled'}>
-        ${canDeploy ? 'DEPLOY ▶' : 'ASSIGN HERO TO DEPLOY'}
-      </button>
-    </div>`;
-
-  return `
-    <div class="operations-tab">
-      ${configBar}
-      <div class="ops-split">
-        <div class="ops-left">${squadTree}</div>
-        <div class="ops-right">${rightContent}</div>
-      </div>
-      ${bottomPanel}
-      ${deployBar}
-    </div>
-  `;
+  return `${filterBar}<div class="ops-available-list">${availableRows || '<div class="panel-placeholder">No soldiers available</div>'}</div>`;
 }
+
+// ── End of Operations tab modular functions ──
 
 function getTypeBadges(types) {
   const typeColors = {

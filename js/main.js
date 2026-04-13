@@ -646,6 +646,62 @@ document.getElementById('app').addEventListener('click', e => {
       });
     }
     // ── Operations actions ──
+    else if (a === 'ops-view') {
+      Game.opsView = action.dataset.view;
+      render();
+    }
+    else if (a === 'ops-formation-squad') {
+      Game.opsFormationSquad = parseInt(action.dataset.squad) || 0;
+      render();
+    }
+    else if (a === 'ops-set-formation') {
+      const sqIdx = parseInt(action.dataset.squad) || 0;
+      const sq = Game.opsConfig?.squads?.[sqIdx];
+      if (sq) {
+        if (!sq.formation) sq.formation = { preset: 'wedge', positions: [], spacing: 80, facing: 0 };
+        sq.formation.preset = action.dataset.preset;
+        sq.formation.positions = []; // clear custom positions
+      }
+      render();
+    }
+    else if (a === 'ops-set-spacing') {
+      const sqIdx = parseInt(action.dataset.squad) || 0;
+      const sq = Game.opsConfig?.squads?.[sqIdx];
+      if (sq?.formation) sq.formation.spacing = parseInt(action.value) || 80;
+    }
+    else if (a === 'ops-select-leader') {
+      const sqIdx = parseInt(action.dataset.squad) || 0;
+      const sq = Game.opsConfig?.squads?.[sqIdx];
+      if (sq && sq.units.length > 0) {
+        // Cycle to next unit as leader
+        const currentIdx = sq.units.indexOf(sq.leaderId);
+        const nextIdx = (currentIdx + 1) % sq.units.length;
+        sq.leaderId = sq.units[nextIdx];
+        render();
+      }
+    }
+    else if (a === 'ops-step-down') {
+      const sqIdx = parseInt(action.dataset.squad) || 0;
+      const sq = Game.opsConfig?.squads?.[sqIdx];
+      if (sq) {
+        // Find next best leader (not the hero)
+        const roster = (Game.roster || []).filter(s => s.status === 'active');
+        const heroId = Game.opsConfig.heroUnit;
+        const candidates = sq.units.filter(uid => uid !== heroId);
+        if (candidates.length > 0) {
+          // Pick highest leadership
+          let best = candidates[0];
+          let bestLead = 0;
+          for (const uid of candidates) {
+            const s = roster.find(r => r.id === uid);
+            const lead = s?.personality?.discipline ?? 0;
+            if (lead > bestLead) { bestLead = lead; best = uid; }
+          }
+          sq.leaderId = best;
+        }
+        render();
+      }
+    }
     else if (a === 'ops-set-map') {
       if (!Game.opsConfig) Game.opsConfig = { mapSize: 'small', startWave: 1, heroUnit: null, squads: [{ units: [], vehicleId: null }], record: true };
       Game.opsConfig.mapSize = action.dataset.size;
@@ -1788,10 +1844,10 @@ document.getElementById('app').addEventListener('click', e => {
     else if (a === 'endless-restart-intro') {
       // Reset roster for fresh intro restart
       Game.endless = null;
-      for (const s of (Game.roster || [])) {
-        if (s.status === 'kia') s.status = 'active';
-        s.hpPercent = 1.0;
-      }
+      // Remove non-hero soldiers (reinforcements from failed run) and heal the hero
+      const pc = (Game.roster || []).find(s => s.isPlayerCharacter);
+      Game.roster = (Game.roster || []).filter(s => s.isPlayerCharacter);
+      if (pc) { pc.status = 'active'; pc.hpPercent = 1.0; pc.woundedBattlesLeft = 0; }
       launchFirstTimeMission();
       initAudio();
       goto(State.ENDLESS_BATTLE);

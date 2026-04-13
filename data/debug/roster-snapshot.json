@@ -1,0 +1,253 @@
+{
+  "roster": [
+    {
+      "id": "sol_mnxfdz4d_1",
+      "name": {
+        "first": "Justin",
+        "last": "Simmons",
+        "nickname": null
+      },
+      "callsign": null,
+      "rankIndex": 1,
+      "experience": 0,
+      "personality": {
+        "aggression": 0.5,
+        "patience": 0.5,
+        "courage": 0.5,
+        "discipline": 0.5,
+        "initiative": 0.5,
+        "awareness": 0.5
+      },
+      "physicals": {
+        "vision": 58,
+        "strength": 43,
+        "reflexes": 57,
+        "endurance": 41
+      },
+      "mos": "rifleman",
+      "training": {
+        "rifleman": 0.5,
+        "medic": 0.1,
+        "engineer": 0.1,
+        "heavy_gunner": 0.15
+      },
+      "pool": "infantry",
+      "role": "rifleman",
+      "insigniaSetId": null,
+      "vehicleExpertise": {},
+      "status": "active",
+      "hpPercent": 1,
+      "morale": 0.7,
+      "fatigue": 0,
+      "survivability": 0.5,
+      "woundedBattlesLeft": 0,
+      "traits": [],
+      "commendations": [],
+      "mmr": 472.3,
+      "mmrFloor": 0,
+      "streak": 1,
+      "heroicActions": [
+        "multiKill"
+      ],
+      "bonds": {},
+      "assignedVehicleId": null,
+      "assignedSlot": null,
+      "isSquadLeader": false,
+      "battlesServed": 1,
+      "kills": 10,
+      "missionsWithVehicle": {},
+      "isPlayerCharacter": true
+    },
+    {
+      "id": "sol_mnxfdz4e_2",
+      "name": {
+        "first": "Troy",
+        "last": "Edwards",
+        "nickname": null
+      },
+      "callsign": null,
+      "rankIndex": 0,
+      "experience": 0,
+      "personality": {
+        "aggression": 0.4918402496685193,
+        "patience": 0.415921996185529,
+        "courage": 0.6693296966910849,
+        "discipline": 0.43120604413108665,
+        "initiative": 0.40853213558741097,
+        "awareness": 0.3227086963221972
+      },
+      "physicals": {
+        "vision": 36,
+        "strength": 39,
+        "reflexes": 43,
+        "endurance": 52
+      },
+      "mos": "rifleman",
+      "training": {
+        "rifleman": 0.5,
+        "medic": 0.1,
+        "engineer": 0.1,
+        "heavy_gunner": 0.15
+      },
+      "pool": "infantry",
+      "role": "rifleman",
+      "insigniaSetId": null,
+      "vehicleExpertise": {},
+      "status": "active",
+      "hpPercent": 1,
+      "morale": 0.7,
+      "fatigue": 0,
+      "survivability": 0.5,
+      "woundedBattlesLeft": 0,
+      "traits": [],
+      "commendations": [],
+      "mmr": 0,
+      "mmrFloor": 0,
+      "streak": 0,
+      "heroicActions": [],
+      "bonds": {},
+      "assignedVehicleId": null,
+      "assignedSlot": null,
+      "isSquadLeader": false,
+      "battlesServed": 0,
+      "kills": 0,
+      "missionsWithVehicle": {}
+    },
+    {
+      "id": "sol_mnxfdz4e_3",
+      "name": {
+        "first": "Mason",
+        "last": "Hall",
+        "nickname": null
+      },
+      "callsign": null,
+      "rankIndex": 0,
+      "experience": 0,
+      "personality": {
+        "aggression": 0.5531778539412073,
+        "patience": 0.44494891336089143,
+        "courage": 0.3344631367641563,
+        "discipline": 0.5339306502538065,
+        "initiative": 0.47428021126001885,
+        "awareness": 0.618591448219937
+      },
+      "physicals": {
+        "vision": 59,
+        "strength": 41,
+        "reflexes": 40,
+        "endurance": 41
+      },
+      "mos": "rifleman",
+      "training": {
+        "rifleman": 0.5,
+        "medic": 0.1,
+        "engineer": 0.1,
+        "heavy_gunner": 0.15
+      },
+      "pool": "infantry",
+      "role": "rifleman",
+      "insigniaSetId": null,
+      "vehicleExpertise": {},
+      "status": "active",
+      "hpPercent": 1,
+      "morale": 0.7,
+      "fatigue": 0,
+      "survivability": 0.5,
+      "woundedBattlesLeft": 0,
+      "traits": [],
+      "commendations": [],
+      "mmr": 0,
+      "mmrFloor": 0,
+      "streak": 0,
+      "heroicActions": [],
+      "bonds": {},
+      "assignedVehicleId": null,
+      "assignedSlot": null,
+      "isSquadLeader": false,
+      "battlesServed": 0,
+      "kills": 0,
+      "missionsWithVehicle": {}
+    },
+    {
+      "id": "sol_mnxfdz4e_4",
+      "name": {
+        "first": "Chase",
+        "last": "Jackson",
+        "nickname": null
+      },
+      "callsign": null,
+      "rankIndex": 0,
+      "experience": 0,
+      "personality": {
+        "aggression": 0.3157327684072872,
+        "patience": 0.38126471616829655,
+        "courage": 0.475140154715657,
+        "discipline": 0.5511481455356788,
+        "initiative": 0.436591344007767,
+        "awareness": 0.5399794047544547
+      },
+      "physicals": {
+        "vision": 36,
+        "strength": 51,
+        "reflexes": 41,
+        "endurance": 40
+      },
+      "mos": "rifleman",
+      "training": {
+        "rifleman": 0.5,
+        "medic": 0.1,
+        "engineer": 0.1,
+        "heavy_gunner": 0.15
+      },
+      "pool": "infantry",
+      "role": "rifleman",
+      "insigniaSetId": null,
+      "vehicleExpertise": {},
+      "status": "active",
+      "hpPercent": 1,
+      "morale": 0.7,
+      "fatigue": 0,
+      "survivability": 0.5,
+      "woundedBattlesLeft": 0,
+      "traits": [],
+      "commendations": [],
+      "mmr": 0,
+      "mmrFloor": 0,
+      "streak": 0,
+      "heroicActions": [],
+      "bonds": {},
+      "assignedVehicleId": null,
+      "assignedSlot": null,
+      "isSquadLeader": false,
+      "battlesServed": 0,
+      "kills": 0,
+      "missionsWithVehicle": {}
+    }
+  ],
+  "vehicles": [
+    {
+      "id": "veh_mnxfi4bw_a",
+      "unitId": "sherman",
+      "name": "Fury",
+      "hpPercent": 0,
+      "condition": 1,
+      "status": "destroyed",
+      "insigniaSetId": null,
+      "battlesServed": 1,
+      "totalDamageTaken": 0,
+      "_isReinforcement": true
+    },
+    {
+      "id": "veh_mnxfi4bw_b",
+      "unitId": "sherman",
+      "name": "Warhorse",
+      "hpPercent": 0.18666666666666668,
+      "condition": 1,
+      "status": "damaged",
+      "insigniaSetId": null,
+      "battlesServed": 1,
+      "totalDamageTaken": 0,
+      "_isReinforcement": true
+    }
+  ]
+}
