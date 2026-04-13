@@ -74,6 +74,11 @@
           }
         ]
       }
+    },
+    "infantry": {
+      "name": "infantry",
+      "category": "unknown",
+      "parts": {}
     }
   },
   "terrain": {}

@@ -3,6 +3,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 export const State = {
+  TITLE: 'title',                 // Save slot selection screen
   MENU: 'menu',
   HQ: 'hq',
   SETTINGS: 'settings',
@@ -37,6 +38,7 @@ export const State = {
   ENDLESS_BATTLE: 'endless_battle',       // Combat (hero control)
   ENDLESS_BETWEEN: 'endless_between',     // Between waves: exit/continue/repair
   ENDLESS_RESULT: 'endless_result',        // Run complete: death or extraction
+  MEDEVAC: 'medevac',                      // Post-mission medevac scene (name input + heal)
   // Fire Range (AI test bed)
   FIRE_RANGE: 'fire_range',               // Config screen: pick units, behaviors
   FIRE_RANGE_BATTLE: 'fire_range_battle',  // Active AI battle (observer mode)
@@ -544,11 +546,11 @@ export const CAMPAIGN_HERO_UNITS = {
 export const PROJECTILES = {
   bullet: {
     speed: 600,       // pixels per second
-    width: 3,
-    height: 8,
+    width: 2,
+    height: 5,
     color: '#ffcc00',
     trail: false,
-    muzzleFlash: { size: 8, duration: 50 }
+    muzzleFlash: { size: 6, duration: 40 }
   },
   rifle: {
     speed: 700,
@@ -626,13 +628,16 @@ export const UNIT_PROJECTILES = {
 // viewRange (pixels): how far the crew can see (independent of fire range)
 // viewCone (degrees): forward vision cone angle (peripheral/rear zones computed from this)
 // Game version — single source of truth. Build number tracks iteration.
-export const GAME_VERSION = { major: 0, minor: 8, build: 180 };
+export const GAME_VERSION = { major: 1, minor: 0, build: 290 };
 export const GAME_VERSION_STRING = `${GAME_VERSION.major}.${GAME_VERSION.minor}.${GAME_VERSION.build}`;
 
 // Default max spread angle (degrees) — per-unit override via maxSpreadDeg in UNIT_COMBAT_STATS
 export const DEFAULT_MAX_SPREAD_DEG = 7.5;
 
 /** Check if a unitId is an infantry type (foot soldier, not a vehicle). */
+// Unit conversion: pixels to meters for display
+export const PIXELS_TO_METERS = 0.3;
+
 export function isInfantryUnit(unitId) {
   return unitId === 'infantry' || unitId === 'medic' || unitId === 'specops' || unitId === 'stinger';
 }
@@ -1852,6 +1857,44 @@ export const RANK_TABLE = [
   { grade: 'E-9', abbr: 'SGM', title: 'Sergeant Major',      mmr: 1800, nco: true  }
 ];
 
+// Officer rank track — separate from enlisted. Used for CMD pool soldiers.
+export const OFFICER_RANKS = [
+  { grade: 'O-1', abbr: '2LT', title: 'Second Lieutenant', mmr: 0,    maxSquads: 1, powerMult: 1.0  },
+  { grade: 'O-2', abbr: '1LT', title: 'First Lieutenant',  mmr: 200,  maxSquads: 2, powerMult: 1.5  },
+  { grade: 'O-3', abbr: 'CPT', title: 'Captain',           mmr: 500,  maxSquads: 3, powerMult: 2.0  },
+  { grade: 'O-4', abbr: 'MAJ', title: 'Major',             mmr: 1000, maxSquads: 3, powerMult: 2.5  }
+];
+
+// Green to Gold — costs to promote enlisted (E-5+) to officer (O-1)
+// Lower enlisted rank = more expensive (riskier bet)
+export const GREEN_TO_GOLD = {
+  5:  { scrap: 800, commendations: 4 },  // SGT
+  6:  { scrap: 600, commendations: 3 },  // SSG
+  7:  { scrap: 400, commendations: 2 },  // SFC
+  8:  { scrap: 250, commendations: 1 },  // MSG
+  9:  { scrap: 150, commendations: 0 }   // SGM
+};
+
+// CMD scoring weights — how mission outcomes affect officer MMR
+export const CMD_SCORE_WEIGHTS = {
+  waveCompleted: 8,
+  fullExtraction: 10,        // all units survived
+  soldierSurvived: 2,        // per soldier that made it out
+  soldierLost: -4,            // per soldier KIA
+  moraleAvg: 5,              // scaled by avg morale at extraction (0-1)
+  objectiveCompleted: 3,     // per objective the squad achieved
+  objectiveFailed: -2,       // per objective not achieved
+  overkillPenalty: -0.5      // per point of power ratio above 2.0
+};
+
+// SGT leadership formula weights
+export const SGT_LEADERSHIP_WEIGHTS = {
+  discipline: 0.4,
+  initiative: 0.3,
+  awareness: 0.2,
+  courage: 0.1
+};
+
 // Scoring weights — how combat actions add to MMR gain per battle
 // NOTE: All weights are placeholder — needs playtesting to balance
 export const SCORE_WEIGHTS = {
@@ -1912,6 +1955,53 @@ export const INFANTRY_ARCHETYPES = {
   heavy_gunner: { hp: 200, damage: 4,  fireRate: 250,  speed: 40, range: 450, special: 'suppress' }
 };
 
+// ─── Magazine / Reload System ────────────────────────────────
+// Weapons with magazines fire in bursts (burstRate ms between shots),
+// then reload (reloadTime ms) when the magazine is empty.
+// Units NOT listed here use single-shot mode (existing fireRate = cooldown).
+export const WEAPON_MAGAZINES = {
+  // Infantry — keyed by role
+  // burstRate: ms between shots. Hero uses this directly; AI uses aiBurstRate (slower to reduce projectile count)
+  rifleman:     { magSize: 30,  burstRate: 150, aiBurstRate: 400, reloadTime: 2500 },
+  medic:        { magSize: 15,  burstRate: 200, aiBurstRate: 500, reloadTime: 2000 },
+  engineer:     { magSize: 20,  burstRate: 160, aiBurstRate: 420, reloadTime: 2500 },
+  heavy_gunner: { magSize: 100, burstRate: 80,  aiBurstRate: 200, reloadTime: 5000 },
+  specops:      { magSize: 10,  burstRate: 300, aiBurstRate: 600, reloadTime: 2800 },
+  // Light vehicles — belt-fed MGs
+  jeep:         { magSize: 50,  burstRate: 120, aiBurstRate: 300, reloadTime: 4000 },
+  humvee:       { magSize: 40,  burstRate: 100, aiBurstRate: 250, reloadTime: 3500 },
+  // Tanks/artillery/aircraft: no entry → single-shot with existing fireRate
+};
+
+/**
+ * Get the magazine config for a unit, or null if single-shot.
+ * Infantry uses _role as key, vehicles use unitId.
+ */
+export function getWeaponMagConfig(unit) {
+  if (unit._role && WEAPON_MAGAZINES[unit._role]) return WEAPON_MAGAZINES[unit._role];
+  if (unit.unitId && WEAPON_MAGAZINES[unit.unitId]) return WEAPON_MAGAZINES[unit.unitId];
+  return null;
+}
+
+/**
+ * Initialize magazine state on a unit. Call at spawn.
+ * Units without magazine config are left unchanged (single-shot mode).
+ */
+export function initMagazine(unit) {
+  const cfg = getWeaponMagConfig(unit);
+  if (!cfg) {
+    unit._hasMagazine = false;
+    return;
+  }
+  unit._hasMagazine = true;
+  unit._magSize = cfg.magSize;
+  unit._magAmmo = cfg.magSize;
+  unit._burstRate = cfg.burstRate;
+  unit._reloadDuration = cfg.reloadTime;
+  unit._isReloading = false;
+  unit._reloadStart = 0;
+}
+
 // Maps roster roles → unit type ID for rendering/sprites
 // All infantry archetypes render as 'infantry' (same sprite set)
 export const ROLE_TO_UNIT_ID = {
@@ -1933,3 +2023,111 @@ export const STARTER_VEHICLES = [
 ];
 
 export const VEHICLE_ROLES = ['tc', 'gunner', 'driver'];
+
+// Role display names — single source of truth for UI labels
+export const ROLE_LABELS = {
+  rifleman: 'RIFLEMAN',
+  medic: 'MEDIC',
+  engineer: 'ENGINEER',
+  heavy_gunner: 'HEAVY GUNNER',
+  tc: 'TC',
+  gunner: 'GUNNER',
+  driver: 'DRIVER',
+  commander: 'COMMANDER',
+  officer: 'OFFICER'
+};
+
+/** Get display label for a role ID. */
+export function getRoleLabel(role) {
+  return ROLE_LABELS[role] || (role || 'rifleman').replace(/_/g, ' ').toUpperCase();
+}
+
+// ─── Physical attributes + cross-training ────────────────────
+
+// All assignable roles (infantry + vehicle crew)
+export const ALL_ROLES = ['rifleman', 'medic', 'engineer', 'heavy_gunner', 'tc', 'gunner', 'driver'];
+
+// MOS definitions — starting training values per primary specialty
+// Primary MOS starts at 0.5, cross-trained roles at 0.05-0.2
+export const MOS_DEFINITIONS = {
+  rifleman:     { startingTraining: { rifleman: 0.5, medic: 0.1, engineer: 0.1, heavy_gunner: 0.15 } },
+  medic:        { startingTraining: { medic: 0.5, rifleman: 0.2 } },
+  engineer:     { startingTraining: { engineer: 0.5, rifleman: 0.15, heavy_gunner: 0.1 } },
+  heavy_gunner: { startingTraining: { heavy_gunner: 0.5, rifleman: 0.2, engineer: 0.1 } },
+  tc:           { startingTraining: { tc: 0.5, gunner: 0.15, driver: 0.1 } },
+  gunner:       { startingTraining: { gunner: 0.5, tc: 0.1 } },
+  driver:       { startingTraining: { driver: 0.5, tc: 0.1, gunner: 0.05 } }
+};
+
+// Training growth config
+export const TRAINING_GROWTH_PER_BATTLE = 0.02;
+export const MOS_GROWTH_MULTIPLIER = 1.5;
+export const TRAINING_CAP = 1.0;
+
+// Physical stat generation ranges by soldier tier
+export const PHYSICAL_RANGES = {
+  recruit: { min: 25, max: 45 },
+  starter: { min: 35, max: 60 },
+  veteran: { min: 50, max: 80 }
+};
+
+// Crew modifier band — how much crew quality affects base stats
+export const CREW_MOD_FLOOR = 0.7;     // worst crew = 70% of base
+export const CREW_MOD_CEILING = 1.0;   // best crew = 100% of base
+export const CREW_MOD_RANGE = CREW_MOD_CEILING - CREW_MOD_FLOOR;
+export const CREW_DEFAULT_MOD = 0.3;   // fallback modifier for units without crew
+
+/** Apply a crew modifier to a base stat. */
+export function applyCrewMod(baseStat, modifier) {
+  return baseStat * (CREW_MOD_FLOOR + (modifier || 0) * CREW_MOD_RANGE);
+}
+
+// Physical stat labels for UI display
+export const PHYSICAL_LABELS = {
+  vision: '👁 VIS',
+  strength: '💪 STR',
+  reflexes: '⚡ REF',
+  endurance: '🏃 END'
+};
+
+// ─── First-time mission config ───────────────────────────────
+
+// Default intro seed preset (always available)
+export const DEFAULT_INTRO_SEED = { seed: 750569, name: 'Forest Valley' };
+
+export const FIRST_MISSION = {
+  gridWidth: 24,
+  gridHeight: 72,       // 3 zones × 24 cells each
+  zoneHeight: 24,       // Cells per zone
+  cellSize: 64,
+  reinforcementCount: 3,    // 3 infantry + 2 tanks from mission vehicles = 5 total
+  surgeMultiplier: 4,   // Wave 3 surge is 4x normal power
+  killThreshold: 3,     // Kills before radio warning in wave 3
+  surgeDelay: 3000,     // ms after warning before surge
+  reinfDelay: 5000,     // ms after surge before friendlies arrive
+};
+
+export const FIRST_MISSION_DIALOG = {
+  intro: [
+    { text: "Separated from my unit... deep in enemy territory.", type: 'thought', pauseGame: true },
+    { text: "Need to stay sharp. Movement ahead.", type: 'thought', pauseGame: true }
+  ],
+  zone2reveal: [
+    { text: "Clear. Need to push forward.", type: 'thought', pauseGame: true },
+    { text: "More contacts ahead. No choice but through.", type: 'thought', pauseGame: true }
+  ],
+  zone3reveal: [
+    { text: "Almost through. One more push.", type: 'thought', pauseGame: true },
+    { text: "Wait... that's a lot more than expected.", type: 'thought', pauseGame: true }
+  ],
+  wave3warning: [
+    { text: "Fall back! Multiple hostiles inbound!", type: 'radio', duration: 4000 }
+  ],
+  reinforcements: [
+    { text: "Friendlies inbound! Hold on!", type: 'radio', duration: 3000 }
+  ],
+  extraction: [
+    { text: "Thought I was done for.", type: 'thought', pauseGame: true },
+    { text: "We've got you. Let's get to base.", type: 'radio', pauseGame: true }
+  ]
+};

@@ -1,18 +1,14 @@
 // ═══════════════════════════════════════════════════════════════
 // MINIMAP — Tactical overview rendered to a canvas element
+// Terrain is cached to an offscreen canvas once at battle start.
+// Each frame only redraws unit dots, fog, and viewport on top.
 // ═══════════════════════════════════════════════════════════════
 
-const TERRAIN_COLORS = {
-  open: '#4a4035', grass: '#3a5a2a', brush: '#2a4a1a',
-  forest: '#1e3a18', high: '#5a4a3a', water: '#1a4a65',
-  trench: '#3a2a1a', pillbox: '#5a5a5a'
-};
+let _terrainCache = null;  // { canvas, mapWidth, mapHeight, w, scaleX, scaleY }
 
 /**
  * Draw the minimap for a battle state.
- * Renders terrain, units, enemies (fog-aware), hero, and camera viewport.
- * @param {object} b - Battle state
- * @param {string} [selector='.minimap-canvas'] - CSS selector for the canvas element
+ * Renders cached terrain + live units/enemies/hero/viewport.
  */
 export function drawMinimap(b, selector = '.minimap-canvas') {
   const canvas = document.querySelector(selector);
@@ -22,35 +18,82 @@ export function drawMinimap(b, selector = '.minimap-canvas') {
   const w = canvas.width;
   const h = canvas.height;
 
+  // Fixed scale: map width fits canvas width
   const scaleX = w / b.mapWidth;
-  const scaleY = h / b.mapHeight;
+  const scaleY = scaleX;
+
+  // Cache terrain on first call or if map changed
+  if (!_terrainCache || _terrainCache.mapWidth !== b.mapWidth || _terrainCache.mapHeight !== b.mapHeight || _terrainCache.w !== w) {
+    _buildTerrainCache(b, w, scaleX, scaleY);
+  }
+
+  const mapCanvasH = b.mapHeight * scaleY;
+
+  // Focus on hero
+  const focusY = b.hero?.y ?? b.mapHeight / 2;
+  const scrollY = Math.max(0, Math.min(focusY * scaleY - h / 2, mapCanvasH - h));
 
   // Clear
   ctx.fillStyle = '#1a1a1a';
   ctx.fillRect(0, 0, w, h);
 
-  // Terrain background
-  drawTerrain(ctx, b, w, h, scaleX, scaleY);
+  // Draw cached terrain with scroll
+  if (_terrainCache?.canvas) {
+    ctx.drawImage(_terrainCache.canvas, 0, scrollY, w, h, 0, 0, w, h);
+  }
 
-  // Units
+  // Everything else draws with scroll offset
+  ctx.save();
+  ctx.translate(0, -scrollY);
+
+  // Fog overlay for unrevealed zones
+  if (b._fogZones) {
+    for (const zone of b._fogZones) {
+      if (!zone.revealed) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(0, zone.y * scaleY, w, zone.height * scaleY);
+      }
+    }
+  }
+
   drawBlueUnits(ctx, b, scaleX, scaleY);
   drawEnemies(ctx, b, scaleX, scaleY);
 
-  // Hero
   if (b.hero && !b.hero.dead) {
     drawHero(ctx, b, scaleX, scaleY);
   }
 
-  // Camera viewport indicator
   if (b.camera?.zoom) {
     drawViewport(ctx, b, w, h, scaleX, scaleY);
   }
+
+  ctx.restore();
 }
 
-function drawTerrain(ctx, b, w, h, scaleX, scaleY) {
+/**
+ * Clear the terrain cache (call on battle end / new battle).
+ */
+export function clearMinimapCache() {
+  _terrainCache = null;
+}
+
+// ── Internal ────────────────────────────────────────────────
+
+function _buildTerrainCache(b, w, scaleX, scaleY) {
+  const mapCanvasH = Math.ceil(b.mapHeight * scaleY);
+  const offscreen = document.createElement('canvas');
+  offscreen.width = w;
+  offscreen.height = mapCanvasH;
+  const ctx = offscreen.getContext('2d');
+
   if (b.terrainCanvases?.terrainCanvas) {
-    ctx.drawImage(b.terrainCanvases.terrainCanvas, 0, 0, w, h);
+    ctx.drawImage(b.terrainCanvases.terrainCanvas, 0, 0, w, mapCanvasH);
   } else if (b.terrain) {
+    const TERRAIN_COLORS = {
+      open: '#4a4035', grass: '#3a5a2a', brush: '#2a4a1a',
+      forest: '#1e3a18', high: '#5a4a3a', water: '#1a4a65',
+      trench: '#3a2a1a', pillbox: '#5a5a5a'
+    };
     const cellW = (b.cellSize || 64) * scaleX;
     const cellH = (b.cellSize || 64) * scaleY;
     for (let row = 0; row < (b.gridHeight || 0); row++) {
@@ -61,6 +104,8 @@ function drawTerrain(ctx, b, w, h, scaleX, scaleY) {
       }
     }
   }
+
+  _terrainCache = { canvas: offscreen, mapWidth: b.mapWidth, mapHeight: b.mapHeight, w };
 }
 
 function drawBlueUnits(ctx, b, scaleX, scaleY) {
@@ -105,7 +150,6 @@ function drawHero(ctx, b, scaleX, scaleY) {
   const x = b.hero.x * scaleX;
   const y = b.hero.y * scaleY;
 
-  // Hero dot
   ctx.fillStyle = '#4a9eff';
   ctx.beginPath();
   ctx.arc(x, y, 4, 0, Math.PI * 2);
@@ -114,7 +158,6 @@ function drawHero(ctx, b, scaleX, scaleY) {
   ctx.lineWidth = 1;
   ctx.stroke();
 
-  // View range circle
   const viewRange = b.hero.viewRange || 850;
   ctx.strokeStyle = 'rgba(74, 158, 255, 0.3)';
   ctx.lineWidth = 1;
@@ -126,7 +169,6 @@ function drawHero(ctx, b, scaleX, scaleY) {
 function drawViewport(ctx, b, w, h, scaleX, scaleY) {
   const cam = b.camera;
   const zoom = cam.zoom || 1;
-  // Approximate screen size from battle-renderer viewport
   const el = document.querySelector('.battle-canvas-container, .campaign-battlefield');
   if (!el) return;
   const viewW = el.clientWidth / zoom;

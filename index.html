@@ -42,6 +42,11 @@
     }
 
     /* Global themed scrollbars */
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: var(--bg-lighter) var(--bg-dark);
+    }
+
     ::-webkit-scrollbar {
       width: 8px;
       height: 8px;
@@ -93,6 +98,73 @@
       display: flex;
       flex-direction: column;
     }
+
+    /* ── Title Screen / Save Slots ── */
+    .title-screen { align-items: center; justify-content: center; padding: 20px; }
+    .title-header { text-align: center; margin-bottom: 30px; }
+    .title-name { font-size: 2rem; font-weight: 700; letter-spacing: 4px; color: var(--accent-green); margin: 0; }
+    .title-version { font-size: 0.7rem; color: var(--text-secondary); }
+    .slot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; max-width: 800px; width: 100%; }
+    .slot-card { padding: 16px; border-radius: 8px; cursor: pointer; transition: all 0.15s; border: 2px solid var(--bg-light); background: var(--bg-medium); }
+    .slot-card:hover { border-color: var(--accent-green); background: var(--bg-light); }
+    .slot-card.slot-active { border-color: var(--accent-green); box-shadow: 0 0 8px rgba(74,222,128,0.25); }
+    .slot-filled .slot-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .slot-name { font-size: 0.85rem; font-weight: 700; color: var(--text-primary); }
+    .slot-wave { font-size: 0.7rem; color: var(--accent-yellow); font-weight: 600; }
+    .slot-details { display: flex; gap: 12px; font-size: 0.7rem; color: var(--text-secondary); margin-bottom: 6px; }
+    .slot-footer { display: flex; justify-content: space-between; align-items: center; }
+    .slot-date { font-size: 0.6rem; color: var(--text-secondary); opacity: 0.6; }
+    .slot-delete { background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 0.7rem; opacity: 0.4; padding: 2px 4px; }
+    .slot-delete:hover { opacity: 1; color: var(--accent-red); }
+    .slot-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80px; border-style: dashed; }
+    .slot-empty-label { font-size: 0.75rem; color: var(--text-secondary); opacity: 0.5; }
+    .slot-new-label { font-size: 0.7rem; color: var(--accent-green); margin-top: 4px; }
+
+    /* New Game Setup Screen */
+    .new-game-setup { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; gap: 20px; }
+    .setup-header { text-align: center; }
+    .setup-header h2 { font-size: 1.4rem; color: var(--accent-green); margin: 0 0 4px; letter-spacing: 2px; }
+    .setup-subtitle { font-size: 0.75rem; color: var(--text-secondary); margin: 0; }
+    .setup-seeds { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 360px; }
+    .seed-row { display: flex; align-items: center; gap: 8px; }
+    .seed-option { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 6px; cursor: pointer; flex: 1; background: var(--bg-medium); border: 1px solid var(--bg-light); transition: border-color 0.15s; }
+    .seed-option:hover { border-color: var(--accent-green); }
+    .seed-option input[type="radio"] { accent-color: var(--accent-green); }
+    .seed-option input[type="radio"]:checked ~ .seed-name { color: var(--accent-green); }
+    .seed-name { font-size: 0.8rem; color: var(--text-primary); flex: 1; }
+    .seed-value { font-size: 0.65rem; color: var(--text-secondary); font-family: monospace; }
+    .seed-remove-btn { background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 0.8rem; padding: 4px 6px; opacity: 0.4; }
+    .seed-remove-btn:hover { opacity: 1; color: var(--accent-red); }
+    .seed-custom-row { flex-wrap: wrap; }
+    .seed-custom-input { width: 100%; margin-top: 4px; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--bg-light); background: var(--bg-dark); color: var(--text-primary); font-family: 'Oxanium', monospace; font-size: 0.75rem; }
+    .seed-custom-input:focus { border-color: var(--accent-green); outline: none; }
+    .setup-actions { display: flex; gap: 12px; margin-top: 8px; }
+    .setup-btn { padding: 10px 28px; border-radius: 6px; border: 1px solid var(--bg-light); background: var(--bg-medium); color: var(--text-primary); font-family: 'Oxanium', monospace; font-size: 0.8rem; cursor: pointer; letter-spacing: 1px; }
+    .setup-btn:hover { border-color: var(--text-secondary); }
+    .setup-btn.primary { background: var(--accent-green); color: var(--bg-dark); font-weight: 700; border-color: var(--accent-green); }
+    .setup-btn.primary:hover { filter: brightness(1.1); }
+    .title-footer { margin-top: 20px; }
+    .title-settings-btn { padding: 8px 20px; background: none; border: 1px solid var(--bg-light); color: var(--text-secondary); border-radius: 4px; cursor: pointer; }
+    .title-settings-btn:hover { border-color: var(--text-secondary); color: var(--text-primary); }
+
+    /* Radio message overlay */
+    .radio-message { position: absolute; bottom: 80px; left: 16px; background: rgba(26,31,46,0.85); border: 1px solid var(--accent-yellow); color: var(--accent-yellow); padding: 8px 14px; border-radius: 6px; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.5px; z-index: 100; transition: opacity 0.5s; pointer-events: none; max-width: 300px; }
+
+    /* Mission fade from black */
+    .mission-fade { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: #000; z-index: 300; pointer-events: none; transition: opacity 0.1s; }
+    .mission-click-hint { position: absolute; bottom: 60px; left: 50%; transform: translateX(-50%); font-size: 0.7rem; color: var(--text-secondary); opacity: 0.6; letter-spacing: 1.5px; text-transform: uppercase; z-index: 150; pointer-events: none; animation: pulse-hint 2s ease-in-out infinite; }
+    @keyframes pulse-hint { 0%, 100% { opacity: 0.3; } 50% { opacity: 0.8; } }
+
+    /* Mission dialog overlay */
+    .mission-dialog-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 200; pointer-events: all; cursor: pointer; }
+    .mission-dialog-overlay.type-thought { background: rgba(0,0,0,0.5); }
+    .mission-dialog-overlay.type-radio { background: rgba(0,0,0,0.3); }
+    .mission-dialog-text { max-width: 600px; text-align: center; padding: 20px 30px; border-radius: 8px; font-size: 1.1rem; line-height: 1.6; }
+    .type-thought .mission-dialog-text { color: var(--text-primary); font-style: italic; background: rgba(26,31,46,0.8); border: 1px solid rgba(255,255,255,0.1); }
+    .type-radio .mission-dialog-text { color: var(--accent-yellow); font-weight: 700; background: rgba(26,31,46,0.9); border: 1px solid var(--accent-yellow); letter-spacing: 0.5px; }
+    .type-radio .mission-dialog-text::before { content: '📻 '; }
+    .mission-dialog-hint { margin-top: 12px; font-size: 0.65rem; color: var(--text-secondary); opacity: 0.6; letter-spacing: 1px; text-transform: uppercase; }
+    .type-radio .mission-dialog-hint { display: none; }
 
     /* Menu Screen - Landscape optimized */
     .menu-screen {
@@ -1012,11 +1084,15 @@
     .hq-header-btn:hover { color: var(--text-primary); border-color: var(--accent-green); }
 
     /* ── Barracks Tab ────────────────────────── */
-    .barracks-tab { display: flex; gap: 16px; height: 100%; min-height: 0; }
-    .barracks-tab.has-panel .barracks-roster { flex: 0 0 55%; }
-    .barracks-tab:not(.has-panel) .barracks-roster { flex: 1; }
-    .barracks-roster { overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+    .barracks-tab { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+    .barracks-sub-tabs { display: flex; gap: 4px; padding: 0 0 8px; flex-shrink: 0; }
+    .barracks-sub-tab { padding: 6px 16px; background: var(--bg-medium); border: 1px solid var(--bg-light); border-radius: 4px; color: var(--text-secondary); font-size: 0.75rem; font-weight: 700; letter-spacing: 1px; cursor: pointer; transition: all 0.15s; }
+    .barracks-sub-tab:hover { background: var(--bg-light); }
+    .barracks-sub-tab.active { background: var(--bg-light); color: var(--accent-green); border-color: var(--accent-green); }
+    .barracks-split { display: flex; gap: 16px; flex: 1; min-height: 0; }
+    .barracks-roster { flex: 0 0 55%; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
     .barracks-panel { flex: 1; overflow-y: auto; background: var(--bg-medium); border-radius: 8px; border: 1px solid var(--bg-light); padding: 12px; }
+    .panel-placeholder { color: var(--text-secondary); font-size: 0.8rem; padding: 20px; text-align: center; opacity: 0.6; }
 
     /* Role groups */
     .roster-group { margin-bottom: 4px; }
@@ -1031,11 +1107,12 @@
     /* Soldier rows */
     .soldier-row { padding: 6px 10px; border-radius: 4px; cursor: pointer; transition: background 0.15s; border-left: 3px solid transparent; }
     .soldier-row:hover { background: var(--bg-light); }
-    .soldier-row.expanded { background: var(--bg-light); border-left-color: var(--accent-green); }
+    .soldier-row.expanded, .soldier-row.selected { background: var(--bg-light); border-left-color: var(--accent-green); }
     .soldier-row.wounded .soldier-main { opacity: 0.8; }
     .soldier-row.kia .soldier-main { opacity: 0.4; text-decoration: line-through; }
     .soldier-main { display: flex; align-items: center; gap: 8px; }
     .soldier-rank-icon { font-size: 0.7rem; width: 20px; text-align: center; color: var(--accent-yellow); }
+    .soldier-insignia { width: 48px; height: 48px; flex-shrink: 0; }
     .soldier-name { font-weight: 600; font-size: 0.8rem; min-width: 120px; }
     .pc-badge { font-size: 0.6rem; background: var(--accent-green); color: var(--bg-dark); padding: 1px 4px; border-radius: 3px; font-weight: 700; }
     .soldier-role-tag { font-size: 0.65rem; padding: 2px 6px; background: var(--bg-dark); border-radius: 3px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; }
@@ -1050,6 +1127,117 @@
     .status-label.status-active { color: var(--accent-green); }
     .status-label.status-wounded { color: var(--accent-yellow); }
     .status-label.status-kia { color: var(--accent-red); }
+
+    /* Memorial section */
+    .memorial-group { border-top: 1px solid rgba(248,113,113,0.2); margin-top: 12px; padding-top: 8px; }
+    .memorial-group .roster-group-header { color: var(--accent-red); opacity: 0.8; }
+    .memorial-cards { display: flex; gap: 10px; padding: 8px 4px; overflow-x: auto; }
+
+    /* Memorial card — tier border */
+    .memorial-card { flex: 0 0 160px; background: var(--bg-dark); border-radius: 6px; padding: 10px; border: 2px solid #666; position: relative; }
+    .memorial-tier-gold { border-color: var(--accent-yellow); box-shadow: 0 0 8px rgba(251,191,36,0.25); }
+    .memorial-tier-silver { border-color: #a0a0a0; box-shadow: 0 0 8px rgba(160,160,160,0.2); }
+    .memorial-tier-bronze { border-color: #a0522d; box-shadow: 0 0 8px rgba(160,82,45,0.15); }
+
+    .memorial-card-header { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+    .memorial-insignia { width: 48px; height: 48px; flex-shrink: 0; }
+    .memorial-card-name { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+    .memorial-rank { font-size: 0.6rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; }
+    .memorial-last { font-size: 0.8rem; font-weight: 700; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .memorial-first { font-size: 0.65rem; color: var(--text-secondary); }
+    .memorial-role-tag { font-size: 0.55rem; padding: 2px 4px; background: rgba(248,113,113,0.15); color: var(--accent-red); border-radius: 3px; text-transform: uppercase; letter-spacing: 0.3px; white-space: nowrap; align-self: flex-start; }
+
+    .memorial-card-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 8px; }
+    .memorial-stat { display: flex; flex-direction: column; align-items: center; padding: 3px 0; }
+    .memorial-stat-val { font-size: 0.85rem; font-weight: 700; color: var(--text-primary); }
+    .memorial-stat-label { font-size: 0.55rem; color: var(--text-secondary); text-transform: uppercase; }
+
+    .memorial-card-footer { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 6px; }
+    .memorial-runs-left { font-size: 0.6rem; color: var(--text-secondary); }
+    .memorial-dismiss { background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 0.6rem; opacity: 0.4; padding: 2px; }
+    .memorial-dismiss:hover { opacity: 1; color: var(--accent-red); }
+
+    /* Unmemorialized KIA — simple rows below cards */
+    .unmemorialized-section { padding: 6px 8px; border-top: 1px solid rgba(255,255,255,0.05); margin-top: 4px; }
+    .unmemorialized-header { font-size: 0.6rem; color: var(--text-secondary); opacity: 0.5; text-transform: uppercase; letter-spacing: 0.5px; display: block; margin-bottom: 4px; }
+    .unmemorialized-list { display: flex; flex-direction: column; gap: 2px; }
+    .unmemorialized-row { display: flex; align-items: center; gap: 8px; padding: 3px 4px; font-size: 0.7rem; color: var(--text-secondary); opacity: 0.5; }
+    .unmemorialized-name { font-weight: 600; min-width: 100px; }
+    .unmemorialized-score { font-size: 0.6rem; margin-left: auto; }
+    .memorial-remove { background: none; border: 1px solid rgba(248,113,113,0.3); color: var(--accent-red); width: 18px; height: 18px; border-radius: 3px; cursor: pointer; font-size: 0.55rem; display: flex; align-items: center; justify-content: center; opacity: 0.4; }
+    .memorial-remove:hover { opacity: 1; background: rgba(248,113,113,0.15); }
+
+    /* Memorial row entries (Legacy view) */
+    .memorial-row-entry { border-left-width: 3px !important; }
+    .memorial-tier-border-gold { border-left-color: var(--accent-yellow) !important; }
+    .memorial-tier-border-silver { border-left-color: #a0a0a0 !important; }
+    .memorial-tier-border-bronze { border-left-color: #a0522d !important; }
+    .memorial-stat-inline { font-size: 0.65rem; color: var(--text-secondary); }
+    .memorial-runs-tag { font-size: 0.6rem; color: var(--accent-yellow); margin-left: auto; opacity: 0.8; }
+    .memorial-row-entry.selected { background: var(--bg-light); }
+
+    /* Recruit row entries (Legacy view) */
+    .recruit-row-entry { }
+    .recruit-legacy-row { border-left-color: var(--accent-yellow) !important; }
+    .recruit-cost-tag { font-size: 0.7rem; font-weight: 700; color: var(--accent-green); min-width: 40px; }
+    .recruit-cost-tag.unaffordable { color: var(--accent-red); opacity: 0.5; }
+    .recruit-row-entry.cant-afford { opacity: 0.5; }
+    .lineage-tag { font-size: 0.6rem; color: var(--accent-yellow); font-style: italic; }
+    .recruit-traits { font-size: 0.65rem; color: var(--text-secondary); margin-left: auto; }
+
+    /* Unmemorialized KIA rows */
+    .unmemorialized-row-entry { opacity: 0.5; }
+    .unmem-name { color: var(--text-secondary); }
+    .unmem-score { font-size: 0.6rem; color: var(--text-secondary); margin-left: auto; }
+
+    /* Memorial detail panel */
+    .memorial-detail { border-left: 3px solid var(--accent-yellow); }
+    .memorial-duration { display: flex; align-items: center; gap: 8px; padding: 8px 0; font-size: 0.75rem; color: var(--text-secondary); }
+    .memorial-tier-label { font-size: 0.65rem; font-weight: 700; padding: 2px 6px; border-radius: 3px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .memorial-tier-label.tier-gold { background: rgba(251,191,36,0.2); color: var(--accent-yellow); }
+    .memorial-tier-label.tier-silver { background: rgba(160,160,160,0.2); color: #c0c0c0; }
+    .memorial-tier-label.tier-bronze { background: rgba(160,82,45,0.2); color: #cd7f32; }
+    .comm-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+    .comm-badge { font-size: 0.6rem; padding: 2px 6px; background: rgba(251,191,36,0.15); color: var(--accent-yellow); border-radius: 3px; }
+    .memorial-sons { margin-top: 8px; }
+    .memorial-sons h4 { font-size: 0.7rem; color: var(--text-secondary); margin-bottom: 4px; }
+    .son-entry { font-size: 0.75rem; color: var(--text-primary); padding: 2px 0; }
+
+    /* Recruit detail panel */
+    .recruit-detail { }
+    .recruit-legacy-detail { border-left: 3px solid var(--accent-yellow); }
+    .recruit-lineage-detail { font-size: 0.8rem; color: var(--accent-yellow); font-style: italic; padding: 4px 0 8px; }
+    .recruit-cost-display { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-top: 1px solid rgba(255,255,255,0.05); }
+    .recruit-cost-label { font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px; }
+    .recruit-cost-val { font-size: 1.1rem; font-weight: 700; color: var(--accent-green); }
+    .recruit-action-btn { width: 100%; padding: 8px; background: rgba(74,222,128,0.15); border: 1px solid var(--accent-green); color: var(--accent-green); border-radius: 4px; font-weight: 700; cursor: pointer; }
+    .recruit-action-btn:hover:not(.disabled) { background: rgba(74,222,128,0.25); }
+    .recruit-action-btn.disabled { opacity: 0.4; cursor: not-allowed; border-color: var(--text-secondary); color: var(--text-secondary); background: none; }
+
+    /* Memorial tier tag (inline in rows) */
+    .memorial-tier-tag { font-size: 0.6rem; font-weight: 700; padding: 1px 5px; border-radius: 3px; margin-left: auto; letter-spacing: 0.3px; }
+    .memorial-tier-tag.tier-gold { background: rgba(251,191,36,0.2); color: var(--accent-yellow); }
+    .memorial-tier-tag.tier-silver { background: rgba(160,160,160,0.2); color: #c0c0c0; }
+    .memorial-tier-tag.tier-bronze { background: rgba(160,82,45,0.2); color: #cd7f32; }
+
+    /* Qualifying fallen rows */
+    .qualifying-row-entry { }
+
+    /* Empty wall placeholder */
+    .empty-wall { padding: 12px; color: var(--text-secondary); font-size: 0.75rem; opacity: 0.5; text-align: center; }
+
+    /* Replace options in fallen detail */
+    .replace-options { display: flex; flex-direction: column; gap: 4px; }
+    .replace-label { font-size: 0.7rem; color: var(--text-secondary); margin-bottom: 4px; }
+    .replace-btn { padding: 6px 10px; background: rgba(248,113,113,0.1); border: 1px solid rgba(248,113,113,0.3); color: var(--accent-red); border-radius: 4px; cursor: pointer; font-size: 0.7rem; text-align: left; }
+    .replace-btn:hover { background: rgba(248,113,113,0.2); }
+
+    /* Locked recruit slots */
+    .locked-slot { opacity: 0.35; cursor: default; }
+    .locked-slot:hover { background: transparent; }
+    .locked-slot-icon { font-size: 0.8rem; }
+    .locked-name { color: var(--text-secondary); font-style: italic; }
+    .locked-timer { font-size: 0.6rem; color: var(--text-secondary); margin-left: auto; }
 
     /* Expanded soldier history */
     .soldier-expanded { padding: 8px 0 4px 28px; }
@@ -1078,6 +1266,25 @@
     .hq-action-btn.disabled { opacity: 0.4; cursor: not-allowed; }
     .dismiss-btn { border-color: #533; color: var(--accent-red); }
     .dismiss-btn:hover { border-color: var(--accent-red); }
+    .retire-btn { border-color: rgba(251,146,60,0.3); color: var(--accent-orange); }
+    .retire-btn:hover { border-color: var(--accent-orange); }
+
+    /* Officer roster group accent */
+    .roster-group-orange .roster-group-header { color: var(--accent-orange); }
+    .roster-group-orange .soldier-row { border-left-color: var(--accent-orange); }
+    .roster-group-orange .soldier-row.selected { border-left-color: var(--accent-orange); background: rgba(251,146,60,0.08); }
+
+    /* Green to Gold promotion section */
+    .g2g-section { margin-top: 8px; padding: 10px; background: rgba(251,146,60,0.05); border: 1px solid rgba(251,146,60,0.2); border-radius: 6px; }
+    .g2g-section h4 { font-size: 0.7rem; color: var(--accent-orange); letter-spacing: 1px; margin-bottom: 6px; }
+    .g2g-info { display: flex; gap: 12px; margin-bottom: 6px; }
+    .g2g-cost, .g2g-comms { font-size: 0.75rem; font-weight: 600; }
+    .g2g-cost.met, .g2g-comms.met { color: var(--accent-green); }
+    .g2g-cost.unmet, .g2g-comms.unmet { color: var(--accent-red); }
+    .g2g-warning { font-size: 0.65rem; color: var(--accent-yellow); margin-bottom: 6px; }
+    .g2g-btn { width: 100%; background: rgba(251,146,60,0.15); border-color: var(--accent-orange); color: var(--accent-orange); }
+    .g2g-btn:hover { background: rgba(251,146,60,0.25); }
+    .g2g-ineligible { font-size: 0.65rem; color: var(--text-secondary); font-style: italic; }
 
     /* ── Comparison view ──────────────────────── */
     .soldier-compare .compare-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
@@ -1109,18 +1316,240 @@
     .recruit-btn { width: 100%; padding: 4px; border: 1px solid var(--accent-green); background: none; color: var(--accent-green); border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 0.7rem; }
     .recruit-btn:hover:not(.disabled) { background: rgba(74,222,128,0.15); }
     .recruit-btn.disabled { opacity: 0.4; cursor: not-allowed; border-color: var(--bg-light); color: var(--text-secondary); }
+    .recruit-legacy { border-color: var(--accent-yellow); box-shadow: 0 0 6px rgba(251,191,36,0.15); }
+    .recruit-lineage { font-size: 0.6rem; color: var(--accent-yellow); font-style: italic; margin: 2px 0; }
 
     /* ── Operations / Motor Pool placeholders ── */
     .empty-state { text-align: center; padding: 40px 20px; color: var(--text-secondary); }
     .empty-state h3 { color: var(--text-primary); margin-bottom: 8px; }
     .text-secondary { color: var(--text-secondary); }
-    .operations-tab { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 20px; }
-    .ops-section { text-align: center; }
-    .ops-section h3 { margin-bottom: 8px; color: var(--text-secondary); font-size: 0.75rem; letter-spacing: 1.5px; }
-    .hq-deploy-btn { padding: 12px 32px; background: linear-gradient(135deg, var(--accent-green), #2a8a4a); border: none; color: var(--bg-dark); border-radius: 6px; font-size: 1rem; font-weight: 700; cursor: pointer; letter-spacing: 1px; }
-    .hq-deploy-btn:hover { filter: brightness(1.1); }
-    .hq-secondary-btn { padding: 8px 20px; background: none; border: 1px solid var(--bg-light); color: var(--text-secondary); border-radius: 4px; cursor: pointer; }
-    .hq-secondary-btn:hover { border-color: var(--text-secondary); color: var(--text-primary); }
+    /* ── Operations Tab ────────────────────────── */
+    .operations-tab { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+
+    /* Config bar */
+    .ops-config-bar { display: flex; align-items: center; gap: 16px; padding: 8px 12px; background: var(--bg-medium); border-radius: 6px; flex-shrink: 0; flex-wrap: wrap; }
+    .ops-config-group { display: flex; align-items: center; gap: 6px; }
+    .ops-config-label { font-size: 0.65rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px; font-weight: 700; }
+    .ops-map-buttons { display: flex; gap: 2px; }
+    .ops-map-btn { padding: 4px 10px; background: var(--bg-dark); border: 1px solid var(--bg-light); color: var(--text-secondary); border-radius: 3px; cursor: pointer; font-size: 0.7rem; font-weight: 600; }
+    .ops-map-btn.active { background: var(--bg-light); color: var(--accent-green); border-color: var(--accent-green); }
+    .ops-wave-select { background: var(--bg-dark); border: 1px solid var(--bg-light); color: var(--text-primary); padding: 3px 6px; border-radius: 3px; font-size: 0.7rem; }
+    .ops-toggle { background: none; border: 1px solid var(--bg-light); color: var(--text-secondary); width: 28px; height: 28px; border-radius: 3px; cursor: pointer; font-size: 0.9rem; }
+    .ops-toggle.active { color: var(--accent-red); border-color: var(--accent-red); }
+    .ops-secondary-btn { padding: 4px 12px; background: none; border: 1px solid var(--bg-light); color: var(--text-secondary); border-radius: 3px; cursor: pointer; font-size: 0.65rem; margin-left: auto; }
+    .ops-secondary-btn:hover { border-color: var(--text-secondary); color: var(--text-primary); }
+
+    /* Split layout */
+    .ops-split { display: flex; gap: 16px; flex: 1; min-height: 0; margin-top: 8px; }
+    .ops-left { flex: 0 0 55%; overflow-y: auto; }
+    .ops-right { flex: 1; overflow-y: auto; background: var(--bg-medium); border-radius: 8px; border: 1px solid var(--bg-light); padding: 8px; }
+
+    /* Hero row */
+    .ops-hero-row { padding: 8px; margin-bottom: 8px; }
+    .ops-hero-label { font-size: 0.7rem; font-weight: 700; color: var(--accent-yellow); letter-spacing: 1px; display: block; margin-bottom: 4px; }
+
+    /* Squad sections */
+    .ops-squad { background: var(--bg-medium); border-radius: 6px; padding: 8px; margin-bottom: 8px; }
+    .ops-squad-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .ops-squad-label { font-size: 0.75rem; font-weight: 700; color: var(--text-primary); letter-spacing: 1px; }
+    .ops-squad-count { font-size: 0.65rem; color: var(--text-secondary); margin-left: auto; }
+    .ops-squad-remove { background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 0.7rem; opacity: 0.5; }
+    .ops-squad-remove:hover { opacity: 1; color: var(--accent-red); }
+
+    /* Slots */
+    .ops-slot { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 4px; border-left: 3px solid transparent; cursor: pointer; transition: background 0.15s; margin-bottom: 2px; }
+    .ops-slot:hover { background: var(--bg-light); }
+    .ops-slot.empty { border-left-color: var(--bg-light); opacity: 0.6; }
+    .ops-slot.filled { border-left-color: var(--accent-green); }
+    .ops-slot.selecting { border-left-color: var(--accent-yellow); background: rgba(251,191,36,0.08); }
+    .ops-slot-name { font-size: 0.75rem; font-weight: 600; color: var(--text-primary); }
+    .ops-slot-role { font-size: 0.6rem; color: var(--text-secondary); text-transform: uppercase; }
+    .ops-slot-empty { font-size: 0.7rem; color: var(--text-secondary); font-style: italic; }
+    .ops-slot-icon { font-size: 0.8rem; }
+    .ops-slot-remove { background: none; border: none; color: var(--text-secondary); cursor: pointer; margin-left: auto; opacity: 0.4; font-size: 0.7rem; }
+    .ops-slot-remove:hover { opacity: 1; color: var(--accent-red); }
+    .ops-crew-slots { padding-left: 16px; }
+    .ops-crew-role { font-size: 0.6rem; color: var(--accent-blue); font-weight: 700; min-width: 40px; }
+
+    /* Add squad button */
+    .ops-add-squad-btn { width: 100%; padding: 8px; background: none; border: 1px dashed var(--bg-light); color: var(--text-secondary); border-radius: 6px; cursor: pointer; font-size: 0.7rem; }
+    .ops-add-squad-btn:hover { border-color: var(--accent-green); color: var(--accent-green); }
+
+    /* Right panel — filter + available list */
+    .ops-filter-bar { display: flex; gap: 2px; flex-wrap: wrap; margin-bottom: 6px; }
+    .ops-filter-btn { padding: 3px 6px; background: var(--bg-dark); border: 1px solid var(--bg-light); color: var(--text-secondary); border-radius: 3px; cursor: pointer; font-size: 0.6rem; font-weight: 600; }
+    .ops-filter-btn.active { background: var(--bg-light); color: var(--accent-green); border-color: var(--accent-green); }
+    .ops-available-list { display: flex; flex-direction: column; gap: 2px; }
+    .ops-available-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 4px; cursor: pointer; transition: background 0.15s; }
+    .ops-available-row:hover { background: var(--bg-light); }
+    .ops-available-row .soldier-insignia { width: 28px; height: 28px; }
+    .ops-panel-title { font-size: 0.7rem; color: var(--text-secondary); letter-spacing: 1px; margin-bottom: 6px; }
+    .ops-veh-icon { font-size: 0.8rem; }
+    .ops-veh-hp { font-size: 0.65rem; color: var(--accent-green); margin-left: auto; }
+
+    /* Deploy bar */
+    .ops-deploy-bar { display: flex; align-items: center; gap: 16px; padding: 10px 16px; background: var(--bg-medium); border-radius: 6px; flex-shrink: 0; margin-top: 8px; }
+    .ops-power-display { display: flex; flex-direction: column; align-items: center; }
+    .ops-power-label { font-size: 0.55rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; }
+    .ops-power-val { font-size: 1rem; font-weight: 700; color: var(--text-primary); }
+    .ops-deploy-btn { margin-left: auto; padding: 10px 32px; background: linear-gradient(135deg, var(--accent-green), #2a8a4a); border: none; color: var(--bg-dark); border-radius: 6px; font-size: 0.9rem; font-weight: 700; cursor: pointer; letter-spacing: 1px; }
+    .ops-deploy-btn:hover:not(.disabled) { filter: brightness(1.1); }
+    .ops-deploy-btn.disabled { background: var(--bg-light); color: var(--text-secondary); cursor: not-allowed; }
+
+    /* Squad header actions */
+    .ops-squad-actions { display: flex; gap: 4px; margin-left: auto; align-items: center; }
+    .ops-header-action { padding: 2px 8px; background: none; border: 1px dashed var(--bg-light); color: var(--text-secondary); border-radius: 3px; cursor: pointer; font-size: 0.6rem; }
+    .ops-header-action:hover { border-color: var(--accent-green); color: var(--accent-green); }
+
+    /* Available row preview state */
+    .ops-available-row.previewing { background: var(--bg-light); border-left: 3px solid var(--accent-green); }
+
+    /* Bottom detail panel */
+    .ops-detail-panel { display: flex; align-items: center; gap: 16px; padding: 10px 16px; background: var(--bg-medium); border-radius: 6px; flex-shrink: 0; margin-top: 8px; border: 1px solid var(--bg-light); }
+    .ops-detail-header { display: flex; align-items: center; gap: 10px; min-width: 200px; }
+    .ops-detail-header .soldier-insignia { width: 36px; height: 36px; }
+    .ops-detail-identity { display: flex; flex-direction: column; }
+    .ops-detail-name { font-size: 0.8rem; font-weight: 700; color: var(--text-primary); }
+    .ops-detail-role { font-size: 0.65rem; color: var(--text-secondary); }
+    .ops-detail-record { display: flex; gap: 12px; font-size: 0.65rem; color: var(--text-secondary); }
+    .ops-detail-stats { display: flex; gap: 8px; flex: 1; min-width: 0; }
+    .ops-detail-stat { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
+    .ops-detail-stat-label { font-size: 0.6rem; color: var(--text-secondary); min-width: 28px; }
+    .ops-detail-stat .card-stat-bar { flex: 1; height: 6px; }
+    .ops-detail-stat-val { font-size: 0.6rem; color: var(--text-primary); min-width: 20px; text-align: right; }
+    .ops-detail-actions { flex-shrink: 0; }
+    .ops-assign-btn { padding: 8px 16px; background: rgba(74,222,128,0.15); border: 1px solid var(--accent-green); color: var(--accent-green); border-radius: 4px; font-weight: 700; font-size: 0.7rem; cursor: pointer; white-space: nowrap; }
+    .ops-assign-btn:hover { background: rgba(74,222,128,0.25); }
+    .ops-detail-hint { font-size: 0.65rem; color: var(--text-secondary); font-style: italic; }
+
+    /* Hero star + indicator */
+    .ops-hero-star { color: var(--accent-yellow); font-size: 0.8rem; flex-shrink: 0; }
+    .ops-hero-indicator { font-size: 0.75rem; font-weight: 700; color: var(--accent-yellow); padding: 6px 10px; margin-bottom: 6px; }
+
+    /* CMD Banner */
+    .ops-cmd-banner { padding: 10px 14px; border-radius: 6px; margin-bottom: 10px; border: 2px solid var(--accent-orange); background: rgba(251,146,60,0.05); }
+    .ops-cmd-label { font-size: 0.65rem; font-weight: 700; color: var(--accent-orange); letter-spacing: 1.5px; text-transform: uppercase; display: block; margin-bottom: 4px; }
+    .ops-cmd-locked { opacity: 0.35; border-style: dashed; cursor: default; }
+    .ops-cmd-locked-msg { font-size: 0.7rem; color: var(--text-secondary); }
+    .ops-cmd-empty { border-style: dashed; cursor: pointer; }
+    .ops-cmd-empty:hover { background: rgba(251,146,60,0.08); }
+    .ops-cmd-empty.selecting { background: rgba(251,146,60,0.1); border-style: solid; }
+    .ops-cmd-empty-msg { font-size: 0.7rem; color: var(--text-secondary); font-style: italic; }
+    .ops-cmd-filled { display: flex; align-items: center; gap: 12px; }
+    .ops-cmd-info { display: flex; flex-direction: column; }
+    .ops-cmd-name { font-size: 0.9rem; font-weight: 700; color: var(--text-primary); }
+    .ops-cmd-effects { display: flex; gap: 12px; margin-left: auto; }
+    .ops-cmd-effect { font-size: 0.65rem; color: var(--text-secondary); padding: 2px 6px; background: var(--bg-dark); border-radius: 3px; }
+    .ops-cmd-change { padding: 4px 10px; background: none; border: 1px solid var(--accent-orange); color: var(--accent-orange); border-radius: 3px; cursor: pointer; font-size: 0.6rem; font-weight: 700; }
+    .ops-cmd-change:hover { background: rgba(251,146,60,0.15); }
+
+    /* Officer rows in right panel */
+    .ops-officer-row { border-left: 3px solid var(--accent-orange); }
+    .ops-officer-row.current-cmd { background: rgba(251,146,60,0.08); }
+    .ops-officer-info { display: flex; flex-direction: column; }
+    .ops-officer-stats { font-size: 0.6rem; color: var(--text-secondary); }
+    .ops-current-badge { font-size: 0.55rem; font-weight: 700; color: var(--accent-orange); padding: 1px 5px; background: rgba(251,146,60,0.15); border-radius: 3px; margin-left: auto; }
+    .ops-hero-btn { padding: 8px 16px; background: rgba(251,191,36,0.15); border: 1px solid var(--accent-yellow); color: var(--accent-yellow); border-radius: 4px; font-weight: 700; font-size: 0.7rem; cursor: pointer; white-space: nowrap; }
+    .ops-hero-btn:hover { background: rgba(251,191,36,0.25); }
+    .ops-hero-current { font-size: 0.7rem; font-weight: 700; color: var(--accent-yellow); }
+    .ops-slot.previewing { background: var(--bg-light); border-left-color: var(--accent-blue); }
+
+    /* Comparison panel */
+    .ops-compare-panel { flex-direction: column; }
+    .ops-cmp-columns { display: flex; gap: 16px; flex: 1; }
+    .ops-cmp-col { flex: 1; min-width: 0; }
+    .ops-cmp-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .ops-cmp-header .soldier-insignia { width: 36px; height: 36px; }
+    .ops-cmp-tag { font-size: 0.55rem; font-weight: 700; letter-spacing: 1px; color: var(--text-secondary); padding: 1px 5px; background: var(--bg-dark); border-radius: 3px; }
+    .ops-cmp-identity { display: flex; flex-direction: column; }
+    .ops-cmp-name { font-size: 0.8rem; font-weight: 700; color: var(--text-primary); }
+    .ops-cmp-role { font-size: 0.6rem; color: var(--text-secondary); }
+    .ops-cmp-record { display: flex; gap: 10px; font-size: 0.6rem; color: var(--text-secondary); margin-bottom: 6px; }
+    .ops-cmp-stats { display: flex; flex-direction: column; gap: 3px; }
+    .ops-cmp-stat { display: flex; align-items: center; gap: 4px; }
+    .ops-cmp-label { font-size: 0.55rem; color: var(--text-secondary); min-width: 26px; }
+    .ops-cmp-stat .card-stat-bar { flex: 1; height: 6px; }
+    .ops-cmp-val { font-size: 0.55rem; color: var(--text-primary); min-width: 18px; text-align: right; }
+    .ops-cmp-divider { display: flex; align-items: center; justify-content: center; padding: 0 4px; }
+    .ops-cmp-vs { font-size: 0.7rem; font-weight: 700; color: var(--text-secondary); }
+    .ops-cmp-actions { display: flex; gap: 8px; align-items: center; justify-content: center; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.05); }
+    .ops-swap-btn { padding: 6px 14px; background: rgba(96,165,250,0.15); border: 1px solid var(--accent-blue); color: var(--accent-blue); border-radius: 4px; font-weight: 700; font-size: 0.7rem; cursor: pointer; }
+    .ops-swap-btn:hover { background: rgba(96,165,250,0.25); }
+
+    /* ── Shared stat display (Operations + Barracks) ── */
+
+    /* Compact row summary: ❤180 ⚔10 ◎120m */
+    .stat-row-summary { font-size: 0.65rem; color: var(--text-secondary); margin-left: auto; white-space: nowrap; }
+    .stat-special-icon { font-size: 0.7rem; }
+
+    /* Full stat detail block */
+    .stat-detail-block { margin: 8px 0; }
+    .stat-detail-primary { display: flex; gap: 16px; margin-bottom: 6px; }
+    .stat-detail-secondary { display: flex; gap: 16px; }
+    .stat-detail-item { display: flex; flex-direction: column; }
+    .stat-detail-label { font-size: 0.55rem; color: var(--text-secondary); font-weight: 700; letter-spacing: 0.5px; }
+    .stat-detail-value { font-size: 0.9rem; font-weight: 700; color: var(--text-primary); }
+    .stat-detail-sub { font-size: 0.55rem; color: var(--text-secondary); }
+    .stat-special { color: var(--accent-blue); }
+    .stat-mod { font-size: 0.55rem; font-weight: 600; }
+    .stat-mod.buff { color: var(--accent-green); }
+    .stat-mod.debuff { color: var(--accent-red); }
+
+    /* Net modifier badge — single indicator per stat */
+    .stat-net-badge { font-size: 0.6rem; font-weight: 700; margin-left: 4px; padding: 1px 4px; border-radius: 3px; cursor: help; }
+    .stat-net-badge.buff { color: var(--accent-green); background: rgba(74,222,128,0.1); }
+    .stat-net-badge.debuff { color: var(--accent-red); background: rgba(248,113,113,0.1); }
+    .stat-info-btn { font-size: 0.6rem; color: var(--text-secondary); cursor: pointer; margin-left: 4px; opacity: 0.5; }
+    .stat-info-btn:hover { opacity: 1; color: var(--accent-blue); }
+
+    /* Stat breakdown popup — click to reveal */
+    .stat-breakdown { display: none; margin-top: 6px; padding: 8px 10px; background: var(--bg-dark); border: 1px solid var(--bg-light); border-radius: 6px; font-size: 0.7rem; }
+    .stat-breakdown.open { display: block; }
+    .bd-row { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; }
+    .bd-label { color: var(--text-secondary); white-space: nowrap; }
+    .bd-value { color: var(--text-primary); font-weight: 600; font-family: monospace; min-width: 70px; text-align: right; white-space: nowrap; }
+    .bd-row.buff .bd-label { color: var(--accent-green); }
+    .bd-row.buff .bd-value { color: var(--accent-green); }
+    .bd-row.debuff .bd-label { color: var(--accent-red); }
+    .bd-row.debuff .bd-value { color: var(--accent-red); }
+    .bd-row.subtotal .bd-value { font-weight: 700; }
+    .bd-row.result { border-top: 1px solid var(--bg-light); padding-top: 4px; margin-top: 2px; }
+    .bd-row.result .bd-label { color: var(--text-primary); font-weight: 700; }
+    .bd-row.result .bd-value { color: var(--text-primary); font-weight: 700; }
+    .bd-sep { border-top: 1px solid rgba(255,255,255,0.05); margin: 2px 0; }
+
+    /* Personality collapsible (shared) */
+    .ops-personality-details, .card-personality-details { margin-top: 6px; }
+    .ops-personality-details summary, .card-personality-details summary { font-size: 0.65rem; color: var(--text-secondary); cursor: pointer; user-select: none; letter-spacing: 0.5px; }
+    .ops-personality-details summary:hover, .card-personality-details summary:hover { color: var(--text-primary); }
+    .ops-personality-details .ops-cmp-stats, .card-personality-details .card-personality { margin-top: 4px; }
+
+    /* Physical stats collapsible */
+    .physicals-details { margin-top: 4px; }
+    .physicals-details summary { font-size: 0.65rem; color: var(--text-secondary); cursor: pointer; user-select: none; letter-spacing: 0.5px; }
+    .physicals-details summary:hover { color: var(--text-primary); }
+
+    /* Training block */
+    .training-block { margin-top: 8px; }
+    .training-block h4 { font-size: 0.7rem; color: var(--text-secondary); letter-spacing: 0.5px; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+    .mos-badge { font-size: 0.6rem; padding: 1px 5px; background: rgba(251,146,60,0.15); color: var(--accent-orange); border-radius: 3px; font-weight: 700; }
+    .training-bars { display: flex; flex-direction: column; gap: 3px; }
+    .training-bar-row { display: flex; align-items: center; gap: 6px; }
+    .training-bar-row.mos-role .training-role-label { color: var(--accent-orange); font-weight: 700; }
+    .training-role-label { font-size: 0.55rem; color: var(--text-secondary); min-width: 70px; text-align: right; }
+    .training-bar { flex: 1; height: 6px; background: var(--bg-dark); border-radius: 3px; overflow: hidden; }
+    .training-bar-fill { height: 100%; background: var(--accent-green); border-radius: 3px; transition: width 0.2s; }
+    .training-bar-val { font-size: 0.55rem; color: var(--text-primary); min-width: 28px; text-align: right; }
+
+    /* MOS selection on recruit panel */
+    .recruit-mos-section { margin-top: 8px; }
+    .recruit-mos-section h4 { font-size: 0.7rem; color: var(--text-secondary); letter-spacing: 0.5px; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+    .mos-recommend { font-size: 0.55rem; color: var(--accent-green); font-weight: 400; font-style: italic; }
+    .mos-select-grid { display: flex; flex-wrap: wrap; gap: 4px; }
+    .mos-option { padding: 4px 8px; background: var(--bg-dark); border: 1px solid var(--bg-light); color: var(--text-secondary); border-radius: 3px; cursor: pointer; font-size: 0.6rem; font-weight: 600; }
+    .mos-option:hover { border-color: var(--text-secondary); color: var(--text-primary); }
+    .mos-option.selected { background: var(--bg-light); color: var(--accent-orange); border-color: var(--accent-orange); }
+    .mos-option.recommended { border-color: rgba(74,222,128,0.3); }
 
     .tab-subtitle {
       font-size: 0.85rem;
@@ -9107,6 +9536,10 @@
     }
     .fps-display {
       font: bold 13px monospace;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 60vw;
     }
 
     .wave-display {
@@ -9217,8 +9650,200 @@
     .endless-minimap .minimap-canvas {
       display: block;
       border-radius: 4px;
-      width: 80px;
-      height: 80px;
+      width: 160px;
+      height: 160px;
+    }
+
+    /* Controls legend */
+    .controls-legend {
+      position: absolute;
+      top: 100%;
+      right: 0;
+      margin-top: 8px;
+      background: rgba(10, 12, 18, 0.9);
+      border: 1px solid var(--bg-light);
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-family: 'Oxanium', monospace;
+      font-size: 0.7rem;
+      color: var(--text-secondary);
+      z-index: 100;
+    }
+    .controls-legend-title {
+      color: var(--accent-green);
+      font-weight: 700;
+      font-size: 0.65rem;
+      letter-spacing: 1px;
+      margin-bottom: 4px;
+    }
+    .controls-legend-row {
+      display: flex;
+      gap: 8px;
+      padding: 1px 0;
+    }
+    .controls-legend-row .key {
+      color: var(--text-primary);
+      font-weight: 600;
+      min-width: 50px;
+    }
+    /* Radio HUD */
+    .radio-hud {
+      position: fixed;
+      bottom: 10px;
+      right: 10px;
+      z-index: 90;
+      pointer-events: auto;
+      transition: transform 0.6s ease, bottom 0.6s ease, right 0.6s ease;
+      transform-origin: bottom right;
+    }
+    .radio-hud.focused {
+      transform: scale(1.6);
+      bottom: 60px;
+      right: 60px;
+      z-index: 200;
+    }
+    .radio-body {
+      position: relative;
+      width: 280px;
+      height: 220px;
+    }
+    .radio-svg {
+      width: 280px;
+      height: 220px;
+      display: block;
+    }
+    .radio-screen {
+      position: absolute;
+      top: 10px;
+      left: 40px;
+      width: 226px;
+      height: 156px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border-radius: 3px;
+    }
+    .radio-objective {
+      padding: 4px 6px;
+      font-family: 'Oxanium', monospace;
+      font-size: 0.6rem;
+      color: #c8a020;
+      text-shadow: 0 0 6px #c8a02044;
+      background: rgba(6, 10, 4, 0.95);
+      flex-shrink: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .radio-obj-label {
+      font-weight: 700;
+      margin-right: 4px;
+      color: #c8a020;
+    }
+    .radio-obj-text {
+      color: #a88818;
+    }
+    .radio-separator {
+      height: 1px;
+      background: #1a2210;
+      flex-shrink: 0;
+    }
+    .radio-comms {
+      flex: 1;
+      overflow: hidden;
+      background: rgba(4, 8, 3, 0.96);
+      cursor: pointer;
+      position: relative;
+      min-height: 0;
+    }
+    .radio-comms-scroll {
+      height: 100%;
+      overflow-y: auto;
+      padding: 4px 6px;
+      scrollbar-width: thin;
+      scrollbar-color: #1a2210 transparent;
+    }
+    .radio-hud.expanded .radio-comms {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 360px;
+      background: rgba(4, 8, 3, 0.96);
+      border: 1px solid #1a2210;
+      border-radius: 4px 4px 0 0;
+      z-index: 5;
+    }
+    .radio-msg {
+      margin-bottom: 4px;
+      padding-bottom: 4px;
+      border-bottom: 1px solid #14200e22;
+    }
+    .radio-msg:last-child { border-bottom: none; margin-bottom: 0; }
+    .radio-msg-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+    .radio-msg-sender {
+      font-family: 'Oxanium', monospace;
+      font-size: 0.55rem;
+      font-weight: 700;
+      color: #5aaa5a;
+      text-shadow: 0 0 4px #3a883a33;
+    }
+    .radio-msg-time {
+      font-family: 'Oxanium', monospace;
+      font-size: 0.5rem;
+      color: #2e5528;
+    }
+    .radio-msg-text {
+      font-family: 'Oxanium', monospace;
+      font-size: 0.6rem;
+      color: #30cc30;
+      text-shadow: 0 0 4px #20aa2028;
+      line-height: 1.3;
+      margin-top: 1px;
+    }
+    .radio-msg.msg-urgent .radio-msg-text { color: #c8a020; text-shadow: 0 0 4px #c8a02033; }
+    .radio-msg.msg-urgent .radio-msg-sender { color: #c8a020; }
+    .radio-msg.msg-critical .radio-msg-text { color: #cc4444; text-shadow: 0 0 6px #cc444444; }
+    .radio-msg.msg-critical .radio-msg-sender { color: #cc4444; }
+
+    /* Scanline overlay */
+    .radio-scanlines {
+      position: absolute;
+      top: 10px;
+      left: 40px;
+      width: 226px;
+      height: 156px;
+      background: repeating-linear-gradient(
+        to bottom,
+        transparent 0px,
+        transparent 2px,
+        rgba(0, 0, 0, 0.08) 2px,
+        rgba(0, 0, 0, 0.08) 4px
+      );
+      pointer-events: none;
+      border-radius: 3px;
+    }
+
+    /* LED animations */
+    .radio-led-pwr { fill: #22aa22; filter: url(#led-glow); }
+    .radio-led-rx { fill: #886600; }
+    .radio-led-tx { fill: #226622; }
+    .radio-led-tx.flashing { animation: led-flash 0.15s ease 3; }
+    .radio-led-tx.flash-urgent { animation: led-flash-amber 0.15s ease 3; }
+    .radio-led-tx.flash-critical { animation: led-flash-red 0.1s ease 5; }
+    @keyframes led-flash { 0%,100% { fill: #226622; } 50% { fill: #44ff44; } }
+    @keyframes led-flash-amber { 0%,100% { fill: #886600; } 50% { fill: #ffcc00; } }
+    @keyframes led-flash-red { 0%,100% { fill: #662222; } 50% { fill: #ff4444; } }
+    .radio-led-rx { animation: led-breathe 3s ease-in-out infinite; }
+    @keyframes led-breathe { 0%,100% { fill: #664400; } 50% { fill: #cc8800; } }
+
+    .controls-legend-btn {
+      font-weight: 700 !important;
+      font-size: 0.85rem !important;
     }
 
     .control-btn {
@@ -9232,7 +9857,148 @@
       cursor: pointer;
     }
 
+    /* Mobile battle HUD scaling */
+    @media (max-width: 768px), (max-height: 500px) {
+      .radio-hud { transform: scale(0.65); transform-origin: bottom right; }
+      .radio-hud.focused { transform: scale(1.2); }
+      .endless-minimap .minimap-canvas { width: 100px; height: 100px; }
+      .endless-controls { top: 8px; right: 5px; gap: 4px; }
+      .control-btn { width: 32px; height: 32px; font-size: 1rem; }
+    }
+
+    /* Mobile HQ — Operations & Barracks density */
+    @media (max-width: 900px), (max-height: 500px) {
+      /* Operations detail panel: cap height so it doesn't take over */
+      .ops-detail-panel { max-height: 35vh; overflow-y: auto; }
+      .ops-detail-panel .ops-cmp-columns { flex-direction: column; gap: 8px; }
+      .ops-cmp-col { min-width: 0; }
+
+      /* Barracks: compact soldier rows */
+      .soldier-row { padding: 4px 8px; }
+      .soldier-main { gap: 4px; }
+      .soldier-insignia { width: 32px !important; height: 32px !important; }
+      .soldier-name { font-size: 0.7rem; }
+      .soldier-role-tag { font-size: 0.55rem; padding: 1px 4px; }
+      .hp-seg { width: 5px; height: 8px; }
+      .status-label { font-size: 0.55rem; }
+      .roster-group-header { padding: 4px 8px; font-size: 0.7rem; }
+
+      /* Tighter gaps everywhere */
+      .barracks-split, .ops-split { gap: 8px; }
+      .ops-config-bar { padding: 4px 8px; gap: 6px; }
+      .ops-deploy-bar { padding: 6px 8px; gap: 8px; }
+    }
+
     /* Endless Between Waves Screen */
+    /* Medevac Scene */
+    .medevac-screen {
+      background: #0a0a0a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .medevac-dialog {
+      max-width: 500px;
+      padding: 40px 30px;
+    }
+    .medevac-line {
+      font-family: 'Oxanium', monospace;
+      font-size: 0.95rem;
+      line-height: 1.6;
+      margin-bottom: 20px;
+      display: none;
+      animation: medevac-fade 0.6s ease forwards;
+    }
+    .medevac-line.visible { display: block; }
+    .medevac-doc { color: #94a3b8; font-style: italic; }
+    .medevac-player { color: #e2e8f0; }
+    .medevac-name-input {
+      display: none;
+      margin: 16px 0 24px;
+      gap: 10px;
+    }
+    .medevac-name-input.visible {
+      display: flex;
+      flex-wrap: wrap;
+      animation: medevac-fade 0.4s ease forwards;
+    }
+    .medevac-input {
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid #4a5568;
+      color: #e2e8f0;
+      font-family: 'Oxanium', monospace;
+      font-size: 1rem;
+      padding: 6px 2px;
+      outline: none;
+      flex: 1;
+      min-width: 120px;
+    }
+    .medevac-input:focus { border-bottom-color: var(--accent-green); }
+    .medevac-input::placeholder { color: #4a5568; }
+    .rush-heal-btn {
+      padding: 4px 12px;
+      font-family: 'Oxanium', monospace;
+      font-size: 0.65rem;
+      background: transparent;
+      border: 1px solid var(--accent-yellow);
+      color: var(--accent-yellow);
+      cursor: pointer;
+      letter-spacing: 0.5px;
+      transition: background 0.2s, color 0.2s;
+    }
+    .rush-heal-btn:hover {
+      background: var(--accent-yellow);
+      color: #0a0a0a;
+    }
+    .rush-heal-btn.disabled {
+      border-color: #4a5568;
+      color: #4a5568;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+
+    .medevac-confirm {
+      padding: 8px 20px;
+      font-size: 0.8rem;
+      font-family: 'Oxanium', monospace;
+      background: transparent;
+      border: 1px solid var(--accent-green);
+      color: var(--accent-green);
+      cursor: pointer;
+      letter-spacing: 1px;
+      transition: background 0.2s, color 0.2s;
+    }
+    .medevac-confirm:hover {
+      background: var(--accent-green);
+      color: #0a0a0a;
+    }
+    .medevac-continue {
+      display: none;
+      margin-top: 30px;
+    }
+    .medevac-continue.visible { display: block; animation: medevac-fade 0.6s ease forwards; }
+    .medevac-continue .btn {
+      padding: 10px 28px;
+      font-family: 'Oxanium', monospace;
+      font-size: 0.85rem;
+      background: transparent;
+      border: 1px solid var(--accent-green);
+      color: var(--accent-green);
+      cursor: pointer;
+      letter-spacing: 1px;
+      transition: background 0.2s, color 0.2s;
+    }
+    .medevac-continue .btn:hover {
+      background: var(--accent-green);
+      color: #0a0a0a;
+    }
+    @keyframes medevac-fade {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
     .endless-between-screen {
       display: flex;
       flex-direction: column;

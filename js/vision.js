@@ -425,13 +425,20 @@ export function buildSpottedList(unit, hostiles, b, now) {
         direct: true,
         timestamp: now
       });
-      // Log new visual detections
+      // Log new visual detections with full vision stats for analysis
       if (b && !prevIds.has(enemy.id)) {
+        const viewRange = unit.viewRange || 200;
+        const zoneMult = result.zone === 'forward' ? 1.0 : result.zone === 'peripheral' ? 0.6 : 0.3;
+        const effRange = viewRange * zoneMult * Math.min(result.concealment, 1.5);
+        const detTerrain = getTerrainAt(b, unit.x, unit.y);
+        const tgtTerrain = getTerrainAt(b, enemy.x, enemy.y);
+        const tgtMoving = enemy._movedThisFrame ? 'moving' : 'still';
+        const tgtFiring = enemy.lastShot && (now - enemy.lastShot < 500) ? 'firing' : 'silent';
         logEvent(b, { t: now, who: unit.id, team: logTeam, type: 'spot',
           source: 'unit', category: 'intel', severity: 'info',
           x: Math.round(unit.x), y: Math.round(unit.y),
           action: 'spotted', target: enemy.id,
-          detail: `zone:${result.zone} dist:${Math.round(result.distance)} acc:${result.accuracy.toFixed(2)} conceal:${result.concealment.toFixed(2)}` });
+          detail: `zone:${result.zone} dist:${Math.round(result.distance)} effRange:${Math.round(effRange)} viewRange:${viewRange} awareness:${awareness.toFixed(2)} conceal:${result.concealment.toFixed(2)} acc:${result.accuracy.toFixed(2)} perCap:${perceptionCap} detTer:${detTerrain} tgtTer:${tgtTerrain} tgtState:${tgtMoving}+${tgtFiring}` });
       }
     }
   }
@@ -477,8 +484,14 @@ export function buildSpottedList(unit, hostiles, b, now) {
       // Stale but not expired — keep with degraded accuracy
       const age = (now - entry.timestamp) / staleTimeout;
       merged.push({ ...entry, accuracy: entry.accuracy * (1 - age * 0.5), stale: true });
+    } else if (entry.enemy && !entry.enemy.dead && b) {
+      // Contact lost — log it
+      logEvent(b, { t: now, who: unit.id, team: logTeam, type: 'spot',
+        source: 'unit', category: 'intel', severity: 'info',
+        x: Math.round(unit.x), y: Math.round(unit.y),
+        action: 'lost_contact', target: entry.enemy.id,
+        detail: `dist:${Math.round(Math.hypot(unit.x - entry.enemy.x, unit.y - entry.enemy.y))} age:${Math.round(now - entry.timestamp)}ms` });
     }
-    // Else: expired, drop it
   }
 
   // Add any new detections not in previous list

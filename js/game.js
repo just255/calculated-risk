@@ -2,7 +2,7 @@
 // GAME - Battle logic, game loop, update, draw
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, UNITS, ENEMIES, getTypeMultiplier, UNIT_COSTS, H2H_BUDGET, PROJECTILES, UNIT_PROJECTILES, UNIT_COMBAT_STATS, UNIT_DESCRIPTIONS, getTerrainSVG, getStanceModifier, getEnemyStance, ZoneOwner, ScenarioType, SHADOW_CONFIG, Team, Owner, FORMATION_OFFSETS, getFormationPositions, CREW_SCHEMAS, RANK_TABLE, DEFAULT_MAX_SPREAD_DEG, isInfantryUnit, WAVE_POWER_CURVE, ENEMY_POWER_COSTS } from './constants.js';
+import { State, SubState, HQTab, UNITS, ENEMIES, getTypeMultiplier, UNIT_COSTS, H2H_BUDGET, PROJECTILES, UNIT_PROJECTILES, UNIT_COMBAT_STATS, UNIT_DESCRIPTIONS, getTerrainSVG, getStanceModifier, getEnemyStance, ZoneOwner, ScenarioType, SHADOW_CONFIG, Team, Owner, FORMATION_OFFSETS, getFormationPositions, CREW_SCHEMAS, RANK_TABLE, DEFAULT_MAX_SPREAD_DEG, isInfantryUnit, WAVE_POWER_CURVE, ENEMY_POWER_COSTS, INFANTRY_ARCHETYPES, ROLE_TO_UNIT_ID, FIRST_MISSION } from './constants.js';
 import { renderBaseTerrainToCanvas, renderCanopyToCanvas } from './world-builder/terrain-renderer.js';
 import { Game, newBattle, newH2H, newCampaign, newCampaignBattle, newEndlessBattle, newFireRangeRun, newFireRangeBattle, createUnit } from './state.js';
 import { sound } from './audio.js';
@@ -18,7 +18,7 @@ import {
   createProjectile,
   updateProjectiles
 } from './combat.js';
-import { isTerrainBlocked, getTerrainSpeedMod, findValidSpawnPos } from './terrain-utils.js';
+import { isTerrainBlocked, getTerrainSpeedMod, getTerrainAt, findValidSpawnPos } from './terrain-utils.js';
 import { clearQueryCache, getBridgeCoverMult, isBridgeDeckBlocking, queryTerrain } from './terrain-query.js';
 // updateSergeant now called via ai-pipeline.js runBattleAI()
 import {
@@ -56,19 +56,22 @@ import {
 } from './movement.js';
 import { rollModifier, applyModifier, getModifiedDamage } from './elite-modifiers.js';
 import { runBattleAI, snapshotAiPerf, spawnSquad, createSquad, applyBrainDefaults, scaleBrainByWave, BRAIN_PRESETS } from './ai-pipeline.js';
-import { planDeployment, scaleCommanderByWave, assignObjective } from './commander.js';
-import { computeShotAccuracy, applyRecoilDrop, updateStability } from './fire-decision.js';
+import { planDeployment, scaleCommanderByWave, assignObjective, predictDeploymentPlay } from './commander.js';
+import { computeShotAccuracy, applyRecoilDrop, updateStability, consumeAmmo } from './fire-decision.js';
 import { createRecorder, recordFrame, finalizeRecording, isRecording, saveReplay } from './replay-recorder.js';
 import { updateFireRangeCamera, updateHeroCamera, cameraKeyDown, cameraKeyUp, cameraZoom, cameraFitMap, cameraFitMapImmediate } from './camera.js';
 import { resolveProjectiles } from './projectile-resolver.js';
-import { drawMinimap } from './minimap.js';
+import { drawMinimap, clearMinimapCache } from './minimap.js';
+import { shouldDrawMinimap, clearLabelCache } from './render-cache.js';
 import { toggleDebugPanel, debugInspectAt, isDebugPanelVisible, destroyDebugPanel } from './debug-panel.js';
 import { logEvent, EventCategory, EventSeverity } from './battle-log.js';
 import { isCrewMode, drawCrewLineup, drawCrewAvailable, drawCrewCard, handleLineupClick, handleSectionHeaderClick, handleCrewAvailableClick, handleCrewAddClick, handlePoolTabClick, handleMotorPoolClick, handleCrewTransfer, clearCrewSelection } from './deploy-crew.js';
-import { getSoldier, getCrewForVehicle, saveRoster, saveVehicles, getVehicle, healAllSoldiers, repairAllVehicles, computeBattleScore, detectHeroics, recordBattleScore, applyPromotion, applyDemotion, getRankName, getMMR } from './roster.js';
+import { getSoldier, getCrewForVehicle, saveRoster, saveVehicles, getVehicle, healAllSoldiers, repairAllVehicles, computeBattleScore, detectHeroics, recordBattleScore, applyPromotion, applyDemotion, getRankName, getMMR, processKIAToFallen, tickRecruitLockouts, getCrewModifiers } from './roster.js';
 import { getEffectivePersonality } from './crew.js';
+import { getCurrentDialog, isDialogPaused, advanceDialog, updateCutscene, isCutsceneActive, getFogZones, getZoneFogOpacity, clampCameraToRevealed, updateMissionScript, initFirstTimeMission, showDialog, updateMissionFrame, launchFirstTimeMission } from './mission.js';
 import { initCMDMode, updateCMDCamera, drawCMDOverlay, handleCMDClick, handleCMDRightClick, handleCMDKey, shouldHeroRunAI } from './cmd-mode.js';
 import { drawPresetPanel, applyPreset } from './loadouts.js';
+import { createRadioHUD, destroyRadioHUD, radioMessage, setRadioObjective } from './radio-hud.js';
 
 /** Format top N AI sub-costs for compact console output */
 function _topCosts(ai, n) {
@@ -98,12 +101,14 @@ function _logPerfSnapshot(b, now) {
   // Get AI sub-timing breakdown (resets accumulator)
   const aiBreakdown = snapshotAiPerf(b);
 
+  const avgRender = (b._perf.render || 0) / n;
   const snapshot = {
     t: now,
     wave: b.wave || 1,
     fps: +(n / 5).toFixed(0),
     avgAi: +avgAi.toFixed(2),
     avgProj: +avgProj.toFixed(2),
+    avgRender: +avgRender.toFixed(2),
     avgFrame: +avgFrame.toFixed(2),
     blueAlive, redAlive,
     proj: b.projectiles?.length || 0,
@@ -113,7 +118,7 @@ function _logPerfSnapshot(b, now) {
   b._perfLog.push(snapshot);
   if (b._perfLog.length > 60) b._perfLog.shift();
 
-  b._perf.ai = 0; b._perf.proj = 0; b._perf.frame = 0; b._perf.samples = 0; b._perf.lastLog = perfNow;
+  b._perf.ai = 0; b._perf.proj = 0; b._perf.render = 0; b._perf.frame = 0; b._perf.samples = 0; b._perf.lastLog = perfNow;
 }
 
 // Get effective unit stats with upgrades applied
@@ -253,12 +258,18 @@ function parseTankInput(keys, joystickInput, currentHullAngle = 0) {
  * W=north, S=south, A=west, D=east. Hull angle follows movement direction.
  * Returns { dx, dy, isMoving, hullAngle }
  */
-function parseInfantryInput(keys) {
+function parseInfantryInput(keys, joystickInput) {
   let dx = 0, dy = 0;
-  if (keys?.w || keys?.ArrowUp) dy -= 1;
-  if (keys?.s || keys?.ArrowDown) dy += 1;
-  if (keys?.a || keys?.ArrowLeft) dx -= 1;
-  if (keys?.d || keys?.ArrowRight) dx += 1;
+  // Joystick overrides keyboard when active
+  if (joystickInput && (Math.abs(joystickInput.dx) > 0.01 || Math.abs(joystickInput.dy) > 0.01)) {
+    dx = joystickInput.dx;
+    dy = joystickInput.dy;
+  } else {
+    if (keys?.w || keys?.ArrowUp) dy -= 1;
+    if (keys?.s || keys?.ArrowDown) dy += 1;
+    if (keys?.a || keys?.ArrowLeft) dx -= 1;
+    if (keys?.d || keys?.ArrowRight) dx += 1;
+  }
 
   const isMoving = dx !== 0 || dy !== 0;
   if (isMoving) {
@@ -404,9 +415,9 @@ export function extractFromRun() {
     Game.resources.parts = (Game.resources.parts || 0) + e.loot.parts.length;
   }
 
-  // Process soldier progression/damage
+  // Process soldier progression/damage (skip if already processed, e.g. medevac scene)
   const b = e.battle;
-  if (b) {
+  if (b && !b._postBattleProcessed) {
     _processPostBattle(b, 'extract');
     if (isRecording(b)) {
       b.result = `extract_wave_${e.wave}`;
@@ -414,8 +425,15 @@ export function extractFromRun() {
     }
   }
 
+  // Track fallen soldiers for Legacy view
+  processKIAToFallen();
+
+  // Tick recruit lockout timers
+  tickRecruitLockouts();
+
   save();
-  goto(State.MENU);
+  destroyRadioHUD();
+  goto(State.HQ);
 }
 
 export function goto(newState, data = {}) {
@@ -584,7 +602,31 @@ export function goto(newState, data = {}) {
     case State.ENDLESS_BATTLE:
       // Initialize endless battle (wave is already set by the action that triggered this)
       if (Game.endless && !Game.endless.battle) {
-        Game.endless.battle = newEndlessBattle(Game.endless.loadout, Game.endless.wave);
+        Game.endless.battle = newEndlessBattle(Game.endless.loadout, Game.endless.wave, Game.endless._mapOverrides || null);
+        // Initialize mission — auto-deploy hero, skip deploy phase, start dialog
+        if (Game.endless._isFirstRun && Game.endless.battle) {
+          const mb = Game.endless.battle;
+          initFirstTimeMission(mb);
+
+          // Position hero in zone 1 (bottom third of map)
+          mb.hero.x = mb.mapWidth / 2;
+          mb.hero.y = mb.mapHeight - mb.cellSize * 4;
+          mb.hero.lastX = mb.hero.x;
+          mb.hero.lastY = mb.hero.y;
+
+          // Camera zoomed on hero
+          const screenW = window.innerWidth;
+          const screenH = window.innerHeight;
+          mb.camera.x = mb.hero.x - screenW / 2;
+          mb.camera.y = mb.hero.y - screenH / 2;
+          mb.camera.userZoom = 1.5;
+
+          // Skip deploy phase — go straight to active
+          _stampRosterData(mb);
+          if (!mb.deployReady) mb.deployReady = {};
+          mb.deployReady.blue = true;
+          mb.phase = 'active';
+        }
         // Carry play mode across waves
         if (Game.endless.playMode) {
           Game.endless.battle.playMode = Game.endless.playMode;
@@ -672,6 +714,7 @@ export function goto(newState, data = {}) {
       if (Game.endless._record) {
         createRecorder(Game.endless.battle, 'endless');
       }
+      createRadioHUD();
       startEndlessLoop();
       break;
 
@@ -687,6 +730,10 @@ export function goto(newState, data = {}) {
       render();
       break;
     }
+
+    case State.MEDEVAC:
+      render();
+      break;
 
     // Fire Range States
     case State.FIRE_RANGE:
@@ -2344,8 +2391,8 @@ function startEndlessLoop() {
   _lastFeedIndex = 0;
 
   const b = Game.endless?.battle;
-  if (b) {
-    // Spawn initial enemies
+  if (b && !b._isMission) {
+    // Spawn initial enemies (mission battles handle spawning via mission script)
     spawnEndlessWave(b);
   }
 
@@ -2365,6 +2412,9 @@ function stopEndlessLoop() {
     b.battleRenderer = null;
   }
   destroyDebugPanel();
+  destroyRadioHUD();
+  clearMinimapCache();
+  clearLabelCache();
 }
 
 function endlessLoop(t) {
@@ -2383,7 +2433,13 @@ function endlessLoop(t) {
   } else {
     const scaledDt = dt * (b?._debugTimeScale || 1);
     updateEndlessBattle(scaledDt);
+    const _renderStart = performance.now();
     drawEndlessBattle();
+    const _renderTime = performance.now() - _renderStart;
+    if (b?._perf) {
+      if (!b._perf.render) b._perf.render = 0;
+      b._perf.render += _renderTime;
+    }
   }
 
   endlessLoopId = requestAnimationFrame(endlessLoop);
@@ -2397,6 +2453,16 @@ function updateEndlessBattle(dt) {
 
   const dtSec = dt / 1000;
   const now = Date.now();
+
+  // --- MISSION UPDATE (handles fade, dialog pause, cutscene, and script) ---
+  if (b._isMission) {
+    const missionBlocks = updateMissionFrame(b, now);
+    if (missionBlocks) return; // Mission is paused/cutscene — skip game logic
+  } else {
+    // Non-mission: still check dialog/cutscene pause
+    if (isDialogPaused(b)) return;
+    if (isCutsceneActive(b)) { updateCutscene(b); return; }
+  }
 
   // --- DEPLOYMENT PHASE GATING ---
   if (b.phase === 'deploying') {
@@ -2425,16 +2491,41 @@ function updateEndlessBattle(dt) {
 
   if (!isCMD) {
   // --- HERO MOVEMENT ---
+  // Block hero movement/firing during mission dialog (game still runs for AI)
+  const heroFrozen = b._missionDialogActive || b._missionWaitForClick || isDialogPaused(b);
   const heroCS = UNIT_COMBAT_STATS[hero.unitId];
 
   let dx, dy, isMoving;
 
-  if (isInfantryHero) {
-    // Infantry controls: WASD = absolute cardinal movement, sprite faces mouse
-    const inf = parseInfantryInput(b.keys);
-    dx = inf.dx;
-    dy = inf.dy;
-    isMoving = inf.isMoving;
+  if (heroFrozen) {
+    // Dialog active — hero stands still, no input
+    dx = 0; dy = 0; isMoving = false;
+  } else if (isInfantryHero) {
+    // Infantry controls: WASD = absolute movement, sprite faces mouse
+    // Direction smoothed only during direction CHANGES (not from standstill)
+    const inf = parseInfantryInput(b.keys, b.joystickInput);
+    if (hero._moveDx == null) { hero._moveDx = 0; hero._moveDy = 0; }
+    const wasMoving = Math.abs(hero._moveDx) > 0.05 || Math.abs(hero._moveDy) > 0.05;
+    if (inf.isMoving && !wasMoving) {
+      // Starting from standstill — snap to input direction immediately
+      hero._moveDx = inf.dx;
+      hero._moveDy = inf.dy;
+    } else if (inf.isMoving) {
+      // Already moving — smooth direction changes
+      const dirBlend = 1 - Math.exp(-10.0 * dtSec);
+      hero._moveDx += (inf.dx - hero._moveDx) * dirBlend;
+      hero._moveDy += (inf.dy - hero._moveDy) * dirBlend;
+    } else {
+      // No input — decay to zero
+      const decayBlend = 1 - Math.exp(-8.0 * dtSec);
+      hero._moveDx *= 1 - decayBlend;
+      hero._moveDy *= 1 - decayBlend;
+    }
+    dx = hero._moveDx;
+    dy = hero._moveDy;
+    const moveLen = Math.sqrt(dx * dx + dy * dy);
+    if (moveLen > 1) { dx /= moveLen; dy /= moveLen; }
+    isMoving = moveLen > 0.05;
     // Hull angle = aim angle (sprite faces mouse, not movement direction)
   } else {
     // Vehicle controls: tank-style hull rotation + forward/back
@@ -2446,8 +2537,9 @@ function updateEndlessBattle(dt) {
     isMoving = result.isMoving;
   }
 
-  // Get terrain speed modifier
+  // Get terrain speed modifier + stamp terrain for replay/debug
   const speedMod = getTerrainSpeedMod(b, hero.x, hero.y);
+  hero._terrain = getTerrainAt(b, hero.x, hero.y);
 
   // Acceleration/deceleration — per-unit power-to-weight ratio
   const targetSpeed = isMoving ? hero.speed * speedMod : 0;
@@ -2479,9 +2571,10 @@ function updateEndlessBattle(dt) {
       yBlocked ? `Y→${Math.round(newY)}: boulder=${qy?.hasBoulder} water=${qy?.water?.toFixed(2)} depth=${qy?.depth} forest=${qy?.cover?.toFixed(2)} dom=${qy?.dominant}` : '');
   }
 
-  // Clamp to map bounds
+  // Clamp to map bounds (mission: clamp to revealed zone edge)
   hero.x = Math.max(30, Math.min(b.mapWidth - 30, hero.x));
-  hero.y = Math.max(30, Math.min(b.mapHeight - 30, hero.y));
+  const heroMinY = b._heroMinY !== undefined ? b._heroMinY : 30;
+  hero.y = Math.max(heroMinY, Math.min(b.mapHeight - 30, hero.y));
 
   // Track hero velocity (pixels/sec) — used by fire decision pipeline
   const velDx = hero.x - (hero.lastX || hero.x);
@@ -2491,6 +2584,15 @@ function updateEndlessBattle(dt) {
   // Stability — must run AFTER movement so position delta is accurate
   updateHeroStability(b, hero, dtSec);
 
+  // Magazine reload completion — check every frame so HUD stays in sync
+  if (hero._hasMagazine && hero._isReloading) {
+    const reloadMod = hero._crewMods?.gunner?.reloadSpeed ?? hero._crewMods?.reloadSpeed ?? 0.3;
+    const reloadDur = hero._reloadDuration * (1.0 - reloadMod * 0.3);
+    if (Date.now() - hero._reloadStart >= reloadDur) {
+      hero._isReloading = false;
+      hero._magAmmo = hero._magSize;
+    }
+  }
 
   // Update movement animation
   if (useCanvasRendering && hero.animId) {
@@ -2535,7 +2637,7 @@ function updateEndlessBattle(dt) {
   while (aimDiff < -Math.PI) aimDiff += Math.PI * 2;
   const turretAligned = Math.abs(aimDiff) < 0.17;
 
-  if (b.mouse.down && turretAligned) {
+  if (b.mouse.down && turretAligned && !heroFrozen) {
     heroFire(b, hero, now);
   }
 
@@ -2568,62 +2670,13 @@ function updateEndlessBattle(dt) {
 
   // --- PROCESS SPAWN QUEUE (staggered reinforcements) ---
   if (b.spawnQueue && b.spawnQueue.length > 0) {
-    const readyEntries = [];
-    const stillWaiting = [];
-    for (const entry of b.spawnQueue) {
-      if (now >= entry.spawnTime) {
-        readyEntries.push(entry);
-      } else {
-        stillWaiting.push(entry);
-      }
+    const { ready, waiting } = _drainSpawnQueue(b.spawnQueue, now, 2);
+    if (ready.length > 0) {
+      _addSpawnedEnemies(b, ready);
+      _joinExistingSquads(b, ready.filter(e => e._squadId));
+      _formNewSquads(b, ready.filter(e => !e._squadId), waiting, now);
     }
-    if (readyEntries.length > 0) {
-      for (const entry of readyEntries) {
-        // Stamp insignia on late-spawned reinforcements
-        if (b._insigniaSetId && !entry.enemy._insigniaSetId) {
-          entry.enemy._insigniaSetId = b._insigniaSetId;
-        }
-        b.enemies.push(entry.enemy);
-      }
-
-      // Group by squad: entries with _squadId join their existing squad
-      const joinExisting = readyEntries.filter(e => e._squadId);
-      const needNewSquad = readyEntries.filter(e => !e._squadId);
-
-      // Add to existing squads
-      for (const entry of joinExisting) {
-        const squad = b._squads?.find(s => s.id === entry._squadId);
-        if (squad) {
-          squad.members.push(entry.enemy.id);
-          entry.enemy._squadId = squad.id;
-          // Apply brain defaults
-          const wave = Game.endless?.wave || 1;
-          const preset = scaleBrainByWave(BRAIN_PRESETS.endlessEnemy, wave);
-          applyBrainDefaults(entry.enemy, preset);
-        }
-      }
-
-      // Create new squad for orphaned entries (no planned squad)
-      if (needNewSquad.length > 0) {
-        const wave = Game.endless?.wave || 1;
-        const firstEntry = needNewSquad[0];
-        const queueZone = firstEntry.squadZone || { x: b.mapWidth / 2, y: b.cellSize * 3, radius: b.mapWidth / 3 };
-        const hasPlannedObjective = !!firstEntry.objective;
-        const enemies = needNewSquad.map(e => e.enemy);
-        const sq = spawnSquad(b, 'red', enemies, queueZone, {
-          preset: scaleBrainByWave(BRAIN_PRESETS.endlessEnemy, wave),
-          sgtPersonality: firstEntry.sgtPersonality,
-          skipObjective: hasPlannedObjective
-        });
-        if (hasPlannedObjective) {
-          const redCmdr2 = b._teamCommanders?.red;
-          if (sq && sq.sergeant && redCmdr2) {
-            assignObjective(redCmdr2, sq.sergeant, firstEntry.objective, now, b);
-          }
-        }
-      }
-    }
-    b.spawnQueue = stillWaiting;
+    b.spawnQueue = waiting;
   }
 
   // --- PROCESS COMMANDER PENDING DEPLOYMENTS (reserves) ---
@@ -2669,14 +2722,36 @@ function updateEndlessBattle(dt) {
     redCmdr._pendingDeployments = [];
   }
 
+  // Process pending reinforcements (small reserve groups joining existing squads)
+  if (redCmdr?._pendingReinforcements) {
+    const reinf = redCmdr._pendingReinforcements;
+    const squad = b._squads?.find(s => s.id === reinf.squadId);
+    if (squad) {
+      const wave = Game.endless?.wave || 1;
+      const zone = squad.sergeant?.spawnZone || { x: b.mapWidth / 2, y: 0, radius: 100 };
+      let enemyIndex = b.enemies.length;
+      for (const unitDef of reinf.units) {
+        const offsetX = (Math.random() - 0.5) * zone.radius * 2;
+        const pos = { x: zone.x + offsetX, y: -(b.stageDepth || 100) / 2 };
+        const enemy = createEndlessEnemy(b, unitDef.type, pos.x, pos.y, wave, b.enemyMult || 1, enemyIndex++);
+        b.enemies.push(enemy);
+        squad.members.push(enemy.id);
+        enemy._squadId = squad.id;
+        applyBrainDefaults(enemy, scaleBrainByWave(BRAIN_PRESETS.endlessEnemy, wave));
+      }
+    }
+    redCmdr._pendingReinforcements = null;
+  }
+
   // --- PERFORMANCE MONITORING ---
   if (!b._perf) b._perf = { ai: 0, proj: 0, frame: 0, samples: 0, lastLog: 0 };
   const _perfFrameStart = performance.now();
 
   // --- UNIFIED AI PIPELINE ---
   const _perfAiStart = performance.now();
-  runBattleAI(b, now, dtSec);
-  b._perf.ai += performance.now() - _perfAiStart;
+  if (!b._aiPaused) runBattleAI(b, now, dtSec);
+  const _perfAiEnd = performance.now();
+  b._perf.ai += _perfAiEnd - _perfAiStart;
 
   // --- RECORD REPLAY FRAME ---
   if (b._recorder) recordFrame(b, now);
@@ -2684,11 +2759,34 @@ function updateEndlessBattle(dt) {
   // --- CHECK HERO DEFEAT ---
   if (hero.hp <= 0) {
     hero.hp = 0;
+
+    // Mission: restart instead of death screen
+    if (b._isMission) {
+      stopLoop();
+      Game.endless = null;
+      // Reset soldier status for restart
+      for (const s of (Game.roster || [])) {
+        if (s.status === 'kia') s.status = 'active';
+        s.hpPercent = 1.0;
+      }
+      launchFirstTimeMission();
+      initAudio();
+      goto(State.ENDLESS_BATTLE);
+      return;
+    }
+
     b.result = 'defeat';
     Game.endless.result = 'death';
     Game.endless.exitWave = Game.endless.wave;
     // Post-battle: update roster durability + progression on defeat
     _processPostBattle(b, 'loss');
+    // Track fallen soldiers for Legacy view
+    processKIAToFallen();
+    // Tick recruit pool refresh timer
+    if (Game.hqRecruitRefreshIn > 0) {
+      Game.hqRecruitRefreshIn--;
+      if (Game.hqRecruitRefreshIn <= 0) Game.hqRecruitPool = null;
+    }
     saveReplay(b);
     goto(State.ENDLESS_RESULT);
   }
@@ -2715,21 +2813,218 @@ function updateEndlessBattle(dt) {
         Game.endless.exitWave = Game.endless.wave;
         goto(State.ENDLESS_RESULT);
       }
+    },
+    onAllyKill(unit) {
+      if (b._isMission) {
+        const rankAbbr = RANK_TABLE[unit._rank || 0]?.abbr || '';
+        const lastName = unit.displayName || unit._soldierName || 'a soldier';
+        const callout = rankAbbr ? `${rankAbbr} ${lastName}` : lastName;
+        radioMessage({
+          sender: 'unit',
+          name: 'You',
+          text: `${callout} is down!`,
+          priority: 'critical'
+        });
+      }
     }
   });
 
-  b._perf.proj += performance.now() - _perfProjStart;
-  b._perf.frame += performance.now() - _perfFrameStart;
+  const _projTime = performance.now() - _perfProjStart;
+  const _aiTime = _perfAiEnd - _perfAiStart; // AI only (excludes replay recording)
+  const _frameTime = performance.now() - _perfFrameStart;
+  b._perf.proj += _projTime;
+  b._perf.frame += _frameTime;
   b._perf.samples++;
+
+  // Spike detector: log when a single frame exceeds 30ms
+  if (_frameTime > 30) {
+    const blueAlive = b.units?.filter(u => !u.dead).length || 0;
+    const redAlive = b.enemies?.filter(e => !e.dead).length || 0;
+    const ap = b._aiPerf || {};
+    const n = Math.max(1, ap._count || 1);
+    // Show per-frame averages for subsystems, and compute gap as ai minus sum of averages
+    const avgCmdrB = (ap.cmdr_blue||0)/n, avgCmdrR = (ap.cmdr_red||0)/n;
+    const avgSgtB = (ap.sgt_blue||0)/n, avgSgtR = (ap.sgt_red||0)/n;
+    const avgFmtB = (ap.fmt_blue||0)/n, avgFmtR = (ap.fmt_red||0)/n;
+    const avgBrB = (ap.brains_blue||0)/n, avgBrR = (ap.brains_red||0)/n;
+    const avgVis = (ap.vision||0)/n, avgFog = (ap.fog||0)/n;
+    const avgIntel = (ap.intel||0)/n, avgMod = (ap.modifiers||0)/n;
+    const avgAi = (b._perf.ai || 0) / Math.max(1, b._perf.samples || 1);
+    const trackedAvg = avgCmdrB+avgCmdrR+avgSgtB+avgSgtR+avgFmtB+avgFmtR+avgBrB+avgBrR+avgVis+avgFog+avgIntel+avgMod;
+    const avgRender = (b._perf.render || 0) / Math.max(1, b._perf.samples);
+    console.warn(
+      `[PERF SPIKE] frame:${_frameTime.toFixed(1)}ms ai:${avgAi.toFixed(1)}ms proj:${_projTime.toFixed(1)}ms render:${avgRender.toFixed(1)}ms` +
+      ` | B:${blueAlive} R:${redAlive} P:${b.projectiles?.length || 0}` +
+      ` | cmdrB:${avgCmdrB.toFixed(1)} cmdrR:${avgCmdrR.toFixed(1)}` +
+      ` sgtB:${avgSgtB.toFixed(1)} sgtR:${avgSgtR.toFixed(1)}` +
+      ` fmtB:${avgFmtB.toFixed(1)} fmtR:${avgFmtR.toFixed(1)}` +
+      ` brainsB:${avgBrB.toFixed(1)} brainsR:${avgBrR.toFixed(1)}` +
+      ` vis:${avgVis.toFixed(1)} fog:${avgFog.toFixed(1)}` +
+      ` gap:${(avgAi - trackedAvg).toFixed(1)}`
+    );
+  }
+
   _logPerfSnapshot(b, now);
 
+  // --- MISSION SCRIPT ---
+  if (b._isMission) {
+    updateMissionScript(b, now, {
+      spawnWave: (wave) => {
+        b.wave = wave;
+        b.waveComplete = false;
+        b.waveStartTime = now;
+        Game.endless.wave = wave;
+        // Update red spawn zone to top of current zone
+        const zoneH = b._mission?.zonePixelHeight || b.mapHeight / 3;
+        const zoneTopY = b.mapHeight - zoneH * wave;
+        const redCmdr = b._teamCommanders?.red;
+        if (redCmdr) {
+          redCmdr.spawnZone = { x: b.mapWidth / 2, y: Math.max(0, zoneTopY), radius: 100 };
+        }
+        if (b.deployZones?.red) {
+          for (const zone of b.deployZones.red) {
+            zone.y = Math.max(0, zoneTopY);
+          }
+        }
+        spawnEndlessWave(b);
+      },
+      spawnSurge: () => {
+        const wave = b.wave || 3;
+        const surgePower = getWavePower(wave) * FIRST_MISSION.surgeMultiplier;
+        const surgeUnits = spendPowerBudget(surgePower, wave, b.enemyMult || 1.0, false, b._allowedEnemyTypes || null);
+        const surgeSpawnY = Math.max(0, b._heroMinY || 0) - 50; // Top of revealed zone
+        for (let i = 0; i < surgeUnits.length; i++) {
+          const spawnX = b.mapWidth * 0.2 + Math.random() * b.mapWidth * 0.6;
+          const enemy = createEndlessEnemy(b, surgeUnits[i].type, spawnX, surgeSpawnY, wave, b.enemyMult || 1.0, b.enemiesSpawned + i);
+          if (!b.spawnQueue) b.spawnQueue = [];
+          b.spawnQueue.push({ enemy, spawnTime: now + i * 150, squadZone: 'BRAVO', objective: { type: 'attack' } });
+        }
+        b.enemiesSpawned += surgeUnits.length;
+        // Reset wave complete — surge adds new enemies that must be cleared
+        b.waveComplete = false;
+        console.log('[mission] Surge:', surgeUnits.length, 'enemies');
+      },
+      spawnReinforcements: () => {
+        const reinforcements = Game.endless?._reinforcements || [];
+        const spawnY = b.hero ? b.hero.y + 300 : b.mapHeight - 200;
+        const spawnCenterX = b.mapWidth / 2;
+        const reinfUnits = [];
+        for (let i = 0; i < reinforcements.length; i++) {
+          const soldier = reinforcements[i];
+          const archetype = INFANTRY_ARCHETYPES[soldier.role || 'rifleman'] || INFANTRY_ARCHETYPES.rifleman;
+          const renderUnitId = ROLE_TO_UNIT_ID[soldier.role || 'rifleman'] || 'infantry';
+          const unit = createUnit(renderUnitId, {
+            id: `reinf_${i}`,
+            x: spawnCenterX + (i - 2) * 60,
+            y: spawnY,
+            hp: archetype.hp, maxHp: archetype.hp,
+            damage: archetype.damage, fireRate: archetype.fireRate,
+            speed: archetype.speed,
+            range: archetype.range,
+            _soldierId: soldier.id, _role: soldier.role || 'rifleman',
+            _special: archetype.special || null,
+            unitName: soldier.name?.last || 'Soldier',
+            displayName: `${soldier.name?.last || 'Soldier'}`,
+            personality: { ...soldier.personality },
+            _crewMods: getCrewModifiers(soldier, soldier.role || 'rifleman'),
+            team: Team.BLUE, _isReinforcement: true
+          });
+          b.units.push(unit);
+          reinfUnits.push(unit);
+        }
+        // Add reinforcement vehicles from Game.vehicles (created during mission setup)
+        const reinfVehicles = (Game.vehicles || []).filter(v => v._isReinforcement && v.status === 'active');
+        for (let i = 0; i < reinfVehicles.length; i++) {
+          const vehicle = reinfVehicles[i];
+          const unitDef = UNITS.find(u => u.id === vehicle.unitId);
+          const stats = UNIT_COMBAT_STATS[vehicle.unitId] || {};
+          const maxHp = unitDef?.hp || stats.hp || 300;
+          const tank = createUnit(vehicle.unitId, {
+            id: `reinf_veh_${i}`,
+            x: spawnCenterX + (i === 0 ? -120 : 120),
+            y: spawnY + 60,
+            hp: Math.round(maxHp * vehicle.hpPercent),
+            maxHp,
+            _vehicleId: vehicle.id,
+            unitName: vehicle.name || unitDef?.name || vehicle.unitId,
+            displayName: vehicle.name || unitDef?.name || vehicle.unitId,
+            personality: { aggression: 0.5, patience: 0.5, courage: 0.7, discipline: 0.7, initiative: 0.5, awareness: 0.5 },
+            team: Team.BLUE, _isReinforcement: true
+          });
+          b.units.push(tank);
+          reinfUnits.push(tank);
+        }
+        // Create reinforcement squad — hero joins as a member (not SGT)
+        // One of the reinforcements becomes SGT and handles tactics
+        const heroZone = { x: b.hero?.x || spawnCenterX, y: spawnY, radius: 100 };
+        const sq = spawnSquad(b, Team.BLUE, reinfUnits, heroZone, {
+          command: 'advance',
+          formation: 'wedge'
+        });
+        // Add hero to the squad so reinforcements get full brains (hero squad)
+        if (sq && b.hero) {
+          sq.members.push(b.hero.id);
+          b.hero._squadId = sq.id;
+        }
+        // Add reinforcement soldiers to the roster so post-battle can find them
+        // Skip if roster already has non-hero infantry (previous run's soldiers persist)
+        const existingInfantry = Game.roster.filter(s => !s.isPlayerCharacter && s.pool === 'infantry');
+        if (existingInfantry.length === 0) {
+          for (const soldier of reinforcements) {
+            Game.roster.push(soldier);
+          }
+        }
+        _stampRosterData(b);
+        console.log('[mission] Reinforcements:', reinforcements.length, 'friendlies via squad system');
+      },
+      onComplete: () => {
+        // Process battle results before medevac scene
+        _processPostBattle(b, 'extract');
+        b._postBattleProcessed = true;
+        if (isRecording(b)) {
+          b.result = `extract_wave_${Game.endless?.wave || 3}`;
+          saveReplay(b);
+        }
+        stopEndlessLoop();
+        goto(State.MEDEVAC);
+      }
+    });
+  }
+
   // --- CHECK WAVE COMPLETE ---
+  // Mission battles: the mission script controls wave completion, not this auto-check.
+  // Only set waveComplete when enemies are dead AND the mission script has spawned a wave.
+  if (b._isMission && (!b.waveStartTime || b._missionDialogActive || b._missionWaitForClick)) {
+    if (!b._waveGateLogged && b._isMission) {
+      console.log(`[WAVE GATE] blocked: waveStartTime=${b.waveStartTime || 'unset'} dialog=${b._missionDialogActive || false} waitClick=${b._missionWaitForClick || false} phase=${b._mission?.phase || 'none'}`);
+      b._waveGateLogged = true;
+    }
+    return;
+  }
+  if (b._waveGateLogged) {
+    console.log(`[WAVE GATE] passed: waveStartTime=${b.waveStartTime} enemies=${b.enemies?.length || 0} queued=${b.spawnQueue?.length || 0} phase=${b._mission?.phase || 'none'}`);
+    b._waveGateLogged = false;
+  }
+
   const aliveEnemies = b.enemies.filter(e => !e.dead).length;
   const queuedEnemies = b.spawnQueue ? b.spawnQueue.length : 0;
   const redCmdrCheck = b._teamCommanders?.red;
   const hasReserves = redCmdrCheck && (redCmdrCheck.reserves.length > 0 || redCmdrCheck._pendingDeployments?.length > 0);
   if (aliveEnemies === 0 && queuedEnemies === 0 && !hasReserves && !b.waveComplete) {
+    console.warn(`[WAVE COMPLETE] alive:${aliveEnemies} queued:${queuedEnemies} reserves:${redCmdrCheck?.reserves?.length || 0} pending:${redCmdrCheck?._pendingDeployments?.length || 0} wave:${b.wave} phase:${b._mission?.phase || 'none'} waveStartTime:${b.waveStartTime || 'unset'} enemies.length:${b.enemies?.length || 0} dialog:${b._missionDialogActive || false} waitClick:${b._missionWaitForClick || false}`);
     b.waveComplete = true;
+
+    // Mission battles: don't go to results screen — mission script handles transitions
+    if (b._isMission) return;
+
+    // Radio: wave cleared (non-mission only — missions use dialog system)
+    radioMessage({
+      sender: 'cmd',
+      name: 'HQ',
+      text: `Wave ${b.wave} cleared. Well done.`,
+      priority: 'normal'
+    });
+    setRadioObjective('Area secured');
 
     // Post-battle: update roster durability + progression
     _processPostBattle(b, 'win');
@@ -2737,16 +3032,14 @@ function updateEndlessBattle(dt) {
     // Short delay then go to results screen
     setTimeout(() => {
       if (Game.state === State.ENDLESS_BATTLE) {
-        // Save replay before clearing battle for next wave
         const ob = Game.endless?.battle;
         if (ob && isRecording(ob)) {
           ob.result = ob.result || `wave_${Game.endless.wave}_complete`;
           saveReplay(ob);
         }
-        // Keep battle ref for results screen stats
         Game.endless._lastBattle = Game.endless.battle;
         Game.endless.battle = null;
-        Game.endless._resultTab = 'battle'; // Default to battle report tab
+        Game.endless._resultTab = 'battle';
         goto(State.ENDLESS_RESULT);
       }
     }, 1500);
@@ -2784,8 +3077,12 @@ function getWavePower(wave) {
  * @param {boolean} playerHasVehicle - Whether player deployed with a vehicle
  * Returns array of { type, delay } definitions (not spawned yet).
  */
-function spendPowerBudget(budget, wave, sizeMult, playerHasVehicle) {
-  const available = ENEMY_POWER_COSTS.filter(e => wave >= e.minWave);
+function spendPowerBudget(budget, wave, sizeMult, playerHasVehicle, allowedTypes) {
+  const available = ENEMY_POWER_COSTS.filter(e => {
+    if (wave < e.minWave) return false;
+    if (allowedTypes && !allowedTypes.includes(e.type)) return false;
+    return true;
+  });
   if (available.length === 0) return [{ type: 'grunt', delay: 0 }];
 
   const totalBudget = Math.round(budget * sizeMult);
@@ -2833,18 +3130,150 @@ function spendPowerBudget(budget, wave, sizeMult, playerHasVehicle) {
       if (roll <= 0) { picked = entry; break; }
     }
 
-    // Stagger spawns: first 60% of budget spawns immediately, rest delayed
-    const spentSoFar = totalBudget - remaining;
-    const delay = spentSoFar > totalBudget * 0.6
-      ? 2000 + Math.random() * 3000
-      : 0;
-
-    units.push({ type: picked.type, delay });
+    // No per-unit stagger — deployment plays control squad-level timing
+    units.push({ type: picked.type, delay: 0 });
     typeSpend[picked.type] += picked.cost;
     remaining -= picked.cost;
   }
 
   return units;
+}
+
+// ─── Scripted Wave Events (first-run intro) ──────────────────
+
+const WAVE_SCRIPT_KILL_THRESHOLD = 3;     // Kills before radio warning
+const WAVE_SCRIPT_SURGE_DELAY = 3000;     // ms after warning before surge spawns
+const WAVE_SCRIPT_REINF_DELAY = 5000;     // ms after surge before friendlies arrive
+const WAVE_SCRIPT_SURGE_MULTIPLIER = 4;   // Surge is Nx the normal wave power
+const WAVE_SCRIPT_REINFORCEMENT_COUNT = 5;
+
+/**
+ * Initialize wave 3 script for first-run experience.
+ * Call when wave 3 starts during a new game.
+ */
+function initWave3Script(b) {
+  b._waveScript = {
+    phase: 'normal',          // normal → warned → surge → reinforcements → combined → complete
+    killsAtStart: Game.endless.kills,
+    warningTime: null,
+    surgeSpawned: false,
+    reinforcementsSpawned: false,
+    complete: false,
+    radioMessages: []         // Messages to display: { text, time, duration }
+  };
+}
+
+/**
+ * Process wave script phases each frame.
+ */
+function _processWaveScript(b, now) {
+  const ws = b._waveScript;
+  if (!ws || ws.complete) return;
+
+  const waveKills = Game.endless.kills - ws.killsAtStart;
+
+  // Phase: NORMAL → player gets kills, feels confident
+  if (ws.phase === 'normal') {
+    if (waveKills >= WAVE_SCRIPT_KILL_THRESHOLD) {
+      ws.phase = 'warned';
+      ws.warningTime = now;
+      // Radio warning
+      ws.radioMessages.push({
+        text: 'If you can hear us, fall back! Multiple enemies inbound!',
+        time: now,
+        duration: 4000
+      });
+      console.log('[wave-script] Warning triggered at', waveKills, 'kills');
+    }
+  }
+
+  // Phase: WARNED → surge spawns after delay
+  else if (ws.phase === 'warned') {
+    if (now - ws.warningTime >= WAVE_SCRIPT_SURGE_DELAY && !ws.surgeSpawned) {
+      ws.surgeSpawned = true;
+      ws.phase = 'surge';
+      ws.surgeTime = now;
+
+      // Spawn massive enemy surge
+      const wave = b.wave || 3;
+      const surgePower = getWavePower(wave) * WAVE_SCRIPT_SURGE_MULTIPLIER;
+      const surgeUnits = spendPowerBudget(surgePower, wave, b.enemyMult || 1.0, false);
+      const spawnY = -50; // Off-map top edge
+
+      for (let i = 0; i < surgeUnits.length; i++) {
+        const enemyDef = ENEMIES.find(e => e.id === surgeUnits[i].type) || ENEMIES.find(e => e.id === 'grunt');
+        const spawnX = b.mapWidth * 0.2 + Math.random() * b.mapWidth * 0.6;
+        const enemy = createEndlessEnemy(b, surgeUnits[i].type, spawnX, spawnY, wave, b.enemyMult || 1.0, b.enemiesSpawned + i);
+        // Stagger spawns over 3 seconds
+        const spawnTime = now + i * 150;
+        if (!b.spawnQueue) b.spawnQueue = [];
+        b.spawnQueue.push({
+          enemy,
+          spawnTime,
+          squadZone: 'BRAVO',
+          objective: { type: 'attack' }
+        });
+      }
+      b.enemiesSpawned += surgeUnits.length;
+
+      console.log('[wave-script] Surge spawned:', surgeUnits.length, 'enemies');
+    }
+  }
+
+  // Phase: SURGE → reinforcements arrive after delay
+  else if (ws.phase === 'surge') {
+    if (now - ws.surgeTime >= WAVE_SCRIPT_REINF_DELAY && !ws.reinforcementsSpawned) {
+      ws.reinforcementsSpawned = true;
+      ws.phase = 'combined';
+
+      // Radio: help is coming
+      ws.radioMessages.push({
+        text: 'Hold on! Friendlies inbound!',
+        time: now,
+        duration: 3000
+      });
+
+      // Spawn 5 friendly AI soldiers at south edge
+      const reinforcements = Game.endless._reinforcements || [];
+      const spawnY = b.mapHeight + 30; // South edge, off-map
+      const spawnCenterX = b.mapWidth / 2;
+
+      for (let i = 0; i < reinforcements.length; i++) {
+        const soldier = reinforcements[i];
+        const archetype = INFANTRY_ARCHETYPES[soldier.role || 'rifleman'] || INFANTRY_ARCHETYPES.rifleman;
+        const renderUnitId = ROLE_TO_UNIT_ID[soldier.role || 'rifleman'] || 'infantry';
+
+        const unit = createUnit(renderUnitId, {
+          id: `reinf_${i}`,
+          x: spawnCenterX + (i - 2) * 60,
+          y: spawnY,
+          hp: archetype.hp,
+          maxHp: archetype.hp,
+          damage: archetype.damage,
+          fireRate: archetype.fireRate,
+          speed: archetype.speed,
+          range: archetype.range,
+          _soldierId: soldier.id,
+          _role: soldier.role || 'rifleman',
+          _special: archetype.special || null,
+          unitName: `${soldier.name?.last || 'Soldier'}`,
+          displayName: `${soldier.name?.last || 'Soldier'}`,
+          personality: { ...soldier.personality },
+          _crewMods: getCrewModifiers(soldier, soldier.role || 'rifleman'),
+          team: Team.BLUE,
+          _isReinforcement: true
+        });
+
+        b.units.push(unit);
+      }
+
+      // Stamp roster data so the AI pipeline picks them up
+      _stampRosterData(b);
+
+      console.log('[wave-script] Reinforcements spawned:', reinforcements.length, 'friendlies');
+      ws.complete = true; // Script done — wave plays out naturally
+    }
+  }
 }
 
 // Create a single enemy from definition
@@ -2915,7 +3344,7 @@ function buildWaveBudget(b, wave, sizeMult) {
   // Check if player has a vehicle (hero is a vehicle type, not infantry)
   const heroUnitId = b.hero?.unitId || 'infantry';
   const playerHasVehicle = !isInfantryUnit(heroUnitId);
-  const units = spendPowerBudget(enemyBudget, wave, sizeMult, playerHasVehicle);
+  const units = spendPowerBudget(enemyBudget, wave, sizeMult, playerHasVehicle, b._allowedEnemyTypes || null);
 
   // Convert to the format expected by spawnEndlessWave
   return units.map(u => {
@@ -2929,12 +3358,107 @@ function buildWaveBudget(b, wave, sizeMult) {
   });
 }
 
+// ── Spawn queue helpers ──────────────────────────────────────
+
+/** Pop up to maxPerFrame ready entries from the queue. */
+function _drainSpawnQueue(queue, now, maxPerFrame) {
+  const ready = [];
+  const waiting = [];
+  for (const entry of queue) {
+    if (now >= entry.spawnTime && ready.length < maxPerFrame) {
+      ready.push(entry);
+    } else {
+      waiting.push(entry);
+    }
+  }
+  return { ready, waiting };
+}
+
+/** Push spawned enemies into the battle and stamp insignia. */
+function _addSpawnedEnemies(b, entries) {
+  for (const entry of entries) {
+    if (b._insigniaSetId && !entry.enemy._insigniaSetId) {
+      entry.enemy._insigniaSetId = b._insigniaSetId;
+    }
+    b.enemies.push(entry.enemy);
+  }
+}
+
+/** Add spawned units to their pre-assigned squads. */
+function _joinExistingSquads(b, entries) {
+  if (entries.length === 0) return;
+  const wave = Game.endless?.wave || 1;
+  const preset = scaleBrainByWave(BRAIN_PRESETS.endlessEnemy, wave);
+  for (const entry of entries) {
+    const squad = b._squads?.find(s => s.id === entry._squadId);
+    if (squad) {
+      squad.members.push(entry.enemy.id);
+      entry.enemy._squadId = squad.id;
+      applyBrainDefaults(entry.enemy, preset);
+    }
+  }
+}
+
+/** Form new squads from spawned units, waiting until all units with the same key have arrived. */
+function _formNewSquads(b, entries, stillWaiting, now) {
+  if (entries.length === 0) return;
+  const wave = Game.endless?.wave || 1;
+
+  // Group by squad key
+  const groups = new Map();
+  for (const entry of entries) {
+    const key = entry._delayedSquadKey || 'default';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(entry);
+  }
+
+  // Keys that still have units waiting in the queue
+  const pendingKeys = new Set();
+  for (const entry of stillWaiting) {
+    if (entry._delayedSquadKey) pendingKeys.add(entry._delayedSquadKey);
+  }
+
+  for (const [key, groupEntries] of groups) {
+    if (pendingKeys.has(key)) {
+      // Stash — more units coming for this squad
+      if (!b._pendingSquadUnits) b._pendingSquadUnits = new Map();
+      const stash = b._pendingSquadUnits.get(key) || { entries: [] };
+      stash.entries.push(...groupEntries);
+      b._pendingSquadUnits.set(key, stash);
+      continue;
+    }
+
+    // All units arrived — form the squad
+    const allEntries = [...(b._pendingSquadUnits?.get(key)?.entries || []), ...groupEntries];
+    if (b._pendingSquadUnits) b._pendingSquadUnits.delete(key);
+
+    const first = allEntries[0];
+    const zone = first.squadZone || { x: b.mapWidth / 2, y: b.cellSize * 3, radius: b.mapWidth / 3 };
+    const hasObjective = !!first.objective;
+    const sq = spawnSquad(b, 'red', allEntries.map(e => e.enemy), zone, {
+      preset: scaleBrainByWave(BRAIN_PRESETS.endlessEnemy, wave),
+      sgtPersonality: first.sgtPersonality,
+      skipObjective: hasObjective
+    });
+    if (hasObjective && sq?.sergeant) {
+      const redCmdr = b._teamCommanders?.red;
+      if (redCmdr) assignObjective(redCmdr, sq.sergeant, first.objective, now, b);
+    }
+  }
+}
+
 // Spawn enemies for endless wave using commander planning system
 function spawnEndlessWave(b) {
   const wave = b.wave;
   const CELL_SIZE = b.cellSize;
   const sizeMult = b.enemyMult || 1.0;
   const now = Date.now();
+
+  // Initialize wave 3 script for first-run experience
+  if (wave === 3 && Game.endless?._isFirstRun && Game.endless._reinforcements?.length > 0) {
+    initWave3Script(b);
+    console.log('[wave-script] Wave 3 script initialized');
+  }
 
   // Scale red commander by wave
   const redCmdr = b._teamCommanders?.red;
@@ -2962,17 +3486,33 @@ function spawnEndlessWave(b) {
 
     let enemyIndex = 0;
 
-    // First group spawns at 25% from red edge (on-map), reinforcements from off-map edge
-    const onMapY = b.mapHeight * 0.25;  // 25% from top = initial enemy position
-    const offMapY = -(b.stageDepth || 100) / 2;  // Off-map — reinforcements march in
+    // Spawn Y positioning — for missions, use zone-relative; for normal, use map-relative
+    let onMapY, offMapY;
+    if (b._isMission && b._mission) {
+      // Spawn enemies at the top of the current revealed zone
+      const zoneH = b._mission.zonePixelHeight;
+      const zoneTopY = b.mapHeight - zoneH * (b._mission.currentWave || 1);
+      onMapY = Math.max(b.cellSize * 3, zoneTopY + b.cellSize * 3);
+      offMapY = Math.max(b.cellSize, zoneTopY);
+    } else {
+      onMapY = b.mapHeight * 0.25;
+      offMapY = -(b.stageDepth || 100) / 2;
+    }
+    console.log(`[spawn] Wave ${wave}: onMap=${Math.round(onMapY)}, offMap=${Math.round(offMapY)}, mapH=${b.mapHeight}, plans:${plans.length}, budget:${budget.length}, totalUnits:${plans.reduce((s,p) => s + p.units.length, 0)}`);
     let isFirstGroup = true;
 
     for (const plan of plans) {
       const squadEnemies = [];
-      const zone = plan.spawnZone;
-      // First group spawns on-map at 25%, subsequent groups from edge
+      // Mission: override spawn zone to center of map at zone-appropriate Y
+      const zone = b._isMission
+        ? { x: b.mapWidth / 2, y: onMapY, radius: b.mapWidth * 0.3 }
+        : plan.spawnZone;
+      // First group spawns on-map, subsequent groups from edge
       const groupY = isFirstGroup ? onMapY : offMapY;
       isFirstGroup = false;
+
+      // Squad-level delay from deployment play
+      const squadDelay = plan.delay || 0;
 
       for (const unitDef of plan.units) {
         // Spawn position: use zone X spread, group-appropriate Y
@@ -2982,13 +3522,15 @@ function spawnEndlessWave(b) {
 
         const enemy = createEndlessEnemy(b, unitDef.type, pos.x, pos.y, wave, sizeMult, enemyIndex++);
 
-        if (unitDef.delay > 0) {
+        if (squadDelay > 0) {
+          // Entire squad delayed — queue all units together
           b.spawnQueue.push({
             enemy,
-            spawnTime: now + unitDef.delay + Math.random() * 500,
+            spawnTime: now + squadDelay,
             squadZone: zone,
             objective: plan.objective,
-            sgtPersonality: plan.sgtPersonality
+            sgtPersonality: plan.sgtPersonality,
+            _delayedSquadKey: `deploy_${wave}_${plans.indexOf(plan)}`
           });
         } else {
           b.enemies.push(enemy);
@@ -3009,24 +3551,40 @@ function spawnEndlessWave(b) {
         if (sq && sq.sergeant && plan.objective) {
           assignObjective(redCmdr, sq.sergeant, plan.objective, now, b);
         }
-
-        // Tag queued entries with this squad's ID so they join it on spawn
-        if (sq) {
-          for (const entry of b.spawnQueue) {
-            if (entry.squadZone === zone && !entry._squadId) {
-              entry._squadId = sq.id;
-            }
-          }
-        }
       }
     }
+
+    console.log(`[spawn] Post-spawn: enemies=${b.enemies.length} queued=${b.spawnQueue?.length || 0} reserves=${redCmdr?.reserves?.length || 0}`);
 
     // Log commander deployment
     logEvent(b, {
       t: now, who: 'cmd-red', team: 'red', type: 'commander',
       action: 'deploy',
-      detail: `Wave ${wave}: ${plans.length} squad(s), ${totalEnemies} enemies, ${redCmdr.reserves.length} reserves`
+      detail: `Wave ${wave}: ${redCmdr._lastDeploymentPlay} — ${plans.length} squad(s), ${totalEnemies} enemies`
     });
+
+    // Blue intel prediction
+    const blueCmdr = b._teamCommanders?.blue || b._teamCommanders?.[Team.BLUE];
+    if (blueCmdr) {
+      const intel = predictDeploymentPlay(blueCmdr, redCmdr);
+      if (intel) {
+        if (!b._intelMessages) b._intelMessages = [];
+        b._intelMessages.push({ text: intel.message, time: now, correct: intel.correct, play: intel.play });
+        logEvent(b, {
+          t: now, who: 'cmd-blue', team: 'blue', type: 'intel',
+          action: intel.correct ? 'accurate' : 'inaccurate',
+          detail: `Predicted: ${intel.play} (${intel.correct ? 'CORRECT' : 'WRONG'}) — "${intel.message}"`
+        });
+        console.log(`[INTEL] ${intel.correct ? '✓' : '✗'} "${intel.message}" (actual: ${redCmdr._lastDeploymentPlay})`);
+        // Send intel to radio HUD
+        radioMessage({
+          sender: 'intel',
+          name: 'HQ',
+          text: intel.message,
+          priority: intel.correct ? 'normal' : 'urgent'
+        });
+      }
+    }
   } else {
     // Fallback: no commander, old single-squad behavior
     let enemyIndex = 0;
@@ -3059,6 +3617,17 @@ function spawnEndlessWave(b) {
 
   // Log wave event for kill feed
   logEvent(b, { t: now, type: 'wave', action: `Wave ${wave} — ${totalEnemies} enemies`, team: null });
+
+  // Update radio HUD objective for non-mission battles
+  if (!b._isMission) {
+    setRadioObjective(`Wave ${wave} — ${totalEnemies} hostiles inbound`);
+    radioMessage({
+      sender: 'cmd',
+      name: 'HQ',
+      text: `Wave ${wave} incoming. ${totalEnemies} contacts on approach.`,
+      priority: wave >= 3 ? 'urgent' : 'normal'
+    });
+  }
 }
 
 // Draw endless battle - uses shared hero battle rendering
@@ -3073,7 +3642,8 @@ function drawEndlessBattle() {
   const heroAlive = b.hero && !b.hero.dead && !b.hero.observer;
   const inCombat = b.phase !== 'deploying' && b.phase !== 'countdown';
   const isCMD = b.playMode === 'cmd';
-  if (heroAlive && inCombat && !isCMD) {
+  const dialogActive = b._missionWaitForClick || isDialogPaused(b);
+  if (heroAlive && inCombat && !isCMD && !dialogActive) {
     if (!bf.classList.contains('hero-crosshair')) bf.classList.add('hero-crosshair');
   } else {
     bf.classList.remove('hero-crosshair');
@@ -3112,6 +3682,110 @@ function drawEndlessBattle() {
 
   // Update kill feed
   updateKillFeed(b);
+
+  // Radio messages from wave script (legacy — kept for non-mission radio)
+  if (b._waveScript?.radioMessages?.length > 0) {
+    const now = Date.now();
+    let radioEl = document.querySelector('.radio-message');
+    const activeMsg = b._waveScript.radioMessages.find(m => now - m.time < m.duration);
+    if (activeMsg) {
+      if (!radioEl) {
+        radioEl = document.createElement('div');
+        radioEl.className = 'radio-message';
+        bf.appendChild(radioEl);
+      }
+      radioEl.textContent = `📻 ${activeMsg.text}`;
+      radioEl.style.opacity = '1';
+    } else if (radioEl) {
+      radioEl.style.opacity = '0';
+    }
+  }
+
+  // Mission fade overlay
+  _renderMissionFade(b, bf);
+
+  // Mission dialog overlay
+  _renderMissionDialog(b);
+
+  // Mission fog zones — rendered in canvas via _drawMapEdgeFade, no DOM fog needed
+}
+
+/** Render the mission dialog overlay DOM element. */
+/** Render black fade overlay for mission intro. */
+function _renderMissionFade(b, bf) {
+  if (!b._fadeOverlay) return;
+  const opacity = b._fadeOverlay.opacity;
+
+  let fadeEl = bf.querySelector('.mission-fade');
+  if (opacity > 0.01) {
+    if (!fadeEl) {
+      fadeEl = document.createElement('div');
+      fadeEl.className = 'mission-fade';
+      bf.appendChild(fadeEl);
+    }
+    fadeEl.style.opacity = opacity;
+    fadeEl.style.display = '';
+  } else if (fadeEl) {
+    fadeEl.style.display = 'none';
+  }
+
+  // Show "click to continue" hint when waiting for click
+  let hintEl = bf.querySelector('.mission-click-hint');
+  if (b._missionWaitForClick && opacity < 0.1) {
+    if (!hintEl) {
+      hintEl = document.createElement('div');
+      hintEl.className = 'mission-click-hint';
+      hintEl.textContent = 'ontouchstart' in window ? 'Tap to continue' : 'Press SPACE to continue';
+      bf.appendChild(hintEl);
+    }
+    hintEl.style.display = '';
+  } else if (hintEl) {
+    hintEl.style.display = 'none';
+  }
+}
+
+function _renderMissionDialog(b) {
+  // Tick dialog state so timed dialogs advance
+  getCurrentDialog(b);
+
+  // Hide overlay — all dialog now routes through radio HUD
+  const overlay = document.querySelector('.mission-dialog-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+/** Render fog zone overlays on the battlefield. */
+function _renderMissionFog(b, bf) {
+  const zones = getFogZones(b);
+  if (zones.length === 0) return;
+
+  for (const zone of zones) {
+    const opacity = getZoneFogOpacity(zone);
+    let fogEl = bf.querySelector(`.fog-zone-${zone.id}`);
+
+    if (opacity > 0) {
+      if (!fogEl) {
+        fogEl = document.createElement('div');
+        fogEl.className = `mission-fog fog-zone-${zone.id}`;
+        fogEl.style.position = 'absolute';
+        fogEl.style.left = '0';
+        fogEl.style.right = '0';
+        fogEl.style.pointerEvents = 'none';
+        fogEl.style.zIndex = '50';
+        bf.appendChild(fogEl);
+      }
+      // Convert world coords to screen coords using camera
+      const cam = b.camera;
+      const zoom = cam.zoom || cam.userZoom || 1;
+      const screenY = (zone.y - cam.y) * zoom;
+      const screenH = zone.height * zoom;
+      fogEl.style.top = `${screenY}px`;
+      fogEl.style.height = `${screenH}px`;
+      fogEl.style.background = `linear-gradient(to top, rgba(0,0,0,${opacity * 0.3}), rgba(0,0,0,${opacity * 0.95}))`;
+      fogEl.style.display = '';
+    } else if (fogEl) {
+      fogEl.style.display = 'none';
+    }
+  }
 }
 
 // ── Deployment phase rendering ──────────────────────────────
@@ -3154,7 +3828,7 @@ function drawDeploymentPhase(bf, b) {
     };
 
     b.battleRenderer.render(b);
-    drawMinimap(b);
+    if (shouldDrawMinimap()) drawMinimap(b);
   }
 }
 
@@ -3173,7 +3847,8 @@ function updateCountdownCamera(b, screenW, screenH) {
   const elapsed = b.countdownStart ? (Date.now() - b.countdownStart) / 1000 : 0;
 
   // Must match updateHeroCamera exactly so transition is seamless
-  const HERO_TACTICAL_RADIUS = 450;
+  const heroViewRange = b.hero?.viewRange || 550;
+  const HERO_TACTICAL_RADIUS = heroViewRange + 50;
   const heroBaseZoom = Math.min(screenW, screenH) / (HERO_TACTICAL_RADIUS * 2);
 
   // Overview used a different tactical radius
@@ -3231,36 +3906,73 @@ function _drawMapEdgeFade(ctx, b) {
   const ext = 3000;
   const dark = '#0c0f0a';
 
+  // Mission fog: find the lowest (highest Y) unrevealed zone boundary
+  // This acts as a "fake top edge" that moves up as zones are revealed
+  let fogEdgeY = 0; // Default: real top edge
+  if (b._fogZones) {
+    for (const zone of b._fogZones) {
+      if (!zone.revealed) {
+        fogEdgeY = Math.max(fogEdgeY, zone.y + zone.height);
+      }
+    }
+    // During reveal animation, smoothly transition the edge
+    for (const zone of b._fogZones) {
+      if (zone.revealed && zone.revealStartTime) {
+        const elapsed = Date.now() - zone.revealStartTime;
+        const revealDuration = 1500;
+        if (elapsed < revealDuration) {
+          // Lerp the fog edge up as zone reveals
+          const t = elapsed / revealDuration;
+          const oldEdge = zone.y + zone.height;
+          fogEdgeY = Math.max(fogEdgeY, oldEdge - zone.height * t);
+        }
+      }
+    }
+  }
+
   // 1. Fill all 4 outer regions with solid dark (covers the void)
   ctx.fillStyle = dark;
-  ctx.fillRect(-ext, -ext, mapW + ext * 2, ext);          // top
-  ctx.fillRect(-ext, mapH, mapW + ext * 2, ext);           // bottom
-  ctx.fillRect(-ext, 0, ext, mapH);                        // left
-  ctx.fillRect(mapW, 0, ext, mapH);                        // right
+  ctx.fillRect(-ext, -ext, mapW + ext * 2, ext);          // top void
+  ctx.fillRect(-ext, mapH, mapW + ext * 2, ext);           // bottom void
+  ctx.fillRect(-ext, 0, ext, mapH);                        // left void
+  ctx.fillRect(mapW, 0, ext, mapH);                        // right void
 
-  // 2. Draw inner gradients on top of the terrain, fading INTO the map
-  // Top
-  const topGrad = ctx.createLinearGradient(0, 0, 0, fadeW);
-  topGrad.addColorStop(0, dark);
-  topGrad.addColorStop(1, 'rgba(12, 15, 10, 0)');
-  ctx.fillStyle = topGrad;
-  ctx.fillRect(0, 0, mapW, fadeW);
+  // 2. Mission fog: solid dark above the fog edge + gradient at boundary
+  if (fogEdgeY > 0) {
+    // Solid dark above the fog boundary
+    ctx.fillStyle = dark;
+    ctx.fillRect(0, 0, mapW, fogEdgeY - fadeW);
 
-  // Bottom
+    // Gradient at the fog boundary (fades from dark to transparent)
+    const fogGrad = ctx.createLinearGradient(0, fogEdgeY - fadeW, 0, fogEdgeY);
+    fogGrad.addColorStop(0, dark);
+    fogGrad.addColorStop(1, 'rgba(12, 15, 10, 0)');
+    ctx.fillStyle = fogGrad;
+    ctx.fillRect(0, fogEdgeY - fadeW, mapW, fadeW);
+  } else {
+    // No fog — draw normal top edge gradient
+    const topGrad = ctx.createLinearGradient(0, 0, 0, fadeW);
+    topGrad.addColorStop(0, dark);
+    topGrad.addColorStop(1, 'rgba(12, 15, 10, 0)');
+    ctx.fillStyle = topGrad;
+    ctx.fillRect(0, 0, mapW, fadeW);
+  }
+
+  // Bottom edge
   const botGrad = ctx.createLinearGradient(0, mapH, 0, mapH - fadeW);
   botGrad.addColorStop(0, dark);
   botGrad.addColorStop(1, 'rgba(12, 15, 10, 0)');
   ctx.fillStyle = botGrad;
   ctx.fillRect(0, mapH - fadeW, mapW, fadeW);
 
-  // Left
+  // Left edge
   const leftGrad = ctx.createLinearGradient(0, 0, fadeW, 0);
   leftGrad.addColorStop(0, dark);
   leftGrad.addColorStop(1, 'rgba(12, 15, 10, 0)');
   ctx.fillStyle = leftGrad;
   ctx.fillRect(0, 0, fadeW, mapH);
 
-  // Right
+  // Right edge
   const rightGrad = ctx.createLinearGradient(mapW, 0, mapW - fadeW, 0);
   rightGrad.addColorStop(0, dark);
   rightGrad.addColorStop(1, 'rgba(12, 15, 10, 0)');
@@ -4691,29 +5403,29 @@ function _stampRosterData(b) {
   // Create blue squad + sergeant now that units are deployed
   // (skipped during initBattleAI because units weren't placed yet)
   if (b.mode === 'endless' && allUnits.length > 0) {
-    // Remove any stale blue squads
-    b._squads = (b._squads || []).filter(s => s.team !== 'blue');
-
     // Stamp brain defaults + insignia on all blue units
     const insigniaSetId = b._insigniaSetId || Game?.settings?.insigniaSetId || null;
     for (const u of allUnits) {
-      applyBrainDefaults(u, 'endlessAlly');
+      if (!u._brainInit) applyBrainDefaults(u, 'endlessAlly');
       u.team = 'blue';
       if (insigniaSetId) u._insigniaSetId = insigniaSetId;
     }
 
-    // Create the blue squad with a sergeant
-    const blueSpawnZone = { x: b.mapWidth / 2, y: b.mapHeight - (b.cellSize || 64) * 3, radius: 100 };
-    const redSpawnZone = { x: b.mapWidth / 2, y: (b.cellSize || 64) * 3, radius: 100 };
-    const squad = createSquad('blue', allUnits.filter(u => !u.isHero), {
-      spawnZone: blueSpawnZone,
-      enemyZone: redSpawnZone
-    });
-    b._squads.push(squad);
+    // Create a blue squad only if none exist yet (don't wipe squads created by spawnSquad)
+    const hasBlueSquad = (b._squads || []).some(s => s.team === 'blue' || s.team === Team.BLUE);
+    const blueMembers = allUnits.filter(u => !u.isHero);
+    if (!hasBlueSquad && blueMembers.length > 0) {
+      const blueSpawnZone = { x: b.mapWidth / 2, y: b.mapHeight - (b.cellSize || 64) * 3, radius: 100 };
+      const redSpawnZone = { x: b.mapWidth / 2, y: (b.cellSize || 64) * 3, radius: 100 };
+      const squad = createSquad('blue', blueMembers, {
+        spawnZone: blueSpawnZone,
+        enemyZone: redSpawnZone
+      });
+      b._squads.push(squad);
 
-    // Assign ATTACK objective to the new sergeant
-    if (squad.sergeant) {
-      squad.sergeant.objective = { type: 'attack' };
+      if (squad.sergeant) {
+        squad.sergeant.objective = { type: 'attack' };
+      }
     }
 
     // Re-sync sergeant lookup
@@ -4801,11 +5513,21 @@ function _processPostBattle(b, result) {
 
     // Durability
     if (unit?.dead || metrics.died) {
-      soldier.status = 'kia';
-      soldier.hpPercent = 0;
+      if (b._isMission) {
+        // Intro mission: knocked out, not killed
+        soldier.status = 'wounded';
+        soldier.hpPercent = 0.05;
+        soldier.woundedBattlesLeft = 3;
+      } else {
+        soldier.status = 'kia';
+        soldier.hpPercent = 0;
+      }
     } else if (unit) {
       soldier.hpPercent = Math.max(0, unit.hp / (unit.maxHp || 1));
-      if (soldier.hpPercent < 0.3) soldier.status = 'wounded';
+      if (soldier.hpPercent < 0.3) {
+        soldier.status = 'wounded';
+        soldier.woundedBattlesLeft = soldier.woundedBattlesLeft || 1;
+      }
       metrics.hpPercent = soldier.hpPercent;
     }
 
@@ -4978,12 +5700,40 @@ function updateHeroStability(b, hero, dtSec) {
  * @returns {boolean} true if shot was fired
  */
 function heroFire(b, hero, now, targetEntity) {
-  if (now - hero.lastShot <= hero.fireRate) return false;
+  // Magazine-aware cooldown
+  if (hero._hasMagazine) {
+    // Currently reloading
+    if (hero._isReloading) {
+      const reloadMod = hero._crewMods?.gunner?.reloadSpeed ?? hero._crewMods?.reloadSpeed ?? 0.3;
+      const reloadDur = hero._reloadDuration * (1.0 - reloadMod * 0.3);
+      if (now - hero._reloadStart < reloadDur) return false;
+      // Reload complete
+      hero._isReloading = false;
+      hero._magAmmo = hero._magSize;
+    }
+    // Empty mag — start reload
+    if (hero._magAmmo <= 0) {
+      hero._isReloading = true;
+      hero._reloadStart = now;
+      return false;
+    }
+    // Burst rate cooldown
+    if (now - hero.lastShot <= hero._burstRate) return false;
+  } else {
+    // Single-shot cooldown (tanks/artillery)
+    if (now - hero.lastShot <= hero.fireRate) return false;
+  }
 
-  // Use actual target position for range calculation, or mouse aim in world space
+  // Use actual target position, joystick aim depth, or mouse aim in world space
   let aimTarget;
   if (targetEntity && !targetEntity.dead) {
     aimTarget = { x: targetEntity.x, y: targetEntity.y };
+  } else if (b.aimAngle != null && b._aimDepth != null) {
+    // Mobile joystick: aim angle + depth
+    aimTarget = {
+      x: hero.x + Math.cos(b.aimAngle) * b._aimDepth,
+      y: hero.y + Math.sin(b.aimAngle) * b._aimDepth
+    };
   } else {
     // Fall back to world-space aim point from mouse + camera
     const zoom = b.camera?.zoom || 1;
@@ -5039,6 +5789,9 @@ function heroFire(b, hero, now, targetEntity) {
 
   // Post-fire recoil
   applyRecoilDrop(hero);
+
+  // Magazine: consume one round
+  consumeAmmo(hero);
 
   // Track metrics for roster progression
   if (b._soldierMetrics && hero._crewSoldierIds?.gunner) {
@@ -5314,9 +6067,33 @@ export function endlessKeyDown(key) {
     return;
   }
 
+  // Space/Enter — advance mission dialog or dismiss speech bubble
+  if (key === ' ' || key === 'Enter') {
+    if (b._missionWaitForClick) {
+      b._missionWaitForClick = false;
+      if (b.hero?._speechBubble?.persist) b.hero._speechBubble = null;
+      if (b.mouse) b.mouse.down = false;
+      return;
+    }
+    if (isDialogPaused(b)) {
+      advanceDialog(b);
+      return;
+    }
+  }
+
   // Deployment phase: F to flip unit card
   if (b.phase === 'deploying' && (key === 'f' || key === 'F') && b._selectedUnit) {
     b._cardFlipped = !b._cardFlipped;
+    return;
+  }
+
+  // R — manual reload (magazine weapons only)
+  if ((key === 'r' || key === 'R') && b.phase === 'active' && b.hero && !b.hero.dead) {
+    const hero = b.hero;
+    if (hero._hasMagazine && !hero._isReloading && hero._magAmmo < hero._magSize) {
+      hero._isReloading = true;
+      hero._reloadStart = Date.now();
+    }
     return;
   }
 
@@ -5337,6 +6114,8 @@ export function endlessKeyUp(key) {
 export function endlessMouseMove(x, y) {
   const b = Game.endless?.battle;
   if (!b) return;
+  // Block aiming during mission dialog/wait-for-click
+  if (b._missionWaitForClick || isDialogPaused(b)) return;
 
   b.mouse.x = x;
   b.mouse.y = y;
@@ -5345,6 +6124,9 @@ export function endlessMouseMove(x, y) {
 export function endlessMouseDown() {
   const b = Game.endless?.battle;
   if (!b) return;
+
+  // Block input during mission dialog/wait-for-click
+  if (b._missionWaitForClick || isDialogPaused(b)) return;
 
   // Debug panel unit inspect — intercept click to select unit
   if (isDebugPanelVisible()) {
@@ -6567,8 +7349,9 @@ function updateCampaignBattle(dt) {
   // Apply tank movement (updates hullAngle, returns movement vector)
   const { dx, dy, isMoving } = applyTankMovement(hero, moveInput, turnInput, targetHullAngle, hullTurnRate, dtSec);
 
-  // Get terrain speed modifier
+  // Get terrain speed modifier + stamp terrain for replay/debug
   const speedMod = getTerrainSpeedMod(b, hero.x, hero.y);
+  hero._terrain = getTerrainAt(b, hero.x, hero.y);
 
   // Acceleration/deceleration — per-unit power-to-weight ratio
   const cTargetSpeed = isMoving ? hero.speed * speedMod : 0;
@@ -6590,9 +7373,10 @@ function updateCampaignBattle(dt) {
     hero.y = newY;
   }
 
-  // Clamp to map bounds
+  // Clamp to map bounds (mission: clamp to revealed zone edge)
   hero.x = Math.max(30, Math.min(b.mapWidth - 30, hero.x));
-  hero.y = Math.max(30, Math.min(b.mapHeight - 30, hero.y));
+  const heroMinY2 = b._heroMinY !== undefined ? b._heroMinY : 30;
+  hero.y = Math.max(heroMinY2, Math.min(b.mapHeight - 30, hero.y));
 
   // Stability — must run AFTER movement so position delta is accurate
   updateHeroStability(b, hero, dtSec);
@@ -6892,7 +7676,7 @@ function drawHeroBattle(bf, b) {
     };
 
     b.battleRenderer.render(b);
-    drawMinimap(b);
+    if (shouldDrawMinimap()) drawMinimap(b);
     return;
   }
 
@@ -7137,9 +7921,19 @@ export function campaignMouseMove(x, y) {
   b.mouse.y = y;
 }
 
-export function campaignMouseDown() {
-  const b = Game.campaign?.heroBattle;
+// ── Battle-agnostic input functions (touch/joystick/gamepad) ──
+
+/** Get the active battle object regardless of mode. */
+export function getActiveBattle() {
+  if (Game.state === State.CAMPAIGN_BATTLE) return Game.campaign?.heroBattle;
+  if (Game.state === State.ENDLESS_BATTLE) return Game.endless?.battle;
+  return null;
+}
+
+export function battleMouseDown() {
+  const b = getActiveBattle();
   if (!b) return;
+  if (b._missionWaitForClick || isDialogPaused(b)) return;
 
   const z = b.camera.zoom || 1;
 
@@ -7147,47 +7941,31 @@ export function campaignMouseDown() {
   if (b.pendingCommand === 'MOVE') {
     const worldX = b.mouse.x / z + b.camera.x;
     const worldY = b.mouse.y / z + b.camera.y;
-
-    // Issue move command to all units with target position
     issueCommand(b.units, 'move', { x: worldX, y: worldY });
-    b.commandFeedback = { text: '🎯 Moving to target!', time: Date.now() };
+    b.commandFeedback = { text: 'Moving to target!', time: Date.now() };
     b.pendingCommand = null;
-    return; // Don't fire weapon when issuing move command
+    return;
   }
 
   // Handle concentrate fire targeting mode
   if (b.commandMode === 'selectTarget' && b.commandAction === 'concentrate') {
     const worldX = b.mouse.x / z + b.camera.x;
     const worldY = b.mouse.y / z + b.camera.y;
-
-    // Find enemy at click position (check within 40px radius for easier targeting)
     const targetEnemy = findEnemyAtPosition(b, worldX, worldY, 40);
-
     if (targetEnemy) {
-      // Set as concentrate target
       b.squad.concentrateTarget = targetEnemy.id;
-      b.commandFeedback = { text: '🎯 FOCUS FIRE!', time: Date.now() };
-
-      // Add to spotted enemies if not already there
-      if (!b.spottedEnemies.find(se => se.enemyId === targetEnemy.id)) {
-        b.spottedEnemies.push({
-          enemyId: targetEnemy.id,
-          lastSeenX: targetEnemy.x,
-          lastSeenY: targetEnemy.y,
-          lastSeenTime: Date.now(),
-          isVisible: true
+      b.commandFeedback = { text: 'FOCUS FIRE!', time: Date.now() };
+      if (!b.spottedEnemies?.find(se => se.enemyId === targetEnemy.id)) {
+        (b.spottedEnemies || []).push({
+          enemyId: targetEnemy.id, lastSeenX: targetEnemy.x, lastSeenY: targetEnemy.y,
+          lastSeenTime: Date.now(), isVisible: true
         });
       }
     } else {
-      // No enemy found, cancel targeting
       b.commandFeedback = { text: 'No target found', time: Date.now() };
     }
-
-    // Exit targeting mode
     b.commandMode = null;
     b.commandAction = null;
-
-    // Need to re-render UI to update button state
     import('./ui.js').then(ui => ui.render());
     return;
   }
@@ -7195,77 +7973,74 @@ export function campaignMouseDown() {
   b.mouse.down = true;
 }
 
-// Helper: Find enemy at given world position
 function findEnemyAtPosition(battle, x, y, radius = 30) {
-  if (!battle || !battle.enemies) return null;
-
+  if (!battle?.enemies) return null;
   for (const enemy of battle.enemies) {
-    if (enemy.hp <= 0) continue; // Skip dead enemies
-
+    if (enemy.hp <= 0) continue;
     const dx = enemy.x - x;
     const dy = enemy.y - y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-
-    // Use enemy's size or default radius for hit detection
-    const hitRadius = enemy.size || radius;
-    if (dist <= hitRadius) {
-      return enemy;
-    }
+    if (Math.sqrt(dx * dx + dy * dy) <= (enemy.size || radius)) return enemy;
   }
   return null;
 }
 
-export function campaignMouseUp() {
-  const b = Game.campaign?.heroBattle;
-  if (!b) return;
-
-  b.mouse.down = false;
+export function battleMouseUp() {
+  const b = getActiveBattle();
+  if (b) b.mouse.down = false;
 }
 
-// Set aim angle directly (for mobile joystick)
-export function campaignSetAimAngle(angle) {
-  const b = Game.campaign?.heroBattle;
-  if (!b) return;
-
-  b.aimAngle = angle;
+export function battleSetAimAngle(angle) {
+  const b = getActiveBattle();
+  if (b) b.aimAngle = angle;
 }
 
-// Clear aim angle (revert to mouse-based aiming)
-export function campaignClearAimAngle() {
-  const b = Game.campaign?.heroBattle;
-  if (!b) return;
-
-  b.aimAngle = null;
+export function battleClearAimAngle() {
+  const b = getActiveBattle();
+  if (b) b.aimAngle = null;
 }
 
-// Set analog joystick input for smooth movement
-export function campaignSetJoystick(dx, dy) {
-  const b = Game.campaign?.heroBattle;
+export function battleSetJoystick(dx, dy) {
+  const b = getActiveBattle();
   if (!b) return;
-
-  // Initialize joystickInput if needed
-  if (!b.joystickInput) {
-    b.joystickInput = { dx: 0, dy: 0 };
-  }
-
-  // Normalize if magnitude > 1
+  if (!b.joystickInput) b.joystickInput = { dx: 0, dy: 0 };
   const mag = Math.sqrt(dx * dx + dy * dy);
-  if (mag > 1) {
-    dx /= mag;
-    dy /= mag;
-  }
-
+  if (mag > 1) { dx /= mag; dy /= mag; }
   b.joystickInput.dx = dx;
   b.joystickInput.dy = dy;
 }
 
-// Clear joystick input
-export function campaignClearJoystick() {
-  const b = Game.campaign?.heroBattle;
-  if (!b) return;
-
-  if (b.joystickInput) {
-    b.joystickInput.dx = 0;
-    b.joystickInput.dy = 0;
-  }
+export function battleClearJoystick() {
+  const b = getActiveBattle();
+  if (b?.joystickInput) { b.joystickInput.dx = 0; b.joystickInput.dy = 0; }
 }
+
+export function battleSetAimDepth(pct) {
+  const b = getActiveBattle();
+  if (!b) return;
+  const hero = b.hero;
+  const maxRange = UNIT_COMBAT_STATS[hero?.unitId]?.range || 400;
+  b._aimDepth = maxRange * Math.max(0, Math.min(1, pct));
+}
+
+export function battleClearAimDepth() {
+  const b = getActiveBattle();
+  if (b) b._aimDepth = null;
+}
+
+/** Get touch config for the current hero unit type. */
+export function getHeroTouchConfig() {
+  const b = getActiveBattle();
+  if (!b?.hero) return { aimDeadzone: 0.5, fireTrigger: 'hold' };
+  const isInf = isInfantryUnit(b.hero.unitId);
+  return isInf
+    ? { aimDeadzone: 0.5, fireTrigger: 'hold' }
+    : { aimDeadzone: 0.2, fireTrigger: 'release' };
+}
+
+// Backwards compatibility aliases
+export const campaignMouseDown = battleMouseDown;
+export const campaignMouseUp = battleMouseUp;
+export const campaignSetAimAngle = battleSetAimAngle;
+export const campaignClearAimAngle = battleClearAimAngle;
+export const campaignSetJoystick = battleSetJoystick;
+export const campaignClearJoystick = battleClearJoystick;

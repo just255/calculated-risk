@@ -2,14 +2,14 @@
 // STATE - Game state object and battle factory
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, H2H_BUDGET, CAMPAIGN_HERO_UNITS, UNITS, ENEMIES, UNIT_COMBAT_STATS, ZoneOwner, ScenarioType, Biome, BIOME_TERRAIN, Team, INFANTRY_ARCHETYPES, ROLE_TO_UNIT_ID, CREW_SCHEMAS, RANK_TABLE, isInfantryUnit } from './constants.js';
+import { State, SubState, HQTab, H2H_BUDGET, CAMPAIGN_HERO_UNITS, UNITS, ENEMIES, UNIT_COMBAT_STATS, ZoneOwner, ScenarioType, Biome, BIOME_TERRAIN, Team, INFANTRY_ARCHETYPES, ROLE_TO_UNIT_ID, CREW_SCHEMAS, RANK_TABLE, isInfantryUnit, FIRST_MISSION, initMagazine } from './constants.js';
 import { WorldBuilder } from './world-builder/index.js';
 import { generateBattleTerrain, randomizeBattleConfig } from './world-builder/battle-terrain.js';
 import { hashString } from './world-builder/rng.js';
 import { createSergeant, DEFAULT_SERGEANT } from './sergeant.js';
 import { initBattleAI, applyBrainDefaults } from './ai-pipeline.js';
 import { findValidSpawnPos } from './terrain-utils.js';
-import { getPool, getAvailableVehicles, getRankName, getSoldier, getCrewForVehicle, assignToVehicle, createSoldier, saveRoster } from './roster.js';
+import { getPool, getAvailableVehicles, getRankName, getSoldier, getCrewForVehicle, assignToVehicle, createSoldier, saveRoster, getCrewModifiers } from './roster.js';
 import { loadLastLoadout } from './storage.js';
 
 // Endless mode map sizes — user-chosen before starting, fixed for the entire run.
@@ -1362,17 +1362,30 @@ export function createUnit(unitId, overrides = {}) {
   // Ensure maxHp matches hp if only hp was overridden
   if (overrides.hp && !overrides.maxHp) unit.maxHp = unit.hp;
 
+  // Initialize magazine state (uses _role from overrides if present)
+  initMagazine(unit);
+
   return unit;
 }
 
 // Build deployment pool from persistent roster + vehicle inventory
-function buildDeploymentPool() {
+/**
+ * Build deployment pool from roster + vehicle inventory.
+ * @param {object} [filter] - Optional filter from opsConfig
+ * @param {Set} [filter.soldierIds] - Only include these soldier IDs
+ * @param {Set} [filter.vehicleIds] - Only include these vehicle IDs
+ */
+function buildDeploymentPool(filter) {
   const pool = [];
+  const soldierFilter = filter?.soldierIds || null;
+  const vehicleFilter = filter?.vehicleIds || null;
 
   // Infantry from roster — each soldier becomes a deployable unit
   const infantrySoldiers = getPool('infantry');
   for (let i = 0; i < infantrySoldiers.length; i++) {
     const soldier = infantrySoldiers[i];
+    if (soldierFilter && !soldierFilter.has(soldier.id)) continue;
+
     const archetype = INFANTRY_ARCHETYPES[soldier.role] || INFANTRY_ARCHETYPES.rifleman;
     const renderUnitId = ROLE_TO_UNIT_ID[soldier.role] || 'infantry';
     const maxHp = archetype.hp;
@@ -1385,17 +1398,14 @@ function buildDeploymentPool() {
       fireRate: archetype.fireRate,
       speed: archetype.speed,
       range: archetype.range,
-      // Roster link
       _soldierId: soldier.id,
       _role: soldier.role,
       _special: archetype.special || null,
-      // Display
       unitName: getRankName(soldier),
       displayName: `${getRankName(soldier)} (${(INFANTRY_ARCHETYPES[soldier.role] ? soldier.role : 'rifleman')})`,
-      // Insignia from roster soldier (falls back to global setting)
       _insigniaSetId: soldier.insigniaSetId || Game.settings?.insigniaSetId || null,
-      // Personality from roster soldier (will be stamped by applyBrainDefaults, but seed it)
-      personality: { ...soldier.personality }
+      personality: { ...soldier.personality },
+      _crewMods: getCrewModifiers(soldier, soldier.role)
     }));
   }
 
@@ -1403,6 +1413,8 @@ function buildDeploymentPool() {
   const vehicles = getAvailableVehicles();
   for (let i = 0; i < vehicles.length; i++) {
     const vehicle = vehicles[i];
+    if (vehicleFilter && !vehicleFilter.has(vehicle.id)) continue;
+
     const unitDef = UNITS.find(u => u.id === vehicle.unitId);
     const stats = UNIT_COMBAT_STATS[vehicle.unitId] || {};
     const baseHp = unitDef?.hp || 300;
@@ -1412,12 +1424,9 @@ function buildDeploymentPool() {
       id: `roster_veh_${i}`,
       hp: Math.round(maxHp * vehicle.hpPercent),
       maxHp,
-      // Vehicle link
       _vehicleId: vehicle.id,
       _crewSoldierIds: {},
-      // Insignia from vehicle inventory (falls back to global setting)
       _insigniaSetId: vehicle.insigniaSetId || Game.settings?.insigniaSetId || null,
-      // Display
       unitName: vehicle.name || (unitDef?.name || vehicle.unitId),
       displayName: unitDef?.name || vehicle.unitId
     }));
@@ -1540,7 +1549,7 @@ function _getOrCreatePlayerSoldier(unitId) {
     pool: 'infantry',
     role: 'rifleman',
     personality: { aggression: 0.5, patience: 0.5, courage: 0.6, discipline: 0.5, initiative: 0.5, awareness: 0.6 },
-    rankIndex: 1, // PV2 — slightly above raw recruit
+    rankIndex: 0, // E-1 PVT — fresh recruit
     hpPercent: 1.0
   });
   pc.isPlayerCharacter = true;
@@ -1550,7 +1559,7 @@ function _getOrCreatePlayerSoldier(unitId) {
 }
 
 // Endless battle factory - creates a battle instance for endless mode
-export function newEndlessBattle(loadout, wave = 1) {
+export function newEndlessBattle(loadout, wave = 1, mapOverrides = null) {
   const CELL_SIZE = 64;
 
   // Get seed and generate terrain config
@@ -1558,12 +1567,11 @@ export function newEndlessBattle(loadout, wave = 1) {
   const battleSeed = seed ? (typeof seed === 'string' ? hashString(seed) : seed) + wave : Math.floor(Math.random() * 999999);
   const varied = Game.terrainImages ? randomizeBattleConfig(battleSeed) : null;
 
-  // Map size tiers — smaller start, ~50% growth per tier
-  // Waves 1-3: small (1 squad max), 4-7: medium (2), 8-12: large (3), 13+: xl (3)
+  // Map size — use overrides if provided (for missions), otherwise standard tiers
   const chosenSize = Game.endless?.mapSize || 'small';
   const sizeTier = ENDLESS_MAP_SIZES[chosenSize] || ENDLESS_MAP_SIZES.small;
-  const gridWidth = sizeTier.grid;
-  const gridHeight = sizeTier.grid;
+  const gridWidth = mapOverrides?.gridWidth || sizeTier.grid;
+  const gridHeight = mapOverrides?.gridHeight || sizeTier.grid;
   const mapWidth = gridWidth * CELL_SIZE;
   const mapHeight = gridHeight * CELL_SIZE;
 
@@ -1758,11 +1766,44 @@ export function newEndlessBattle(loadout, wave = 1) {
     skipBlueSquads: true
   });
 
-  // Build deployment pool from persistent roster + vehicle inventory
-  battle.reservePool = buildDeploymentPool();
+  // Override hero soldier link from opsConfig
+  const opsConfig = Game.endless?._opsConfig || null;
+  if (opsConfig?.heroUnit) {
+    const heroSoldier = getSoldier(opsConfig.heroUnit);
+    if (heroSoldier) {
+      battle.hero._soldierId = heroSoldier.id;
+      battle.hero.unitName = getRankName(heroSoldier);
+      battle.hero.personality = { ...heroSoldier.personality };
+      // Set role for magazine system + archetype stats
+      if (heroSoldier.role) {
+        battle.hero._role = heroSoldier.role;
+        initMagazine(battle.hero); // Re-init with correct role
+      }
+    }
+  }
 
-  // Auto-restore last-used loadout if available
-  _restoreLastLoadout(battle);
+  // Build deployment pool — filtered by opsConfig if deploying from Operations
+  if (opsConfig) {
+    // Collect squad soldier IDs and vehicle IDs — exclude hero (already battle.hero)
+    const soldierIds = new Set();
+    const vehicleIds = new Set();
+    for (const sq of opsConfig.squads || []) {
+      for (const uid of sq.units || []) {
+        if (uid !== opsConfig.heroUnit) soldierIds.add(uid);
+      }
+      if (sq.vehicleId) vehicleIds.add(sq.vehicleId);
+    }
+
+    const pool = buildDeploymentPool({ soldierIds, vehicleIds });
+    // All selected units go directly to battle.units (pre-deployed)
+    battle.units = pool;
+    battle.reservePool = [];
+    battle._fromOpsConfig = true;
+  } else {
+    // Legacy flow — full roster in reserve pool
+    battle.reservePool = buildDeploymentPool();
+    _restoreLastLoadout(battle);
+  }
 
   return battle;
 }

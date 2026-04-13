@@ -130,6 +130,43 @@ app.delete('/api/debug/log', (req, res) => {
   }
 });
 
+// POST /api/debug/roster - Save roster snapshot from client localStorage
+app.post('/api/debug/roster', (req, res) => {
+  try {
+    ensureDir(DEBUG_DIR);
+    const rosterFile = path.join(DEBUG_DIR, 'roster-snapshot.json');
+    fs.writeFileSync(rosterFile, JSON.stringify(req.body, null, 2));
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/debug/roster - Read last roster snapshot
+app.get('/api/debug/roster', (req, res) => {
+  try {
+    const rosterFile = path.join(DEBUG_DIR, 'roster-snapshot.json');
+    if (!fs.existsSync(rosterFile)) return res.json({ roster: [], vehicles: [] });
+    res.json(JSON.parse(fs.readFileSync(rosterFile, 'utf8')));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/debug/console - Save console log dump from client
+app.post('/api/debug/console', express.text({ limit: '10mb' }), (req, res) => {
+  try {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const filename = `console-${timestamp}.log`;
+    const filepath = path.join(DEBUG_DIR, filename);
+    fs.writeFileSync(filepath, req.body || '');
+    console.log(`[debug] Console saved: ${filename} (${(req.body || '').length} bytes)`);
+    res.json({ success: true, filename });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /api/debug/fire-range - Save fire range snapshot (optionally named)
 const FR_LOG_DIR = path.join(DEBUG_DIR, 'fire-range');
 app.post('/api/debug/fire-range', (req, res) => {
@@ -343,6 +380,25 @@ app.delete('/api/replays/:name', (req, res) => {
     fs.unlinkSync(filePath);
     console.log(`Replay deleted: ${safeName}`);
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /api/replays - Purge old replays, keep most recent N
+app.delete('/api/replays', (req, res) => {
+  try {
+    const keep = parseInt(req.query.keep) || 20;
+    const files = fs.readdirSync(REPLAYS_DIR)
+      .filter(f => f.endsWith('.json'))
+      .sort()
+      .reverse(); // newest first (filenames are date-sorted)
+    const toDelete = files.slice(keep);
+    for (const f of toDelete) {
+      fs.unlinkSync(path.join(REPLAYS_DIR, f));
+    }
+    console.log(`Replay purge: kept ${Math.min(files.length, keep)}, deleted ${toDelete.length}`);
+    res.json({ success: true, kept: Math.min(files.length, keep), deleted: toDelete.length });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

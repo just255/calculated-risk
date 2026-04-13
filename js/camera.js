@@ -7,6 +7,91 @@ const ZOOM_MIN = 0.15;
 const ZOOM_MAX = 3;
 const ZOOM_STEP = 0.1;
 
+// ── Camera transitions (unified zoom + position animation) ───
+
+/**
+ * Start an eased camera transition. Animates any combination of x, y, zoom.
+ * Queues multiple waypoints for chained transitions.
+ * Call cameraUpdateTransition() each frame.
+ *
+ * @param {object} b - Battle object
+ * @param {Array<object>} waypoints - [{ x?, y?, zoom?, duration }]
+ *   - x/y: target camera position (omit to keep current)
+ *   - zoom: target userZoom (omit to keep current)
+ *   - duration: ms for this waypoint (default 500)
+ */
+export function cameraStartTransition(b, waypoints) {
+  if (!b.camera || !waypoints?.length) return;
+  b.camera._transition = {
+    waypoints,
+    currentIndex: 0,
+    startTime: Date.now(),
+    active: true
+  };
+}
+
+/**
+ * Convenience: transition only zoom.
+ * @param {object} b - Battle object
+ * @param {number} zoom - Target userZoom
+ * @param {number} [duration=500] - Animation duration in ms
+ */
+export function cameraSetZoomTarget(b, zoom, duration = 500) {
+  cameraStartTransition(b, [{ zoom, duration }]);
+}
+
+/**
+ * Advance camera transition one frame. No-op if no transition is active.
+ * Returns true if a transition is currently running.
+ * @param {object} b - Battle object
+ * @returns {boolean}
+ */
+export function cameraUpdateTransition(b) {
+  const tr = b.camera?._transition;
+  if (!tr?.active || !tr.waypoints.length) return false;
+
+  const wp = tr.waypoints[tr.currentIndex];
+  if (!wp) { tr.active = false; return false; }
+
+  const elapsed = Date.now() - tr.startTime;
+  const t = Math.min(elapsed / (wp.duration || 500), 1);
+  // Smoothstep ease-in-out
+  const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+
+  // Capture start values on first frame
+  if (wp._startX == null) {
+    wp._startX = b.camera.x;
+    wp._startY = b.camera.y;
+    wp._startZoom = b.camera.userZoom || 1;
+  }
+
+  if (wp.x !== undefined) b.camera.x = wp._startX + (wp.x - wp._startX) * eased;
+  if (wp.y !== undefined) b.camera.y = wp._startY + (wp.y - wp._startY) * eased;
+  if (wp.zoom !== undefined) b.camera.userZoom = wp._startZoom + (wp.zoom - wp._startZoom) * eased;
+
+  // Advance to next waypoint
+  if (t >= 1) {
+    tr.currentIndex++;
+    tr.startTime = Date.now();
+    if (tr.currentIndex >= tr.waypoints.length) {
+      tr.active = false;
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Check if a camera transition is active.
+ */
+export function cameraIsTransitioning(b) {
+  return b.camera?._transition?.active || false;
+}
+
+// Backwards compat alias
+export const cameraUpdateZoomLerp = cameraUpdateTransition;
+
 // ── Per-frame camera update ────────────────────────────────────
 
 /**
@@ -67,7 +152,9 @@ export function updateFireRangeCamera(b, screenW, screenH) {
  * @returns {number} zoom  - Final computed zoom value
  */
 export function updateHeroCamera(b, screenW, screenH) {
-  const TACTICAL_RADIUS = 450;
+  // Tactical radius matches hero's view range + padding so full vision is on-screen
+  const heroViewRange = b.hero?.viewRange || 550;
+  const TACTICAL_RADIUS = heroViewRange + 50;
   const baseZoom = Math.min(screenW, screenH) / (TACTICAL_RADIUS * 2);
   const userZoom = b.camera.userZoom || 1;
   const zoom = baseZoom * userZoom;
@@ -91,7 +178,10 @@ export function updateHeroCamera(b, screenW, screenH) {
     }
   }
 
-  if (!b.camera._manualPan) {
+  // Skip hero-follow only during transitions that pan position (have x/y targets)
+  const tr = b.camera._transition;
+  const isPanning = tr?.active && tr.waypoints?.[tr.currentIndex] && (tr.waypoints[tr.currentIndex].x !== undefined || tr.waypoints[tr.currentIndex].y !== undefined);
+  if (!b.camera._manualPan && !isPanning) {
     // Auto-follow hero — always centered, no clamping
     b.camera.x = b.hero.x - viewW / 2;
     b.camera.y = b.hero.y - viewH / 2;

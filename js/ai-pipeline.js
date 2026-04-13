@@ -14,6 +14,8 @@ import { createSergeant, updateSergeant } from './sergeant.js';
 import {
   updateUnitAI,
   updateEnemyAI,
+  updateFollowerUnitAI,
+  updateFollowerEnemyAI,
   updateFormation,
   shareTeamIntel,
   Command
@@ -21,6 +23,51 @@ import {
 import { updateModifierEffects } from './elite-modifiers.js';
 import { buildSpottedList } from './vision.js';
 import { logEvent } from './battle-log.js';
+
+// ═══════════════════════════════════════════════════════════════
+// THROTTLED BRAIN ROTATION — Caps brain updates per frame
+// Priority units (panicking, recently damaged, never updated) always run.
+// Normal units rotate through a budget each frame.
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Run brain updates with a per-frame cap and priority handling.
+ * @param {Array} units - All units to process
+ * @param {number} offset - Current rotation offset
+ * @param {number} maxPerFrame - Max brains to run per frame
+ * @param {number} now - Current timestamp
+ * @param {Function} updateFn - (unit) => void — the brain update to call
+ * @returns {number} New offset for next frame
+ */
+function _runThrottledBrains(units, offset, maxPerFrame, now, updateFn) {
+  const priority = [];
+  const normal = [];
+  for (const u of units) {
+    if (u._panicking || (u._lastDamageTaken && u._lastDamageTaken > now - 500) || !u._followerLastRun) {
+      priority.push(u);
+    } else {
+      normal.push(u);
+    }
+  }
+  // Priority always runs
+  for (const u of priority) {
+    updateFn(u);
+    u._followerLastRun = now;
+  }
+  // Normal rotates within remaining budget
+  const count = normal.length;
+  if (count > 0) {
+    const budget = Math.max(0, maxPerFrame - priority.length);
+    const toProcess = Math.min(count, budget);
+    for (let i = 0; i < toProcess; i++) {
+      const idx = (offset + i) % count;
+      updateFn(normal[idx]);
+      normal[idx]._followerLastRun = now;
+    }
+    return (offset + toProcess) % count;
+  }
+  return offset;
+}
 
 // ═══════════════════════════════════════════════════════════════
 // DETERMINISTIC UNIT HASH — Personality-driven desync seed
@@ -419,10 +466,8 @@ export function initBattleAI(b, opts = {}) {
   // Create commanders and assign initial objectives
   // In unit/sgt modes, only the red commander exists (blue is player-driven)
   _initCommanders(b, opts);
-  // Remove blue commander for non-CMD play modes (sergeant drives blue team)
-  if (b.playMode && b.playMode !== 'cmd' && !b.fireRange) {
-    b._teamCommanders[Team.BLUE] = null;
-  }
+  // Blue commander always exists — manages AI-only blue squads (reinforcements, etc.)
+  // Player-controlled commanders (CMD mode) use driver:'player' which skips auto-evaluation
 
   // Backwards compat: build _sergeants from squads
   _syncSergeants(b);
@@ -593,16 +638,42 @@ export function runBattleAI(b, now, dtSec) {
     ap['fmt' + teamSuffix] += performance.now() - t0;
   }
 
-  // 3. Individual unit brains — per team (using pre-filtered alive arrays)
+  // 3. Individual unit brains — full brain for SGTs + hero squad, follower brain for everyone else
+  // Build set of sergeant unit IDs + hero squad ID for gating
+  const sgtUnitIds = new Set();
+  for (const sq of b._squads) {
+    if (sq.sergeantUnitId) sgtUnitIds.add(sq.sergeantUnitId);
+  }
+  const heroSquadId = hero?._squadId ?? -1;
+
+  // Red brains: SGTs get full brain, everyone else follower
   t0 = performance.now();
+  // SGTs run full brain. Followers use throttled rotation.
+  const redSgts = [];
+  const redFollowers = [];
   for (const e of aliveRed) {
+    if (sgtUnitIds.has(e.id)) redSgts.push(e);
+    else redFollowers.push(e);
+  }
+  for (const e of redSgts) {
     updateEnemyAI(b, e, hero, aliveBlue, now, dtSec);
   }
+  b._redFollowerOffset = _runThrottledBrains(
+    redFollowers, b._redFollowerOffset || 0, 10, now,
+    (u) => updateFollowerEnemyAI(b, u, hero, aliveBlue, now, dtSec)
+  );
   ap.brains_red += performance.now() - t0;
 
+  // Blue brains: hero squad + SGTs get full brain, everyone else follower
+  // Hero squad non-SGTs get full sensors but light movement (skip mode scoring)
   t0 = performance.now();
   for (const u of aliveBlue) {
-    updateUnitAI(b, u, hero, aliveRed, now, dtSec);
+    if (u._squadId === heroSquadId || sgtUnitIds.has(u.id)) {
+      u._lightMovement = u._squadId === heroSquadId && !sgtUnitIds.has(u.id) && u !== hero;
+      updateUnitAI(b, u, hero, aliveRed, now, dtSec);
+    } else {
+      updateFollowerUnitAI(b, u, hero, aliveRed, now, dtSec);
+    }
   }
   ap.brains_blue += performance.now() - t0;
 
@@ -778,6 +849,22 @@ export function spawnSquad(b, team, units, spawnZone, opts = {}) {
   const enemyZone = team === Team.BLUE
     ? { x: b.mapWidth / 2, y: 100, radius: 100 }
     : { x: b.mapWidth / 2, y: b.mapHeight - 100, radius: 100 };
+
+  // Cap squads per team — if at max, merge into smallest existing squad instead
+  const maxSquadsPerTeam = team === 'red' ? 5 : 3;
+  const teamSquads = (b._squads || []).filter(s => s.team === team && s.active);
+  if (teamSquads.length >= maxSquadsPerTeam) {
+    console.log(`[SQUAD CAP] ${team} at ${teamSquads.length}/${maxSquadsPerTeam}, merging ${units.length} units into existing squad`);
+  }
+  if (teamSquads.length >= maxSquadsPerTeam) {
+    // Find smallest active squad and merge units into it
+    const smallest = teamSquads.reduce((a, c) => a.members.length < c.members.length ? a : c);
+    for (const u of units) {
+      smallest.members.push(u.id);
+      u._squadId = smallest.id;
+    }
+    return smallest;
+  }
 
   const squad = createSquad(team, units, {
     spawnZone,

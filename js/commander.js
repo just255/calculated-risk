@@ -45,6 +45,172 @@ export const Play = {
 };
 
 
+// ── Deployment plays (pre-battle wave spawn strategy) ────────────
+
+export const DeploymentPlay = {
+  RUSH:           'rush',            // One big squad, all at once, center
+  PROBE_AND_PUSH: 'probe_and_push',  // Scouts first, main force follows
+  PINCER:         'pincer',          // Main center + flanker delayed
+  FEINT:          'feint',           // Small distraction center, main flanks wide
+  ECHELON:        'echelon',         // Staggered diagonal squads
+  WAVE_ASSAULT:   'wave_assault'     // Many small squads, all at once, spread
+};
+
+// Static config per deployment play
+// sizePct: fraction of total budget (0 = use fixedSize instead)
+// delay: 0 or [min, max] ms range
+// position: 'center' | 'flank' | 'wide_flank' | 'spread' | 'diagonal_N'
+// objective: 'attack' | 'advance_then_attack'
+// fixedSize: [min, max] unit count (overrides sizePct)
+const DEPLOYMENT_PLAY_DEFS = {
+  [DeploymentPlay.RUSH]: {
+    squads: [{ sizePct: 1.0, delay: 0, position: 'center', objective: 'attack' }],
+    minUnits: 2
+  },
+  [DeploymentPlay.PROBE_AND_PUSH]: {
+    squads: [
+      { sizePct: 0, delay: 0, position: 'center', objective: 'attack', fixedSize: [5, 5] },
+      { sizePct: 1.0, delay: [5000, 8000], position: 'center', objective: 'attack' }
+    ],
+    minUnits: 10
+  },
+  [DeploymentPlay.PINCER]: {
+    squads: [
+      { sizePct: 0.6, delay: 0, position: 'center', objective: 'attack' },
+      { sizePct: 0.4, delay: [3000, 5000], position: 'flank', objective: 'advance_then_attack' }
+    ],
+    minUnits: 10
+  },
+  [DeploymentPlay.FEINT]: {
+    squads: [
+      { sizePct: 0.25, delay: 0, position: 'center', objective: 'attack' },
+      { sizePct: 0.75, delay: [4000, 6000], position: 'wide_flank', objective: 'advance_then_attack' }
+    ],
+    minUnits: 10
+  },
+  [DeploymentPlay.ECHELON]: {
+    squads: [
+      { sizePct: 0.34, delay: 0, position: 'diagonal_1', objective: 'attack' },
+      { sizePct: 0.33, delay: [2000, 3000], position: 'diagonal_2', objective: 'attack' },
+      { sizePct: 0.33, delay: [4000, 6000], position: 'diagonal_3', objective: 'attack' }
+    ],
+    minUnits: 15
+  },
+  [DeploymentPlay.WAVE_ASSAULT]: {
+    squads: 'split_max',  // Special: split into as many squads as possible (min 5 each)
+    minUnits: 5
+  }
+};
+
+// Trait-weighted scoring for deployment play selection
+const DEPLOYMENT_PLAY_WEIGHTS = {
+  [DeploymentPlay.RUSH]:           { aggression: 0.5, resolve: 0.3, composure_inv: 0.2 },
+  [DeploymentPlay.PROBE_AND_PUSH]: { composure: 0.5, aggression_inv: 0.3, acumen: 0.2 },
+  [DeploymentPlay.PINCER]:         { acumen: 0.4, aggression: 0.2, composure: 0.2, resolve: 0.2 },
+  [DeploymentPlay.FEINT]:          { acumen: 0.5, composure: 0.3, aggression_inv: 0.2 },
+  [DeploymentPlay.ECHELON]:        { composure: 0.4, aggression_inv: 0.2, acumen: 0.2, resolve: 0.2 },
+  [DeploymentPlay.WAVE_ASSAULT]:   { aggression: 0.4, composure_inv: 0.3, resolve: 0.3 }
+};
+
+/**
+ * Select a deployment play based on commander traits and force context.
+ * Called once per wave at spawn time.
+ *
+ * @param {object} cmdr - Commander state (has .traits)
+ * @param {number} unitCount - Total units in this wave's budget
+ * @param {object} [context] - { blueAlive } for force ratio scoring
+ * @returns {{ play: string, score: number }}
+ */
+export function selectDeploymentPlay(cmdr, unitCount, context = {}) {
+  const t = cmdr.traits || cmdr.personality || {};
+  const blueAlive = context.blueAlive || 1;
+  const forceRatio = unitCount / Math.max(1, blueAlive);
+
+  let bestPlay = DeploymentPlay.RUSH;
+  let bestScore = -Infinity;
+
+  for (const [play, weights] of Object.entries(DEPLOYMENT_PLAY_WEIGHTS)) {
+    const def = DEPLOYMENT_PLAY_DEFS[play];
+
+    // Gate by minimum unit count
+    if (unitCount < def.minUnits) continue;
+
+    // Score from trait weights
+    let score = 0;
+    for (const [trait, weight] of Object.entries(weights)) {
+      if (trait.endsWith('_inv')) {
+        score += (1 - (t[trait.replace('_inv', '')] ?? 0.5)) * weight;
+      } else {
+        score += (t[trait] ?? 0.5) * weight;
+      }
+    }
+
+    // Force ratio modifier: overwhelming numbers favor RUSH and WAVE_ASSAULT
+    if (forceRatio > 3) {
+      const ratioBonus = Math.min(0.3, (forceRatio - 3) * 0.05);
+      if (play === DeploymentPlay.RUSH || play === DeploymentPlay.WAVE_ASSAULT) {
+        score += ratioBonus;
+      }
+    }
+
+    // Acumen noise: low acumen adds randomness (bad commanders pick suboptimal plays)
+    const acumenNoise = (1 - (t.acumen ?? 0.5)) * 0.2;
+    score += (Math.random() - 0.5) * acumenNoise;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestPlay = play;
+    }
+  }
+
+  // Store on commander for intel system
+  cmdr._lastDeploymentPlay = bestPlay;
+
+  return { play: bestPlay, score: bestScore };
+}
+
+// ── Blue commander intel prediction ─────────────────────────
+
+const INTEL_MESSAGES = {
+  [DeploymentPlay.RUSH]:           ["Enemy massing for a direct assault!", "They're coming straight at us, all at once!"],
+  [DeploymentPlay.PROBE_AND_PUSH]: ["Scouts incoming — main force behind them!", "They're probing first. Expect the main body shortly."],
+  [DeploymentPlay.PINCER]:         ["Enemy splitting — watch the flanks!", "They're flanking! Main force up the middle, second group on the side."],
+  [DeploymentPlay.FEINT]:          ["Don't fall for the center push — main force is flanking!", "Decoy up the middle. Real threat coming from the side!"],
+  [DeploymentPlay.ECHELON]:        ["Staggered approach — they'll hit us in waves!", "Echelon formation. Expect sequential contact."],
+  [DeploymentPlay.WAVE_ASSAULT]:   ["Multiple groups incoming from all directions!", "They're rushing from everywhere — spread fire!"]
+};
+
+/**
+ * Predict the red commander's deployment play.
+ * Acumen = probability of correct prediction. Always gives a prediction — may be wrong.
+ *
+ * @param {object} blueCmdr - Blue commander (has .traits.acumen)
+ * @param {object} redCmdr - Red commander (has ._lastDeploymentPlay)
+ * @returns {{ correct: boolean, play: string, message: string } | null}
+ */
+export function predictDeploymentPlay(blueCmdr, redCmdr) {
+  if (!blueCmdr || !redCmdr?._lastDeploymentPlay) return null;
+
+  const acumen = blueCmdr.traits?.acumen ?? blueCmdr.personality?.acumen ?? 0.5;
+  const actualPlay = redCmdr._lastDeploymentPlay;
+  const correct = Math.random() < acumen;
+
+  let predictedPlay;
+  if (correct) {
+    predictedPlay = actualPlay;
+  } else {
+    // Pick a random different play
+    const allPlays = Object.values(DeploymentPlay);
+    const others = allPlays.filter(p => p !== actualPlay);
+    predictedPlay = others[Math.floor(Math.random() * others.length)];
+  }
+
+  const messages = INTEL_MESSAGES[predictedPlay] || INTEL_MESSAGES[DeploymentPlay.RUSH];
+  const message = messages[Math.floor(Math.random() * messages.length)];
+
+  return { correct, play: predictedPlay, message };
+}
+
 // ── Commander traits (strategic-level, derived from unit traits) ──
 
 /**
@@ -292,11 +458,15 @@ export function buildCommanderSitrep(cmdr, b, now) {
   const spottedEnemyIds = new Set();
   let contactBearingX = 0, contactBearingY = 0, contactSources = 0;
 
+  // Build ID→unit lookup for O(1) member checks (avoid O(n²) find loops)
+  const unitById = new Map();
+  for (const u of unitPool) unitById.set(u.id, u);
+
   for (const sq of (b._squads || [])) {
     if (sq.team !== team) continue;
 
     const aliveMembers = sq.members.filter(id => {
-      const u = unitPool.find(u2 => u2.id === id);
+      const u = unitById.get(id);
       return u && !u.dead;
     });
 
@@ -309,7 +479,7 @@ export function buildCommanderSitrep(cmdr, b, now) {
 
     // Collect spotted enemies from unit _spotted arrays
     for (const memberId of sq.members) {
-      const u = unitPool.find(u2 => u2.id === memberId);
+      const u = unitById.get(memberId);
       if (!u || u.dead) continue;
       for (const s of (u._spotted || [])) {
         if (s.enemy && !s.enemy.dead) spottedEnemyIds.add(s.enemy.id);
@@ -913,6 +1083,225 @@ function pickAdvanceTarget(cmdr, b, squadIndex, squadCount, cmdSitrep) {
 }
 
 
+// ── Deployment play execution ────────────────────────────────
+
+/**
+ * Get spawn zone positions for a deployment play.
+ * Wraps getEdgeSpawnZones for standard layouts, adds flank/diagonal positions.
+ *
+ * @param {string} edge - 'top'|'bottom'|'left'|'right'
+ * @param {number} mapW
+ * @param {number} mapH
+ * @param {Array} squadDefs - play squad definitions with position keys
+ * @param {number} cellSize
+ * @returns {Array<{x,y,radius}>}
+ */
+function getPlaySpawnZones(edge, mapW, mapH, squadDefs, cellSize = 64) {
+  const margin = cellSize * 2;
+  const zones = [];
+
+  // Pick flank side (random, could be acumen-driven later)
+  const flankRight = Math.random() > 0.5;
+
+  for (const def of squadDefs) {
+    const pos = def.position || 'center';
+    let x, y, radius;
+
+    // All positions assume 'top' edge, we'll transform at the end
+    const edgeY = margin;
+    radius = Math.max(60, mapW * 0.12);
+
+    switch (pos) {
+      case 'center':
+        x = mapW * 0.5;
+        y = edgeY;
+        break;
+      case 'flank':
+        x = flankRight ? mapW * 0.8 : mapW * 0.2;
+        y = edgeY;
+        break;
+      case 'wide_flank':
+        x = flankRight ? mapW * 0.9 : mapW * 0.1;
+        y = edgeY;
+        break;
+      case 'diagonal_1':
+        x = mapW * 0.25;
+        y = edgeY;
+        break;
+      case 'diagonal_2':
+        x = mapW * 0.5;
+        y = edgeY;
+        break;
+      case 'diagonal_3':
+        x = mapW * 0.75;
+        y = edgeY;
+        break;
+      default:
+        x = mapW * 0.5;
+        y = edgeY;
+    }
+
+    // Transform for non-top edges
+    if (edge === 'bottom') {
+      y = mapH - margin;
+    } else if (edge === 'left') {
+      const tmp = x; x = margin; y = tmp * (mapH / mapW);
+    } else if (edge === 'right') {
+      const tmp = x; x = mapW - margin; y = tmp * (mapH / mapW);
+    }
+
+    zones.push({ x: Math.round(x), y: Math.round(y), radius: Math.round(radius) });
+  }
+
+  return zones;
+}
+
+/**
+ * Split a budget array into N groups by percentage, enforcing minimum squad size.
+ * @param {Array} budget - unit definitions
+ * @param {Array<number>} pcts - target percentages per squad (should sum to ~1)
+ * @param {Array<Array<number>>} [fixedSizes] - optional [min,max] override per squad
+ * @returns {Array<Array>} - split buckets
+ */
+function splitBudget(budget, pcts, fixedSizes = [], minSize = 2) {
+  const buckets = pcts.map(() => []);
+  const units = [...budget];
+
+  // First pass: allocate fixed-size squads
+  for (let i = 0; i < pcts.length; i++) {
+    const fixed = fixedSizes[i];
+    if (fixed) {
+      const count = Math.min(fixed[1], Math.max(fixed[0], Math.min(units.length - (pcts.length - i - 1) * minSize, fixed[1])));
+      for (let j = 0; j < count && units.length > 0; j++) {
+        buckets[i].push(units.shift());
+      }
+    }
+  }
+
+  // Second pass: allocate remaining by percentage
+  const remaining = units.length;
+  for (let i = 0; i < pcts.length; i++) {
+    if (fixedSizes[i]) continue; // Already filled
+    const count = Math.max(minSize, Math.round(remaining * pcts[i]));
+    for (let j = 0; j < count && units.length > 0; j++) {
+      buckets[i].push(units.shift());
+    }
+  }
+
+  // Overflow: distribute remaining units to the largest squad
+  while (units.length > 0) {
+    const largest = buckets.reduce((a, b) => a.length >= b.length ? a : b);
+    largest.push(units.shift());
+  }
+
+  // Remove empty buckets — but always keep at least one bucket if we have any units
+  const filtered = buckets.filter(b => b.length >= minSize);
+  if (filtered.length === 0 && buckets.some(b => b.length > 0)) {
+    // All buckets below minSize — merge everything into one
+    const merged = buckets.flat();
+    return merged.length > 0 ? [merged] : [];
+  }
+  return filtered;
+}
+
+/**
+ * Build squad plans from a chosen deployment play.
+ *
+ * @param {object} cmdr - Commander state
+ * @param {object} b - Battle state
+ * @param {string} play - DeploymentPlay value
+ * @param {Array} budget - Unit definitions from spendPowerBudget
+ * @param {number} now - Current timestamp
+ * @returns {Array<object>} Squad plans: [{ units, spawnZone, objective, sgtPersonality, delay }]
+ */
+function buildDeploymentFromPlay(cmdr, b, play, budget, now) {
+  const def = DEPLOYMENT_PLAY_DEFS[play];
+  if (!def) return [];
+
+  const p = cmdr.personality;
+  const mapW = b.mapWidth;
+  const mapH = b.mapHeight;
+
+  // WAVE_ASSAULT: special handling — split into max squads
+  if (def.squads === 'split_max') {
+    const maxSquads = Math.min(cmdr.maxSquads || 3, Math.floor(budget.length / 5));
+    const squadCount = Math.max(1, maxSquads);
+    const zones = getEdgeSpawnZones(cmdr.spawnEdge, mapW, mapH, squadCount, b.cellSize || 64);
+    const perSquad = Math.floor(budget.length / squadCount);
+    const plans = [];
+    let idx = 0;
+    for (let i = 0; i < squadCount; i++) {
+      const count = perSquad + (i < budget.length % squadCount ? 1 : 0);
+      const units = budget.slice(idx, idx + count);
+      idx += count;
+      plans.push({
+        units,
+        spawnZone: zones[i],
+        objective: { type: Objective.ATTACK },
+        sgtPersonality: { ...p, initiative: Math.min(1, p.initiative + 0.05 * i) },
+        delay: 0
+      });
+    }
+    return plans;
+  }
+
+  // Standard plays: use squad definitions
+  const squadDefs = def.squads;
+  const pcts = squadDefs.map(s => s.sizePct);
+  const fixedSizes = squadDefs.map(s => s.fixedSize || null);
+  const minSquadSize = cmdr.team === 'red' ? 5 : 1;
+  const buckets = splitBudget(budget, pcts, fixedSizes, minSquadSize);
+
+  // Get spawn zones for this play's positioning
+  const zones = getPlaySpawnZones(cmdr.spawnEdge, mapW, mapH, squadDefs, b.cellSize || 64);
+
+  const plans = [];
+  for (let i = 0; i < buckets.length; i++) {
+    if (buckets[i].length === 0) continue;
+    const sDef = squadDefs[i] || squadDefs[squadDefs.length - 1];
+
+    // Delay: 0 or random within range
+    let delay = 0;
+    if (Array.isArray(sDef.delay)) {
+      delay = sDef.delay[0] + Math.random() * (sDef.delay[1] - sDef.delay[0]);
+      delay = Math.round(delay);
+    } else {
+      delay = sDef.delay || 0;
+    }
+
+    // Objective
+    let objective;
+    if (sDef.objective === 'advance_then_attack') {
+      // Flanking: advance to a waypoint at 60-70% map depth on the flank side
+      const zone = zones[i] || zones[0];
+      const depth = cmdr.spawnEdge === 'top' ? mapH * 0.6 : mapH * 0.4;
+      objective = {
+        type: Objective.ADVANCE_TO,
+        position: { x: zone.x, y: Math.round(depth) }
+      };
+    } else {
+      objective = { type: Objective.ATTACK };
+    }
+
+    // Sergeant personality variation
+    const sgtPers = { ...p };
+    if (i > 0) {
+      sgtPers.initiative = Math.min(1, sgtPers.initiative + 0.1);
+      sgtPers.aggression = Math.max(0, sgtPers.aggression - 0.05 * i);
+    }
+
+    plans.push({
+      units: buckets[i],
+      spawnZone: zones[i] || zones[0],
+      objective,
+      sgtPersonality: sgtPers,
+      delay
+    });
+  }
+
+  return plans;
+}
+
 // ── Deployment planning ──────────────────────────────────────
 
 /**
@@ -928,101 +1317,21 @@ function pickAdvanceTarget(cmdr, b, squadIndex, squadCount, cmdSitrep) {
 export function planDeployment(cmdr, b, budget, now) {
   if (!budget || budget.length === 0) return [];
 
-  const p = cmdr.personality;
+  // Select deployment play based on commander personality + force context
+  const blueAlive = (b.units || []).filter(u => !u.dead).length + (b.hero && !b.hero.dead ? 1 : 0);
+  const { play } = selectDeploymentPlay(cmdr, budget.length, { blueAlive });
 
-  // Determine sergeant capacity (leadership-based, 3-7 per squad)
-  const leadership = p.discipline * 0.6 + p.initiative * 0.4; // proxy for leadership
-  const sgtCapacity = 3 + Math.floor(leadership * 4);
-
-  // Squad count decision
-  const splitDesire = p.initiative * 0.5 + p.aggression * 0.3 + p.discipline * 0.2;
-  const minSquadSize = 3;
-  const affordableSquads = Math.min(cmdr.maxSquads, Math.floor(budget.length / minSquadSize));
-  let squadCount;
-  if (affordableSquads <= 0) {
-    squadCount = 1; // Always at least try to deploy something
-  } else if (splitDesire > 0.6 && affordableSquads >= 3) {
-    squadCount = Math.min(affordableSquads, 3);
-  } else if (splitDesire > 0.3 && affordableSquads >= 2) {
-    squadCount = Math.min(affordableSquads, 2);
-  } else {
-    squadCount = 1;
-  }
-
-  // Cap by sergeant capacity (each squad needs at least minSquadSize)
-  const maxByCapacity = Math.floor(budget.length / minSquadSize);
-  squadCount = Math.min(squadCount, maxByCapacity, cmdr.maxSquads);
-  squadCount = Math.max(1, squadCount);
-
-  // Spawn zones
-  const spawnZones = getEdgeSpawnZones(cmdr.spawnEdge, b.mapWidth, b.mapHeight, squadCount, b.cellSize || 64);
-
-  // Sort budget by commander's unit preferences (highest pref → first pick for main squad)
+  // Sort budget by commander's unit preferences (heavy units first for main squad)
   const sorted = [...budget].sort((a, b2) => {
     return getUnitPref(cmdr, b2.unitId) - getUnitPref(cmdr, a.unitId);
   });
 
-  // Distribute units across squads
-  // Main squad (index 0) gets preferred/heavy units, others get remainder
-  const squadBuckets = Array.from({ length: squadCount }, () => []);
-  const unitsPerSquad = Math.floor(sorted.length / squadCount);
-  const remainder = sorted.length % squadCount;
+  // Build squad plans from the chosen play
+  const plans = buildDeploymentFromPlay(cmdr, b, play, sorted, now);
 
-  let idx = 0;
-  for (let sq = 0; sq < squadCount; sq++) {
-    const count = unitsPerSquad + (sq < remainder ? 1 : 0);
-    const cap = Math.min(count, sgtCapacity);
-    for (let j = 0; j < cap && idx < sorted.length; j++) {
-      squadBuckets[sq].push(sorted[idx++]);
-    }
-  }
-
-  // Any remaining units go to reserves
-  while (idx < sorted.length) {
-    cmdr.reserves.push(sorted[idx++]);
-  }
-
-  // Build commander sitrep for objective scoring
-  const cmdSitrep = buildCommanderSitrep(cmdr, b, now);
-
-  // Build squad plans
-  const plans = [];
-  for (let sq = 0; sq < squadCount; sq++) {
-    if (squadBuckets[sq].length === 0) continue;
-
-    // Sergeant personality: derived from commander's with some variation per squad
-    const sgtPersonality = { ...p };
-    if (sq > 0) {
-      // Non-main squads: boost initiative for flanking behavior
-      sgtPersonality.initiative = Math.min(1, sgtPersonality.initiative + 0.1);
-      sgtPersonality.aggression = Math.max(0, sgtPersonality.aggression - 0.05 * sq);
-    }
-
-    // Main squad (index 0) always gets ATTACK — they lead the assault.
-    // Non-primary squads get scored for possible flanking (ADVANCE_TO).
-    let objective;
-    if (sq === 0) {
-      objective = { type: Objective.ATTACK };
-    } else {
-      const scores = scoreObjectives(cmdr, cmdSitrep, null);
-      const best = pickBestObjective(scores);
-      if (best.type === Objective.ADVANCE_TO) {
-        objective = {
-          type: Objective.ADVANCE_TO,
-          position: pickAdvanceTarget(cmdr, b, sq, squadCount, cmdSitrep)
-        };
-      } else {
-        objective = { type: best.type };
-      }
-    }
-
-    plans.push({
-      units: squadBuckets[sq],
-      spawnZone: spawnZones[sq],
-      objective,
-      sgtPersonality
-    });
-  }
+  // Log the chosen play
+  _logEvent(b, cmdr, now, 'deployment_play',
+    `${play} — ${budget.length} units, ${plans.length} squad(s)${plans.some(p => p.delay > 0) ? `, delayed: ${plans.filter(p => p.delay > 0).map(p => Math.round(p.delay / 1000) + 's').join('+')}` : ''}`);
 
   return plans;
 }
@@ -1168,7 +1477,10 @@ export function updateCommander(b, commander, now) {
     // ── Check ATTACK completion ────────────────────────
     if (objective.type === Objective.ATTACK) {
       const enemyPool = team === 'blue' ? b.enemies : b.units;
-      const allDead = !enemyPool || enemyPool.length === 0 || enemyPool.every(e => e.dead);
+      const poolDead = !enemyPool || enemyPool.length === 0 || enemyPool.every(e => e.dead);
+      // Red attacking blue: also check if hero is alive
+      const heroAlive = team === 'red' && b.hero && !b.hero.dead;
+      const allDead = poolDead && !heroAlive;
       if (allDead) {
         objective.status = 'complete';
         _logEvent(b, commander, now, 'complete',
@@ -1204,17 +1516,39 @@ export function updateCommander(b, commander, now) {
         commitFraction = 0.3 + (1 - t.composure) * 0.2;
       }
 
-      const commitCount = Math.max(2, Math.ceil(commander.reserves.length * commitFraction));
+      const commitCount = Math.max(5, Math.ceil(commander.reserves.length * commitFraction));
       const toCommit = commander.reserves.splice(0, commitCount);
 
-      const plans = planDeployment(commander, b, toCommit, now);
-      commander._reinforceTimer = 0;
-      commander._destroyedSinceLastDeploy = 0;
+      // Not enough for a new squad — reinforce an existing one
+      if (toCommit.length < 5) {
+        // Find the smallest active squad to absorb these units
+        const activeSquads = (b._squads || []).filter(sq =>
+          sq.team === commander.team && sq.members.some(id => {
+            const pool = commander.team === 'red' ? (b.enemies || []) : (b.units || []);
+            return pool.some(u => u.id === id && !u.dead);
+          })
+        );
+        if (activeSquads.length > 0) {
+          const smallest = activeSquads.reduce((a, c) => a.members.length < c.members.length ? a : c);
+          // Queue as pending reinforcements to the smallest squad
+          commander._pendingReinforcements = { squadId: smallest.id, units: toCommit };
+          _logEvent(b, commander, now, 'reserve',
+            `Reinforcing Squad ${smallest.id} with ${toCommit.length} units`);
+        } else {
+          // No active squads — push back and wait
+          commander.reserves.unshift(...toCommit);
+        }
+        commander._reinforceTimer = 0;
+      } else {
+        const plans = planDeployment(commander, b, toCommit, now);
+        commander._reinforceTimer = 0;
+        commander._destroyedSinceLastDeploy = 0;
 
-      _logEvent(b, commander, now, 'reserve',
-        `Deploying reserves: ${plans.reduce((n, p) => n + p.units.length, 0)} units in ${plans.length} squad(s) (panic: ${commander.panic.toFixed(2)})`);
+        _logEvent(b, commander, now, 'reserve',
+          `Deploying reserves: ${plans.reduce((n, p) => n + p.units.length, 0)} units in ${plans.length} squad(s) (panic: ${commander.panic.toFixed(2)})`);
 
-      commander._pendingDeployments = plans;
+        commander._pendingDeployments = plans;
+      }
     }
   }
 
@@ -1224,16 +1558,23 @@ export function updateCommander(b, commander, now) {
     _logEvent(b, commander, now, 'escalate', 'Escalating: committing all reserves');
   }
 
-  // Clean up destroyed squad IDs
-  commander.squads = cmdSquads.filter(sqId => {
-    const sq = squads.find(s => s.id === sqId);
-    if (!sq) return false;
+  // Clean up destroyed squad IDs (use Map for O(1) lookups)
+  {
     const pool = team === 'blue' ? (b.units || []) : (b.enemies || []);
-    return sq.members.some(id => {
-      const u = pool.find(u2 => u2.id === id);
-      return u && !u.dead;
+    const poolById = new Map();
+    for (const u of pool) poolById.set(u.id, u);
+    const squadMap = new Map();
+    for (const s of squads) squadMap.set(s.id, s);
+
+    commander.squads = cmdSquads.filter(sqId => {
+      const sq = squadMap.get(sqId);
+      if (!sq) return false;
+      return sq.members.some(id => {
+        const u = poolById.get(id);
+        return u && !u.dead;
+      });
     });
-  });
+  }
 }
 
 

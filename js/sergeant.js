@@ -241,8 +241,8 @@ export function createSergeant(teamKey, personality, spawnZone, enemySpawnZone, 
     phase: Phase.SEARCH,
     prevPhase: null,
 
-    // Timing — seeded from personality to desynchronize multiple sergeants
-    lastEval: -(awarenessDelay + initiativeOffset),
+    // Timing — seeded from personality + squadId to desynchronize multiple sergeants
+    lastEval: -(awarenessDelay + initiativeOffset + (squadId || 0) * 500),
     phaseStartTime: 0,
     contactTime: 0,
 
@@ -709,7 +709,7 @@ function getSitrepScore(phase, sitrep, personality) {
     }
     case Phase.FLANK:
       if (stalemate) score += 0.3;
-      if (!sitrep.spotted) score -= 0.3;
+      if (!sitrep.spotted) score -= 0.6; // Can't flank what you can't see — strongly prefer SEARCH
       // Enemy holding/stalemate — flanking breaks the deadlock
       if (enemyHolding && inContact) score += 0.2;
       break;
@@ -879,7 +879,9 @@ export function updateSergeant(b, sgt, friendlies, hostiles, now) {
   sgt._emergencyReeval = 0; // Clear emergency flag
 
   // Build situational report
+  const _sgtT0 = performance.now();
   const sitrep = buildSitrep(b, sgt, friendlies, hostiles, now);
+  const _sitrepTime = performance.now() - _sgtT0;
   sgt.sitrep = sitrep;
 
   // Record sitrep history for trend analysis
@@ -969,7 +971,13 @@ export function updateSergeant(b, sgt, friendlies, hostiles, now) {
 
   // ── Execute phase actions ──────────────────────────────────
   const phaseChanged = sgt.phase !== prevPhase;
+  const _phaseT0 = performance.now();
   executePhase(b, sgt, sitrep, alive, now, phaseChanged);
+  const _phaseTime = performance.now() - _phaseT0;
+  const _totalSgtTime = performance.now() - _sgtT0;
+  if (_totalSgtTime > 5) {
+    console.warn(`[SGT SPIKE] ${sgt.teamKey} sq:${sgt.squadId} total:${_totalSgtTime.toFixed(1)}ms sitrep:${_sitrepTime.toFixed(1)}ms phase:${_phaseTime.toFixed(1)}ms (${sgt.phase}) members:${alive.length} enemies:${hostiles.length}`);
+  }
 }
 
 // ── Phase transition helper ──────────────────────────────────
@@ -1310,6 +1318,8 @@ function executePhase(b, sgt, sitrep, alive, now, phaseChanged) {
       else if (sitrep.enemyCenter?.x != null && sitrep.enemyAliveCount > 0 && sitrep.spotted) {
         setPathWaypoint(b, sgt, sitrep.enemyCenter, alive, sitrep.center);
         sgt._searchTarget = null; // Clear bound — we found them
+        // Update last known position so search heads here if contact is lost
+        sgt.enemyZone = { x: sitrep.enemyCenter.x, y: sitrep.enemyCenter.y };
       } else if (sitrep.underFire && sitrep.enemyCenter?.x != null) {
         // Taking fire but can't see them — update suspected enemy position
         if ((p.awareness ?? 0.5) > 0.3) {
@@ -1434,15 +1444,17 @@ function executePhase(b, sgt, sitrep, alive, now, phaseChanged) {
 
     case Phase.FLANK: {
       // Maneuver around enemy — issue FLANK_LEFT or FLANK_RIGHT based on flank side
+      // Only compute flank point on phase entry, then use raw waypoint (no A* for short moves)
       if (phaseChanged && sitrep.enemyCenter) {
         const flankPt = computeFlankPoint(b, sgt, sitrep);
         if (flankPt) {
-          setPathWaypoint(b, sgt, flankPt, alive, sitrep.center);
+          // Skip A* for flank — just set raw waypoint. Flank distances are short (200-350px).
+          sgt.waypoint = { x: flankPt.x, y: flankPt.y };
+          setTeamWaypoint(b, sgt, sgt.waypoint);
           sgt._flankSide = flankPt.side || 'left';
         }
-      } else if (sgt.waypoint) {
-        setPathWaypoint(b, sgt, sgt.pathGoal || sgt.waypoint, alive, sitrep.center);
       }
+      // Don't re-pathfind on subsequent evals — hold the flank waypoint
       const flankCmd = sgt._flankSide === 'right' ? Command.FLANK_RIGHT : Command.FLANK_LEFT;
       setCommand(sgt, alive, flankCmd);
       if (phaseChanged) sgt._formationOverride = Formation.COLUMN;
@@ -1482,9 +1494,19 @@ function computePath(b, sgt, from, to, alive) {
   // Determine unit category from the heaviest unit in the squad
   const category = getSquadCategory(alive);
 
-  const path = findPathWorld(b, from.x, from.y, to.x, to.y, {
+  // Clamp pathfinding goal to SGT's effective vision range (no point pathfinding beyond what we can see)
+  const maxPathDist = 800; // Don't pathfind further than this
+  const dx = to.x - from.x, dy = to.y - from.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  let goalX = to.x, goalY = to.y;
+  if (dist > maxPathDist) {
+    goalX = from.x + (dx / dist) * maxPathDist;
+    goalY = from.y + (dy / dist) * maxPathDist;
+  }
+
+  const path = findPathWorld(b, from.x, from.y, goalX, goalY, {
     category,
-    maxIterations: 3000
+    maxIterations: 800
   });
 
   if (path && path.length > 0) {
@@ -1528,12 +1550,16 @@ function setPathWaypoint(b, sgt, target, alive, center) {
     return;
   }
 
-  // Recompute path if goal changed significantly or no path exists
-  const goalMoved = !sgt.pathGoal
-    || Math.hypot(target.x - sgt.pathGoal.x, target.y - sgt.pathGoal.y) > 120;
+  // Recompute path only if goal moved significantly AND enough time has passed
+  const goalDist = sgt.pathGoal
+    ? Math.hypot(target.x - sgt.pathGoal.x, target.y - sgt.pathGoal.y)
+    : Infinity;
+  const pathAge = Date.now() - (sgt._pathComputeTime || 0);
+  const needsRecompute = !sgt.pathGoal || (goalDist > 200 && pathAge > 3000);
 
-  if (goalMoved) {
+  if (needsRecompute) {
     computePath(b, sgt, center, target, alive);
+    sgt._pathComputeTime = Date.now();
   }
 
   // Advance along the path

@@ -3,7 +3,97 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { Game } from './state.js';
-import { loadRoster, saveRoster, seedStarterRoster, loadVehicles, saveVehicles, seedStarterVehicles } from './roster.js';
+import { loadRoster, saveRoster, seedStarterRoster, loadVehicles, saveVehicles, seedStarterVehicles, loadMemorial } from './roster.js';
+
+// ── Save slot system ─────────────────────────────────────────
+
+const MAX_SLOTS = 10;             // Dev: 10, Live: 3
+const SLOT_META_KEY = 'cr_slots'; // Stores slot metadata (summaries)
+const ACTIVE_SLOT_KEY = 'cr_active_slot';
+
+/** Get the prefixed storage key for the active slot. Uses Game._activeSlot. */
+export function slotKey(key) {
+  const slot = Game._activeSlot;
+  if (slot == null) return key; // Fallback for pre-slot code
+  return `cr_s${slot}_${key}`;
+}
+
+/** Get/set the active slot index (0-based). Stored on Game for cross-module access. */
+export function getActiveSlot() { return Game._activeSlot ?? null; }
+export function setActiveSlot(idx) {
+  Game._activeSlot = idx;
+  localStorage.setItem(ACTIVE_SLOT_KEY, String(idx));
+}
+
+/** Get metadata for all slots. Returns array of { idx, name, summary } or null for empty. */
+export function getSlotMetas() {
+  try {
+    return JSON.parse(localStorage.getItem(SLOT_META_KEY)) || [];
+  } catch { return []; }
+}
+
+/** Save metadata for a single slot. */
+export function saveSlotMeta(idx, meta) {
+  const metas = getSlotMetas();
+  // Pad array to idx
+  while (metas.length <= idx) metas.push(null);
+  metas[idx] = meta;
+  localStorage.setItem(SLOT_META_KEY, JSON.stringify(metas));
+}
+
+/** Update the active slot's metadata from current Game state. */
+export function updateActiveSlotMeta() {
+  if (Game._activeSlot == null) return;
+  const roster = Game.roster || [];
+  const alive = roster.filter(s => s.status !== 'kia').length;
+  saveSlotMeta(Game._activeSlot, {
+    name: `Slot ${Game._activeSlot + 1}`,
+    rosterSize: alive,
+    highestWave: Game.stats?.highestWave || 0,
+    scrap: Game.resources?.scrap || 0,
+    lastPlayed: Date.now()
+  });
+}
+
+/** Delete a save slot — removes all its localStorage keys. */
+export function deleteSlot(idx) {
+  const prefix = `cr_s${idx}_`;
+  const keysToRemove = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith(prefix)) keysToRemove.push(key);
+  }
+  for (const key of keysToRemove) localStorage.removeItem(key);
+  // Clear metadata
+  const metas = getSlotMetas();
+  if (metas[idx]) { metas[idx] = null; localStorage.setItem(SLOT_META_KEY, JSON.stringify(metas)); }
+}
+
+/** Check if a slot has save data. */
+export function slotExists(idx) {
+  return localStorage.getItem(`cr_s${idx}_cr_save`) !== null ||
+         localStorage.getItem(`cr_s${idx}_cr_roster`) !== null;
+}
+
+/** Migrate legacy (non-slotted) save to slot 0 if it exists and no slots exist yet. */
+export function migrateLegacySave() {
+  const metas = getSlotMetas();
+  if (metas.some(m => m !== null)) return; // Already have slots
+  if (!localStorage.getItem('cr_save') && !localStorage.getItem('cr_roster')) return; // No legacy data
+
+  // Copy all cr_ keys to slot 0
+  const legacyKeys = ['cr_save', 'cr_roster', 'cr_vehicles', 'cr_memorial', 'cr_recent_fallen', 'cr_last_loadout', 'cr_fr_last_config', 'cr_fr_saves'];
+  for (const key of legacyKeys) {
+    const val = localStorage.getItem(key);
+    if (val) localStorage.setItem(`cr_s0_${key}`, val);
+  }
+  saveSlotMeta(0, { name: 'Slot 1 (migrated)', rosterSize: 0, highestWave: 0, scrap: 0, lastPlayed: Date.now() });
+}
+
+/** Get the max number of slots. */
+export function getMaxSlots() { return MAX_SLOTS; }
+
+// ── Storage keys (now routed through slotKey) ────────────────
 
 const SAVE_KEY = 'cr_save';
 const FR_LAST_KEY = 'cr_fr_last_config';
@@ -29,7 +119,7 @@ export function saveLastLoadout(b) {
       formation: b._deployFormation || 'line',
       lineup
     };
-    localStorage.setItem(LOADOUT_KEY, JSON.stringify(data));
+    localStorage.setItem(slotKey(LOADOUT_KEY), JSON.stringify(data));
   } catch (e) {
     console.warn('Failed to save loadout:', e);
   }
@@ -41,7 +131,7 @@ export function saveLastLoadout(b) {
  */
 export function loadLastLoadout() {
   try {
-    const raw = localStorage.getItem(LOADOUT_KEY);
+    const raw = localStorage.getItem(slotKey(LOADOUT_KEY));
     return raw ? JSON.parse(raw) : null;
   } catch (e) {
     console.warn('Failed to load loadout:', e);
@@ -51,7 +141,7 @@ export function loadLastLoadout() {
 
 export function save() {
   try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify({
+    localStorage.setItem(slotKey(SAVE_KEY), JSON.stringify({
       resources: Game.resources,
       stats: Game.stats,
       settings: Game.settings,
@@ -59,6 +149,7 @@ export function save() {
     }));
     saveRoster();
     saveVehicles();
+    updateActiveSlotMeta();
   } catch (e) {
     console.warn('Failed to save:', e);
   }
@@ -66,7 +157,16 @@ export function save() {
 
 export function load() {
   try {
-    const data = JSON.parse(localStorage.getItem(SAVE_KEY));
+    // Reset state before loading to prevent cross-slot bleed
+    Game.resources = { scrap: 0, parts: 0 };
+    Game.stats = { highestWave: 0, battles: 0, kills: 0 };
+    Game.roster = [];
+    Game.vehicles = [];
+    Game.memorial = [];
+    Game.recentFallen = [];
+    Game.hqRecruitPool = null;
+
+    const data = JSON.parse(localStorage.getItem(slotKey(SAVE_KEY)));
     if (data) {
       Object.assign(Game.resources, data.resources || {});
       Object.assign(Game.stats, data.stats || {});
@@ -96,6 +196,7 @@ export function load() {
     // Load persistent roster + vehicles (separate storage keys)
     loadRoster();
     loadVehicles();
+    loadMemorial();
     // Seed starters if first time
     seedStarterRoster();
     seedStarterVehicles();
@@ -167,7 +268,7 @@ export function migrateFRConfig(config) {
 
 export function saveFRConfig(config) {
   try {
-    localStorage.setItem(FR_LAST_KEY, JSON.stringify(stripExpanded(config)));
+    localStorage.setItem(slotKey(FR_LAST_KEY), JSON.stringify(stripExpanded(config)));
   } catch (e) {
     console.warn('Failed to save FR config:', e);
   }
@@ -175,7 +276,7 @@ export function saveFRConfig(config) {
 
 export function loadFRConfig() {
   try {
-    const raw = localStorage.getItem(FR_LAST_KEY);
+    const raw = localStorage.getItem(slotKey(FR_LAST_KEY));
     return raw ? migrateFRConfig(JSON.parse(raw)) : null;
   } catch (e) {
     console.warn('Failed to load FR config:', e);
@@ -185,9 +286,9 @@ export function loadFRConfig() {
 
 export function saveFRNamedConfig(name, config) {
   try {
-    const saves = JSON.parse(localStorage.getItem(FR_SAVES_KEY) || '{}');
+    const saves = JSON.parse(localStorage.getItem(slotKey(FR_SAVES_KEY)) || '{}');
     saves[name] = { config: stripExpanded(config), savedAt: Date.now() };
-    localStorage.setItem(FR_SAVES_KEY, JSON.stringify(saves));
+    localStorage.setItem(slotKey(FR_SAVES_KEY), JSON.stringify(saves));
   } catch (e) {
     console.warn('Failed to save named FR config:', e);
   }
@@ -195,7 +296,7 @@ export function saveFRNamedConfig(name, config) {
 
 export function loadFRNamedConfigs() {
   try {
-    return JSON.parse(localStorage.getItem(FR_SAVES_KEY) || '{}');
+    return JSON.parse(localStorage.getItem(slotKey(FR_SAVES_KEY)) || '{}');
   } catch (e) {
     console.warn('Failed to load named FR configs:', e);
     return {};
@@ -204,9 +305,9 @@ export function loadFRNamedConfigs() {
 
 export function deleteFRNamedConfig(name) {
   try {
-    const saves = JSON.parse(localStorage.getItem(FR_SAVES_KEY) || '{}');
+    const saves = JSON.parse(localStorage.getItem(slotKey(FR_SAVES_KEY)) || '{}');
     delete saves[name];
-    localStorage.setItem(FR_SAVES_KEY, JSON.stringify(saves));
+    localStorage.setItem(slotKey(FR_SAVES_KEY), JSON.stringify(saves));
   } catch (e) {
     console.warn('Failed to delete named FR config:', e);
   }

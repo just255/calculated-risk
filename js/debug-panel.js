@@ -4,6 +4,30 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { saveDebugReplay } from './replay-recorder.js';
+import { saveIntroSeed } from './ui.js';
+
+// Console capture — intercepts warn/log/error and stores for export
+const _consoleLogs = [];
+const _maxLogs = 5000;
+const _origWarn = console.warn;
+const _origLog = console.log;
+const _origError = console.error;
+
+console.warn = (...args) => {
+  _consoleLogs.push({ t: Date.now(), level: 'warn', msg: args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ') });
+  if (_consoleLogs.length > _maxLogs) _consoleLogs.shift();
+  _origWarn.apply(console, args);
+};
+console.log = (...args) => {
+  _consoleLogs.push({ t: Date.now(), level: 'log', msg: args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ') });
+  if (_consoleLogs.length > _maxLogs) _consoleLogs.shift();
+  _origLog.apply(console, args);
+};
+console.error = (...args) => {
+  _consoleLogs.push({ t: Date.now(), level: 'error', msg: args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ') });
+  if (_consoleLogs.length > _maxLogs) _consoleLogs.shift();
+  _origError.apply(console, args);
+};
 
 let _panel = null;
 let _visible = false;
@@ -138,6 +162,8 @@ export function debugInspectAt(b, worldX, worldY) {
     if (d < closestDist) { closest = u; closestDist = d; }
   }
   _inspectedUnit = closest;
+  // Also set vision debug target so _renderVisionPolygon shows this unit's vision
+  if (b) b._debugVisionUnit = closest;
   return !!closest;
 }
 
@@ -168,6 +194,7 @@ function _createPanel(getBattle) {
     <span class="debug-label">Actions</span>
     <button class="debug-btn danger" data-debug="kill">Kill Enemies</button>
     <button class="debug-btn danger" data-debug="skip">Skip Wave</button>
+    <button class="debug-btn" data-debug="god">God Mode</button>
     <div class="debug-sep"></div>
     <button class="debug-btn" data-debug="vision">Vision</button>
     <button class="debug-btn" data-debug="terrain">Terrain</button>
@@ -175,6 +202,9 @@ function _createPanel(getBattle) {
     <div class="debug-sep"></div>
     <button class="debug-btn" data-debug="pause">Pause</button>
     <button class="debug-btn" data-debug="save-replay">Save Replay</button>
+    <button class="debug-btn" data-debug="save-seed">Save Seed</button>
+    <button class="debug-btn" data-debug="save-console">Save Console</button>
+    <button class="debug-btn" data-debug="watch-replay">Watch Replay</button>
     <div class="debug-sep"></div>
     <div class="debug-timescale">
       <span class="debug-label">Speed</span>
@@ -205,6 +235,14 @@ function _createPanel(getBattle) {
         console.log('[DEBUG] Skipping wave');
         break;
       }
+      case 'god':
+        if (b.hero) {
+          b.hero._godMode = !b.hero._godMode;
+          btn.classList.toggle('active', b.hero._godMode);
+          btn.textContent = b.hero._godMode ? 'God Mode ON' : 'God Mode';
+          console.log(`[DEBUG] God mode ${b.hero._godMode ? 'ON' : 'OFF'}`);
+        }
+        break;
       case 'vision':
         b.showVision = !b.showVision;
         btn.classList.toggle('active', b.showVision);
@@ -239,6 +277,62 @@ function _createPanel(getBattle) {
           setTimeout(() => { btn.textContent = 'Save Replay'; btn.disabled = false; }, 2000);
         });
         break;
+      case 'save-console': {
+        btn.disabled = true;
+        btn.textContent = 'Saving...';
+        const body = _consoleLogs.map(l => `[${l.level}] ${l.msg}`).join('\n');
+        fetch('/api/debug/console', {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body
+        }).then(r => r.json()).then(res => {
+          btn.textContent = res.success ? `Saved (${_consoleLogs.length} lines)` : 'Failed';
+          setTimeout(() => { btn.textContent = 'Save Console'; btn.disabled = false; }, 2000);
+        }).catch(() => {
+          btn.textContent = 'Failed';
+          setTimeout(() => { btn.textContent = 'Save Console'; btn.disabled = false; }, 2000);
+        });
+        break;
+      }
+      case 'watch-replay': {
+        btn.disabled = true;
+        btn.textContent = 'Saving...';
+        // Save current battle as debug replay, then open it
+        saveDebugReplay(b).then(ok => {
+          if (!ok) { btn.textContent = 'Failed'; setTimeout(() => { btn.textContent = 'Watch Replay'; btn.disabled = false; }, 2000); return; }
+          // Pause the game
+          b._debugPaused = true;
+          // Store return state
+          b._returnFromReplay = true;
+          btn.textContent = 'Opening...';
+          // Fetch latest replay and trigger playback via custom event
+          fetch('/api/replays').then(r => r.json()).then(list => {
+            const replays = list.replays || list;
+            if (replays.length > 0) {
+              // Dispatch event for main.js to handle (avoids circular imports)
+              window.dispatchEvent(new CustomEvent('debug-watch-replay', { detail: { name: replays[0].name } }));
+            }
+            btn.textContent = 'Watch Replay';
+            btn.disabled = false;
+          });
+        });
+        break;
+      }
+      case 'save-seed': {
+        const seed = b.terrainSeed;
+        if (seed) {
+          const name = prompt('Name this seed:', `Seed #${seed}`);
+          if (name !== null) {
+            saveIntroSeed(seed, name);
+            btn.textContent = `Saved #${seed}`;
+            setTimeout(() => { btn.textContent = 'Save Seed'; }, 2000);
+          }
+        } else {
+          btn.textContent = 'No seed';
+          setTimeout(() => { btn.textContent = 'Save Seed'; }, 2000);
+        }
+        break;
+      }
     }
   });
 

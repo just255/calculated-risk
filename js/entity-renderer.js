@@ -5,7 +5,8 @@
 // ═══════════════════════════════════════════════════════════════
 
 import * as sprites from './sprites.js';
-import { Owner, UNITS, UNIT_COMBAT_STATS } from './constants.js';
+import { Owner, UNITS, UNIT_COMBAT_STATS, RANK_TABLE } from './constants.js';
+import { getCachedLabel } from './render-cache.js';
 import { getCachedInsignia, cacheInsigniaSet } from './insignia-renderer.js';
 import { buildVisionPolygon } from './vision.js';
 import { queryTerrain } from './terrain-query.js';
@@ -304,8 +305,8 @@ export class EntityRenderer {
       this._renderUnitSvgFallback(ctx, unit, UNIT_SIZE, unit.team || 'blue', isSelected, now);
     }
 
-    // Rank chevrons (pop-in + fade) and promotion highlight
-    this._drawRankChevrons(ctx, unit.x, unit.y, unit, now);
+    // Name label + rank (replaces rank chevrons on unit)
+    this._drawNameLabel(ctx, unit.x, unit.y, unit);
     this._drawPromotionHighlight(ctx, unit.x, unit.y, UNIT_SIZE / 2, unit, now);
   }
 
@@ -349,6 +350,45 @@ export class EntityRenderer {
       const rotation = (hullAngle * 180 / Math.PI) + 90;
       sprites.renderAnimatedUnit(ctx, enemy.animId, enemy.x, enemy.y, rotation, 0.4, now);
     } else {
+      // Try PNG sprite first
+      const pngSprite = _getPngSprite(enemy.unitId);
+      if (pngSprite?._loaded) {
+        if (isConcentrateTarget) {
+          const pulse = 0.7 + 0.3 * Math.sin(now * Math.PI * 2 / TARGET_PULSE_PERIOD);
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(enemy.x, enemy.y, r + 4, 0, Math.PI * 2);
+          ctx.strokeStyle = '#ffff00';
+          ctx.lineWidth = 3;
+          ctx.shadowColor = '#ffff00';
+          ctx.shadowBlur = 15 * pulse;
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+          ctx.restore();
+        }
+        ctx.save();
+        ctx.translate(enemy.x, enemy.y);
+        ctx.rotate((enemy.hullAngle ?? enemy.angle) + Math.PI / 2);
+        const imgW = pngSprite.naturalWidth || pngSprite.width;
+        const imgH = pngSprite.naturalHeight || pngSprite.height;
+        const aspect = imgW / imgH || 1;
+        let drawW, drawH;
+        if (aspect > 1) { drawW = ENEMY_SIZE; drawH = ENEMY_SIZE / aspect; }
+        else { drawH = ENEMY_SIZE; drawW = ENEMY_SIZE * aspect; }
+        ctx.drawImage(pngSprite, -drawW / 2, -drawH / 2, drawW, drawH);
+        ctx.restore();
+
+        // Rank chevrons + promotion
+        this._drawRankChevrons(ctx, enemy.x, enemy.y, enemy, now);
+        this._drawPromotionHighlight(ctx, enemy.x, enemy.y, r, enemy, now);
+
+        // Health bar
+        if (enemy.hp < enemy.maxHp) {
+          this._drawHealthBar(ctx, enemy.x, enemy.y - r - 6, enemy.hp / enemy.maxHp, false);
+        }
+        return;
+      }
+
       // Try two-layer SVG rendering (hull + turret)
       const layers = _getUnitLayers(enemy.unitId, 'red');
 
@@ -814,10 +854,13 @@ export class EntityRenderer {
   _renderVisionPolygon(ctx, b) {
     if (!b.debugOverlay && !b.showVision) return;
 
-    // Pick unit to show vision for: hero first, then selected ally
-    const unit = (b.hero && !b.hero.dead && !b.hero.observer)
-      ? b.hero
-      : b.units?.find(u => u.isSelected && !u.dead) || null;
+    // Pick unit to show vision for: debug-inspected unit first, then hero, then selected ally
+    const inspected = b._debugVisionUnit;
+    const unit = (inspected && !inspected.dead)
+      ? inspected
+      : (b.hero && !b.hero.dead && !b.hero.observer)
+        ? b.hero
+        : b.units?.find(u => u.isSelected && !u.dead) || null;
     if (!unit) return;
 
     // Throttle: rebuild polygon every 200ms (5fps), cache between frames
@@ -1145,6 +1188,21 @@ export class EntityRenderer {
     ctx.restore();
   }
 
+  _drawNameLabel(ctx, x, y, unit) {
+    const lastName = unit.displayName || unit.unitName || null;
+    if (!lastName) return;
+
+    const rankIdx = unit._rank || 0;
+    const rankAbbr = RANK_TABLE[rankIdx]?.abbr || '';
+    const label = rankAbbr ? `${rankAbbr} ${lastName}` : lastName;
+
+    const isBlue = unit.team === 'blue' || unit.team === 1;
+    const color = isBlue ? '#b0d0b0' : '#d0b0b0';
+    const cached = getCachedLabel(label, color);
+
+    ctx.drawImage(cached.canvas, x - cached.width / 2, y + 18);
+  }
+
   _drawPromotionHighlight(ctx, x, y, radius, unit, now) {
     if (!unit._promotionTime) return;
 
@@ -1396,7 +1454,7 @@ export class EntityRenderer {
    */
   renderSpeechBubbles(ctx, b, now) {
     const BUBBLE_DURATION = 2500;
-    const allUnits = [...(b.units || []), ...(b.enemies || [])];
+    const allUnits = [...(b.hero ? [b.hero] : []), ...(b.units || []), ...(b.enemies || [])];
     const fogSet = b._visibleEnemies;
     const enemySet = b.enemies ? new Set(b.enemies.map(e => e.id)) : null;
 
@@ -1407,12 +1465,11 @@ export class EntityRenderer {
       if (fogSet && enemySet?.has(unit.id) && !fogSet.has(unit.id)) continue;
 
       const age = now - bubble.t;
-      if (age < 0 || age > BUBBLE_DURATION) continue;
+      if (!bubble.persist && (age < 0 || age > BUBBLE_DURATION)) continue;
 
-      // Fade out in the last 500ms
-      const alpha = age > BUBBLE_DURATION - 500
-        ? (BUBBLE_DURATION - age) / 500
-        : 1;
+      // Fade out in the last 500ms (persistent bubbles don't fade)
+      const alpha = bubble.persist ? 1
+        : age > BUBBLE_DURATION - 500 ? (BUBBLE_DURATION - age) / 500 : 1;
 
       const x = unit.x;
       const y = unit.y;
@@ -1434,7 +1491,7 @@ export class EntityRenderer {
       const by = y - r - bh - 8;
 
       // Team color for bubble
-      const isBlue = (b.units || []).includes(unit);
+      const isBlue = unit === b.hero || unit.isHero || (b.units || []).includes(unit);
       const bgColor = isBlue ? 'rgba(30, 58, 95, 0.9)' : 'rgba(95, 30, 30, 0.9)';
       const borderColor = isBlue ? '#4a9eff' : '#ff4444';
       const textColor = '#ffffff';

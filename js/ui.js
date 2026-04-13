@@ -2,9 +2,10 @@
 // UI - HTML rendering functions
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, UnitType, UNITS, ENEMIES, UNIT_COSTS, H2H_BUDGET, VEHICLE_UNITS, TYPE_CHART, UNIT_PROJECTILES, PROJECTILES, UNIT_DESCRIPTIONS, CAMPAIGN_ERAS, CAMPAIGN_MOS, SquadOrder, TargetPriority, Formation, VEHICLE_CATEGORIES, ENDLESS_VEHICLES, PART_CATEGORY_CONFIG, SYSTEM_DEFINITIONS, UNIT_PART_SLOTS, UNIT_TYPE_MAP, Team, RANK_NAMES, INSIGNIA_SHAPE_TYPES, RANK_TABLE, HEROIC_ACTIONS, GAME_VERSION_STRING, UNIT_COMBAT_STATS } from './constants.js';
-import { Game } from './state.js';
-import { save } from './storage.js';
+import { State, SubState, HQTab, UnitType, UNITS, ENEMIES, UNIT_COSTS, H2H_BUDGET, VEHICLE_UNITS, TYPE_CHART, UNIT_PROJECTILES, PROJECTILES, UNIT_DESCRIPTIONS, CAMPAIGN_ERAS, CAMPAIGN_MOS, SquadOrder, TargetPriority, Formation, VEHICLE_CATEGORIES, ENDLESS_VEHICLES, PART_CATEGORY_CONFIG, SYSTEM_DEFINITIONS, UNIT_PART_SLOTS, UNIT_TYPE_MAP, Team, RANK_NAMES, INSIGNIA_SHAPE_TYPES, RANK_TABLE, HEROIC_ACTIONS, GAME_VERSION_STRING, UNIT_COMBAT_STATS, WAVE_POWER_CURVE, CREW_SCHEMAS, getRoleLabel, PHYSICAL_LABELS, TRAINING_CAP, ALL_ROLES, MOS_DEFINITIONS, OFFICER_RANKS, PIXELS_TO_METERS, DEFAULT_INTRO_SEED } from './constants.js';
+import { Game, ENDLESS_MAP_SIZES } from './state.js';
+import { getCachedInsignia } from './insignia-renderer.js';
+import { save, getSlotMetas, getMaxSlots, slotExists } from './storage.js';
 import { getSkinSelectorData, setSkinPref, clearCache as clearSkinCache, loadVariantData, getCachedVariant } from './skins.js';
 import { getSprite, hasSprite, loadPartSprites, compositeUnitSprite, getPartImage, loadVariant, renderVariant } from './sprites.js';
 import { FR_PRESET_LIST } from './fire-range-presets.js';
@@ -12,6 +13,209 @@ import { Objective } from './commander.js';
 import { PERSONALITY_PRESETS } from './ai-pipeline.js';
 import { EntityRenderer } from './entity-renderer.js';
 import { INSIGNIA_PRESETS } from './insignia-presets.js';
+import { getMemorial, getMemorialTier, computeLegacyScore, getMemorialLineageInfluence, processKIAToFallen, getRecentFallen, hasMemorialSlot, MEMORIAL_THRESHOLD, MEMORIAL_MAX_SLOTS, getRosterCapacity, getNextRosterUnlock, hasRosterRoom, fillRecruitSlots, getAvailableVehicles, getCrewForVehicle, getRoster, getRankInfo, isOfficer, computeCmdEffects, checkGreenToGold, computeLeadership, getEffectiveCombatStats, generatePhysicals } from './roster.js';
+
+// ─── Shared stat display helpers ─────────────────────────────
+// Used by both Operations and Barracks for consistent stat rendering.
+
+/** Compact stat summary for roster rows.
+ * Infantry: ❤180 ⚔10 ◎120m
+ * Vehicle crew: 👁78 💪55 ⚡82 🏃63
+ * Officers: empty
+ */
+function statRowSummary(cs, soldier) {
+  if (!cs || cs.isOfficer) return '';
+  if (soldier?.pool === 'vehicle') {
+    const p = soldier.physicals || {};
+    return `<span class="stat-row-summary">👁${p.vision || 0} 💪${p.strength || 0} ⚡${p.reflexes || 0} 🏃${p.endurance || 0}</span>`;
+  }
+  const special = cs.special ? `<span class="stat-special-icon">${cs.special === 'heal' ? '✚' : cs.special === 'repair' ? '🔧' : '⚡'}</span>` : '';
+  return `<span class="stat-row-summary">❤${cs.hp} ⚔${cs.dps} ◎${cs.rangeM}m ${special}</span>`;
+}
+
+/** Physical stats bar for detail panels */
+function physicalStatsBlock(soldier) {
+  if (!soldier?.physicals) return '';
+  const p = soldier.physicals;
+  const bar = (label, icon, val) => {
+    return `<div class="stat-detail-item">
+      <span class="stat-detail-label">${label}</span>
+      <span class="stat-detail-value">${icon} ${val}</span>
+    </div>`;
+  };
+  return `
+    <div class="stat-detail-block">
+      <div class="stat-detail-primary">
+        ${bar('VISION', '👁', p.vision || 0)}
+        ${bar('STRENGTH', '💪', p.strength || 0)}
+        ${bar('REFLEXES', '⚡', p.reflexes || 0)}
+        ${bar('ENDURANCE', '🏃', p.endurance || 0)}
+      </div>
+    </div>`;
+}
+
+/** Training progress display */
+function trainingBlock(soldier) {
+  if (!soldier?.training) return '';
+  const mos = soldier.mos || soldier.role;
+  const entries = Object.entries(soldier.training)
+    .filter(([, v]) => v > 0)
+    .sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) return '';
+
+  return `
+    <div class="training-block">
+      <h4>TRAINING ${mos ? `<span class="mos-badge">${getRoleLabel(mos)}</span>` : ''}</h4>
+      <div class="training-bars">
+        ${entries.map(([role, level]) => {
+          const pct = Math.round(level * 100);
+          const isMOS = role === mos;
+          return `<div class="training-bar-row ${isMOS ? 'mos-role' : ''}">
+            <span class="training-role-label">${getRoleLabel(role)}</span>
+            <div class="training-bar"><div class="training-bar-fill" style="width:${pct}%"></div></div>
+            <span class="training-bar-val">${pct}%</span>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+}
+
+/** Full stats block for detail panels — branches on soldier type */
+function statDetailBlock(cs, soldier) {
+  if (!cs) return '';
+  if (cs.isOfficer) return '';
+
+  // Vehicle crew: show physicals + training
+  if (soldier?.pool === 'vehicle') {
+    return physicalStatsBlock(soldier) + trainingBlock(soldier);
+  }
+
+  // Infantry: show combat stats with single net badge + click-to-show breakdown
+  const mods = cs.modifiers || [];
+
+  // Compute base values (before modifiers)
+  const baseHp = cs.maxHp - mods.filter(m => m.stat === 'hp' && m.value > 0).reduce((s, m) => s + m.value, 0);
+  const baseDmg = cs.damage; // damage no longer has physical modifiers
+  const baseFireRate = cs.fireRate + mods.filter(m => m.stat === 'fireRate').reduce((s, m) => s + Math.abs(m.value), 0);
+  const baseRange = cs.range - mods.filter(m => m.stat === 'range').reduce((s, m) => s + m.value, 0);
+  const baseSpeed = Math.round((cs.speed - mods.filter(m => m.stat === 'speed').reduce((s, m) => s + m.value, 0)) * 10) / 10;
+  const baseDps = baseFireRate > 0 ? Math.round(baseDmg * (1000 / baseFireRate) * 10) / 10 : 0;
+  const dpsDiff = Math.round((cs.dps - baseDps) * 10) / 10;
+
+  // Net badge: single arrow showing modifier direction, always clickable for breakdown
+  const netBadge = (stat, diff) => {
+    const d = diff !== undefined ? diff : mods.filter(m => m.stat === stat).reduce((s, m) => s + m.value, 0);
+    const hasMods = diff !== undefined ? true : mods.some(m => m.stat === stat);
+    if (d !== 0) {
+      const cls = d > 0 ? 'buff' : 'debuff';
+      const arrow = d > 0 ? '▲' : '▼';
+      return `<span class="stat-net-badge ${cls}" data-action="stat-toggle-breakdown" data-stat="${stat}">${arrow} ${d > 0 ? '+' : ''}${Math.round(d * 10) / 10}</span>`;
+    }
+    // No diff but still show clickable info icon for math breakdown
+    return `<span class="stat-info-btn" data-action="stat-toggle-breakdown" data-stat="${stat}">ℹ</span>`;
+  };
+
+  // Format number for consistent decimal alignment in breakdown
+  // Always shows 1 decimal place for consistency
+  const bdNum = (n, unit) => {
+    const num = typeof n === 'number' ? n.toFixed(1) : String(n);
+    return unit ? `${num} ${unit}` : num;
+  };
+
+  // Breakdown row helpers
+  const breakdownRow = (label, value, cls) =>
+    `<div class="bd-row ${cls || ''}"><span class="bd-label">${label}</span><span class="bd-value">${value}</span></div>`;
+  const breakdownSep = () => `<div class="bd-sep"></div>`;
+
+  const buildBreakdown = (stat) => {
+    const shown = Game._statBreakdownOpen === stat ? 'open' : '';
+    let rows = '';
+
+    // Format modifier label with icon
+    const modLabel = (m, prefix) => `${prefix} ${m.icon || ''} ${m.source}`;
+
+    if (stat === 'hp') {
+      const hpMods = mods.filter(m => m.stat === 'hp');
+      rows += breakdownRow('Base HP', bdNum(baseHp));
+      for (const m of hpMods.filter(m => m.value > 0)) rows += breakdownRow(modLabel(m, '+'), `+${bdNum(m.value)}`, 'buff');
+      if (hpMods.some(m => m.value > 0)) rows += breakdownRow('Max HP', bdNum(cs.maxHp), 'subtotal');
+      for (const m of hpMods.filter(m => m.value < 0)) rows += breakdownRow(modLabel(m, '-'), bdNum(m.value), 'debuff');
+      rows += breakdownSep();
+      rows += breakdownRow('Health', `${bdNum(cs.hp)} / ${bdNum(cs.maxHp)}`, 'result');
+    } else if (stat === 'firepower') {
+      const baseRps = baseFireRate > 0 ? Math.round(1000 / baseFireRate * 10) / 10 : 0;
+      const computedBaseDps = Math.round(cs.damage * baseRps * 10) / 10;
+      const frMods = mods.filter(m => m.stat === 'fireRate');
+      rows += breakdownRow('Damage / shot', bdNum(cs.damage));
+      rows += breakdownRow('Shots / sec', bdNum(baseRps));
+      rows += breakdownRow(`${bdNum(cs.damage)} × ${bdNum(baseRps)}`, `= ${bdNum(computedBaseDps)}`, 'subtotal');
+      if (frMods.length > 0) {
+        const dpsBuff = Math.round((cs.dps - computedBaseDps) * 10) / 10;
+        for (const m of frMods) rows += breakdownRow(`+ ${m.icon || ''} ${m.source}`, `+${bdNum(dpsBuff)}`, 'buff');
+        rows += breakdownSep();
+      }
+      rows += breakdownRow('Firepower', bdNum(cs.dps, 'DPS'), 'result');
+    } else if (stat === 'range') {
+      const baseRangeM = Math.round(baseRange * PIXELS_TO_METERS);
+      const rangeMods = mods.filter(m => m.stat === 'range');
+      rows += breakdownRow('Base Range', bdNum(baseRangeM, 'm'));
+      if (rangeMods.length > 0) {
+        for (const m of rangeMods) rows += breakdownRow(modLabel(m, '+'), `+${bdNum(Math.round(m.value * PIXELS_TO_METERS), 'm')}`, 'buff');
+        rows += breakdownSep();
+      }
+      rows += breakdownRow('Range', bdNum(cs.rangeM, 'm'), 'result');
+    } else if (stat === 'speed') {
+      const baseSpeedMs = Math.round(baseSpeed * PIXELS_TO_METERS * 10) / 10;
+      const speedMods = mods.filter(m => m.stat === 'speed');
+      rows += breakdownRow('Base Speed', bdNum(baseSpeedMs, 'm/s'));
+      if (speedMods.length > 0) {
+        for (const m of speedMods) rows += breakdownRow(modLabel(m, '+'), `+${bdNum(Math.round(m.value * PIXELS_TO_METERS * 10) / 10, 'm/s')}`, 'buff');
+        rows += breakdownSep();
+      }
+      rows += breakdownRow('Speed', bdNum(cs.speedMs, 'm/s'), 'result');
+    }
+
+    return `<div class="stat-breakdown ${shown}" data-stat="${stat}">${rows}</div>`;
+  };
+
+  return `
+    <div class="stat-detail-block">
+      <div class="stat-detail-primary">
+        <div class="stat-detail-item stat-health">
+          <span class="stat-detail-label">HEALTH</span>
+          <span class="stat-detail-value">❤ ${cs.hp}/${cs.maxHp}</span>
+          ${netBadge('hp')}
+          ${buildBreakdown('hp')}
+        </div>
+        <div class="stat-detail-item stat-firepower">
+          <span class="stat-detail-label">FIREPOWER</span>
+          <span class="stat-detail-value">⚔ ${cs.dps}</span>
+          ${netBadge('firepower', dpsDiff)}
+          ${buildBreakdown('firepower')}
+        </div>
+        <div class="stat-detail-item stat-range">
+          <span class="stat-detail-label">RANGE</span>
+          <span class="stat-detail-value">◎ ${cs.rangeM}m</span>
+          ${netBadge('range')}
+          ${buildBreakdown('range')}
+        </div>
+      </div>
+      <div class="stat-detail-secondary">
+        <div class="stat-detail-item">
+          <span class="stat-detail-label">SPEED</span>
+          <span class="stat-detail-value">${cs.speedMs} m/s</span>
+          ${netBadge('speed')}
+          ${buildBreakdown('speed')}
+        </div>
+        ${cs.special ? `<div class="stat-detail-item">
+          <span class="stat-detail-label">SPECIAL</span>
+          <span class="stat-detail-value stat-special">${cs.special.toUpperCase()}</span>
+        </div>` : ''}
+      </div>
+    </div>
+    ${physicalStatsBlock(soldier)}
+    ${trainingBlock(soldier)}`;
+}
 
 // Mobile detection
 const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
@@ -104,6 +308,219 @@ export function setSubState(sub, data = {}) {
 // MAIN RENDER
 // ═══════════════════════════════════════════════════════════════
 
+/**
+ * Targeted update for barracks/operations — updates panel + selection without full re-render.
+ * Call this instead of render() when only the selection changed.
+ */
+export function updateBarracksPanel() {
+  const panel = document.querySelector('.barracks-panel');
+  if (!panel) { render(); return; }
+
+  const roster = Game.roster || [];
+  const selected = Game.hqSelectedSoldiers || [];
+  const subView = Game.hqBarracksView || 'roster';
+
+  // Update selected row highlighting
+  document.querySelectorAll('.soldier-row').forEach(row => {
+    const id = row.dataset.soldier;
+    row.classList.toggle('selected', id && selected.includes(id));
+  });
+
+  // Build new panel content based on view + selection
+  let panelHTML = '';
+  if (subView === 'roster') {
+    const selectedSoldiers = selected.map(id => roster.find(s => s.id === id)).filter(Boolean);
+    if (selectedSoldiers.length === 1) {
+      panelHTML = _soldierCardHTML(selectedSoldiers[0]);
+    } else if (selectedSoldiers.length >= 2) {
+      panelHTML = _soldierCompareHTML(selectedSoldiers[0], selectedSoldiers[1]);
+    } else {
+      panelHTML = '<div class="panel-placeholder">Select a soldier to view details</div>';
+    }
+  } else {
+    // Legacy view — delegate to full render since it has complex selection logic
+    render();
+    return;
+  }
+
+  panel.innerHTML = panelHTML;
+  _renderBarracksInsignia();
+}
+
+/**
+ * Targeted update for Operations — updates bottom panel + row highlighting only.
+ */
+export function updateOpsPanel() {
+  const opsTab = document.querySelector('.operations-tab');
+  if (!opsTab) { render(); return; }
+
+  const ops = Game.opsConfig;
+  if (!ops) { render(); return; }
+
+  const roster = getRoster().filter(s => s.status === 'active');
+  const vehicles = getAvailableVehicles();
+
+  // Update row highlighting
+  document.querySelectorAll('.ops-available-row').forEach(row => {
+    row.classList.toggle('previewing', row.dataset.soldier === Game.opsPreviewSoldier);
+  });
+  document.querySelectorAll('.ops-slot').forEach(slot => {
+    const pu = Game.opsPreviewUnit;
+    const isPreview = pu && slot.dataset.unitType === pu.type &&
+      parseInt(slot.dataset.squad) === pu.squad && parseInt(slot.dataset.unitIdx) === pu.idx;
+    slot.classList.toggle('previewing', !!isPreview);
+  });
+
+  // Update hero stars
+  document.querySelectorAll('.ops-hero-star').forEach(el => el.remove());
+  document.querySelectorAll('.ops-slot[data-soldier]').forEach(slot => {
+    if (slot.dataset.soldier === ops.heroUnit) {
+      const nameEl = slot.querySelector('.ops-slot-name');
+      if (nameEl && !slot.querySelector('.ops-hero-star')) {
+        nameEl.insertAdjacentHTML('beforebegin', '<span class="ops-hero-star">★</span>');
+      }
+    }
+  });
+
+  // Build bottom panel
+  const bottomPanel = _buildOpsBottomPanel(ops, roster, vehicles);
+
+  // Replace existing or insert new
+  const existing = opsTab.querySelector('.ops-detail-panel');
+  if (existing) existing.remove();
+  if (bottomPanel) {
+    const deployBar = opsTab.querySelector('.ops-deploy-bar');
+    if (deployBar) deployBar.insertAdjacentHTML('beforebegin', bottomPanel);
+  }
+
+  _renderBarracksInsignia();
+}
+
+/** Build the Operations bottom detail panel HTML. Extracted for targeted updates. */
+function _buildOpsBottomPanel(ops, roster, vehicles) {
+  if (!ops) return '';
+
+  const previewUnit = Game.opsPreviewUnit || null;
+  const previewId = Game.opsPreviewSoldier || null;
+  const previewSoldier = previewId ? roster.find(s => s.id === previewId) : null;
+  const selectedSlot = Game.opsSelectedSlot || null;
+
+  let assignedSoldier = null;
+  let assignedVehicle = null;
+  let assignedUnitId = null;
+
+  if (previewUnit) {
+    if (previewUnit.type === 'infantry') {
+      const sq = ops.squads[previewUnit.squad];
+      const sid = sq?.units[previewUnit.idx];
+      assignedSoldier = sid ? roster.find(s => s.id === sid) : null;
+      assignedUnitId = sid;
+    } else if (previewUnit.type === 'vehicle') {
+      const sq = ops.squads[previewUnit.squad];
+      assignedUnitId = sq?.vehicleId;
+      assignedVehicle = assignedUnitId ? vehicles.find(v => v.id === assignedUnitId) : null;
+    } else if (previewUnit.type === 'crew' && previewUnit.soldierId) {
+      assignedSoldier = roster.find(s => s.id === previewUnit.soldierId);
+      assignedUnitId = previewUnit.soldierId;
+    }
+  }
+
+  const _col = (s, label) => {
+    if (!s) return '';
+    const rn = getRankInfo(s).abbr;
+    const cs = getEffectiveCombatStats(s);
+    const p = s.personality || {};
+    const pctBar = (lbl, val) => {
+      const pct = Math.round((val || 0) * 100);
+      return `<div class="ops-cmp-stat"><span class="ops-cmp-label">${lbl}</span><div class="card-stat-bar"><div class="card-stat-fill" style="width:${pct}%"></div></div><span class="ops-cmp-val">${pct}</span></div>`;
+    };
+    return `
+      <div class="ops-cmp-col">
+        <div class="ops-cmp-header">
+          <span class="ops-cmp-tag">${label}</span>
+          <canvas class="soldier-insignia" data-rank="${s.rankIndex}" width="64" height="64"></canvas>
+          <div class="ops-cmp-identity">
+            <span class="ops-cmp-name">${rn} ${s.name?.last || 'Unknown'}</span>
+            <span class="ops-cmp-role">${getRoleLabel(s.role)}</span>
+          </div>
+        </div>
+        ${statDetailBlock(cs, s)}
+        <div class="ops-cmp-record">
+          <span>${s.battlesServed || 0} btl</span>
+          <span>${s.kills || 0} kills</span>
+          <span>MMR ${Math.round(s.mmr || 0)}</span>
+        </div>
+        <details class="ops-personality-details">
+          <summary>Personality</summary>
+          <div class="ops-cmp-stats">
+            ${pctBar('AGG', p.aggression)}
+            ${pctBar('PAT', p.patience)}
+            ${pctBar('CRG', p.courage)}
+            ${pctBar('DIS', p.discipline)}
+            ${pctBar('INI', p.initiative)}
+            ${pctBar('AWR', p.awareness)}
+          </div>
+        </details>
+      </div>`;
+  };
+
+  if (assignedSoldier && previewSoldier) {
+    const canAssign = selectedSlot && (selectedSlot.type === 'infantry-add' || selectedSlot.type === 'crew');
+    const slotLabel = selectedSlot ? (selectedSlot.type === 'crew' ? getRoleLabel(selectedSlot.crewRole) : `SQUAD ${(selectedSlot.squad || 0) + 1}`) : '';
+    const isHero = ops.heroUnit === assignedUnitId;
+    return `
+      <div class="ops-detail-panel ops-compare-panel">
+        <div class="ops-cmp-columns">
+          ${_col(assignedSoldier, 'ASSIGNED')}
+          <div class="ops-cmp-divider"><span class="ops-cmp-vs">VS</span></div>
+          ${_col(previewSoldier, 'CANDIDATE')}
+        </div>
+        <div class="ops-detail-actions ops-cmp-actions">
+          ${!isHero ? `<button class="ops-hero-btn" data-action="ops-set-hero" data-soldier="${assignedUnitId}">★ SET HERO</button>` : '<span class="ops-hero-current">★ HERO</span>'}
+          ${canAssign ? `<button class="ops-assign-btn" data-action="ops-assign-soldier" data-soldier="${previewSoldier.id}">ASSIGN TO ${slotLabel}</button>` : ''}
+          <button class="ops-swap-btn" data-action="ops-swap-soldier" data-old="${assignedUnitId}" data-new="${previewSoldier.id}" data-squad="${previewUnit?.squad || 0}" data-idx="${previewUnit?.idx || 0}">SWAP ⇄</button>
+        </div>
+      </div>`;
+  } else if (assignedSoldier) {
+    const isHero = ops.heroUnit === assignedUnitId;
+    return `
+      <div class="ops-detail-panel">
+        <div class="ops-cmp-columns">${_col(assignedSoldier, 'ASSIGNED')}</div>
+        <div class="ops-detail-actions">
+          ${isHero ? '<span class="ops-hero-current">★ CURRENT HERO</span>' : `<button class="ops-hero-btn" data-action="ops-set-hero" data-soldier="${assignedUnitId}">SET AS HERO ★</button>`}
+        </div>
+      </div>`;
+  } else if (assignedVehicle) {
+    const isHero = ops.heroUnit === assignedUnitId;
+    return `
+      <div class="ops-detail-panel">
+        <div class="ops-detail-header">
+          <span class="ops-slot-icon" style="font-size:1.5rem">🚗</span>
+          <div class="ops-detail-identity">
+            <span class="ops-detail-name">${isHero ? '★ ' : ''}${assignedVehicle.unitId.toUpperCase()}</span>
+            <span class="ops-detail-role">VEHICLE — ${Math.round(assignedVehicle.hpPercent * 100)}% HP</span>
+          </div>
+        </div>
+        <div class="ops-detail-actions">
+          ${isHero ? '<span class="ops-hero-current">★ CURRENT HERO</span>' : `<button class="ops-hero-btn" data-action="ops-set-hero" data-soldier="${assignedUnitId}">PLAY AS THIS VEHICLE ★</button>`}
+        </div>
+      </div>`;
+  } else if (previewSoldier) {
+    const canAssign = selectedSlot && (selectedSlot.type === 'infantry-add' || selectedSlot.type === 'crew');
+    const slotLabel = selectedSlot ? (selectedSlot.type === 'crew' ? getRoleLabel(selectedSlot.crewRole) : `SQUAD ${(selectedSlot.squad || 0) + 1}`) : '';
+    return `
+      <div class="ops-detail-panel">
+        <div class="ops-cmp-columns">${_col(previewSoldier, 'CANDIDATE')}</div>
+        <div class="ops-detail-actions">
+          ${canAssign
+            ? `<button class="ops-assign-btn" data-action="ops-assign-soldier" data-soldier="${previewSoldier.id}">ASSIGN TO ${slotLabel}</button>`
+            : '<span class="ops-detail-hint">Select a slot first, then assign</span>'}
+        </div>
+      </div>`;
+  }
+  return '';
+}
+
 export function render() {
   const app = document.getElementById('app');
 
@@ -111,8 +528,19 @@ export function render() {
   stopUIAnimation();
 
   switch (Game.state) {
+    case State.TITLE: // Fall through to MENU — slot picker is integrated
     case State.MENU: app.innerHTML = menuHTML(); break;
-    case State.HQ: app.innerHTML = headquartersHTML(); startUIAnimation(); break;
+    case State.HQ:
+      try {
+        processKIAToFallen();
+        app.innerHTML = headquartersHTML();
+        startUIAnimation();
+        _renderBarracksInsignia();
+      } catch (e) {
+        console.error('[HQ] Render failed:', e);
+        app.innerHTML = `<div class="screen"><h2>HQ Render Error</h2><pre>${e.message}\n${e.stack}</pre></div>`;
+      }
+      break;
     case State.SETTINGS: app.innerHTML = settingsHTML(); loadSkinsUI(); break;
     case State.STATS: app.innerHTML = statsHTML(); break;
     case State.MATCHMAKING: app.innerHTML = matchmakingHTML(); break;
@@ -139,6 +567,23 @@ export function render() {
     case State.ENDLESS_BATTLE: app.innerHTML = endlessBattleHTML(); break;
     case State.ENDLESS_BETWEEN: app.innerHTML = endlessBetweenHTML(); break;
     case State.ENDLESS_RESULT: app.innerHTML = endlessResultHTML(); break;
+    case State.MEDEVAC:
+      app.innerHTML = medevacSceneHTML();
+      // Stagger intro reveal
+      setTimeout(() => {
+        const intro = app.querySelector('[data-step="intro"]');
+        if (intro) intro.classList.add('visible');
+        setTimeout(() => {
+          const name = app.querySelector('[data-step="name"]');
+          if (name) {
+            name.classList.add('visible');
+            name.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+          const firstInput = app.querySelector('#medevac-first');
+          if (firstInput) firstInput.focus();
+        }, 1200);
+      }, 800);
+      break;
     // Fire Range states
     case State.FIRE_RANGE: app.innerHTML = fireRangeConfigHTML(); break;
     case State.FIRE_RANGE_BATTLE: app.innerHTML = fireRangeBattleHTML(); break;
@@ -154,28 +599,174 @@ export function render() {
 
 // Game version imported from constants.js (single source of truth)
 
+function titleScreenHTML() {
+  const metas = getSlotMetas();
+  const maxSlots = getMaxSlots();
+
+  const slotCards = [];
+  for (let i = 0; i < maxSlots; i++) {
+    const meta = metas[i];
+    const exists = meta || slotExists(i);
+    if (exists && meta) {
+      const lastPlayed = meta.lastPlayed ? new Date(meta.lastPlayed).toLocaleDateString() : '';
+      slotCards.push(`
+        <div class="slot-card slot-filled" data-action="slot-select" data-slot="${i}">
+          <div class="slot-header">
+            <span class="slot-name">${meta.name || `Slot ${i + 1}`}</span>
+            <span class="slot-wave">Wave ${meta.highestWave || 0}</span>
+          </div>
+          <div class="slot-details">
+            <span>Roster: ${meta.rosterSize || 0}</span>
+            <span>Scrap: ${meta.scrap || 0}</span>
+          </div>
+          <div class="slot-footer">
+            <span class="slot-date">${lastPlayed}</span>
+            <button class="slot-delete" data-action="slot-delete" data-slot="${i}" title="Delete save">✕</button>
+          </div>
+        </div>`);
+    } else {
+      slotCards.push(`
+        <div class="slot-card slot-empty" data-action="slot-new" data-slot="${i}">
+          <span class="slot-empty-label">EMPTY</span>
+          <span class="slot-new-label">New Game</span>
+        </div>`);
+    }
+  }
+
+  return `
+    <div class="screen title-screen">
+      <div class="title-header">
+        <h1 class="title-name">CALCULATED RISK</h1>
+        <span class="title-version">${GAME_VERSION_STRING}</span>
+      </div>
+      <div class="slot-grid">
+        ${slotCards.join('')}
+      </div>
+      <div class="title-footer">
+        <button class="title-settings-btn" data-action="settings">SETTINGS</button>
+      </div>
+    </div>
+  `;
+}
+
+// Saved seed management (localStorage)
+const SAVED_SEEDS_KEY = 'cr_intro_seeds';
+
+export function getSavedSeeds() {
+  try {
+    const raw = localStorage.getItem(SAVED_SEEDS_KEY);
+    const saved = raw ? JSON.parse(raw) : [];
+    // Always include default seed first if not already saved
+    if (!saved.find(s => s.seed === DEFAULT_INTRO_SEED.seed)) {
+      saved.unshift({ ...DEFAULT_INTRO_SEED });
+    }
+    return saved;
+  } catch { return [{ ...DEFAULT_INTRO_SEED }]; }
+}
+
+export function saveIntroSeed(seed, name) {
+  const seeds = getSavedSeeds();
+  if (seeds.find(s => s.seed === seed)) return; // Already saved
+  seeds.push({ seed, name: name || `Seed #${seed}` });
+  localStorage.setItem(SAVED_SEEDS_KEY, JSON.stringify(seeds));
+}
+
+export function removeIntroSeed(seed) {
+  // Don't allow removing the default
+  if (seed === DEFAULT_INTRO_SEED.seed) return;
+  const seeds = getSavedSeeds().filter(s => s.seed !== seed);
+  localStorage.setItem(SAVED_SEEDS_KEY, JSON.stringify(seeds));
+}
+
+export function newGameSetupHTML(slotIdx) {
+  const seeds = getSavedSeeds();
+  const presetRows = seeds.map((p, i) => `
+    <div class="seed-row">
+      <label class="seed-option">
+        <input type="radio" name="intro-seed" value="${p.seed}" ${i === 0 ? 'checked' : ''}>
+        <span class="seed-name">${p.name}</span>
+        <span class="seed-value">#${p.seed}</span>
+      </label>
+      ${p.seed !== DEFAULT_INTRO_SEED.seed ? `<button class="seed-remove-btn" data-action="seed-remove" data-seed="${p.seed}">✕</button>` : ''}
+    </div>`).join('');
+
+  return `
+    <div class="screen new-game-setup">
+      <div class="setup-header">
+        <h2>DEPLOYMENT ZONE</h2>
+        <p class="setup-subtitle">Select terrain for your mission</p>
+      </div>
+      <div class="setup-seeds">
+        ${presetRows}
+        <div class="seed-row">
+          <label class="seed-option">
+            <input type="radio" name="intro-seed" value="random">
+            <span class="seed-name">Random</span>
+          </label>
+        </div>
+        <div class="seed-row seed-custom-row">
+          <label class="seed-option">
+            <input type="radio" name="intro-seed" value="custom">
+            <span class="seed-name">Custom</span>
+          </label>
+          <input type="number" class="seed-custom-input" id="seed-custom-val" placeholder="Seed #" min="1" max="999999">
+        </div>
+      </div>
+      <div class="setup-actions">
+        <button class="setup-btn" data-action="setup-back">BACK</button>
+        <button class="setup-btn primary" data-action="setup-deploy" data-slot="${slotIdx}">DEPLOY</button>
+      </div>
+    </div>
+  `;
+}
+
 function menuHTML() {
+  const metas = getSlotMetas();
+  const maxSlots = getMaxSlots();
+  const activeSlot = Game._activeSlot;
+
+  const slotCards = [];
+  for (let i = 0; i < maxSlots; i++) {
+    const meta = metas[i];
+    const exists = meta || slotExists(i);
+    const isActive = activeSlot === i;
+    if (exists && meta) {
+      const lastPlayed = meta.lastPlayed ? new Date(meta.lastPlayed).toLocaleDateString() : '';
+      slotCards.push(`
+        <div class="slot-card slot-filled ${isActive ? 'slot-active' : ''}" data-action="slot-select" data-slot="${i}">
+          <div class="slot-header">
+            <span class="slot-name">${meta.name || `Slot ${i + 1}`}</span>
+            <span class="slot-wave">Wave ${meta.highestWave || 0}</span>
+          </div>
+          <div class="slot-details">
+            <span>Roster: ${meta.rosterSize || 0}</span>
+            <span>⬡ ${meta.scrap || 0}</span>
+          </div>
+          <div class="slot-footer">
+            <span class="slot-date">${lastPlayed}</span>
+            <button class="slot-delete" data-action="slot-delete" data-slot="${i}" title="Delete save">✕</button>
+          </div>
+        </div>`);
+    } else {
+      slotCards.push(`
+        <div class="slot-card slot-empty" data-action="slot-new" data-slot="${i}">
+          <span class="slot-empty-label">EMPTY</span>
+          <span class="slot-new-label">New Game</span>
+        </div>`);
+    }
+  }
+
   return `
     <div class="screen menu-screen">
       <div class="menu-content">
         <div class="menu-header">
           <h1 class="game-title"><span>CALCULATED</span> RISK</h1>
           <p class="game-subtitle">TACTICAL DEFENSE</p>
-          <div class="menu-resources">
-            <span class="res-scrap">⬡ ${Game.resources.scrap}</span>
-            <span class="res-parts">◈ ${Game.resources.parts}</span>
-          </div>
         </div>
+        <div class="slot-grid">${slotCards.join('')}</div>
         <div class="menu-buttons">
-          <button class="menu-btn" data-action="campaign">Campaign</button>
-          <button class="menu-btn" data-action="endless">Endless</button>
-          <button class="menu-btn" data-action="fire-range">Fire Range</button>
-          <button class="menu-btn" data-action="replay-theater">Replay Theater</button>
-          <button class="menu-btn" data-action="classic">Classic</button>
-          <button class="menu-btn" data-action="versus">Head 2 Head</button>
-          <button class="menu-btn" data-action="hq">Headquarters</button>
           <button class="menu-btn secondary" data-action="settings">Settings</button>
-          <button class="menu-btn secondary" data-action="stats">Statistics</button>
+          <button class="menu-btn secondary" data-action="fire-range">Fire Range</button>
           <button class="menu-btn secondary" data-action="sprite-editor">Sprite Editor</button>
           <button class="menu-btn secondary" data-action="terrain-editor">Terrain Editor</button>
         </div>
@@ -506,27 +1097,9 @@ function headquartersHTML() {
 function _barracksTabHTML() {
   const roster = Game.roster || [];
   const selected = Game.hqSelectedSoldiers || [];
-  const hasSelection = selected.length > 0;
+  const subView = Game.hqBarracksView || 'roster'; // 'roster' or 'legacy'
 
-  // Group roster by role category
-  const groups = [
-    { key: 'command', label: 'COMMAND', soldiers: roster.filter(s => s.isSquadLeader || s.role === 'commander' || s.isPlayerCharacter) },
-    { key: 'infantry', label: 'INFANTRY', soldiers: roster.filter(s => (s.pool === 'infantry' || !s.pool) && !s.isSquadLeader && !s.isPlayerCharacter) },
-    { key: 'crew', label: 'VEHICLE CREW', soldiers: roster.filter(s => s.pool === 'vehicle') }
-  ];
-
-  // Remove empty groups, handle soldiers that appear in multiple
-  const seenIds = new Set();
-  for (const g of groups) {
-    g.soldiers = g.soldiers.filter(s => {
-      if (seenIds.has(s.id)) return false;
-      seenIds.add(s.id);
-      return true;
-    });
-  }
-
-  const collapsed = Game.hqCollapsedGroups || {};
-
+  // Shared helpers
   const hpSegments = (hp) => {
     const pct = Math.round((hp || 1) * 100);
     const segs = 10;
@@ -545,96 +1118,578 @@ function _barracksTabHTML() {
     return '<span class="status-label status-active">READY</span>';
   };
 
-  const isExpanded = (s) => selected.includes(s.id);
+  // Counts for sub-tab badges
+  const aliveCount = roster.filter(s => s.status !== 'kia').length;
+  const rosterCap = getRosterCapacity();
+  const nextUnlock = getNextRosterUnlock();
+  const memorial = getMemorial();
+  const recruitPool = Game.hqRecruitPool || [];
+  const legacyBadge = memorial.length > 0 || recruitPool.length > 0
+    ? `${memorial.length} ★ | ${recruitPool.length} ▼` : '';
 
-  const soldierRow = (s) => {
-    const rankName = RANK_NAMES[s.rankIndex] || 'PVT';
-    const name = s.name?.last || s.name?.first || 'Unknown';
-    const role = (s.role || 'rifleman').toUpperCase();
-    const isPC = s.isPlayerCharacter ? '<span class="pc-badge">YOU</span>' : '';
-    const expanded = isExpanded(s);
+  // Sub-tab bar
+  const woundedCount = roster.filter(s => s.status === 'wounded').length;
+  const unlockHint = nextUnlock ? `title="Next: ${nextUnlock.slots} slots at wave ${nextUnlock.wave}"` : '';
+  const subTabBar = `
+    <div class="barracks-sub-tabs">
+      <button class="barracks-sub-tab ${subView === 'roster' ? 'active' : ''}" data-action="hq-barracks-view" data-view="roster" ${unlockHint}>ROSTER (${aliveCount}/${rosterCap})</button>
+      <button class="barracks-sub-tab ${subView === 'infirmary' ? 'active' : ''}" data-action="hq-barracks-view" data-view="infirmary">INFIRMARY${woundedCount > 0 ? ` (${woundedCount})` : ''}</button>
+      <button class="barracks-sub-tab ${subView === 'legacy' ? 'active' : ''}" data-action="hq-barracks-view" data-view="legacy">LEGACY ${legacyBadge ? `(${legacyBadge})` : ''}</button>
+    </div>`;
 
-    let expandedHTML = '';
-    if (expanded) {
-      const battles = s.battlesServed || 0;
-      const kills = s.kills || 0;
-      const streak = s.streak || 0;
-      const heroics = (s.heroicActions || []).length;
-      const comms = (s.commendations || []).length;
-      const vehicle = s.assignedVehicleId ? `Assigned: ${s.assignedVehicleId}` : 'Unassigned';
+  let leftContent = '';
+  let rightPanel = '';
 
-      expandedHTML = `
-        <div class="soldier-expanded">
-          <div class="soldier-history">
-            <div class="history-stat"><span class="history-label">Battles</span><span class="history-value">${battles}</span></div>
-            <div class="history-stat"><span class="history-label">Kills</span><span class="history-value">${kills}</span></div>
-            <div class="history-stat"><span class="history-label">Streak</span><span class="history-value">${streak}</span></div>
-            <div class="history-stat"><span class="history-label">Heroics</span><span class="history-value">${heroics}</span></div>
-            <div class="history-stat"><span class="history-label">Medals</span><span class="history-value">${comms}</span></div>
-          </div>
-          <div class="soldier-vehicle">${vehicle}</div>
-        </div>`;
+  if (subView === 'roster') {
+    // ── ROSTER VIEW ──
+    const alive = roster.filter(s => s.status !== 'kia');
+
+    // Role filter
+    const bRoleFilter = Game.hqRoleFilter || 'all';
+    const bRoleFilters = ['all', 'rifleman', 'medic', 'engineer', 'heavy_gunner', 'tc', 'gunner', 'driver'];
+    const bFilterBar = `
+      <div class="ops-filter-bar">
+        ${bRoleFilters.map(r => `<button class="ops-filter-btn ${bRoleFilter === r ? 'active' : ''}" data-action="hq-filter-role" data-role="${r}">${r === 'all' ? 'ALL' : getRoleLabel(r)}</button>`).join('')}
+      </div>`;
+
+    const filtered = bRoleFilter === 'all' ? alive
+      : alive.filter(s => s.role === bRoleFilter || (bRoleFilter === 'infantry' && s.pool === 'infantry') || (bRoleFilter === 'vehicle' && s.pool === 'vehicle'));
+
+    // Group by pool — no overlap, no dedup needed
+    const playerChar = filtered.filter(s => s.isPlayerCharacter);
+    const groups = [
+      { key: 'officers', label: 'OFFICERS', soldiers: filtered.filter(s => isOfficer(s)), accent: 'orange' },
+      ...(playerChar.length > 0 ? [{ key: 'command', label: 'COMMAND', soldiers: playerChar }] : []),
+      { key: 'infantry', label: 'INFANTRY', soldiers: filtered.filter(s => s.pool === 'infantry' && !s.isPlayerCharacter && !isOfficer(s)) },
+      { key: 'crew', label: 'VEHICLE CREW', soldiers: filtered.filter(s => s.pool === 'vehicle' && !isOfficer(s)) }
+    ];
+    // Add soldiers with no pool to infantry as fallback
+    const pooled = new Set(groups.flatMap(g => g.soldiers.map(s => s.id)));
+    const unpooled = filtered.filter(s => !pooled.has(s.id));
+    if (unpooled.length > 0) {
+      const infGroup = groups.find(g => g.key === 'infantry');
+      if (infGroup) infGroup.soldiers.push(...unpooled);
+    }
+    for (const g of groups) {
+      // Sort by role, then alphabetically by last name within role
+      g.soldiers.sort((a, b) => {
+        const roleA = (a.role || 'rifleman');
+        const roleB = (b.role || 'rifleman');
+        if (roleA !== roleB) return roleA.localeCompare(roleB);
+        return (a.name?.last || '').localeCompare(b.name?.last || '');
+      });
     }
 
-    return `
-      <div class="soldier-row ${expanded ? 'expanded' : ''} ${s.status}" data-action="hq-toggle-soldier" data-soldier="${s.id}">
-        <div class="soldier-main">
-          <span class="soldier-rank-icon">${_rankChevron(s.rankIndex)}</span>
-          <span class="soldier-name">${rankName} ${name} ${isPC}</span>
-          <span class="soldier-role-tag">${role}</span>
-          ${s.status !== 'kia' ? hpSegments(s.hpPercent) : ''}
-          ${statusLabel(s)}
-        </div>
-        ${expandedHTML}
-      </div>`;
-  };
+    const collapsed = Game.hqCollapsedGroups || {};
 
-  const groupHTML = (g) => {
-    if (g.soldiers.length === 0) return '';
-    const isCollapsed = collapsed[g.key];
-    const woundedCount = g.soldiers.filter(s => s.status === 'wounded').length;
-    const woundedBadge = woundedCount > 0 ? `<span class="group-wounded-badge">${woundedCount} wounded</span>` : '';
-    return `
+    const soldierRow = (s) => {
+      const rankName = getRankInfo(s).abbr;
+      const name = s.name?.last || s.name?.first || 'Unknown';
+      const role = getRoleLabel(s.role);
+      const isPC = s.isPlayerCharacter ? '<span class="pc-badge">YOU</span>' : '';
+      const isSelected = selected.includes(s.id);
+      return `
+        <div class="soldier-row ${isSelected ? 'selected' : ''} ${s.status}" data-action="hq-toggle-soldier" data-soldier="${s.id}">
+          <div class="soldier-main">
+            <canvas class="soldier-insignia" data-rank="${s.rankIndex}" width="64" height="64"></canvas>
+            <span class="soldier-name">${rankName} ${name} ${isPC}</span>
+            <span class="soldier-role-tag">${role}</span>
+            ${s.status !== 'kia' ? hpSegments(s.hpPercent) : ''}
+            ${statusLabel(s)}
+          </div>
+        </div>`;
+    };
+
+    const groupHTML = (g) => {
+      if (g.soldiers.length === 0) return '';
+      const isCollapsed = collapsed[g.key];
+      const woundedCount = g.soldiers.filter(s => s.status === 'wounded').length;
+      const woundedBadge = woundedCount > 0 ? `<span class="group-wounded-badge">${woundedCount} wounded</span>` : '';
+      const accentClass = g.accent ? `roster-group-${g.accent}` : '';
+      return `
+        <div class="roster-group ${accentClass}">
+          <div class="roster-group-header" data-action="hq-toggle-group" data-group="${g.key}">
+            <span class="group-chevron">${isCollapsed ? '▶' : '▼'}</span>
+            <span class="group-label">${g.label}</span>
+            <span class="group-count">(${g.soldiers.length})</span>
+            ${woundedBadge}
+          </div>
+          ${isCollapsed ? '' : `<div class="roster-group-list">${g.soldiers.map(soldierRow).join('')}</div>`}
+        </div>`;
+    };
+
+    leftContent = bFilterBar + groups.map(groupHTML).join('');
+
+    // Right panel — soldier card or comparison
+    const selectedSoldiers = selected.map(id => roster.find(s => s.id === id)).filter(Boolean);
+    if (selectedSoldiers.length === 1) {
+      rightPanel = _soldierCardHTML(selectedSoldiers[0]);
+    } else if (selectedSoldiers.length >= 2) {
+      rightPanel = _soldierCompareHTML(selectedSoldiers[0], selectedSoldiers[1]);
+    } else {
+      rightPanel = '<div class="panel-placeholder">Select a soldier to view details</div>';
+    }
+
+  } else if (subView === 'infirmary') {
+    // ── INFIRMARY VIEW ──
+    const wounded = roster.filter(s => s.status === 'wounded');
+    const scrap = Game.resources?.scrap || 0;
+    const healCost = 50;
+
+    if (wounded.length === 0) {
+      leftContent = `<div class="panel-placeholder" style="padding:40px 20px;text-align:center;">
+        <div style="font-size:1.2rem;color:var(--accent-green);margin-bottom:8px;">All Clear</div>
+        <div style="color:var(--text-secondary);">No wounded personnel.</div>
+      </div>`;
+    } else {
+      leftContent = wounded.map(s => {
+        const rankName = getRankInfo(s).abbr;
+        const name = s.name?.last || s.name?.first || 'Unknown';
+        const role = getRoleLabel(s.role);
+        const battlesLeft = s.woundedBattlesLeft || 0;
+        const recoveryText = battlesLeft > 0
+          ? `${battlesLeft} battle${battlesLeft > 1 ? 's' : ''} until recovery`
+          : 'Recovering — next battle clears';
+        const canRush = scrap >= healCost;
+        return `
+          <div class="soldier-row wounded">
+            <div class="soldier-main">
+              <canvas class="soldier-insignia" data-rank="${s.rankIndex}" width="64" height="64"></canvas>
+              <span class="soldier-name">${rankName} ${name}</span>
+              <span class="soldier-role-tag">${role}</span>
+              ${hpSegments(s.hpPercent)}
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 8px 4px 80px;">
+              <span style="font-size:0.7rem;color:var(--accent-yellow);">${recoveryText}</span>
+              <button class="rush-heal-btn ${canRush ? '' : 'disabled'}" data-action="hq-rush-heal" data-soldier="${s.id}">RUSH HEAL (${healCost} scrap)</button>
+            </div>
+          </div>`;
+      }).join('');
+    }
+    rightPanel = `<div class="panel-placeholder" style="padding:20px;">
+      <div style="color:var(--text-secondary);font-size:0.75rem;line-height:1.5;">
+        Wounded soldiers recover naturally between battles. Spend <span style="color:var(--accent-yellow);">${healCost} scrap</span> to rush a soldier back to full strength immediately.
+        <br><br>Scrap available: <span style="color:var(--accent-green);">${scrap}</span>
+      </div>
+    </div>`;
+
+  } else {
+    // ── LEGACY VIEW ──
+    const collapsed = Game.hqCollapsedGroups || {};
+    const slotsLeft = MEMORIAL_MAX_SLOTS - memorial.length;
+    const { qualifying, unqualifying } = getRecentFallen();
+
+    // Generate recruit pool if needed, fill unlocked null slots
+    if (!Game.hqRecruitPool || Game.hqRecruitPool.length === 0) {
+      Game.hqRecruitPool = _generateRecruitPool(5);
+    }
+    fillRecruitSlots(_generateRecruitPool);
+    const pool = Game.hqRecruitPool;
+    const rosterFull = !hasRosterRoom();
+
+    // Memorial wall rows
+    const memorialRowHTML = (m) => {
+      const tier = getMemorialTier(m);
+      const rankName = getRankInfo(m).abbr;
+      const name = m.name?.last || 'Unknown';
+      const isSelected = selected.includes(m.id);
+      return `
+        <div class="soldier-row memorial-row-entry memorial-tier-border-${tier} ${isSelected ? 'selected' : ''}" data-action="hq-select-memorial" data-soldier="${m.id}">
+          <div class="soldier-main">
+            <canvas class="soldier-insignia" data-rank="${m.rankIndex}" width="64" height="64"></canvas>
+            <span class="soldier-name">${rankName} ${name}</span>
+            <span class="soldier-role-tag">${getRoleLabel(m.role)}</span>
+            <span class="memorial-stat-inline">${m.battlesServed} btl</span>
+            <span class="memorial-stat-inline">${m.kills} kills</span>
+            <span class="memorial-tier-tag tier-${tier}">${tier.toUpperCase()}</span>
+          </div>
+        </div>`;
+    };
+
+    // Qualifying fallen rows (can be added to wall)
+    const qualifyingRowHTML = (f) => {
+      const tier = getMemorialTier(f);
+      const rankName = getRankInfo(f).abbr;
+      const name = f.name?.last || 'Unknown';
+      const isSelected = selected.includes(`fallen_${f.id}`);
+      return `
+        <div class="soldier-row qualifying-row-entry memorial-tier-border-${tier} ${isSelected ? 'selected' : ''}" data-action="hq-select-fallen" data-soldier="${f.id}">
+          <div class="soldier-main">
+            <canvas class="soldier-insignia" data-rank="${f.rankIndex}" width="64" height="64"></canvas>
+            <span class="soldier-name">${rankName} ${name}</span>
+            <span class="soldier-role-tag">${getRoleLabel(f.role)}</span>
+            <span class="memorial-stat-inline">${f.battlesServed} btl</span>
+            <span class="memorial-stat-inline">${f.kills} kills</span>
+            <span class="memorial-tier-tag tier-${tier}">${tier.toUpperCase()}</span>
+          </div>
+        </div>`;
+    };
+
+    // Unqualifying fallen rows
+    const unqualifyingRowHTML = (f) => {
+      const rankName = getRankInfo(f).abbr;
+      const name = f.name?.last || 'Unknown';
+      const score = f.legacyScore || 0;
+      return `
+        <div class="soldier-row unmemorialized-row-entry">
+          <div class="soldier-main">
+            <span class="soldier-name unmem-name">${rankName} ${name}</span>
+            <span class="unmem-score">Legacy: ${score}/${MEMORIAL_THRESHOLD}</span>
+          </div>
+        </div>`;
+    };
+
+    // Recruit rows (handles locked slots)
+    const recruitRowHTML = (r, i) => {
+      if (r?.locked) {
+        return `
+          <div class="soldier-row recruit-row-entry locked-slot">
+            <div class="soldier-main">
+              <span class="locked-slot-icon">🔒</span>
+              <span class="soldier-name locked-name">Slot locked</span>
+              <span class="locked-timer">${r.runsLeft} run${r.runsLeft !== 1 ? 's' : ''} remaining</span>
+            </div>
+          </div>`;
+      }
+      const canAfford = Game.resources.scrap >= r.cost;
+      const canRecruit = canAfford && !rosterFull;
+      const isSelected = selected.includes(`recruit_${i}`);
+      const lineageTag = r.lineage ? `<span class="lineage-tag">Son of ${r.lineage.fatherName}</span>` : '';
+      return `
+        <div class="soldier-row recruit-row-entry ${r.lineage ? 'recruit-legacy-row' : ''} ${isSelected ? 'selected' : ''} ${!canRecruit ? 'cant-afford' : ''}" data-action="hq-select-recruit" data-recruit="${i}">
+          <div class="soldier-main">
+            <span class="recruit-cost-tag ${canAfford ? '' : 'unaffordable'}">⬡${r.cost}</span>
+            <span class="soldier-name">${r.name?.first || ''} ${r.name?.last || 'Unknown'}</span>
+            <span class="soldier-role-tag">${getRoleLabel(r.role)}</span>
+            ${lineageTag}
+            <span class="recruit-traits">${_describePersonality(r.personality)}</span>
+          </div>
+        </div>`;
+    };
+
+    // Build sections
+    const memorialSection = `
+      <div class="roster-group memorial-group">
+        <div class="roster-group-header" data-action="hq-toggle-group" data-group="memorial">
+          <span class="group-chevron">${collapsed.memorial ? '▶' : '▼'}</span>
+          <span class="group-label">MEMORIAL WALL</span>
+          <span class="group-count">(${memorial.length}/${MEMORIAL_MAX_SLOTS})</span>
+        </div>
+        ${collapsed.memorial ? '' : `<div class="roster-group-list">
+          ${memorial.length > 0 ? memorial.map(memorialRowHTML).join('') : '<div class="empty-wall">No soldiers honored. Add qualifying fallen to the wall.</div>'}
+        </div>`}
+      </div>`;
+
+    const qualifyingSection = qualifying.length > 0 ? `
       <div class="roster-group">
-        <div class="roster-group-header" data-action="hq-toggle-group" data-group="${g.key}">
-          <span class="group-chevron">${isCollapsed ? '▶' : '▼'}</span>
-          <span class="group-label">${g.label}</span>
-          <span class="group-count">(${g.soldiers.length})</span>
-          ${woundedBadge}
+        <div class="roster-group-header" data-action="hq-toggle-group" data-group="qualifying">
+          <span class="group-chevron">${collapsed.qualifying ? '▶' : '▼'}</span>
+          <span class="group-label">ELIGIBLE FOR MEMORIAL</span>
+          <span class="group-count">(${qualifying.length})</span>
         </div>
-        ${isCollapsed ? '' : `<div class="roster-group-list">${g.soldiers.map(soldierRow).join('')}</div>`}
-      </div>`;
-  };
+        ${collapsed.qualifying ? '' : `<div class="roster-group-list">${qualifying.map(qualifyingRowHTML).join('')}</div>`}
+      </div>` : '';
 
-  // Build right panel — soldier card or comparison
-  let rightPanel = '';
-  const selectedSoldiers = selected.map(id => roster.find(s => s.id === id)).filter(Boolean);
-  if (selectedSoldiers.length === 1) {
-    rightPanel = _soldierCardHTML(selectedSoldiers[0]);
-  } else if (selectedSoldiers.length >= 2) {
-    rightPanel = _soldierCompareHTML(selectedSoldiers[0], selectedSoldiers[1]);
+    const recruitSection = `
+      <div class="roster-group recruitment-group">
+        <div class="roster-group-header" data-action="hq-toggle-group" data-group="recruitment">
+          <span class="group-chevron">${collapsed.recruitment ? '▶' : '▼'}</span>
+          <span class="group-label">AVAILABLE RECRUITS</span>
+          <span class="group-count">(${pool.filter(r => !r?.locked).length} available)</span>
+        </div>
+        ${collapsed.recruitment ? '' : `<div class="roster-group-list">${pool.map((r, i) => recruitRowHTML(r, i)).join('')}</div>`}
+      </div>`;
+
+    const unqualifyingSection = unqualifying.length > 0 ? `
+      <div class="roster-group">
+        <div class="roster-group-header" data-action="hq-toggle-group" data-group="unqualifying">
+          <span class="group-chevron">${collapsed.unqualifying ? '▶' : '▼'}</span>
+          <span class="group-label">RECENT FALLEN</span>
+          <span class="group-count">(${unqualifying.length})</span>
+        </div>
+        ${collapsed.unqualifying ? '' : `<div class="roster-group-list">${unqualifying.map(unqualifyingRowHTML).join('')}</div>`}
+      </div>` : '';
+
+    leftContent = memorialSection + qualifyingSection + recruitSection + unqualifyingSection;
+
+    // Right panel — context-dependent
+    const selMemorial = memorial.find(m => selected.includes(m.id));
+    const selFallenId = selected.find(id => typeof id === 'string' && id.startsWith('fallen_'));
+    const selRecruitIdx = selected.find(id => typeof id === 'string' && id.startsWith('recruit_'));
+
+    if (selMemorial) {
+      rightPanel = _memorialDetailHTML(selMemorial);
+    } else if (selFallenId) {
+      const fId = selFallenId.replace('fallen_', '');
+      const fallen = [...qualifying, ...unqualifying].find(f => f.id === fId);
+      if (fallen) rightPanel = _fallenDetailHTML(fallen, slotsLeft > 0, memorial);
+    } else if (selRecruitIdx !== undefined) {
+      const idx = parseInt(String(selRecruitIdx).replace('recruit_', ''));
+      const recruit = pool[idx];
+      if (recruit) rightPanel = _recruitDetailHTML(recruit, idx);
+    } else {
+      rightPanel = '<div class="panel-placeholder">Select a memorial, fallen soldier, or recruit to view details</div>';
+    }
   }
 
   return `
-    <div class="barracks-tab ${hasSelection ? 'has-panel' : ''}">
-      <div class="barracks-roster">
-        ${groups.map(groupHTML).join('')}
-        ${_recruitmentPanelHTML()}
+    <div class="barracks-tab">
+      ${subTabBar}
+      <div class="barracks-split">
+        <div class="barracks-roster">
+          ${leftContent}
+        </div>
+        <div class="barracks-panel">${rightPanel}</div>
       </div>
-      ${hasSelection ? `<div class="barracks-panel">${rightPanel}</div>` : ''}
     </div>
   `;
 }
 
-/** Rank chevron as simple text icon */
-function _rankChevron(rankIndex) {
-  const icons = ['', '▪', '▪▪', '◆', '▪▪▪', '★'];
-  return icons[rankIndex] || '';
+/** Memorial detail panel — full service history for a memorialized soldier */
+function _memorialDetailHTML(m) {
+  const rankName = getRankInfo(m).abbr;
+  const fullRank = getRankInfo(m).title;
+  const name = m.name?.last || 'Unknown';
+  const firstName = m.name?.first || '';
+  const tier = getMemorialTier(m);
+  const p = m.personality || {};
+
+  const statBar = (label, val) => {
+    const pct = Math.round((val || 0) * 100);
+    return `<div class="card-stat">
+      <span class="card-stat-label">${label}</span>
+      <div class="card-stat-bar"><div class="card-stat-fill" style="width:${pct}%"></div></div>
+      <span class="card-stat-val">${pct}</span>
+    </div>`;
+  };
+
+  const commNames = { combatAction: 'Combat Action', purpleHeart: 'Purple Heart', veteranService: 'Veteran Service', bronzeStar: 'Bronze Star', silverStar: 'Silver Star' };
+  const commList = (m.commendations || []).map(c => `<span class="comm-badge">${commNames[c] || c}</span>`).join('');
+
+  // Find sons in recruit pool
+  const pool = Game.hqRecruitPool || [];
+  const sons = pool.filter(r => r.lineage?.fatherId === m.id);
+  const sonsHTML = sons.length > 0
+    ? `<div class="memorial-sons"><h4>SONS IN RECRUIT POOL</h4>${sons.map(s =>
+        `<div class="son-entry">${s.name?.first} ${s.name?.last} — ${getRoleLabel(s.role)}</div>`
+      ).join('')}</div>`
+    : '';
+
+  return `
+    <div class="soldier-card memorial-detail memorial-tier-border-${tier}">
+      <div class="card-header">
+        <div class="card-rank">${rankName} — ${fullRank}</div>
+        <div class="card-fullname">${firstName} ${name}</div>
+        <div class="card-role">${getRoleLabel(m.role)}</div>
+      </div>
+      ${physicalStatsBlock(m)}
+      ${trainingBlock(m)}
+      <div class="card-record">
+        <h4>SERVICE RECORD</h4>
+        <div class="record-grid">
+          <span>Battles: ${m.battlesServed}</span>
+          <span>Kills: ${m.kills}</span>
+          <span>Medals: ${(m.commendations || []).length}</span>
+          <span>Heroics: ${(m.heroicActions || []).length}</span>
+        </div>
+        ${commList ? `<div class="comm-list">${commList}</div>` : ''}
+      </div>
+      <details class="card-personality-details">
+        <summary>Personality</summary>
+        <div class="card-personality">
+          ${statBar('AGG', p.aggression)}
+          ${statBar('PAT', p.patience)}
+          ${statBar('CRG', p.courage)}
+          ${statBar('DIS', p.discipline)}
+          ${statBar('INI', p.initiative)}
+          ${statBar('AWR', p.awareness)}
+        </div>
+      </details>
+      <div class="memorial-duration">
+        <span class="memorial-tier-label tier-${tier}">${tier.toUpperCase()}</span>
+        <span>Legacy Score: ${m.legacyScore}</span>
+      </div>
+      ${sonsHTML}
+      <div class="card-actions">
+        <button class="hq-action-btn dismiss-btn" data-action="hq-dismiss-memorial" data-soldier="${m.id}">REMOVE FROM WALL</button>
+      </div>
+    </div>
+  `;
+}
+
+/** Recruit detail panel — full stat preview with recruit button */
+function _recruitDetailHTML(r, idx) {
+  const p = r.personality || {};
+  const ph = r.physicals || {};
+  const canAfford = Game.resources.scrap >= r.cost;
+
+  const lineageHTML = r.lineage
+    ? `<div class="recruit-lineage-detail">Son of <strong>${r.lineage.fatherName}</strong></div>`
+    : '';
+
+  // Recommend MOS based on highest physical stat
+  const recommended = _recommendMOS(ph);
+
+  const pctBar = (label, val) => {
+    const pct = Math.round((val || 0) * 100);
+    return `<div class="card-stat"><span class="card-stat-label">${label}</span><div class="card-stat-bar"><div class="card-stat-fill" style="width:${pct}%"></div></div><span class="card-stat-val">${pct}</span></div>`;
+  };
+
+  return `
+    <div class="soldier-card recruit-detail ${r.lineage ? 'recruit-legacy-detail' : ''}">
+      <div class="card-header">
+        <div class="card-rank">RECRUIT</div>
+        <div class="card-fullname">${r.name?.first || ''} ${r.name?.last || 'Unknown'}</div>
+        <div class="card-role">${getRoleLabel(r.role)}</div>
+      </div>
+      ${lineageHTML}
+      ${physicalStatsBlock(r)}
+      <div class="recruit-mos-section">
+        <h4>ASSIGN MOS ${recommended ? `<span class="mos-recommend">Recommended: ${getRoleLabel(recommended)}</span>` : ''}</h4>
+        <div class="mos-select-grid">
+          ${ALL_ROLES.map(role => `<button class="mos-option ${r._selectedMOS === role ? 'selected' : ''} ${role === recommended ? 'recommended' : ''}" data-action="hq-select-mos" data-recruit="${idx}" data-mos="${role}">${getRoleLabel(role)}</button>`).join('')}
+        </div>
+      </div>
+      <details class="card-personality-details">
+        <summary>Personality</summary>
+        <div class="card-personality">
+          ${pctBar('AGG', p.aggression)}
+          ${pctBar('PAT', p.patience)}
+          ${pctBar('CRG', p.courage)}
+          ${pctBar('DIS', p.discipline)}
+          ${pctBar('INI', p.initiative)}
+          ${pctBar('AWR', p.awareness)}
+        </div>
+      </details>
+      <div class="recruit-cost-display">
+        <span class="recruit-cost-label">COST</span>
+        <span class="recruit-cost-val">⬡ ${r.cost}</span>
+      </div>
+      <div class="card-actions">
+        ${hasRosterRoom()
+          ? `<button class="hq-action-btn recruit-action-btn ${canAfford ? '' : 'disabled'}" data-action="hq-recruit-specific" data-recruit="${idx}" ${canAfford ? '' : 'disabled'}>
+              ${canAfford ? 'RECRUIT' : 'CANNOT AFFORD'}
+            </button>`
+          : `<button class="hq-action-btn disabled" disabled>ROSTER FULL (${getRosterCapacity()})</button>`
+        }
+        <button class="hq-action-btn dismiss-btn" data-action="hq-dismiss-recruit" data-recruit="${idx}">DISMISS (locks slot 10 runs)</button>
+      </div>
+    </div>
+  `;
+}
+
+/** Recommend MOS based on highest physical stat. */
+function _recommendMOS(physicals) {
+  if (!physicals) return ALL_ROLES[0];
+  const { vision, strength, reflexes, endurance } = physicals;
+  const max = Math.max(vision || 0, strength || 0, reflexes || 0, endurance || 0);
+  if (max === vision) return 'tc';
+  if (max === strength) return 'gunner';
+  if (max === reflexes) return 'driver';
+  if (max === endurance) return 'rifleman';
+  return ALL_ROLES[0];
+}
+
+/** Fallen soldier detail — shows stats + ADD TO WALL / REPLACE buttons */
+function _fallenDetailHTML(f, hasSlot, currentWall) {
+  const tier = getMemorialTier(f);
+  const rankName = getRankInfo(f).abbr;
+  const fullRank = getRankInfo(f).title;
+  const name = f.name?.last || 'Unknown';
+  const firstName = f.name?.first || '';
+  const p = f.personality || {};
+  const qualifies = f.qualifies;
+
+  const statBar = (label, val) => {
+    const pct = Math.round((val || 0) * 100);
+    return `<div class="card-stat">
+      <span class="card-stat-label">${label}</span>
+      <div class="card-stat-bar"><div class="card-stat-fill" style="width:${pct}%"></div></div>
+      <span class="card-stat-val">${pct}</span>
+    </div>`;
+  };
+
+  const commNames = { combatAction: 'Combat Action', purpleHeart: 'Purple Heart', veteranService: 'Veteran Service', bronzeStar: 'Bronze Star', silverStar: 'Silver Star' };
+  const commList = (f.commendations || []).map(c => `<span class="comm-badge">${commNames[c] || c}</span>`).join('');
+
+  // Action buttons
+  let actionsHTML = '';
+  if (qualifies) {
+    if (hasSlot) {
+      actionsHTML = `<button class="hq-action-btn recruit-action-btn" data-action="hq-add-to-wall" data-soldier="${f.id}">ADD TO WALL</button>`;
+    } else {
+      // Wall is full — offer replacement options
+      actionsHTML = `<div class="replace-options">
+        <span class="replace-label">Wall is full. Replace:</span>
+        ${currentWall.map(m => `
+          <button class="hq-action-btn replace-btn" data-action="hq-replace-on-wall" data-old="${m.id}" data-new="${f.id}">
+            ${getRankInfo(m).abbr} ${m.name?.last || 'Unknown'}
+          </button>
+        `).join('')}
+      </div>`;
+    }
+  } else {
+    actionsHTML = `<div class="panel-placeholder">Does not meet memorial threshold (${MEMORIAL_THRESHOLD})</div>`;
+  }
+
+  return `
+    <div class="soldier-card fallen-detail ${qualifies ? 'memorial-tier-border-' + tier : ''}">
+      <div class="card-header">
+        <div class="card-rank">${rankName} — ${fullRank}</div>
+        <div class="card-fullname">${firstName} ${name}</div>
+        <div class="card-role">${getRoleLabel(f.role)}</div>
+      </div>
+      ${physicalStatsBlock(f)}
+      ${trainingBlock(f)}
+      <div class="card-record">
+        <h4>SERVICE RECORD</h4>
+        <div class="record-grid">
+          <span>Battles: ${f.battlesServed}</span>
+          <span>Kills: ${f.kills}</span>
+          <span>Medals: ${(f.commendations || []).length}</span>
+          <span>Heroics: ${(f.heroicActions || []).length}</span>
+        </div>
+        ${commList ? `<div class="comm-list">${commList}</div>` : ''}
+      </div>
+      <details class="card-personality-details">
+        <summary>Personality</summary>
+        <div class="card-personality">
+          ${statBar('AGG', p.aggression)}
+          ${statBar('PAT', p.patience)}
+          ${statBar('CRG', p.courage)}
+          ${statBar('DIS', p.discipline)}
+          ${statBar('INI', p.initiative)}
+          ${statBar('AWR', p.awareness)}
+        </div>
+      </details>
+      <div class="memorial-duration">
+        <span class="memorial-tier-label tier-${tier}">${tier.toUpperCase()}</span>
+        <span>Legacy Score: ${f.legacyScore}</span>
+      </div>
+      <div class="card-actions">${actionsHTML}</div>
+    </div>
+  `;
+}
+
+/** Render insignia canvases in the barracks after DOM is mounted */
+function _renderBarracksInsignia() {
+  const setId = Game.settings?.insigniaSetId;
+  if (!setId) return;
+  const canvases = document.querySelectorAll('.soldier-insignia');
+  for (const c of canvases) {
+    const rank = parseInt(c.dataset.rank) || 0;
+    const cached = getCachedInsignia(setId, rank);
+    if (cached) {
+      const ctx = c.getContext('2d');
+      ctx.clearRect(0, 0, c.width, c.height);
+      ctx.drawImage(cached, 0, 0, c.width, c.height);
+    }
+  }
 }
 
 /** Soldier detail card — shown in right panel when one soldier selected */
 function _soldierCardHTML(s) {
-  const rankName = RANK_NAMES[s.rankIndex] || 'PVT';
+  const rankName = getRankInfo(s).abbr;
   const name = s.name?.last || s.name?.first || 'Unknown';
   const firstName = s.name?.first || '';
   const p = s.personality || {};
@@ -652,35 +1707,81 @@ function _soldierCardHTML(s) {
   const healCost = 25;
   const canHeal = isWounded && Game.resources.scrap >= healCost;
 
+  const cs = getEffectiveCombatStats(s);
+
   return `
-    <div class="soldier-card">
+    <div class="soldier-card ${isOfficer(s) ? 'officer-card' : ''}">
       <div class="card-header">
         <div class="card-rank">${rankName}</div>
         <div class="card-fullname">${firstName} ${name}</div>
-        <div class="card-role">${(s.role || 'rifleman').toUpperCase()}</div>
+        <div class="card-role">${getRoleLabel(s.role)}</div>
       </div>
-      <div class="card-personality">
-        <h4>PERSONALITY</h4>
-        ${statBar('AGG', p.aggression)}
-        ${statBar('PAT', p.patience)}
-        ${statBar('CRG', p.courage)}
-        ${statBar('DIS', p.discipline)}
-        ${statBar('INI', p.initiative)}
-        ${statBar('AWR', p.awareness)}
-      </div>
+      ${statDetailBlock(cs, s)}
       <div class="card-record">
-        <h4>SERVICE RECORD</h4>
-        <div class="record-grid">
-          <span>Battles: ${s.battlesServed || 0}</span>
-          <span>Kills: ${s.kills || 0}</span>
-          <span>MMR: ${Math.round(s.mmr || 0)}</span>
-          <span>Streak: ${s.streak || 0}</span>
-        </div>
+        ${isOfficer(s) ? `
+          <h4>COMMAND RECORD</h4>
+          <div class="record-grid">
+            <span>Runs: ${s.cmdMetrics?.runsCommanded || 0}</span>
+            <span>Ext: ${s.cmdMetrics?.runsCommanded ? Math.round(((s.cmdMetrics?.totalExtractions || 0) / s.cmdMetrics.runsCommanded) * 100) : 0}%</span>
+            <span>KIA: ${s.cmdMetrics?.soldiersLost || 0}</span>
+            <span>Waves: ${s.cmdMetrics?.wavesCompleted || 0}</span>
+            <span>Obj: ${s.cmdMetrics?.objectivesCompleted || 0}</span>
+            <span>MMR: ${Math.round(s.mmr || 0)}</span>
+          </div>
+        ` : `
+          <h4>SERVICE RECORD</h4>
+          <div class="record-grid">
+            <span>Battles: ${s.battlesServed || 0}</span>
+            <span>Kills: ${s.kills || 0}</span>
+            <span>MMR: ${Math.round(s.mmr || 0)}</span>
+            <span>Streak: ${s.streak || 0}</span>
+          </div>
+        `}
       </div>
+      <details class="card-personality-details">
+        <summary>Personality</summary>
+        <div class="card-personality">
+          ${statBar('AGG', p.aggression)}
+          ${statBar('PAT', p.patience)}
+          ${statBar('CRG', p.courage)}
+          ${statBar('DIS', p.discipline)}
+          ${statBar('INI', p.initiative)}
+          ${statBar('AWR', p.awareness)}
+        </div>
+      </details>
+      ${_greenToGoldHTML(s)}
       <div class="card-actions">
         ${isWounded ? `<button class="hq-action-btn ${canHeal ? '' : 'disabled'}" data-action="hq-heal-soldier" data-soldier="${s.id}" ${canHeal ? '' : 'disabled'}>HEAL ⬡${healCost}</button>` : ''}
+        ${!s.isPlayerCharacter ? `<button class="hq-action-btn retire-btn" data-action="hq-retire-soldier" data-soldier="${s.id}">RETIRE</button>` : ''}
         <button class="hq-action-btn dismiss-btn" data-action="hq-dismiss-soldier" data-soldier="${s.id}">DISMISS</button>
       </div>
+    </div>
+  `;
+}
+
+/** Green to Gold promotion section — shown on eligible enlisted soldiers */
+function _greenToGoldHTML(s) {
+  if (isOfficer(s)) return '';
+  const check = checkGreenToGold(s);
+  if (!check) return ''; // Below E-5
+
+  const canAfford = Game.resources.scrap >= check.scrapCost;
+  const meetsComms = check.commendationsHave >= check.commendationsRequired;
+  const canPromote = check.eligible && canAfford;
+
+  return `
+    <div class="g2g-section">
+      <h4>GREEN TO GOLD</h4>
+      <div class="g2g-info">
+        <span class="g2g-cost ${canAfford ? 'met' : 'unmet'}">⬡${check.scrapCost}</span>
+        <span class="g2g-comms ${meetsComms ? 'met' : 'unmet'}">${check.commendationsHave}/${check.commendationsRequired} medals</span>
+      </div>
+      ${canPromote ? `
+        <div class="g2g-warning">This is permanent. ${(getRankInfo(s)).abbr} ${s.name?.last} will leave the field.</div>
+        <button class="hq-action-btn g2g-btn" data-action="hq-promote-officer" data-soldier="${s.id}">PROMOTE TO 2LT</button>
+      ` : `
+        <div class="g2g-ineligible">${!meetsComms ? 'Needs more commendations' : 'Not enough scrap'}</div>
+      `}
     </div>
   `;
 }
@@ -750,11 +1851,13 @@ function _recruitmentPanelHTML() {
   const recruitCard = (r, i) => {
     const canAfford = Game.resources.scrap >= r.cost;
     const traits = _describePersonality(r.personality);
+    const lineageBadge = r.lineage ? `<div class="recruit-lineage">Son of ${r.lineage.fatherName}</div>` : '';
     return `
-      <div class="recruit-card ${canAfford ? '' : 'cant-afford'}">
+      <div class="recruit-card ${canAfford ? '' : 'cant-afford'} ${r.lineage ? 'recruit-legacy' : ''}">
         <div class="recruit-portrait"></div>
         <div class="recruit-name">${r.name?.first || ''} ${r.name?.last || 'Unknown'}</div>
-        <span class="recruit-role-badge">${(r.role || 'rifleman').toUpperCase()}</span>
+        <span class="recruit-role-badge">${getRoleLabel(r.role)}</span>
+        ${lineageBadge}
         <div class="recruit-desc">${traits}</div>
         <div class="recruit-cost">⬡ ${r.cost}</div>
         <button class="recruit-btn ${canAfford ? '' : 'disabled'}" data-action="hq-recruit-specific" data-recruit="${i}" ${canAfford ? '' : 'disabled'}>RECRUIT</button>
@@ -780,34 +1883,82 @@ function _recruitmentPanelHTML() {
 
 /** Generate a pool of recruits with varying stats and costs */
 function _generateRecruitPool(count) {
-  const roles = ['rifleman', 'rifleman', 'medic', 'engineer', 'heavy_gunner'];
+  const FIRST = ['Ryan', 'Kelly', 'Tom', 'Dana', 'Nick', 'Sam', 'Alex', 'Jordan', 'Casey', 'Morgan', 'Eric', 'Pat', 'Jamie', 'Riley', 'Quinn'];
+  const LAST = ['Fisher', 'Harris', 'Silva', 'Stone', 'Morgan', 'Kelly', 'Holt', 'Kerr', 'Freeman', 'Webb', 'Reyes', 'Chen', 'Okafor', 'Brooks', 'Tanaka'];
+  const baseRoles = ['rifleman', 'rifleman', 'medic', 'engineer', 'heavy_gunner'];
+  const clamp01 = v => Math.max(0, Math.min(1, v));
+
+  // Lineage influence from memorial wall
+  const lineage = getMemorialLineageInfluence();
+
+  // Build role weights — memorial soldiers boost their role's appearance
+  const roleWeights = {};
+  for (const r of baseRoles) roleWeights[r] = (roleWeights[r] || 0) + 1;
+  for (const m of lineage) {
+    const r = m.role || 'rifleman';
+    roleWeights[r] = (roleWeights[r] || 0) + 1.5; // 1.5x affinity boost per memorial
+  }
+  const weightedRoles = [];
+  for (const [role, w] of Object.entries(roleWeights)) {
+    for (let i = 0; i < Math.round(w); i++) weightedRoles.push(role);
+  }
+
   const pool = [];
-  for (let i = 0; i < count; i++) {
-    const role = roles[Math.floor(Math.random() * roles.length)];
-    // Random quality: 0.2-0.5 for cheap recruits, 0.4-0.7 for expensive ones
+
+  // Chance to generate a son for each memorialized soldier (one per pool generation)
+  const sonSlots = Math.min(Math.floor(count * 0.6), lineage.length); // Up to 60% of pool can be sons
+  const shuffledLineage = [...lineage].sort(() => Math.random() - 0.5);
+
+  for (let i = 0; i < sonSlots; i++) {
+    const father = shuffledLineage[i];
+    if (Math.random() > 0.6) continue; // 60% chance per memorial entry
+
+    const fp = father.personality || {};
+    const personality = {};
+    for (const trait of ['aggression', 'patience', 'courage', 'discipline', 'initiative', 'awareness']) {
+      // Inherit father x0.7 + random x0.3
+      const inherited = (fp[trait] || 0.5) * 0.7 + Math.random() * 0.3;
+      personality[trait] = clamp01(inherited);
+    }
+    // Lineage courage bonus
+    personality.courage = clamp01(personality.courage + 0.1);
+
+    const avgStat = Object.values(personality).reduce((a, b) => a + b, 0) / 6;
+    const baseCost = 30 + Math.round(avgStat * 120);
+    const cost = Math.max(20, baseCost + Math.floor(Math.random() * 20 - 10));
+
+    // Suffix for generation
+    const fatherLast = father.name?.last || 'Unknown';
+    pool.push({
+      name: { first: FIRST[Math.floor(Math.random() * FIRST.length)], last: fatherLast },
+      role: father.role || ALL_ROLES[0],
+      personality,
+      physicals: generatePhysicals('recruit'),
+      cost,
+      lineage: { fatherId: father.id, fatherName: `${fatherLast}` }
+    });
+  }
+
+  // Fill remaining slots with random recruits
+  while (pool.length < count) {
+    const role = weightedRoles[Math.floor(Math.random() * weightedRoles.length)];
     const quality = 0.2 + Math.random() * 0.5;
     const spread = 0.15;
-    const personality = {
-      aggression: Math.max(0, Math.min(1, quality + (Math.random() - 0.5) * spread * 2)),
-      patience: Math.max(0, Math.min(1, quality + (Math.random() - 0.5) * spread * 2)),
-      courage: Math.max(0, Math.min(1, quality + (Math.random() - 0.5) * spread * 2)),
-      discipline: Math.max(0, Math.min(1, quality + (Math.random() - 0.5) * spread * 2)),
-      initiative: Math.max(0, Math.min(1, quality + (Math.random() - 0.5) * spread * 2)),
-      awareness: Math.max(0, Math.min(1, quality + (Math.random() - 0.5) * spread * 2))
-    };
-    // Cost scales with quality
+    const personality = {};
+    for (const trait of ['aggression', 'patience', 'courage', 'discipline', 'initiative', 'awareness']) {
+      personality[trait] = clamp01(quality + (Math.random() - 0.5) * spread * 2);
+    }
     const baseCost = 30 + Math.round(quality * 120);
     const cost = baseCost + Math.floor(Math.random() * 20 - 10);
 
-    const FIRST = ['Ryan', 'Kelly', 'Tom', 'Dana', 'Nick', 'Sam', 'Alex', 'Jordan', 'Casey', 'Morgan', 'Eric', 'Pat', 'Jamie', 'Riley', 'Quinn'];
-    const LAST = ['Fisher', 'Harris', 'Silva', 'Stone', 'Morgan', 'Kelly', 'Holt', 'Kerr', 'Freeman', 'Webb', 'Reyes', 'Chen', 'Okafor', 'Brooks', 'Tanaka'];
-
     pool.push({
       name: { first: FIRST[Math.floor(Math.random() * FIRST.length)], last: LAST[Math.floor(Math.random() * LAST.length)] },
-      role, personality, cost
+      role, personality, physicals: generatePhysicals('recruit'), cost
     });
   }
-  return pool;
+
+  // Shuffle so sons aren't always first
+  return pool.sort(() => Math.random() - 0.5);
 }
 
 /** Generate a 1-line personality description from traits */
@@ -875,15 +2026,331 @@ function _motorPoolTabHTML() {
 }
 
 function _operationsTabHTML() {
+  // Initialize ops state if needed
+  if (!Game.opsConfig) {
+    Game.opsConfig = {
+      mapSize: 'small',
+      startWave: 1,
+      heroUnit: null,        // soldier ID or 'infantry'
+      squads: [{ units: [], vehicleId: null }],
+      record: Game.settings?.autoRecord !== false,
+      cmdOfficerId: null
+    };
+  }
+  const ops = Game.opsConfig;
+  const highestWave = Game.stats?.highestWave || 0;
+  const cmdUnlocked = highestWave >= 3;
+
+  // Full roster (active only)
+  const roster = getRoster().filter(s => s.status === 'active');
+
+  // Auto-set hero to player character and assign to squad 0 if not already set
+  if (!ops.heroUnit) {
+    const pc = roster.find(s => s.isPlayerCharacter);
+    if (pc) {
+      ops.heroUnit = pc.id;
+      if (ops.squads[0] && !ops.squads[0].units.includes(pc.id)) {
+        ops.squads[0].units.unshift(pc.id);
+      }
+    }
+  }
+  const officers = roster.filter(s => isOfficer(s));
+
+  // CMD effects — gates maxSquads and provides passive bonuses
+  const cmdOfficer = ops.cmdOfficerId ? roster.find(s => s.id === ops.cmdOfficerId) : null;
+  const cmdEffects = computeCmdEffects(cmdOfficer);
+  const mapCfg = ENDLESS_MAP_SIZES[ops.mapSize] || ENDLESS_MAP_SIZES.small;
+  const maxSquads = Math.min(mapCfg.maxSquads, cmdEffects.maxSquads);
+
+  // Wave power calculation
+  const wp = WAVE_POWER_CURVE;
+  const wavePower = Math.round(wp.base + ops.startWave * wp.linear + ops.startWave * ops.startWave * wp.quadratic);
+  const assignedIds = new Set();
+  for (const sq of ops.squads) {
+    for (const u of sq.units) assignedIds.add(u);
+  }
+  if (ops.heroUnit) assignedIds.add(ops.heroUnit);
+  const available = roster.filter(s => !assignedIds.has(s.id) && !isOfficer(s));
+
+  // Available vehicles
+  const vehicles = getAvailableVehicles();
+
+  // Filter state
+  const roleFilter = Game.opsRoleFilter || 'all';
+  const filteredAvailable = roleFilter === 'all' ? available
+    : available.filter(s => s.role === roleFilter || (roleFilter === 'infantry' && s.pool === 'infantry') || (roleFilter === 'vehicle' && s.pool === 'vehicle'));
+
+  // Selected slot for assignment
+  const selectedSlot = Game.opsSelectedSlot || null; // { squad, type, idx }
+
+  // ── MISSION CONFIG BAR ──
+  const mapSizeButtons = Object.entries(ENDLESS_MAP_SIZES).map(([key, cfg]) =>
+    `<button class="ops-map-btn ${ops.mapSize === key ? 'active' : ''}" data-action="ops-set-map" data-size="${key}">${cfg.label}</button>`
+  ).join('');
+
+  const waveOptions = [];
+  for (let w = 1; w <= Math.max(1, highestWave); w++) {
+    waveOptions.push(`<option value="${w}" ${w === ops.startWave ? 'selected' : ''}>Wave ${w}</option>`);
+  }
+
+  const configBar = `
+    <div class="ops-config-bar">
+      <div class="ops-config-group">
+        <span class="ops-config-label">MAP</span>
+        <div class="ops-map-buttons">${mapSizeButtons}</div>
+      </div>
+      <div class="ops-config-group">
+        <span class="ops-config-label">WAVE</span>
+        <select class="ops-wave-select" data-action="ops-set-wave">${waveOptions.join('')}</select>
+      </div>
+      <div class="ops-config-group">
+        <span class="ops-config-label">REC</span>
+        <button class="ops-toggle ${ops.record ? 'active' : ''}" data-action="ops-toggle-record">${ops.record ? '●' : '○'}</button>
+      </div>
+      <div class="ops-config-group">
+        <button class="ops-secondary-btn" data-action="hq-fire-range">FIRE RANGE</button>
+      </div>
+    </div>`;
+
+  // ── SQUAD TREE ──
+  // Collect all assigned unit IDs for hero star display
+  const allAssignedUnits = [];
+  for (const sq of ops.squads) {
+    for (const uid of sq.units) allAssignedUnits.push({ id: uid, type: 'infantry' });
+    if (sq.vehicleId) allAssignedUnits.push({ id: sq.vehicleId, type: 'vehicle' });
+  }
+
+  const squadSection = (sq, sqIdx) => {
+    const veh = sq.vehicleId ? vehicles.find(v => v.id === sq.vehicleId) : null;
+    const crew = veh ? getCrewForVehicle(veh.id) : {};
+    const schema = veh ? (CREW_SCHEMAS[veh.unitId] || []) : [];
+    const isPreviewingSlot = (type, idx) => Game.opsPreviewUnit?.type === type && Game.opsPreviewUnit?.squad === sqIdx && Game.opsPreviewUnit?.idx === idx;
+
+    // Vehicle row (only if assigned)
+    const vehicleRow = veh ? `
+      <div class="ops-slot filled ${isPreviewingSlot('vehicle', 0) ? 'previewing' : ''}" data-action="ops-preview-unit" data-unit-type="vehicle" data-squad="${sqIdx}" data-unit-idx="0">
+        ${ops.heroUnit === sq.vehicleId ? '<span class="ops-hero-star">★</span>' : ''}
+        <span class="ops-slot-icon">🚗</span>
+        <span class="ops-slot-name">${veh.unitId.toUpperCase()}</span>
+        <span class="ops-veh-hp">${Math.round(veh.hpPercent * 100)}%</span>
+        <button class="ops-slot-remove" data-action="ops-unassign" data-slot-type="vehicle" data-squad="${sqIdx}" title="Remove">✕</button>
+      </div>` : '';
+
+    // Crew slots (only if vehicle assigned)
+    const crewSlots = veh && schema.length > 0 ? schema.map((slot, i) => {
+      const crewMember = crew[slot];
+      const isHero = crewMember && ops.heroUnit === crewMember.id;
+      return `
+        <div class="ops-slot crew-slot ${crewMember ? 'filled' : 'empty'} ${selectedSlot?.type === 'crew' && selectedSlot?.squad === sqIdx && selectedSlot?.idx === i ? 'selecting' : ''}" data-action="${crewMember ? 'ops-preview-unit' : 'ops-select-slot'}" data-unit-type="crew" data-slot-type="crew" data-squad="${sqIdx}" data-slot-idx="${i}" data-unit-idx="${i}" data-crew-role="${slot}" ${crewMember ? `data-soldier="${crewMember.id}"` : ''}>
+          ${isHero ? '<span class="ops-hero-star">★</span>' : ''}
+          <span class="ops-crew-role">${getRoleLabel(slot)}</span>
+          ${crewMember
+            ? `<span class="ops-slot-name">${getRankInfo(crewMember).abbr} ${crewMember.name?.last || ''}</span><button class="ops-slot-remove" data-action="ops-unassign" data-slot-type="crew" data-squad="${sqIdx}" data-slot-idx="${i}" title="Remove">✕</button>`
+            : '<span class="ops-slot-empty">empty</span>'}
+        </div>`;
+    }).join('') : '';
+
+    // Infantry slots
+    const infantrySlots = sq.units.map((soldierId, i) => {
+      const s = roster.find(r => r.id === soldierId);
+      if (!s) return '';
+      const isHero = ops.heroUnit === soldierId;
+      const isPreviewing = isPreviewingSlot('infantry', i);
+      return `
+        <div class="ops-slot filled ${isPreviewing ? 'previewing' : ''}" data-action="ops-preview-unit" data-unit-type="infantry" data-squad="${sqIdx}" data-unit-idx="${i}" data-soldier="${soldierId}">
+          ${isHero ? '<span class="ops-hero-star">★</span>' : ''}
+          <span class="ops-slot-name">${getRankInfo(s).abbr} ${s.name?.last || ''}</span>
+          <span class="ops-slot-role">${getRoleLabel(s.role)}</span>
+          <button class="ops-slot-remove" data-action="ops-unassign" data-slot-type="infantry" data-squad="${sqIdx}" data-slot-idx="${i}" title="Remove">✕</button>
+        </div>`;
+    }).join('');
+
+    return `
+      <div class="ops-squad">
+        <div class="ops-squad-header">
+          <span class="ops-squad-label">SQUAD ${sqIdx + 1}</span>
+          <span class="ops-squad-count">${sq.units.length + (veh ? 1 : 0)} units</span>
+          <div class="ops-squad-actions">
+            ${!veh ? `<button class="ops-header-action" data-action="ops-select-slot" data-slot-type="vehicle" data-squad="${sqIdx}">+ Vehicle</button>` : ''}
+            <button class="ops-header-action" data-action="ops-select-slot" data-slot-type="infantry-add" data-squad="${sqIdx}">+ Infantry</button>
+            ${sqIdx > 0 ? `<button class="ops-squad-remove" data-action="ops-remove-squad" data-squad="${sqIdx}" title="Remove squad">✕</button>` : ''}
+          </div>
+        </div>
+        ${vehicleRow}
+        ${crewSlots ? `<div class="ops-crew-slots">${crewSlots}</div>` : ''}
+        ${infantrySlots}
+      </div>`;
+  };
+
+  // Ensure squad count matches map size
+  while (ops.squads.length < 1) ops.squads.push({ units: [], vehicleId: null });
+
+  const addSquadBtn = ops.squads.length < maxSquads
+    ? `<button class="ops-add-squad-btn" data-action="ops-add-squad">+ ADD SQUAD (${ops.squads.length}/${maxSquads})</button>`
+    : '';
+
+  // Hero indicator
+  const heroSoldier = ops.heroUnit ? roster.find(s => s.id === ops.heroUnit) : null;
+  const heroVehicle = ops.heroUnit ? vehicles.find(v => v.id === ops.heroUnit) : null;
+  const heroLabel = heroSoldier ? `★ ${getRankInfo(heroSoldier).abbr} ${heroSoldier.name?.last}` : heroVehicle ? `★ ${heroVehicle.unitId.toUpperCase()}` : '★ No hero selected';
+
+  // ── CMD BANNER ──
+  let cmdBanner = '';
+  if (!cmdUnlocked) {
+    cmdBanner = `
+      <div class="ops-cmd-banner ops-cmd-locked">
+        <span class="ops-cmd-label">COMMANDING OFFICER</span>
+        <span class="ops-cmd-locked-msg">Unlocks at Wave 3</span>
+      </div>`;
+  } else if (!cmdOfficer) {
+    const hasOfficers = officers.length > 0;
+    cmdBanner = `
+      <div class="ops-cmd-banner ops-cmd-empty ${Game.opsSelectedSlot?.type === 'cmd' ? 'selecting' : ''}" data-action="ops-select-slot" data-slot-type="cmd">
+        <span class="ops-cmd-label">COMMANDING OFFICER</span>
+        <span class="ops-cmd-empty-msg">${hasOfficers ? 'Click to assign an officer' : 'No officers available — promote an NCO in Barracks'}</span>
+      </div>`;
+  } else {
+    const cmdRank = (OFFICER_RANKS[cmdOfficer.rankIndex] || OFFICER_RANKS[0]);
+    const cmdName = `${cmdRank.abbr} ${cmdOfficer.name?.last || 'Unknown'}`;
+    const intelLabel = cmdEffects.intelQuality > 0.6 ? 'High' : cmdEffects.intelQuality > 0.3 ? 'Medium' : 'Low';
+    cmdBanner = `
+      <div class="ops-cmd-banner ops-cmd-filled">
+        <div class="ops-cmd-info">
+          <span class="ops-cmd-label">COMMANDING OFFICER</span>
+          <span class="ops-cmd-name">${cmdName}</span>
+        </div>
+        <div class="ops-cmd-effects">
+          <span class="ops-cmd-effect">Squads: ${cmdEffects.maxSquads}</span>
+          <span class="ops-cmd-effect">Intel: ${intelLabel}</span>
+          <span class="ops-cmd-effect">Morale: ${Math.round(cmdEffects.moraleDegradationResist * 100)}%</span>
+        </div>
+        <button class="ops-cmd-change" data-action="ops-select-slot" data-slot-type="cmd">CHANGE</button>
+      </div>`;
+  }
+
+  const squadTree = `
+    <div class="ops-squad-tree">
+      ${cmdBanner}
+      <div class="ops-hero-indicator">${heroLabel}</div>
+      ${ops.squads.map((sq, i) => squadSection(sq, i)).join('')}
+      ${addSquadBtn}
+    </div>`;
+
+  // ── AVAILABLE ROSTER (right panel) ──
+  const roleFilters = ['all', 'rifleman', 'medic', 'engineer', 'heavy_gunner', 'tc', 'gunner', 'driver'];
+  const filterBar = `
+    <div class="ops-filter-bar">
+      ${roleFilters.map(r => `<button class="ops-filter-btn ${roleFilter === r ? 'active' : ''}" data-action="ops-filter-role" data-role="${r}">${r === 'all' ? 'ALL' : getRoleLabel(r)}</button>`).join('')}
+    </div>`;
+
+  const previewId = Game.opsPreviewSoldier || null;
+  const opsRow = (s) => {
+    const rankName = getRankInfo(s).abbr;
+    const isPreviewing = previewId === s.id;
+    const cs = getEffectiveCombatStats(s);
+    return `
+      <div class="ops-available-row ${isPreviewing ? 'previewing' : ''}" data-action="ops-preview-soldier" data-soldier="${s.id}">
+        <canvas class="soldier-insignia" data-rank="${s.rankIndex}" width="64" height="64"></canvas>
+        <span class="soldier-name">${rankName} ${s.name?.last || 'Unknown'}</span>
+        <span class="soldier-role-tag">${getRoleLabel(s.role)}</span>
+        ${statRowSummary(cs, s)}
+      </div>`;
+  };
+
+  // Group available soldiers by pool (same sections as barracks)
+  const opsGroups = [
+    { key: 'infantry', label: 'INFANTRY', soldiers: filteredAvailable.filter(s => s.pool === 'infantry' || !s.pool) },
+    { key: 'crew', label: 'VEHICLE CREW', soldiers: filteredAvailable.filter(s => s.pool === 'vehicle') }
+  ].filter(g => g.soldiers.length > 0);
+
+  // Sort within groups by role then name
+  for (const g of opsGroups) {
+    g.soldiers.sort((a, b) => {
+      const roleA = a.role || 'rifleman';
+      const roleB = b.role || 'rifleman';
+      if (roleA !== roleB) return roleA.localeCompare(roleB);
+      return (a.name?.last || '').localeCompare(b.name?.last || '');
+    });
+  }
+
+  const opsCollapsed = Game.hqCollapsedGroups || {};
+  const availableRows = opsGroups.map(g => `
+    <div class="roster-group">
+      <div class="roster-group-header" data-action="hq-toggle-group" data-group="ops_${g.key}">
+        <span class="group-chevron">${opsCollapsed['ops_' + g.key] ? '▶' : '▼'}</span>
+        <span class="group-label">${g.label}</span>
+        <span class="group-count">(${g.soldiers.length})</span>
+      </div>
+      ${opsCollapsed['ops_' + g.key] ? '' : `<div class="roster-group-list">${g.soldiers.map(opsRow).join('')}</div>`}
+    </div>
+  `).join('');
+
+  // Vehicle list (when selecting a vehicle slot)
+  const vehicleRows = selectedSlot?.type === 'vehicle' ? vehicles.filter(v => {
+    // Exclude vehicles already assigned to other squads
+    return !ops.squads.some((sq, i) => sq.vehicleId === v.id && i !== selectedSlot.squad);
+  }).map(v => `
+    <div class="ops-available-row" data-action="ops-assign-vehicle" data-vehicle="${v.id}">
+      <span class="ops-veh-icon">🚗</span>
+      <span class="soldier-name">${v.unitId.toUpperCase()}</span>
+      <span class="ops-veh-hp">${Math.round(v.hpPercent * 100)}% HP</span>
+    </div>
+  `).join('') : '';
+
+  // Officer rows (when CMD slot is selected)
+  const officerRows = selectedSlot?.type === 'cmd' ? officers.map(o => {
+    const oRank = (OFFICER_RANKS[o.rankIndex] || OFFICER_RANKS[0]);
+    const isCurrent = ops.cmdOfficerId === o.id;
+    const m = o.cmdMetrics || {};
+    const extRate = m.runsCommanded > 0 ? Math.round((m.totalExtractions / m.runsCommanded) * 100) : 0;
+    return `
+      <div class="ops-available-row ops-officer-row ${isCurrent ? 'current-cmd' : ''}" data-action="ops-assign-cmd" data-soldier="${o.id}">
+        <canvas class="soldier-insignia" data-rank="${o.rankIndex}" width="64" height="64"></canvas>
+        <div class="ops-officer-info">
+          <span class="soldier-name">${oRank.abbr} ${o.name?.last || 'Unknown'}</span>
+          <span class="ops-officer-stats">${m.runsCommanded || 0} runs | ${extRate}% ext | ${m.soldiersLost || 0} KIA</span>
+        </div>
+        ${isCurrent ? '<span class="ops-current-badge">ACTIVE</span>' : ''}
+      </div>`;
+  }).join('') : '';
+
+  const rightContent = selectedSlot?.type === 'cmd'
+    ? `<h4 class="ops-panel-title">SELECT COMMANDING OFFICER</h4><div class="ops-available-list">${officerRows || '<div class="panel-placeholder">No officers available</div>'}</div>`
+    : selectedSlot?.type === 'vehicle'
+    ? `<h4 class="ops-panel-title">SELECT VEHICLE</h4>${vehicleRows || '<div class="panel-placeholder">No vehicles available</div>'}`
+    : `${filterBar}<div class="ops-available-list">${availableRows || '<div class="panel-placeholder">No soldiers available</div>'}</div>`;
+
+  // ── BOTTOM DETAIL PANEL (extracted to _buildOpsBottomPanel for targeted updates) ──
+  const bottomPanel = _buildOpsBottomPanel(ops, roster, vehicles);
+
+  // ── DEPLOY BAR ──
+  const totalUnits = ops.squads.reduce((sum, sq) => sum + sq.units.length + (sq.vehicleId ? 1 : 0), 0);
+  const canDeploy = ops.heroUnit && totalUnits > 0;
+
+  const deployBar = `
+    <div class="ops-deploy-bar">
+      <div class="ops-power-display">
+        <span class="ops-power-label">UNITS</span>
+        <span class="ops-power-val">${totalUnits}</span>
+      </div>
+      <div class="ops-power-display">
+        <span class="ops-power-label">WAVE ${ops.startWave} POWER</span>
+        <span class="ops-power-val">${wavePower}</span>
+      </div>
+      <button class="ops-deploy-btn ${canDeploy ? '' : 'disabled'}" data-action="ops-deploy" ${canDeploy ? '' : 'disabled'}>
+        ${canDeploy ? 'DEPLOY ▶' : 'ASSIGN HERO TO DEPLOY'}
+      </button>
+    </div>`;
+
   return `
     <div class="operations-tab">
-      <div class="ops-section">
-        <h3>DEPLOY</h3>
-        <button class="hq-deploy-btn" data-action="hq-deploy-endless">ENDLESS MODE</button>
+      ${configBar}
+      <div class="ops-split">
+        <div class="ops-left">${squadTree}</div>
+        <div class="ops-right">${rightContent}</div>
       </div>
-      <div class="ops-section">
-        <button class="hq-secondary-btn" data-action="hq-fire-range">FIRE RANGE</button>
-      </div>
+      ${bottomPanel}
+      ${deployBar}
     </div>
   `;
 }
@@ -5198,11 +6665,28 @@ function endlessBattleHTML() {
 
       <div class="kill-feed" id="kill-feed"></div>
 
+      <div class="mission-dialog-overlay" style="display:none">
+        <div class="mission-dialog-text"></div>
+        <div class="mission-dialog-hint">${'ontouchstart' in window ? 'Tap to continue' : 'Press SPACE to continue'}</div>
+      </div>
+
       <div class="endless-controls">
         <div class="endless-minimap">
-          <canvas class="minimap-canvas" width="80" height="80"></canvas>
+          <canvas class="minimap-canvas" width="160" height="160"></canvas>
         </div>
         <button class="control-btn" data-action="endless-pause">⏸</button>
+        <button class="control-btn" data-action="zoom-in">+</button>
+        <button class="control-btn" data-action="zoom-out">−</button>
+        <button class="control-btn controls-legend-btn" data-action="toggle-controls-legend">?</button>
+        <div class="controls-legend" style="display:none">
+        <div class="controls-legend-title">CONTROLS</div>
+        <div class="controls-legend-row"><span class="key">WASD</span> Move</div>
+        <div class="controls-legend-row"><span class="key">MOUSE</span> Aim</div>
+        <div class="controls-legend-row"><span class="key">CLICK</span> Fire</div>
+        <div class="controls-legend-row"><span class="key">R</span> Reload</div>
+        <div class="controls-legend-row"><span class="key">SCROLL</span> Zoom</div>
+        <div class="controls-legend-row"><span class="key">SPACE</span> Continue</div>
+        <div class="controls-legend-row"><span class="key">\`</span> Debug</div>
       </div>
     </div>
   `;
@@ -5261,6 +6745,50 @@ function endlessBetweenHTML() {
   `;
 }
 
+function medevacSceneHTML() {
+  const roster = Game.roster || [];
+  const wounded = roster.filter(s => s.status === 'wounded' && !s.isPlayerCharacter);
+  const woundedCount = wounded.length;
+  const allAlive = woundedCount === 0;
+  const totalSquad = roster.filter(s => !s.isPlayerCharacter).length;
+  const allDown = woundedCount === totalSquad && totalSquad > 0;
+
+  // Determine squad status text
+  let squadStatusLine = '';
+  if (allAlive) {
+    squadStatusLine = `
+      <div class="medevac-line medevac-player" data-step="squad1">"The others — they all make it?"</div>
+      <div class="medevac-line medevac-doc" data-step="squad2">"Every one of them. Your squad's waiting for you back at base."</div>`;
+  } else if (allDown) {
+    squadStatusLine = `
+      <div class="medevac-line medevac-player" data-step="squad1">"The squad... are they...?"</div>
+      <div class="medevac-line medevac-doc" data-step="squad2">"They're alive. All of them. It's going to take some time, but they'll pull through. You got them out — that's what matters."</div>`;
+  } else {
+    const names = wounded.slice(0, 3).map(s => s.name?.last || 'Soldier').join(' and ');
+    squadStatusLine = `
+      <div class="medevac-line medevac-player" data-step="squad1">"What about my squad?"</div>
+      <div class="medevac-line medevac-doc" data-step="squad2">"${names}... they're in surgery. They're tough — give it a few days and they'll be back on their feet."</div>`;
+  }
+
+  return `
+    <div class="screen medevac-screen">
+      <div class="medevac-dialog">
+        <div class="medevac-line medevac-doc" data-step="intro">"Easy now. You're safe. What's your name, soldier?"</div>
+        <div class="medevac-name-input" data-step="name">
+          <input type="text" class="medevac-input" id="medevac-first" placeholder="First name" maxlength="20" autocomplete="off" />
+          <input type="text" class="medevac-input" id="medevac-last" placeholder="Last name" maxlength="20" autocomplete="off" />
+          <button class="btn medevac-confirm" data-action="medevac-name-confirm">Confirm</button>
+        </div>
+        <div class="medevac-line medevac-doc" data-step="greeting"></div>
+        <div class="medevac-line medevac-doc" data-step="heal">"Let's get you patched up."</div>
+        ${squadStatusLine}
+        <div class="medevac-continue" data-step="done">
+          <button class="btn" data-action="medevac-continue">Continue</button>
+        </div>
+      </div>
+    </div>`;
+}
+
 function endlessResultHTML() {
   const e = Game.endless;
   if (!e) return '<div class="screen">Loading...</div>';
@@ -5306,10 +6834,13 @@ function endlessResultHTML() {
 
       <div class="result-actions">
         ${isDeath
-          ? `<button class="menu-btn primary" data-action="endless-retry">NEW RUN</button>`
+          ? (Game._isFirstRun
+            ? `<button class="menu-btn primary" data-action="endless-restart-intro">RESTART</button>`
+            : `<button class="menu-btn primary" data-action="endless-retry">NEW RUN</button>`)
           : `<button class="menu-btn primary" data-action="endless-next-wave">CONTINUE (Wave ${wave + 1})</button>
              <button class="menu-btn extract-btn" data-action="endless-extract">EXTRACT — Keep ⬡ ${e.loot?.scrap || 0}</button>`
         }
+        <button class="menu-btn secondary" data-action="endless-view-replay">VIEW REPLAY</button>
       </div>
     </div>
   `;
@@ -5669,7 +7200,8 @@ export function replayTheaterHTML(replays, activeFilter = 'all') {
       const waveMatch = r.result?.match(/^wave_(\d+)_complete$/);
       const resultColor = r.result === 'in_progress' ? '#fb923c' : r.result === 'blue_wins' ? '#4a9eff' : r.result === 'red_wins' ? '#ff4444' : r.result === 'victory' ? '#4a9eff' : r.result === 'defeat' ? '#ff4444' : r.result === 'draw' ? '#fbbf24' : r.result === 'exit' ? '#94a3b8' : waveMatch ? '#4ade80' : '#888';
       const resultText = r.result === 'in_progress' ? 'In Progress' : r.result === 'blue_wins' ? 'Blue Wins' : r.result === 'red_wins' ? 'Red Wins' : r.result === 'victory' ? 'Victory' : r.result === 'defeat' ? 'Defeat' : r.result === 'draw' ? 'Draw' : r.result === 'exit' ? 'Exited' : waveMatch ? `Wave ${waveMatch[1]}` : r.result || 'Unknown';
-      const modeLabel = r.mode === 'fire_range' ? 'Fire Range' : r.mode === 'campaign' ? 'Campaign' : r.mode === 'endless' ? 'Endless' : r.mode || 'Fire Range';
+      const missionLabel = r.missionId === 'intro' ? 'Intro Mission' : r.missionId ? `Mission: ${r.missionId}` : null;
+      const modeLabel = missionLabel || (r.mode === 'fire_range' ? 'Fire Range' : r.mode === 'campaign' ? 'Campaign' : r.mode === 'endless' ? 'Endless' : r.mode || 'Fire Range');
       const debugTag = r.debugSave ? '<span class="replay-debug-tag">DEBUG</span>' : '';
       const duration = r.duration ? `${Math.floor(r.duration / 60)}m ${Math.floor(r.duration % 60)}s` : '?';
       const date = r.recordedAt ? new Date(r.recordedAt).toLocaleString() : '?';
@@ -5695,10 +7227,15 @@ export function replayTheaterHTML(replays, activeFilter = 'all') {
     }
   }
   return `<div class="replay-theater">
-    <h1>REPLAY THEATER</h1>
-    <div class="replay-tabs">${tabsHTML}</div>
+    <div style="position:relative;display:flex;justify-content:center;align-items:center;margin-bottom:12px;">
+      <button class="replay-back-btn" data-action="replay-back" style="position:absolute;left:0;">Back</button>
+      <h1 style="margin:0;">REPLAY THEATER</h1>
+    </div>
+    <div class="replay-tabs" style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+      ${tabsHTML}
+      ${replays?.length > 20 ? `<button class="replay-tab" data-action="replay-purge" style="margin-left:auto;color:var(--accent-red);border-color:var(--accent-red);">Purge (keep 20)</button>` : ''}
+    </div>
     <div class="replay-list">${cards}</div>
-    <button class="replay-back-btn" data-action="replay-back">Back</button>
   </div>`;
 }
 

@@ -7,7 +7,7 @@
 // Damage falloff: steep drop beyond ~60% of range
 // ═══════════════════════════════════════════════════════════════
 
-import { UNIT_COMBAT_STATS } from './constants.js';
+import { UNIT_COMBAT_STATS, applyCrewMod, CREW_DEFAULT_MOD, CREW_MOD_FLOOR, CREW_MOD_CEILING, getWeaponMagConfig } from './constants.js';
 
 // Zero-in time fallback for enemy AI types (not in UNIT_COMBAT_STATS)
 const ENEMY_ZERO_IN = {
@@ -51,7 +51,9 @@ export function updateStability(unit, dtSec, typeKey) {
   // Turret slew bleeds stability — fast turret rotation destabilizes aim.
   // Per-unit slewThreshold: infantry can snap-aim without penalty, heavy turrets penalize any rotation.
   const turretAngVel = unit._turretAngVel ?? 0;
-  const slewThreshold = combatStats?.slewThreshold ?? 0.2;
+  // Crew stability modifier: better gunner has higher effective slew threshold
+  const stabMod = unit._crewMods?.gunner?.stabilityRecovery ?? unit._crewMods?.stabilityRecovery ?? CREW_DEFAULT_MOD;
+  const slewThreshold = applyCrewMod(combatStats?.slewThreshold ?? 0.2, stabMod);
   if (turretAngVel > slewThreshold) {
     const slewBleed = Math.min(0.8, (turretAngVel - slewThreshold) / (Math.PI * 1.5)) * dtSec;
     unit.stability = Math.max(0, unit.stability - slewBleed);
@@ -110,7 +112,11 @@ export function applyRecoilDrop(unit) {
   if (!unit || unit.stability === undefined) return;
   const damage = unit.damage || 10;
   // Light weapons (10 dmg): 0.05 drop. Heavy (60 dmg): 0.30 drop.
-  const drop = Math.min(0.4, damage * 0.005);
+  const baseDrop = Math.min(0.4, damage * 0.005);
+  // Crew recoil management: stronger gunner absorbs more recoil
+  const recoilMod = unit._crewMods?.gunner?.recoilManagement ?? unit._crewMods?.recoilManagement ?? CREW_DEFAULT_MOD;
+  // Invert: higher mod = less drop (good crew reduces recoil)
+  const drop = baseDrop * (CREW_MOD_CEILING - recoilMod * (CREW_MOD_CEILING - CREW_MOD_FLOOR));
   unit.stability = Math.max(0, unit.stability - drop);
 }
 
@@ -210,11 +216,38 @@ export function computeShotAccuracy(unit, target, opts = {}) {
 // ═══════════════════════════════════════════════════════════════
 
 export function shouldFire(unit, target, b, now, opts = {}) {
-  // 1. COOLDOWN — hard gate
-  const fireRate = unit.fireRate || 2000;
-  const lastAttack = unit.lastAttack || unit.lastShot || 0;
-  if (now - lastAttack < fireRate) {
-    return { canFire: false, accuracy: 0, damageMod: 0 };
+  // 1. MAGAZINE CHECK — if unit has a magazine, check ammo/reload state
+  if (unit._hasMagazine) {
+    // Currently reloading — check if done
+    if (unit._isReloading) {
+      const reloadMod = unit._crewMods?.gunner?.reloadSpeed ?? unit._crewMods?.reloadSpeed ?? CREW_DEFAULT_MOD;
+      const reloadDur = unit._reloadDuration * (CREW_MOD_CEILING - reloadMod * (CREW_MOD_CEILING - CREW_MOD_FLOOR));
+      if (now - unit._reloadStart < reloadDur) {
+        return { canFire: false, accuracy: 0, damageMod: 0, reason: 'reloading' };
+      }
+      // Reload complete — refill magazine
+      unit._isReloading = false;
+      unit._magAmmo = unit._magSize;
+    }
+    // Empty magazine — start reload
+    if (unit._magAmmo <= 0) {
+      unit._isReloading = true;
+      unit._reloadStart = now;
+      return { canFire: false, accuracy: 0, damageMod: 0, reason: 'reloading' };
+    }
+    // Burst rate cooldown (time between shots within a magazine)
+    const lastAttack = unit.lastAttack || unit.lastShot || 0;
+    if (now - lastAttack < unit._burstRate) {
+      return { canFire: false, accuracy: 0, damageMod: 0 };
+    }
+  } else {
+    // 1b. SINGLE-SHOT COOLDOWN — original behavior (crew reload speed reduces cooldown)
+    const reloadMod = unit._crewMods?.gunner?.reloadSpeed ?? unit._crewMods?.reloadSpeed ?? CREW_DEFAULT_MOD;
+    const fireRate = (unit.fireRate || 2000) * (CREW_MOD_CEILING - reloadMod * (CREW_MOD_CEILING - CREW_MOD_FLOOR));
+    const lastAttack = unit.lastAttack || unit.lastShot || 0;
+    if (now - lastAttack < fireRate) {
+      return { canFire: false, accuracy: 0, damageMod: 0 };
+    }
   }
 
   // 2. RANGE CUTOFF — hard gate
@@ -224,6 +257,13 @@ export function shouldFire(unit, target, b, now, opts = {}) {
   const range = unit.range || 150;
   if (dist > range * 1.1) {
     return { canFire: false, accuracy: 0, damageMod: 0 };
+  }
+
+  // 2b. SHARED INTEL PENALTY — firing on intel-only targets has severely reduced accuracy
+  // Direct vision: normal accuracy. Shared intel: suppressive fire only (25% accuracy cap)
+  let intelPenalty = 1.0;
+  if (unit._targetDirect === false) {
+    intelPenalty = 0.25;
   }
 
   // 3. Accuracy physics (shared with hero)
@@ -255,5 +295,16 @@ export function shouldFire(unit, target, b, now, opts = {}) {
     return { canFire: false, accuracy: shot.accuracy, damageMod: shot.damageMod, factors: shot.factors };
   }
 
-  return { canFire: true, accuracy: shot.accuracy, damageMod: shot.damageMod, factors: shot.factors };
+  const finalAccuracy = shot.accuracy * intelPenalty;
+  return { canFire: true, accuracy: finalAccuracy, damageMod: shot.damageMod, factors: shot.factors };
+}
+
+/**
+ * Decrement magazine ammo after a successful shot.
+ * Call from tryShoot/heroFire after creating a projectile.
+ * @param {object} unit - The unit that just fired
+ */
+export function consumeAmmo(unit) {
+  if (!unit._hasMagazine) return;
+  unit._magAmmo = Math.max(0, unit._magAmmo - 1);
 }

@@ -4,9 +4,9 @@
 // Lane-based and H2H modes use their own systems.
 // ═══════════════════════════════════════════════════════════════
 
-import { Team, Owner, getStanceModifier, getEnemyStance } from './constants.js';
+import { Team, Owner, getStanceModifier, getEnemyStance, CREW_DEFAULT_MOD } from './constants.js';
 import { applyHitStabilityDrop } from './fire-decision.js';
-import { isTerrainBlocked } from './terrain-utils.js';
+import { isTerrainBlocked, getTerrainAt } from './terrain-utils.js';
 import { getBridgeCoverMult, isBridgeDeckBlocking } from './terrain-query.js';
 import {
   recordDamage,
@@ -17,6 +17,67 @@ import {
   getTierDamageMultiplier
 } from './ai.js';
 import { logEvent } from './battle-log.js';
+
+// ── Terrain cover system ─────────────────────────────────────
+// Miss chance: projectile "hits a tree" — based on terrain + endurance (cover effectiveness)
+// Damage reduction: strength absorbs impact when hit lands
+
+const TERRAIN_MISS_CHANCE = {
+  open:    0,
+  grass:   0,
+  brush:   0.10,
+  forest:  0.25,
+  trench:  0.35,
+  pillbox: 0.45,
+  water:   0
+};
+
+const TERRAIN_SUPPRESSION_MULT = {
+  open:    1.0,
+  grass:   1.0,
+  brush:   0.85,
+  forest:  0.70,
+  trench:  0.55,
+  pillbox: 0.40,
+  water:   1.0
+};
+
+/**
+ * Apply terrain cover effects to incoming damage.
+ * Returns { missed, dmg, suppressionMult } — missed=true means projectile hit cover, not the unit.
+ *
+ * @param {object} b - Battle state
+ * @param {object} unit - Target unit being hit
+ * @param {number} dmg - Incoming damage before cover
+ * @returns {{ missed: boolean, dmg: number, suppressionMult: number }}
+ */
+function applyTerrainCover(b, unit, dmg) {
+  const terrain = getTerrainAt(b, unit.x, unit.y);
+  const baseMiss = TERRAIN_MISS_CHANCE[terrain] || 0;
+  const suppressionMult = TERRAIN_SUPPRESSION_MULT[terrain] || 1.0;
+
+  if (baseMiss <= 0 && suppressionMult >= 1.0) {
+    return { missed: false, dmg, suppressionMult: 1.0 };
+  }
+
+  // Endurance (cover effectiveness) modifies miss chance: high endurance = better cover use
+  // coverMod ranges from CREW_DEFAULT_MOD (0.3) to ~1.0
+  const coverMod = unit._crewMods?.coverEffectiveness ?? CREW_DEFAULT_MOD;
+  const missChance = baseMiss * (0.5 + coverMod * 0.5); // 50%-100% of base miss chance
+
+  // Roll for miss
+  if (Math.random() < missChance) {
+    return { missed: true, dmg: 0, suppressionMult };
+  }
+
+  // Strength-based damage reduction: stronger soldiers absorb more impact
+  // strengthMod ranges from ~0.3 to ~1.0
+  const strengthMod = unit._crewMods?.recoilManagement ?? CREW_DEFAULT_MOD; // recoilManagement is strength-driven
+  const dmgReduction = strengthMod * 0.12; // 0-12% damage reduction
+  const reducedDmg = Math.max(1, Math.round(dmg * (1 - dmgReduction)));
+
+  return { missed: false, dmg: reducedDmg, suppressionMult };
+}
 
 /**
  * Track hit/kill metrics for roster soldier progression.
@@ -65,14 +126,27 @@ function _applyEnemyHitToBlue(b, p, unit, now, opts = {}) {
   const bridgeMult = getBridgeCoverMult(b.terrainMap?.bridges, unit.x, unit.y, p.vx, p.vy);
   if (bridgeMult < 1) dmg = Math.round(dmg * bridgeMult);
 
+  // God mode: hero takes no damage
+  if (unit._godMode) { p.dead = true; return; }
+
+  // Terrain cover: miss chance + damage reduction
+  const cover = applyTerrainCover(b, unit, dmg);
+  if (cover.missed) {
+    p.dead = true;
+    // Still apply reduced suppression — near miss in cover
+    applySuppression(unit, dmg * 0.3 * cover.suppressionMult, unit.maxHp);
+    return;
+  }
+  dmg = cover.dmg;
+
   unit.hp -= dmg;
   p.dead = true;
 
-  // Physics: stability drop, shock, suppression
+  // Physics: stability drop, shock, suppression (reduced by cover)
   applyHitStabilityDrop(unit, dmg);
   unit._shockTimer = 2;
   unit._lastAttackerId = p.sourceId || null;
-  applySuppression(unit, dmg, unit.maxHp);
+  applySuppression(unit, dmg * cover.suppressionMult, unit.maxHp);
   recordDamage(unit, p.sourceId || '?', dmg);
 
   // Debug invincibility
@@ -144,11 +218,18 @@ function _detonateProjectile(b, p, impactX, impactY, now, opts = {}) {
         if (useTierDamage) {
           dmg = Math.round(dmg * getTierDamageMultiplier(p.attackerTier ?? 0, getArmorTier(unit)));
         }
+        // Terrain cover on blast damage
+        const bCover = applyTerrainCover(b, unit, dmg);
+        if (bCover.missed) {
+          applySuppression(unit, dmg * 0.3 * bCover.suppressionMult, unit.maxHp);
+          continue;
+        }
+        dmg = bCover.dmg;
         unit.hp -= dmg;
         if (unit.hp < 0) unit.hp = 0;
         applyHitStabilityDrop(unit, dmg);
         unit._shockTimer = 2;
-        applySuppression(unit, dmg, unit.maxHp);
+        applySuppression(unit, dmg * bCover.suppressionMult, unit.maxHp);
         recordDamage(unit, p.sourceId || '?', dmg);
 
         if (unit.hp <= 0) {
@@ -299,6 +380,14 @@ export function resolveProjectiles(b, now, dtSec, opts = {}) {
           const bridgeMult = getBridgeCoverMult(b.terrainMap?.bridges, e.x, e.y, p.vx, p.vy);
           if (bridgeMult < 1) dmg = Math.round(dmg * bridgeMult);
 
+          // Terrain cover: miss chance + damage reduction
+          const eCover = applyTerrainCover(b, e, dmg);
+          if (eCover.missed) {
+            applySuppression(e, dmg * 0.3 * eCover.suppressionMult, e.maxHp);
+            return; // Projectile missed — hit terrain cover
+          }
+          dmg = eCover.dmg;
+
           e.hp -= dmg;
           if (e.hp < 0) e.hp = 0;
 
@@ -319,7 +408,7 @@ export function resolveProjectiles(b, now, dtSec, opts = {}) {
           // Combat effects
           e._shockTimer = 2;
           e._lastAttackerId = p.sourceId || null;
-          applySuppression(e, dmg, e.maxHp);
+          applySuppression(e, dmg * eCover.suppressionMult, e.maxHp);
           recordDamage(e, p.sourceId || 'hero', dmg);
 
           // Debug invincibility

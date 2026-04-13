@@ -33,6 +33,7 @@ export function createRecorder(b, mode) {
   const recorder = {
     version: 2,
     mode: mode || (b.fireRange ? 'fire_range' : 'unknown'),
+    missionId: b._isMission ? (b._mission?.id || 'intro') : null,
     seed: b.terrainSeed || null,
     mapWidth: b.mapWidth,
     mapHeight: b.mapHeight,
@@ -74,6 +75,12 @@ function _snapshotUnit(u) {
     slotDev: Math.round(u._dbg?.slotDev ?? 0),
     fmt: u._dbg?.formation || ''
   };
+  // Terrain — only include when it changes (saves replay size)
+  const ter = u._dbg?.terrain || u._terrain || '';
+  if (ter !== (u._lastRecordedTerrain || '')) {
+    snap.ter = ter;
+    u._lastRecordedTerrain = ter;
+  }
   return snap;
 }
 
@@ -131,6 +138,12 @@ export function recordFrame(b, now) {
       stab: +((b.hero.stability ?? 0).toFixed(2)),
       sup: +((b.hero._suppression ?? 0).toFixed(2))
     };
+    // Terrain — only on change
+    const heroTer = b.hero._terrain || '';
+    if (heroTer !== (rec._lastHeroTerrain || '')) {
+      hero.ter = heroTer;
+      rec._lastHeroTerrain = heroTer;
+    }
   }
 
   // Snapshot units (blue team)
@@ -387,6 +400,7 @@ export function finalizeRecording(b) {
   return {
     version: rec.version,
     mode: rec.mode,
+    missionId: rec.missionId || null,
     seed: rec.seed,
     mapWidth: rec.mapWidth,
     mapHeight: rec.mapHeight,

@@ -2,18 +2,20 @@
 // MAIN - Entry point, event handlers, initialization
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, UNITS, PROJECTILES, UNIT_PROJECTILES, SquadOrder, ENDLESS_VEHICLES, Team, GAME_VERSION_STRING } from './constants.js';
-import { Game, newBattlePlan, newCampaign, createAdvancingScenario, createFrontlineScenario, newZoneBattle, newEndlessRun, newFireRangeRun } from './state.js';
+import { State, SubState, HQTab, UNITS, PROJECTILES, UNIT_PROJECTILES, SquadOrder, ENDLESS_VEHICLES, Team, GAME_VERSION_STRING, RANK_TABLE } from './constants.js';
+import { Game, newBattlePlan, newCampaign, createAdvancingScenario, createFrontlineScenario, newZoneBattle, newEndlessRun, newFireRangeRun, ENDLESS_MAP_SIZES } from './state.js';
 import { initAudio, sound } from './audio.js';
 import { save, load, saveFRConfig, loadFRConfig, saveFRNamedConfig, loadFRNamedConfigs, deleteFRNamedConfig, migrateFRConfig } from './storage.js';
-import { goto, deploy, switchUnit, stopLoop, stopFireRangeLoop, formatFireRangeLog, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, campaignMouseDown, campaignMouseUp, campaignSetAimAngle, campaignClearAimAngle, campaignSetJoystick, campaignClearJoystick, endlessKeyDown, endlessKeyUp, endlessMouseMove, endlessMouseDown, endlessMouseUp, handleDeployClick, fireRangeKeyDown, fireRangeKeyUp, fireRangeWheel, updateEventLog, extractFromRun } from './game.js';
+import { goto, deploy, switchUnit, stopLoop, stopFireRangeLoop, formatFireRangeLog, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, endlessKeyDown, endlessKeyUp, endlessMouseMove, endlessMouseDown, endlessMouseUp, handleDeployClick, fireRangeKeyDown, fireRangeKeyUp, fireRangeWheel, updateEventLog, extractFromRun, battleMouseDown, battleMouseUp, battleSetAimAngle, battleClearAimAngle, battleSetJoystick, battleClearJoystick, battleSetAimDepth, battleClearAimDepth, getActiveBattle, getHeroTouchConfig } from './game.js';
 import { FR_PRESETS } from './fire-range-presets.js';
-import { render, setSubState, fetchAvailableVehicles, fetchUnitVariants, fetchVariantData, getUnitVariants, fireRangeResultsHTML, replayTheaterHTML } from './ui.js';
+import { render, updateBarracksPanel, updateOpsPanel, setSubState, fetchAvailableVehicles, fetchUnitVariants, fetchVariantData, getUnitVariants, fireRangeResultsHTML, replayTheaterHTML, newGameSetupHTML, removeIntroSeed, saveIntroSeed } from './ui.js';
+import { setActiveSlot, migrateLegacySave, updateActiveSlotMeta, deleteSlot } from './storage.js';
+import { advanceDialog, isDialogPaused, launchFirstTimeMission } from './mission.js';
 import { ReplayPlayer } from './replay-player.js';
 import { cameraKeyDown, cameraKeyUp, cameraZoom, cameraPanStart, cameraPanMove, cameraPanEnd } from './camera.js';
 import { initController, getControllerInput, updateButtonStates, setControllerCallbacks, isControllerConnected } from './controller.js';
 import { initGestures, setResetJoysticksCallback } from './gestures.js';
-import { generateRecruit, saveRoster, createSoldier } from './roster.js';
+import { generateRecruit, saveRoster, createSoldier, removeFromMemorial, addToMemorial, replaceOnMemorial, saveMemorial, getRecentFallen, hasRosterRoom, dismissRecruit, promoteToOfficer, retireSoldier, debugSetRank, debugSetMMR, debugSetPhysicals, debugSetTraining, debugSetAllTraining, debugMaxSoldier, debugResetSoldier, getSoldier, generatePhysicals, rushHeal } from './roster.js';
 import { Objective, assignObjective } from './commander.js';
 import { PERSONALITY_PRESETS } from './ai-pipeline.js';
 import { EntityRenderer } from './entity-renderer.js';
@@ -180,8 +182,10 @@ function checkAuth() {
 }
 
 async function initApp() {
-  // Load saved data
-  load();
+  // Migrate legacy save to slot 0 if needed
+  migrateLegacySave();
+  // Don't load yet — wait for slot selection. Just render title screen.
+  // load(); — moved to slot-select action
   // Preload PNG sprites (non-blocking, falls back to SVG if missing)
   initSprites();
   // Preload terrain sprites for PCG battle terrain (non-blocking)
@@ -288,8 +292,8 @@ function controllerLoop() {
   const input = getControllerInput();
   if (!input) return;
 
-  // Only process during campaign battle
-  if (Game.state === State.CAMPAIGN_BATTLE) {
+  // Process during any hero battle
+  if (isHeroBattle()) {
     processControllerBattle(input);
   }
 
@@ -345,10 +349,10 @@ function processControllerBattle(input) {
   // Shooting (RT trigger)
   if (input.shoot && !controllerShootHeld) {
     controllerShootHeld = true;
-    campaignMouseDown();
+    battleMouseDown();
   } else if (!input.shoot && controllerShootHeld) {
     controllerShootHeld = false;
-    campaignMouseUp();
+    battleMouseUp();
   }
 
   // Unit commands (face buttons)
@@ -375,6 +379,45 @@ function setupEventHandlers() {
 // ═══════════════════════════════════════════════════════════════
 
 document.getElementById('app').addEventListener('click', e => {
+  // Mission dialog/speech advance: Space/Enter on desktop, tap on mobile
+  if ('ontouchstart' in window && Game.state === State.ENDLESS_BATTLE) {
+    const mb = Game.endless?.battle;
+    if (mb?._missionWaitForClick) {
+      mb._missionWaitForClick = false;
+      if (mb.hero?._speechBubble?.persist) mb.hero._speechBubble = null;
+      if (mb.mouse) mb.mouse.down = false;
+      e.stopPropagation();
+      return;
+    }
+    if (mb && isDialogPaused(mb)) {
+      advanceDialog(mb);
+      e.stopPropagation();
+      return;
+    }
+  }
+
+  // Toggle controls legend
+  if (e.target.closest('[data-action="toggle-controls-legend"]')) {
+    const legend = document.querySelector('.controls-legend');
+    if (legend) legend.style.display = legend.style.display === 'none' ? '' : 'none';
+    return;
+  }
+
+  if (e.target.closest('[data-action="zoom-in"]')) {
+    const b = getActiveBattle();
+    if (b?.camera) {
+      b.camera.userZoom = Math.min(2.0, (b.camera.userZoom || 1) + 0.15);
+    }
+    return;
+  }
+  if (e.target.closest('[data-action="zoom-out"]')) {
+    const b = getActiveBattle();
+    if (b?.camera) {
+      b.camera.userZoom = Math.max(0.5, (b.camera.userZoom || 1) - 0.15);
+    }
+    return;
+  }
+
   // Toggle minimap expand/collapse
   if (e.target.closest('[data-action="toggle-minimap"]') && Game.state === State.CAMPAIGN_BATTLE) {
     const minimap = document.querySelector('.campaign-minimap');
@@ -527,10 +570,244 @@ document.getElementById('app').addEventListener('click', e => {
     else if (a === 'settings') goto(State.SETTINGS);
     else if (a === 'stats') goto(State.STATS);
     else if (a === 'hq') { goto(State.HQ); if (Game.hqTab === HQTab.INSIGNIA) setTimeout(() => initInsigniaTab(), 0); }
+    // Save slot actions
+    else if (a === 'slot-select') {
+      const idx = parseInt(action.dataset.slot);
+      setActiveSlot(idx);
+      load(); // Load this slot's data
+      goto(State.HQ);
+    }
+    else if (a === 'slot-new') {
+      const idx = parseInt(action.dataset.slot);
+      // Show seed selection setup screen
+      document.getElementById('app').innerHTML = newGameSetupHTML(idx);
+    }
+    else if (a === 'setup-back') {
+      render(); // Back to title/menu
+    }
+    else if (a === 'setup-deploy') {
+      const idx = parseInt(action.dataset.slot);
+      // Read selected seed
+      const selected = document.querySelector('input[name="intro-seed"]:checked')?.value;
+      let seed;
+      if (selected === 'random') {
+        seed = Math.floor(Math.random() * 999999);
+      } else if (selected === 'custom') {
+        seed = parseInt(document.getElementById('seed-custom-val')?.value) || Math.floor(Math.random() * 999999);
+      } else {
+        seed = parseInt(selected);
+      }
+
+      setActiveSlot(idx);
+      Game.roster = [];
+      Game.vehicles = [];
+      Game.memorial = [];
+      Game.recentFallen = [];
+      Game.resources = { scrap: 0, parts: 0 };
+      Game.stats = { highestWave: 0, battles: 0, kills: 0 };
+      Game.settings = Game.settings || {};
+      Game.hqRecruitPool = null;
+      Game.opsConfig = null;
+      Game.hqSelectedSoldiers = [];
+      Game.hqBarracksView = 'roster';
+      Game.hqCollapsedGroups = {};
+      Game._isFirstRun = true;
+      Game._introSeed = seed;
+      launchFirstTimeMission();
+      updateActiveSlotMeta();
+      initAudio();
+      goto(State.ENDLESS_BATTLE);
+    }
+    else if (a === 'seed-remove') {
+      const seed = parseInt(action.dataset.seed);
+      removeIntroSeed(seed);
+      // Re-render the setup screen (find slot from the deploy button)
+      const deployBtn = document.querySelector('[data-action="setup-deploy"]');
+      const slotIdx = deployBtn ? parseInt(deployBtn.dataset.slot) : 0;
+      document.getElementById('app').innerHTML = newGameSetupHTML(slotIdx);
+    }
+    else if (a === 'slot-delete') {
+      const idx = parseInt(action.dataset.slot);
+      deleteSlot(idx);
+      render();
+    }
     // HQ actions
     else if (a === 'hq-deploy-endless') { Game.endless = newEndlessRun(); Game.endless._record = Game.settings?.autoRecord !== false; initAudio(); fetchUnitVariants().then(() => { goto(State.ENDLESS_LOADOUT); render(); }); }
     else if (a === 'hq-fire-range') { goto(State.FIRE_RANGE); }
-    else if (a === 'hq-replays') { goto(State.REPLAY_THEATER); }
+    else if (a === 'hq-replays') {
+      goto(State.REPLAY_THEATER);
+      fetch('/api/replays').then(r => r.json()).then(list => {
+        Game._replayCache = list.replays || list;
+        Game._replayFilter = 'all';
+        document.getElementById('app').innerHTML = replayTheaterHTML(Game._replayCache, 'all');
+      }).catch(() => {
+        Game._replayCache = [];
+        document.getElementById('app').innerHTML = replayTheaterHTML([], 'all');
+      });
+    }
+    // ── Operations actions ──
+    else if (a === 'ops-set-map') {
+      if (!Game.opsConfig) Game.opsConfig = { mapSize: 'small', startWave: 1, heroUnit: null, squads: [{ units: [], vehicleId: null }], record: true };
+      Game.opsConfig.mapSize = action.dataset.size;
+      // Trim squads if map size reduced
+      const max = (ENDLESS_MAP_SIZES[Game.opsConfig.mapSize] || { maxSquads: 1 }).maxSquads;
+      while (Game.opsConfig.squads.length > max) Game.opsConfig.squads.pop();
+      render();
+    }
+    else if (a === 'ops-set-wave') {
+      if (Game.opsConfig) Game.opsConfig.startWave = parseInt(action.value) || 1;
+    }
+    else if (a === 'ops-toggle-record') {
+      if (Game.opsConfig) Game.opsConfig.record = !Game.opsConfig.record;
+      render();
+    }
+    else if (a === 'ops-select-slot') {
+      const slotType = action.dataset.slotType;
+      const squad = parseInt(action.dataset.squad) || 0;
+      const idx = parseInt(action.dataset.slotIdx) || 0;
+      Game.opsSelectedSlot = { type: slotType, squad, idx, crewRole: action.dataset.crewRole };
+      Game.opsPreviewSoldier = null;
+      // Auto-filter to matching roles for the selected slot
+      if (slotType === 'crew') Game.opsRoleFilter = action.dataset.crewRole || 'all';
+      else if (slotType === 'infantry-add') Game.opsRoleFilter = 'infantry';
+      else if (slotType === 'vehicle') Game.opsRoleFilter = 'all';
+      // hero is no longer a slot type — it's a flag on an assigned unit
+      render();
+    }
+    else if (a === 'ops-preview-unit') {
+      Game.opsPreviewUnit = {
+        type: action.dataset.unitType,
+        squad: parseInt(action.dataset.squad) || 0,
+        idx: parseInt(action.dataset.unitIdx) || 0,
+        soldierId: action.dataset.soldier || null
+      };
+      Game.opsPreviewSoldier = null;
+      updateOpsPanel();
+    }
+    else if (a === 'ops-set-hero') {
+      if (Game.opsConfig) {
+        Game.opsConfig.heroUnit = action.dataset.soldier;
+      }
+      updateOpsPanel();
+    }
+    else if (a === 'ops-preview-soldier') {
+      Game.opsPreviewSoldier = action.dataset.soldier;
+      Game.opsPreviewUnit = null;
+      updateOpsPanel();
+    }
+    else if (a === 'ops-assign-soldier') {
+      const soldierId = action.dataset.soldier;
+      const slot = Game.opsSelectedSlot;
+      if (!slot || !Game.opsConfig) { render(); return; }
+      if (slot.type === 'hero') {
+        Game.opsConfig.heroUnit = soldierId;
+      } else if (slot.type === 'infantry-add') {
+        Game.opsConfig.squads[slot.squad]?.units.push(soldierId);
+      } else if (slot.type === 'crew') {
+        // TODO: assign crew to vehicle slot
+      }
+      Game.opsPreviewSoldier = null;
+      render();
+    }
+    else if (a === 'ops-swap-soldier') {
+      const oldId = action.dataset.old;
+      const newId = action.dataset.new;
+      const sqIdx = parseInt(action.dataset.squad) || 0;
+      const unitIdx = parseInt(action.dataset.idx) || 0;
+      if (Game.opsConfig) {
+        const sq = Game.opsConfig.squads[sqIdx];
+        if (sq && sq.units[unitIdx] === oldId) {
+          sq.units[unitIdx] = newId;
+        }
+        // If swapped unit was hero, transfer hero to new unit
+        if (Game.opsConfig.heroUnit === oldId) Game.opsConfig.heroUnit = newId;
+      }
+      Game.opsPreviewSoldier = null;
+      Game.opsPreviewUnit = null;
+      render();
+    }
+    else if (a === 'ops-assign-cmd') {
+      if (Game.opsConfig) {
+        Game.opsConfig.cmdOfficerId = action.dataset.soldier;
+        Game.opsSelectedSlot = null;
+      }
+      render();
+    }
+    else if (a === 'ops-assign-vehicle') {
+      const vehicleId = action.dataset.vehicle;
+      const slot = Game.opsSelectedSlot;
+      if (slot?.type === 'vehicle' && Game.opsConfig) {
+        Game.opsConfig.squads[slot.squad].vehicleId = vehicleId;
+      }
+      Game.opsSelectedSlot = null;
+      render();
+    }
+    else if (a === 'ops-unassign') {
+      const slotType = action.dataset.slotType;
+      const squad = parseInt(action.dataset.squad) || 0;
+      const idx = parseInt(action.dataset.slotIdx) || 0;
+      if (!Game.opsConfig) { render(); return; }
+      if (slotType === 'hero') Game.opsConfig.heroUnit = null;
+      else if (slotType === 'vehicle') Game.opsConfig.squads[squad].vehicleId = null;
+      else if (slotType === 'infantry') Game.opsConfig.squads[squad]?.units.splice(idx, 1);
+      render();
+    }
+    else if (a === 'ops-add-squad') {
+      if (Game.opsConfig) {
+        Game.opsConfig.squads.push({ units: [], vehicleId: null });
+        render();
+      }
+    }
+    else if (a === 'ops-remove-squad') {
+      const sqIdx = parseInt(action.dataset.squad);
+      if (Game.opsConfig && sqIdx > 0) {
+        Game.opsConfig.squads.splice(sqIdx, 1);
+        render();
+      }
+    }
+    else if (a === 'ops-filter-role') {
+      Game.opsRoleFilter = action.dataset.role;
+      render();
+    }
+    else if (a === 'hq-filter-role') {
+      Game.hqRoleFilter = action.dataset.role;
+      render();
+    }
+    else if (a === 'ops-deploy') {
+      if (!Game.opsConfig?.heroUnit) return;
+      const ops = Game.opsConfig;
+
+      // Determine hero unit type from the selected soldier
+      const heroSoldier = (Game.roster || []).find(s => s.id === ops.heroUnit);
+      let heroVehicleId = 'infantry'; // default to infantry
+      if (heroSoldier?.pool === 'vehicle') {
+        // Hero is vehicle crew — find which vehicle they're in from opsConfig
+        for (const sq of ops.squads) {
+          if (sq.vehicleId) {
+            const veh = (Game.vehicles || []).find(v => v.id === sq.vehicleId);
+            if (veh) { heroVehicleId = veh.unitId; break; }
+          }
+        }
+      }
+
+      // Create endless run
+      Game.endless = newEndlessRun();
+      Game.endless.wave = ops.startWave;
+      Game.endless.mapSize = ops.mapSize;
+      Game.endless._record = ops.record;
+      Game.endless.loadout.vehicle = heroVehicleId;
+      // Attach opsConfig so newEndlessBattle can filter the deployment pool
+      Game.endless._opsConfig = {
+        heroUnit: ops.heroUnit,
+        squads: JSON.parse(JSON.stringify(ops.squads)),
+        cmdOfficerId: ops.cmdOfficerId
+      };
+
+      // Note: first-run missions launch directly from slot-new via launchMission(), not through ops-deploy
+
+      initAudio();
+      goto(State.ENDLESS_BATTLE);
+    }
     else if (a === 'hq-settings') { goto(State.SETTINGS); }
     else if (a === 'hq-recruit') {
       const cost = 50;
@@ -553,6 +830,110 @@ document.getElementById('app').addEventListener('click', e => {
         saveRoster(); save(); render();
       }
     }
+    else if (a === 'hq-barracks-view') {
+      Game.hqBarracksView = action.dataset.view;
+      Game.hqSelectedSoldiers = []; // Clear selection on view switch
+      render();
+    }
+    else if (a === 'hq-rush-heal') {
+      const soldierId = action.dataset.soldier;
+      const cost = 50;
+      if ((Game.resources?.scrap || 0) >= cost) {
+        if (rushHeal(soldierId, cost)) {
+          Game.resources.scrap -= cost;
+          save();
+          render();
+        }
+      }
+    }
+    else if (a === 'medevac-name-confirm') {
+      const first = document.getElementById('medevac-first')?.value?.trim();
+      const last = document.getElementById('medevac-last')?.value?.trim();
+      if (!first || !last) return;
+      // Update hero soldier name
+      const pc = (Game.roster || []).find(s => s.isPlayerCharacter);
+      if (pc) {
+        pc.name = { first, last, nickname: null };
+        saveRoster();
+      }
+      // Heal hero
+      if (pc) {
+        pc.status = 'active';
+        pc.hpPercent = 1.0;
+        pc.woundedBattlesLeft = 0;
+        saveRoster();
+      }
+      // Advance dialog steps
+      const dialog = document.querySelector('.medevac-dialog');
+      if (dialog) {
+        // Hide name input
+        const nameInput = dialog.querySelector('[data-step="name"]');
+        if (nameInput) nameInput.classList.remove('visible');
+        // Get rank
+        const rank = RANK_TABLE[pc?.rankIndex || 0]?.abbr || 'Private';
+        // Show greeting
+        const greeting = dialog.querySelector('[data-step="greeting"]');
+        if (greeting) {
+          greeting.textContent = `"Alright, ${rank} ${last}. Good to have you."`;
+          greeting.classList.add('visible');
+        }
+        // Stagger remaining lines
+        const steps = ['heal', 'squad1', 'squad2', 'done'];
+        steps.forEach((step, i) => {
+          setTimeout(() => {
+            const el = dialog.querySelector(`[data-step="${step}"]`);
+            if (el) el.classList.add('visible');
+          }, 1200 + i * 1500);
+        });
+      }
+    }
+    else if (a === 'medevac-continue') {
+      // Finish extraction and go to HQ
+      extractFromRun();
+    }
+    else if (a === 'hq-purge-unseeded') {
+      const before = Game.roster.length;
+      Game.roster = Game.roster.filter(s => s.isPlayerCharacter || (s.battlesServed || 0) > 0 || s.status === 'kia');
+      saveRoster();
+      console.log(`[roster] Purged ${before - Game.roster.length} unseeded soldiers`);
+      render();
+    }
+    else if (a === 'hq-select-memorial') {
+      const soldierId = action.dataset.soldier;
+      Game.hqSelectedSoldiers = [soldierId];
+      render();
+    }
+    else if (a === 'hq-select-fallen') {
+      const soldierId = action.dataset.soldier;
+      Game.hqSelectedSoldiers = [`fallen_${soldierId}`];
+      render();
+    }
+    else if (a === 'hq-add-to-wall') {
+      const soldierId = action.dataset.soldier;
+      const { qualifying } = getRecentFallen();
+      const fallen = qualifying.find(f => f.id === soldierId);
+      if (fallen) {
+        addToMemorial(fallen);
+        Game.hqSelectedSoldiers = [soldierId]; // Select the new wall entry
+        render();
+      }
+    }
+    else if (a === 'hq-replace-on-wall') {
+      const oldId = action.dataset.old;
+      const newId = action.dataset.new;
+      const { qualifying } = getRecentFallen();
+      const fallen = qualifying.find(f => f.id === newId);
+      if (fallen) {
+        replaceOnMemorial(oldId, fallen);
+        Game.hqSelectedSoldiers = [newId];
+        render();
+      }
+    }
+    else if (a === 'hq-select-recruit') {
+      const idx = action.dataset.recruit;
+      Game.hqSelectedSoldiers = [`recruit_${idx}`];
+      render();
+    }
     else if (a === 'hq-toggle-soldier') {
       const soldierId = action.dataset.soldier;
       if (!Game.hqSelectedSoldiers) Game.hqSelectedSoldiers = [];
@@ -560,11 +941,10 @@ document.getElementById('app').addEventListener('click', e => {
       if (idx >= 0) {
         Game.hqSelectedSoldiers.splice(idx, 1);
       } else {
-        // Max 2 selected for comparison
         if (Game.hqSelectedSoldiers.length >= 2) Game.hqSelectedSoldiers.shift();
         Game.hqSelectedSoldiers.push(soldierId);
       }
-      render();
+      updateBarracksPanel();
     }
     else if (a === 'hq-toggle-group') {
       const group = action.dataset.group;
@@ -572,20 +952,55 @@ document.getElementById('app').addEventListener('click', e => {
       Game.hqCollapsedGroups[group] = !Game.hqCollapsedGroups[group];
       render();
     }
+    else if (a === 'hq-dismiss-recruit') {
+      const idx = parseInt(action.dataset.recruit);
+      const pool = Game.hqRecruitPool || [];
+      if (pool[idx] && !pool[idx].locked) {
+        dismissRecruit(idx);
+        Game.hqSelectedSoldiers = [];
+        save(); render();
+      }
+    }
+    else if (a === 'stat-toggle-breakdown') {
+      const stat = action.dataset.stat;
+      Game._statBreakdownOpen = Game._statBreakdownOpen === stat ? null : stat;
+      // Toggle breakdown visibility directly in DOM instead of full re-render
+      document.querySelectorAll('.stat-breakdown').forEach(el => {
+        el.classList.toggle('open', el.dataset.stat === Game._statBreakdownOpen);
+      });
+    }
+    else if (a === 'hq-select-mos') {
+      const idx = parseInt(action.dataset.recruit);
+      const pool = Game.hqRecruitPool || [];
+      const recruit = pool[idx];
+      if (recruit && !recruit.locked) {
+        recruit._selectedMOS = action.dataset.mos;
+        render();
+      }
+    }
     else if (a === 'hq-recruit-specific') {
       const idx = parseInt(action.dataset.recruit);
       const pool = Game.hqRecruitPool || [];
       const recruit = pool[idx];
-      if (recruit && Game.resources.scrap >= recruit.cost) {
+      if (recruit && !recruit.locked && Game.resources.scrap >= recruit.cost && hasRosterRoom()) {
         Game.resources.scrap -= recruit.cost;
+        // Use selected MOS or default to recruit's role
+        const mos = recruit._selectedMOS || recruit.role;
+        const isVehicleRole = ['tc', 'gunner', 'driver'].includes(mos);
         const soldier = createSoldier({
           name: recruit.name,
-          pool: 'infantry',
-          role: recruit.role,
-          personality: recruit.personality
+          pool: isVehicleRole ? 'vehicle' : 'infantry',
+          role: mos,
+          mos,
+          personality: recruit.personality,
+          physicals: recruit.physicals
         });
+        if (recruit.lineage) {
+          soldier.lineage = { ...recruit.lineage, generation: 2 };
+        }
         Game.roster.push(soldier);
         pool.splice(idx, 1);
+        Game.hqSelectedSoldiers = [];
         saveRoster(); save(); render();
       }
     }
@@ -597,6 +1012,39 @@ document.getElementById('app').addEventListener('click', e => {
         s.status = 'active'; s.hpPercent = 1.0;
         saveRoster(); save(); render();
       }
+    }
+    else if (a === 'hq-remove-kia') {
+      const soldierId = action.dataset.soldier;
+      const idx = (Game.roster || []).findIndex(r => r.id === soldierId);
+      if (idx >= 0 && Game.roster[idx].status === 'kia') {
+        Game.roster.splice(idx, 1);
+        if (Game.hqSelectedSoldiers) {
+          Game.hqSelectedSoldiers = Game.hqSelectedSoldiers.filter(id => id !== soldierId);
+        }
+        saveRoster(); save(); render();
+      }
+    }
+    else if (a === 'hq-dismiss-memorial') {
+      const soldierId = action.dataset.soldier;
+      removeFromMemorial(soldierId);
+      render();
+    }
+    else if (a === 'hq-promote-officer') {
+      const soldierId = action.dataset.soldier;
+      const soldier = (Game.roster || []).find(r => r.id === soldierId);
+      if (soldier) {
+        const result = promoteToOfficer(soldier);
+        if (result) {
+          Game.hqSelectedSoldiers = [soldierId];
+          saveRoster(); save(); render();
+        }
+      }
+    }
+    else if (a === 'hq-retire-soldier') {
+      const soldierId = action.dataset.soldier;
+      retireSoldier(soldierId);
+      Game.hqSelectedSoldiers = [];
+      saveRoster(); save(); render();
     }
     else if (a === 'hq-dismiss-soldier') {
       const soldierId = action.dataset.soldier;
@@ -1334,9 +1782,47 @@ document.getElementById('app').addEventListener('click', e => {
       }
     }
     else if (a === 'endless-retry') {
-      Game.endless = newEndlessRun();
-      Game.endless._record = Game.settings?.autoRecord !== false;
-      fetchUnitVariants().then(() => { goto(State.ENDLESS_LOADOUT); render(); });
+      Game.endless = null;
+      goto(State.HQ);
+    }
+    else if (a === 'endless-restart-intro') {
+      // Reset roster for fresh intro restart
+      Game.endless = null;
+      for (const s of (Game.roster || [])) {
+        if (s.status === 'kia') s.status = 'active';
+        s.hpPercent = 1.0;
+      }
+      launchFirstTimeMission();
+      initAudio();
+      goto(State.ENDLESS_BATTLE);
+    }
+    else if (a === 'endless-view-replay') {
+      // Load the most recent replay
+      fetch('/api/replays').then(r => r.json()).then(list => {
+        const replays = list.replays || list;
+        if (replays.length === 0) return;
+        const latest = replays[0]; // Sorted by most recent
+        fetch(`/api/replays/${encodeURIComponent(latest.name)}`).then(r2 => r2.json()).then(async replayData => {
+          replayPlayer = new ReplayPlayer();
+          await replayPlayer.load(replayData);
+          goto(State.REPLAY_PLAYBACK);
+          const container = document.getElementById('replay-battlefield');
+          if (container) {
+            replayPlayer.initRenderer(container);
+            replayPlayer.onTimeUpdate((currentMs, durationMs) => {
+              const scrubber = document.getElementById('replay-scrubber');
+              if (scrubber) scrubber.value = (currentMs / durationMs) * 100;
+              const timeEl = document.getElementById('replay-time');
+              if (timeEl) {
+                const cur = Math.floor(currentMs / 1000);
+                const dur = Math.floor(durationMs / 1000);
+                timeEl.textContent = `${Math.floor(cur/60)}:${(cur%60).toString().padStart(2,'0')} / ${Math.floor(dur/60)}:${(dur%60).toString().padStart(2,'0')}`;
+              }
+            });
+            replayPlayer.play();
+          }
+        });
+      });
     }
     else if (a === 'endless-next-wave') {
       // Advance to next wave — auto-deploy surviving squad on new map
@@ -1798,8 +2284,28 @@ document.getElementById('app').addEventListener('click', e => {
       const app = document.getElementById('app');
       app.innerHTML = replayTheaterHTML(Game._replayCache || [], mode);
     }
+    else if (a === 'replay-purge') {
+      fetch('/api/replays?keep=20', { method: 'DELETE' })
+        .then(r => r.json())
+        .then(result => {
+          console.log(`[replay] Purged: ${result.deleted} deleted, ${result.kept} kept`);
+          // Refresh theater
+          fetch('/api/replays').then(r => r.json()).then(list => {
+            document.getElementById('app').innerHTML = replayTheaterHTML(list.replays || list);
+          });
+        });
+    }
     else if (a === 'replay-back') {
-      goto(State.MENU);
+      if (replayPlayer) { replayPlayer.destroy(); replayPlayer = null; }
+      // Return to battle if we came from debug watch
+      const b = Game.endless?.battle;
+      if (b?._returnFromReplay) {
+        b._returnFromReplay = false;
+        b._debugPaused = false;
+        goto(State.ENDLESS_BATTLE);
+      } else {
+        goto(State.MENU);
+      }
     }
     else if (a === 'replay-watch') {
       const name = action.dataset.name;
@@ -2232,11 +2738,36 @@ document.getElementById('app').addEventListener('click', e => {
   }
 });
 
+// Debug: expose Game + roster helpers to console
+window._game = Game;
+window._debug = {
+  setRank: (id, rank) => { const s = getSoldier(id); if (s) { debugSetRank(s, rank); saveRoster(); } },
+  setMMR: (id, mmr) => { const s = getSoldier(id); if (s) { debugSetMMR(s, mmr); saveRoster(); } },
+  setPhysicals: (id, p) => { const s = getSoldier(id); if (s) { debugSetPhysicals(s, p); saveRoster(); } },
+  setTraining: (id, role, lvl) => { const s = getSoldier(id); if (s) { debugSetTraining(s, role, lvl); saveRoster(); } },
+  setAllTraining: (id, lvl) => { const s = getSoldier(id); if (s) { debugSetAllTraining(s, lvl); saveRoster(); } },
+  maxSoldier: (id) => { const s = getSoldier(id); if (s) { debugMaxSoldier(s); saveRoster(); } },
+  resetSoldier: (id) => { const s = getSoldier(id); if (s) { debugResetSoldier(s); saveRoster(); } },
+  getSoldier,
+  roster: () => Game.roster,
+  godMode: (on = true) => {
+    const b = Game.endless?.battle;
+    if (b?.hero) { b.hero._godMode = on; console.log(`God mode ${on ? 'ON' : 'OFF'}`); }
+    else console.warn('No active battle/hero');
+  }
+};
+
 // Change events (for dropdowns)
 document.getElementById('app').addEventListener('change', e => {
   // Insignia editor checkboxes (flipX, flipY, fillEnabled)
   if (Game.state === State.HQ && Game.hqTab === HQTab.INSIGNIA) {
     if (handleInsigniaInput(e.target)) return;
+  }
+
+  // Operations wave select
+  if (e.target.closest('.ops-wave-select') && Game.state === State.HQ) {
+    if (Game.opsConfig) Game.opsConfig.startWave = parseInt(e.target.value) || 1;
+    return;
   }
 
   // Priority dropdown in radio panel
@@ -2435,6 +2966,36 @@ document.getElementById('app').addEventListener('input', e => {
 // NOTE: Touch gestures moved to gestures.js module
 
 // Keyboard events for campaign battle
+// Debug panel: watch replay event
+window.addEventListener('debug-watch-replay', async (e) => {
+  const name = e.detail?.name;
+  if (!name) return;
+  try {
+    const replayData = await fetch(`/api/replays/${encodeURIComponent(name)}`).then(r => r.json());
+    replayPlayer = new ReplayPlayer();
+    await replayPlayer.load(replayData);
+    stopLoop();
+    goto(State.REPLAY_PLAYBACK);
+    const container = document.getElementById('replay-battlefield');
+    if (container) {
+      replayPlayer.initRenderer(container);
+      replayPlayer.onTimeUpdate((currentMs, durationMs) => {
+        const scrubber = document.getElementById('replay-scrubber');
+        if (scrubber) scrubber.value = (currentMs / durationMs) * 100;
+        const timeEl = document.getElementById('replay-time');
+        if (timeEl) {
+          const cur = Math.floor(currentMs / 1000);
+          const dur = Math.floor(durationMs / 1000);
+          timeEl.textContent = `${Math.floor(cur/60)}:${(cur%60).toString().padStart(2,'0')} / ${Math.floor(dur/60)}:${(dur%60).toString().padStart(2,'0')}`;
+        }
+      });
+      replayPlayer.play();
+    }
+  } catch (err) {
+    console.error('[debug] Failed to load replay:', err);
+  }
+});
+
 document.addEventListener('keydown', e => {
   // Insignia editor keyboard shortcuts (Ctrl+C/V/A/D, Delete)
   if (Game.state === State.HQ && Game.hqTab === HQTab.INSIGNIA) {
@@ -2504,7 +3065,7 @@ document.addEventListener('mousemove', e => {
 
 document.addEventListener('mousedown', e => {
   if (Game.state === State.CAMPAIGN_BATTLE && e.button === 0) {
-    campaignMouseDown();
+    battleMouseDown();
   }
   // Endless mode mouse
   if (Game.state === State.ENDLESS_BATTLE && e.button === 0) {
@@ -2531,7 +3092,7 @@ document.addEventListener('mousedown', e => {
 
 document.addEventListener('mouseup', e => {
   if (Game.state === State.CAMPAIGN_BATTLE && e.button === 0) {
-    campaignMouseUp();
+    battleMouseUp();
   }
   // Endless mode mouse
   if (Game.state === State.ENDLESS_BATTLE && e.button === 0) {
@@ -2573,6 +3134,19 @@ document.addEventListener('wheel', e => {
     if (bf && bf.contains(e.target)) {
       e.preventDefault();
       fireRangeWheel(e.deltaY);
+    }
+  }
+  if (Game.state === State.ENDLESS_BATTLE) {
+    const bf = document.querySelector('.endless-battlefield');
+    if (bf && bf.contains(e.target)) {
+      const b = Game.endless?.battle;
+      if (b) {
+        e.preventDefault();
+        // Clamp zoom between 1.0 and 1.5 for hero mode
+        const current = b.camera.userZoom || 1;
+        const step = e.deltaY > 0 ? -0.05 : 0.05;
+        b.camera.userZoom = Math.max(0.8, Math.min(1.5, current + step));
+      }
     }
   }
   if (Game.state === State.REPLAY_PLAYBACK && replayPlayer?.battle) {
@@ -2632,9 +3206,13 @@ let joystickHoldX = 0;
 let joystickHoldY = 0;
 const JOYSTICK_HOLD_MS = 1000;  // 1 second hold to reposition
 
+function isHeroBattle() {
+  return Game.state === State.CAMPAIGN_BATTLE || Game.state === State.ENDLESS_BATTLE;
+}
+
 // Handle joystick touch start - set PENDING if near anchor (activate on drag)
 document.addEventListener('touchstart', e => {
-  if (Game.state !== State.CAMPAIGN_BATTLE) return;
+  if (!isHeroBattle()) return;
 
   for (const touch of e.changedTouches) {
     const nearAnchor = getNearJoystickAnchor(touch.clientX, touch.clientY);
@@ -2688,7 +3266,7 @@ document.addEventListener('touchstart', e => {
 }, { passive: false });
 
 document.addEventListener('touchmove', e => {
-  if (Game.state !== State.CAMPAIGN_BATTLE) return;
+  if (!isHeroBattle()) return;
 
   for (const touch of e.changedTouches) {
     // Cancel joystick repositioning if touch moves
@@ -2752,26 +3330,31 @@ document.addEventListener('touchmove', e => {
       const dy = shootJoystick.currentY - shootJoystick.startY;
       const dist = Math.sqrt(dx * dx + dy * dy);
 
-      // Calculate magnitude as percentage of max range (capped at 1.0)
+      // Get unit-type-specific touch config
+      const touchCfg = getHeroTouchConfig();
       const magnitude = Math.min(dist / AIM_JOYSTICK_MAX_RANGE, 1.0);
 
       // Always set aim angle when joystick is moved (even in deadzone)
-      if (dist > 5) {  // Small threshold to avoid jitter at center
+      if (dist > 5) {
         const angle = Math.atan2(dy, dx);
-        campaignSetAimAngle(angle);
+        battleSetAimAngle(angle);
       }
 
-      // Fire only when past the deadzone (50% of range)
-      if (magnitude > AIM_FIRE_DEADZONE) {
-        if (!shootJoystick.firing) {
+      // Past deadzone: set aim depth + fire (behavior varies by unit type)
+      if (magnitude > touchCfg.aimDeadzone) {
+        const depthPct = (magnitude - touchCfg.aimDeadzone) / (1.0 - touchCfg.aimDeadzone);
+        battleSetAimDepth(depthPct);
+        // Infantry: fire continuously while held past deadzone
+        if (touchCfg.fireTrigger === 'hold' && !shootJoystick.firing) {
           shootJoystick.firing = true;
-          campaignMouseDown();
+          battleMouseDown();
         }
       } else {
+        battleClearAimDepth();
         // Inside deadzone - aim but don't fire
         if (shootJoystick.firing) {
           shootJoystick.firing = false;
-          campaignMouseUp();
+          battleMouseUp();
         }
       }
     }
@@ -2779,7 +3362,7 @@ document.addEventListener('touchmove', e => {
 }, { passive: false });
 
 document.addEventListener('touchend', e => {
-  if (Game.state !== State.CAMPAIGN_BATTLE) return;
+  if (!isHeroBattle()) return;
 
   for (const touch of e.changedTouches) {
     // Cancel joystick repositioning
@@ -2799,14 +3382,21 @@ document.addEventListener('touchend', e => {
 
     // Release shoot joystick (pending or active)
     if (touch.identifier === shootJoystick.touchId) {
+      const touchCfg = getHeroTouchConfig();
+      const wasAiming = shootJoystick.active;
       shootJoystick.pending = false;
       shootJoystick.active = false;
       shootJoystick.touchId = null;
       if (shootJoystick.firing) {
         shootJoystick.firing = false;
-        campaignMouseUp();
+        battleMouseUp();
+      } else if (touchCfg.fireTrigger === 'release' && wasAiming) {
+        // Tank: fire single shot on release
+        battleMouseDown();
+        requestAnimationFrame(() => battleMouseUp());
       }
-      campaignClearAimAngle();
+      battleClearAimAngle();
+      battleClearAimDepth();
       updateShootJoystickVisual();
     }
   }
@@ -2832,9 +3422,10 @@ document.addEventListener('touchcancel', e => {
   shootJoystick.touchId = null;
   if (shootJoystick.firing) {
     shootJoystick.firing = false;
-    campaignMouseUp();
+    battleMouseUp();
   }
-  campaignClearAimAngle();
+  battleClearAimAngle();
+  battleClearAimDepth();
   updateShootJoystickVisual();
 });
 
@@ -2923,7 +3514,7 @@ function updateJoystickInput() {
 
   if (!moveJoystick.active) {
     // Clear joystick input
-    campaignClearJoystick();
+    battleClearJoystick();
     return;
   }
 
@@ -2947,7 +3538,7 @@ function updateJoystickInput() {
   }
 
   // Send analog values to game
-  campaignSetJoystick(dx, dy);
+  battleSetJoystick(dx, dy);
 }
 
 // Update shoot joystick visual
@@ -2962,18 +3553,18 @@ function resetAllJoysticks() {
   moveJoystick.pending = false;
   moveJoystick.active = false;
   moveJoystick.touchId = null;
-  campaignClearJoystick();
+  battleClearJoystick();
   if (moveJoystickEl) moveJoystickEl.style.display = 'none';
 
   // Reset shoot joystick
   if (shootJoystick.firing) {
-    campaignMouseUp();
+    battleMouseUp();
   }
   shootJoystick.pending = false;
   shootJoystick.active = false;
   shootJoystick.touchId = null;
   shootJoystick.firing = false;
-  campaignClearAimAngle();
+  battleClearAimAngle();
   if (shootJoystickEl) shootJoystickEl.style.display = 'none';
 }
 

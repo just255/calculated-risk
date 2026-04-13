@@ -5,8 +5,8 @@
 // Shared brain for allies AND enemies.
 // ═══════════════════════════════════════════════════════════════
 
-import { UNITS, UNIT_PROJECTILES, UNIT_COMBAT_STATS, Formation, FORMATION_OFFSETS, Team, Owner, DEFAULT_MAX_SPREAD_DEG } from './constants.js';
-import { updateStability, shouldFire, getDamageFalloff, applyRecoilDrop } from './fire-decision.js';
+import { UNITS, UNIT_PROJECTILES, UNIT_COMBAT_STATS, Formation, FORMATION_OFFSETS, Team, Owner, DEFAULT_MAX_SPREAD_DEG, applyCrewMod, CREW_DEFAULT_MOD } from './constants.js';
+import { updateStability, shouldFire, getDamageFalloff, applyRecoilDrop, consumeAmmo } from './fire-decision.js';
 import {
   isTerrainBlocked, getTerrainSpeedMod, getTerrainAt, isInCover,
   TERRAIN_COVER_SCORE, getWaterDepth, isTerrainPassable,
@@ -645,6 +645,10 @@ function turnHullToward(unit, targetAngle, dtSec) {
       ? (combatStats.hullRate * Math.PI / 180)
       : (unit._turnRate ?? TURN_RATE[cat] ?? TURN_RATE[UnitCategory.INFANTRY]);
 
+  // Crew turn rate modifier: better driver = faster hull rotation
+  const driverTurnMod = unit._crewMods?.driver?.turnRate ?? unit._crewMods?.turnRate ?? CREW_DEFAULT_MOD;
+  rate = applyCrewMod(rate, driverTurnMod);
+
   // Wheeled vehicles turn slower when not moving
   if (MOVE_MODEL[cat] === 'wheeled') {
     const speed = unit._currentSpeed ?? 0;
@@ -1273,6 +1277,18 @@ function moveBrainUnit(b, unit, targetX, targetY, dtSec, allUnits, speedMult = 1
   // Prone/hull-down units cannot move
   if (unit._isProne || unit._isHullDown) return false;
 
+  // Guard: reject NaN/null/undefined inputs
+  if (isNaN(targetX) || isNaN(targetY) || targetX == null || targetY == null) {
+    console.error(`[NaN TARGET] ${unit.id} targetX:${targetX} targetY:${targetY} cmd:${unit.command} verb:${unit._actionVerb}`);
+    return false;
+  }
+  if (isNaN(unit.x) || isNaN(unit.y) || unit.x == null || unit.y == null) {
+    console.error(`[NaN UNIT POS] ${unit.id} x:${unit.x} y:${unit.y} — resetting to last valid`);
+    if (unit._prevX != null && !isNaN(unit._prevX)) { unit.x = unit._prevX; unit.y = unit._prevY; }
+    else { unit.x = b.mapWidth / 2; unit.y = b.mapHeight / 2; } // Last resort
+    return false;
+  }
+
   // A* path following — resolves long-distance targets to next waypoint
   const nav = resolveNavWaypoint(b, unit, targetX, targetY, inferCategory(unit));
   targetX = nav.x;
@@ -1292,7 +1308,11 @@ function moveBrainUnit(b, unit, targetX, targetY, dtSec, allUnits, speedMult = 1
     ? Math.min(unit.speed || 80, unit._formationSpeed)
     : (unit.speed || 80);
   const speed = baseSpeed * speedMult;
-  const terrainMod = getTerrainSpeedMod(b, unit.x, unit.y);
+  const rawTerrainMod = getTerrainSpeedMod(b, unit.x, unit.y);
+  // Crew terrain handling: good driver reduces terrain penalty
+  const driverHandling = unit._crewMods?.driver?.terrainHandling ?? unit._crewMods?.terrainHandling ?? CREW_DEFAULT_MOD;
+  const terrainPenaltyReduction = 0.4; // max 40% of terrain penalty can be offset by crew
+  const terrainMod = rawTerrainMod + (1 - rawTerrainMod) * driverHandling * terrainPenaltyReduction;
   // Water depth speed modifier (category-aware)
   const waterMod = getWaterSpeedMod(b, unit.x, unit.y, category);
   // Suppression slows movement (max 40% penalty)
@@ -1325,7 +1345,8 @@ function moveBrainUnit(b, unit, targetX, targetY, dtSec, allUnits, speedMult = 1
 
   // Formation slot steering — bias toward assigned slot position
   // Formations are a suggestion: discipline controls nudge strength
-  if (unit._inFormation && unit._slotTarget && unit !== unit._formationLeader) {
+  if (unit._inFormation && unit._slotTarget && unit !== unit._formationLeader
+      && !isNaN(unit._slotTarget.x) && !isNaN(unit._slotTarget.y)) {
     const slotDx = unit._slotTarget.x - unit.x;
     const slotDy = unit._slotTarget.y - unit.y;
     const slotDist = Math.sqrt(slotDx * slotDx + slotDy * slotDy);
@@ -1434,6 +1455,12 @@ function moveBrainUnit(b, unit, targetX, targetY, dtSec, allUnits, speedMult = 1
 
   const newX = unit.x + moveDirX * unit._currentSpeed * dtSec;
   const newY = unit.y + moveDirY * unit._currentSpeed * dtSec;
+
+  // NaN guard — catch and log position corruption before it propagates
+  if (isNaN(newX) || isNaN(newY)) {
+    console.error(`[NaN POSITION] ${unit.id} newX:${newX} newY:${newY} x:${unit.x} y:${unit.y} dirX:${moveDirX} dirY:${moveDirY} speed:${unit._currentSpeed} dt:${dtSec} targetX:${targetX} targetY:${targetY} slotX:${unit._slotTarget?.x} slotY:${unit._slotTarget?.y} cmd:${unit.command}`);
+    return false; // Don't update position
+  }
 
   // Axis-independent terrain blocking + water passability
   const xBlocked = isTerrainBlocked(b, newX, unit.y);
@@ -1621,7 +1648,8 @@ export function updateSuppression(unit, dtSec, b) {
   const discipline = unit.personality?.discipline ?? 0.5;
   const inCover = (TERRAIN_COVER_SCORE[getTerrainAt(b, unit.x, unit.y)] || 0) >= 15;
 
-  let decayRate = 0.08 + discipline * 0.04;
+  const enduranceMod = unit._crewMods?.tc?.suppressionResistance ?? unit._crewMods?.suppressionResistance ?? CREW_DEFAULT_MOD;
+  let decayRate = applyCrewMod(0.08 + discipline * 0.04, enduranceMod);
   if (inCover) decayRate += 0.03;
 
   unit._suppression = Math.max(0, sup - decayRate * dtSec);
@@ -1664,7 +1692,8 @@ function findNextCoverBound(b, unit, objX, objY, friendlies) {
   const angleToObj = Math.atan2(dyObj, dxObj);
 
   // Search radius: 2-5 cells ahead, based on view range and cover bias
-  const viewRange = unit.viewRange || 200;
+  const vrMod = unit._crewMods?.tc?.viewRange ?? unit._crewMods?.viewRange ?? CREW_DEFAULT_MOD;
+  const viewRange = applyCrewMod(unit.viewRange || 200, vrMod);
   const searchDist = Math.min(viewRange * 0.6, distToObj); // Don't search past objective
   const searchCells = Math.ceil(searchDist / cellSize);
   const col = Math.floor(unit.x / cellSize);
@@ -2990,35 +3019,73 @@ function executeAdvance(b, unit, target, targetDist, range, speed, now, dtSec, f
     const flankDrive = initiative * (1 - suppression); // Suppression dampens flanking
 
     if (flankDrive > 0.25 && !unit._isProne) {
-      // Commit to a flank target (latch to prevent oscillation)
-      if (!unit._flankTarget) {
+      // Flank state machine: idle → moving → holding → idle
+      // 'holding' means we reached the flank and are firing from it.
+      // Only re-evaluate when the hold expires or target changes.
+      const flankState = unit._flankState || 'idle'; // idle | moving | holding
+
+      if (flankState === 'idle') {
+        // Seek a new flank position
         const flankPos = findFlankPosition(b, unit, target, range);
         if (flankPos) {
           unit._flankTarget = { x: flankPos.x, y: flankPos.y };
+          unit._flankState = 'moving';
+          unit._flankForTarget = target.id; // Track which target we're flanking
           logEvent(b, { t: now, who: unit.id, team: unit.team, type: 'flank',
             x: Math.round(unit.x), y: Math.round(unit.y),
             action: 'flanking', target: `(${Math.round(flankPos.x)},${Math.round(flankPos.y)})`,
             detail: `init:${initiative.toFixed(2)} drive:${flankDrive.toFixed(2)} score:${flankPos.flankScore.toFixed(2)}` });
+        } else {
+          // No valid position — stay put, don't re-evaluate until next tick cycle
+          unit._flankState = 'holding';
+          unit._flankHoldUntil = now + 3000;
         }
       }
 
-      if (unit._flankTarget) {
+      if (flankState === 'moving' && unit._flankTarget) {
         const fDist = Math.hypot(unit._flankTarget.x - unit.x, unit._flankTarget.y - unit.y);
         if (fDist < 15) {
+          // Arrived — hold this position and fire
           unit._flankTarget = null;
+          unit._flankState = 'holding';
+          unit._flankHoldUntil = now + 4000 + Math.random() * 3000; // Hold 4-7s
           unit._actionVerb = 'flanking_hold';
         } else {
           moveBrainUnit(b, unit, unit._flankTarget.x, unit._flankTarget.y, dtSec, friendlies);
           unit._actionVerb = 'flanking';
         }
       }
+
+      if (flankState === 'holding') {
+        // Fire from flank position until hold expires
+        unit._actionVerb = 'flanking_hold';
+        if (now > (unit._flankHoldUntil || 0)) {
+          unit._flankState = 'idle';
+        }
+      }
+
+      // Invalidate flank if target changed
+      if (unit._flankForTarget && unit._flankForTarget !== target.id) {
+        unit._flankTarget = null;
+        unit._flankState = 'idle';
+        unit._flankForTarget = null;
+      }
+    } else {
+      // Conditions not met for flanking — reset state
+      if (unit._flankState) {
+        unit._flankTarget = null;
+        unit._flankState = null;
+        unit._flankForTarget = null;
+      }
     }
     } // end halt-to-fire else
   }
 
-  // Clear flank target if target dies or we lose sight
-  if (unit._flankTarget && (!target || target.dead)) {
+  // Clear flank state if target dies or we lose sight
+  if ((unit._flankTarget || unit._flankState) && (!target || target.dead)) {
     unit._flankTarget = null;
+    unit._flankState = null;
+    unit._flankForTarget = null;
   }
 
   // Fire at target — shouldFire() handles range gating + stability + acquisition
@@ -3284,6 +3351,8 @@ function executeFocusFire(b, unit, target, targetDist, range, speed, now, dtSec,
   // Target died or no target — FOCUS_FIRE was for THAT target, transition to HOLD
   if (!target || target.dead) {
     unit._flankTarget = null;
+    unit._flankState = null;
+    unit._flankForTarget = null;
     unit.command = Command.HOLD;
     executeHold(b, unit, null, Infinity, range, now, dtSec, friendlies);
     return;
@@ -3306,21 +3375,41 @@ function executeFocusFire(b, unit, target, targetDist, range, speed, now, dtSec,
     const effInitiative = initiative * (1 - suppression);
 
     if (effInitiative > 0.15 && !unit._isProne) {
-      // Probability of seeking a flank position scales with initiative
-      if (!unit._flankTarget && Math.random() < effInitiative * 0.03) {
+      // Flank state machine: idle → moving → holding → idle
+      const flankState = unit._flankState || 'idle';
+
+      if (flankState === 'idle' && Math.random() < effInitiative * 0.03) {
         const flankPos = findFlankPosition(b, unit, target, range);
         if (flankPos) {
           unit._flankTarget = { x: flankPos.x, y: flankPos.y };
+          unit._flankState = 'moving';
+          unit._flankForTarget = target.id;
         }
       }
-      if (unit._flankTarget) {
+
+      if (flankState === 'moving' && unit._flankTarget) {
         const flankDist = Math.hypot(unit._flankTarget.x - unit.x, unit._flankTarget.y - unit.y);
         if (flankDist < 15) {
           unit._flankTarget = null;
+          unit._flankState = 'holding';
+          unit._flankHoldUntil = now + 4000 + Math.random() * 3000;
         } else {
           moveBrainUnit(b, unit, unit._flankTarget.x, unit._flankTarget.y, dtSec, friendlies);
           unit._actionVerb = 'flanking';
         }
+      }
+
+      if (flankState === 'holding') {
+        if (now > (unit._flankHoldUntil || 0)) {
+          unit._flankState = 'idle';
+        }
+      }
+
+      // Invalidate if target changed
+      if (unit._flankForTarget && unit._flankForTarget !== target.id) {
+        unit._flankTarget = null;
+        unit._flankState = 'idle';
+        unit._flankForTarget = null;
       }
     }
   }
@@ -3451,6 +3540,21 @@ function findFlankPosition(b, unit, target, range) {
  * Cached on the unit as _sgtLeadership to avoid repeated squad lookups.
  * @returns {number} 0-1 leadership value
  */
+/**
+ * Get the SGT unit's current target for this unit's squad.
+ * Followers use this instead of running their own target selection.
+ */
+function _getSquadSgtTarget(b, unit) {
+  const squads = b._squads || [];
+  for (const sq of squads) {
+    if (sq.id !== unit._squadId || !sq.active) continue;
+    const pool = sq.team === 'blue' ? (b.units || []) : (b.enemies || []);
+    const sgtUnit = pool.find(u => u.id === sq.sergeantUnitId);
+    return sgtUnit?._currentTarget || null;
+  }
+  return null;
+}
+
 function _getSquadLeadership(b, unit) {
   // Return cached value if fresh (recalc every 5s or on squad change)
   if (unit._sgtLeadership !== undefined && unit._sgtLeadershipSquad === unit._squadId) {
@@ -4330,29 +4434,50 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
 
   _bp.survival += performance.now() - _bt;
 
-  // 6. Unified movement — build context, resolve mode, execute
+  // 6. Movement — full mode scoring for SGTs, direct command execution for squad members
   _bt = performance.now();
-  const moveCtx = buildMovementContext(b, unit, target, targetDist, hostiles, friendlies, now, leader);
-  unit._moveCtx = moveCtx; // Cache for moveBrainUnit threat speed calculation
-  const modeResult = resolveMovementMode(unit, moveCtx);
+  let modeResult = null;
+  if (unit._lightMovement) {
+    // Squad member: skip buildMovementContext + resolveMovementMode (saves ~1ms/unit/frame)
+    // Execute command directly, with panic override
+    const ctx = { target, targetDist, command: activeCommand, leader };
+    if (unit._panicking) {
+      executePanicFlee(b, unit, ctx, speed, dtSec, friendlies);
+    } else {
+      executeCommandMode(b, unit, ctx, range, speed, now, dtSec, friendlies);
+    }
+  } else {
+    // SGT or hero: full movement mode scoring (throttled to every 2nd frame)
+    const modeInterval = 2;
+    unit._modeFrame = (unit._modeFrame || 0) + 1;
+    if (unit._modeFrame >= modeInterval || !unit._lastModeResult) {
+      unit._modeFrame = 0;
+      const moveCtx = buildMovementContext(b, unit, target, targetDist, hostiles, friendlies, now, leader);
+      unit._moveCtx = moveCtx;
+      unit._lastMoveCtx = moveCtx;
+      modeResult = resolveMovementMode(unit, moveCtx);
+      unit._lastModeResult = modeResult;
+    } else {
+      modeResult = unit._lastModeResult;
+      unit._moveCtx = unit._lastMoveCtx;
+    }
 
-  // Log mode changes with full score breakdown
-  if (unit._prevMovementMode !== modeResult.mode) {
-    // Build compact score summary: UCvr:35 Surv:0 Bnd:12 Cmd:40 Rgrp:5
-    const scoreStr = modeResult.scores ? Object.entries(modeResult.scores)
-      .map(([k, v]) => {
-        const abbr = { urgent_cover: 'UCvr', survival_action: 'Surv',
-          tactical_bound: 'Bnd', command_execute: 'Cmd', regroup: 'Rgrp' };
-        return `${abbr[k] || k}:${Math.round(v)}`;
-      }).join(' ') : '';
-    logEvent(b, { t: now, who: unit.id, team, type: 'movement',
-      x: Math.round(unit.x), y: Math.round(unit.y),
-      action: modeResult.mode,
-      detail: `winner:${Math.round(modeResult.score)} [${scoreStr}] prev:${unit._prevMovementMode || 'none'}` });
-    unit._prevMovementMode = modeResult.mode;
+    if (unit._prevMovementMode !== modeResult.mode) {
+      const scoreStr = modeResult.scores ? Object.entries(modeResult.scores)
+        .map(([k, v]) => {
+          const abbr = { urgent_cover: 'UCvr', survival_action: 'Surv',
+            tactical_bound: 'Bnd', command_execute: 'Cmd', regroup: 'Rgrp' };
+          return `${abbr[k] || k}:${Math.round(v)}`;
+        }).join(' ') : '';
+      logEvent(b, { t: now, who: unit.id, team, type: 'movement',
+        x: Math.round(unit.x), y: Math.round(unit.y),
+        action: modeResult.mode,
+        detail: `winner:${Math.round(modeResult.score)} [${scoreStr}] prev:${unit._prevMovementMode || 'none'}` });
+      unit._prevMovementMode = modeResult.mode;
+    }
+
+    executeMovementMode(b, unit, modeResult, unit._moveCtx, range, speed, now, dtSec, friendlies);
   }
-
-  executeMovementMode(b, unit, modeResult, moveCtx, range, speed, now, dtSec, friendlies);
 
   _bp.movement += performance.now() - _bt;
 
@@ -4621,6 +4746,7 @@ function updateBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
     isProne: unit._isProne || false,
     isHullDown: unit._isHullDown || false,
     inCover: unit._coverReached || false,
+    terrain: unitTerrain || 'open',
     suppression: +(unit._suppression ?? 0).toFixed(2),
     _rawMorale: unit.morale ?? 0.8,
     // Fire readiness
@@ -4689,6 +4815,184 @@ export const TacticalCommand = {
 // ═══════════════════════════════════════════════════════════════
 // PUBLIC API — Called by game.js
 // ═══════════════════════════════════════════════════════════════
+
+/**
+ * Lightweight follower brain — skips survival assessment, movement mode scoring,
+ * flank detection, stuck detection, event logging, and full debug telemetry.
+ * Keeps: vision, target selection, firing, command execution, morale, stability.
+ * Used by all units NOT in the hero's squad and NOT a sergeant.
+ */
+function updateFollowerBrain(b, unit, leader, hostiles, friendlies, now, dtSec, team) {
+  // 0. Init
+  initBrain(unit, team);
+  unit._battle = b;
+  unit._dbg = unit._dbg || {};
+
+  const prevX = unit.x;
+  const prevY = unit.y;
+  const typeKey = unit.aiTypeKey || unit.unitId || 'infantry';
+
+  // 1. Cohesion + morale (throttled 2s)
+  const cohesion = getCohesion(unit, friendlies);
+  if (now - (unit._lastMoraleCheck || 0) > 2000) {
+    if (cohesion.isolated) applyMoraleEvent(unit, MoraleEvent.ISOLATED, 0.3);
+    else if (cohesion.nearbyCount >= 2) applyMoraleEvent(unit, MoraleEvent.NEAR_ALLIES, 0.3);
+    unit._lastMoraleCheck = now;
+  }
+
+  // 2. Awareness + shock decay
+  if (unit._shockTimer > 0) unit._shockTimer = Math.max(0, unit._shockTimer - dtSec);
+  getAwareness(unit, cohesion);
+
+  // 2.1. Effective morale
+  const sgtLeadership = _getSquadLeadership(b, unit);
+  unit._effectiveMorale = computeEffectiveMorale(unit, sgtLeadership);
+
+  // 3. Panic check
+  let activeCommand = unit.command || Command.ADVANCE;
+  const courage = unit.personality?.courage ?? 0.5;
+  const panicCooldownOver = !unit._panicRecoveryTime || (now - unit._panicRecoveryTime) > 10000;
+  if (!unit._panicking && unit._effectiveMorale < unit._routThreshold && panicCooldownOver) {
+    unit._panicking = true;
+    unit._panicStartTime = now;
+    unit._panicFleeTarget = null;
+    unit._inFormation = false;
+  }
+  if (unit._panicking) {
+    const panicDuration = (2 + (1 - courage) * 3) * 1000;
+    if (now - (unit._panicStartTime || 0) > panicDuration && unit._effectiveMorale >= unit._routThreshold + 0.05) {
+      unit._panicking = false;
+      unit._panicFleeTarget = null;
+      unit._panicRecoveryTime = now;
+      unit.morale = Math.max(unit.morale, 0.3);
+    } else {
+      activeCommand = Command.FALL_BACK;
+    }
+  }
+
+  // 2.4. Suppression decay
+  updateSuppression(unit, dtSec, b);
+
+  // 2.5. Vision scan — real buildSpottedList but slower + staggered across frames
+  // Each follower offsets its scan timer by a hash of its ID to avoid all scanning the same frame
+  if (!unit._followerVisionNext) {
+    // Stagger: hash unit ID to spread scans across frames
+    let hash = 0;
+    for (let i = 0; i < (unit.id?.length || 0); i++) hash = ((hash << 5) - hash + unit.id.charCodeAt(i)) | 0;
+    unit._followerVisionNext = now + Math.abs(hash % 1000); // 0-1000ms initial offset
+  }
+  if (now >= unit._followerVisionNext) {
+    buildSpottedList(unit, hostiles, b, now);
+    const awareness = unit._awareness ?? 0.5;
+    // Scan every 500-1500ms (slower than full brain's 100-500ms, faster than no vision)
+    unit._followerVisionNext = now + 500 + (1 - awareness) * 1000;
+  }
+
+  // 4. Target selection — only fire at targets the unit can directly see
+  // Shared intel (SGT/team) tells them WHERE to move, not WHO to shoot at
+  let target;
+  let targetDirect = false; // Track if we have direct LOS
+  const prevTarget = unit._currentTarget;
+  const prevTargetAlive = prevTarget && !prevTarget.dead && prevTarget.hp > 0;
+
+  // Keep current target if still locked
+  if (prevTargetAlive && now < (unit._targetLockedUntil || 0)) {
+    target = prevTarget;
+    targetDirect = unit._targetDirect || false;
+  } else {
+    // Check spotted list for directly visible targets
+    const spotted = unit._spotted || [];
+    const directTargets = spotted.filter(s => s.direct && s.enemy && !s.enemy.dead);
+
+    if (directTargets.length > 0) {
+      // Discipline determines SGT target vs nearest visible
+      const discipline = unit.personality?.discipline ?? 0.5;
+      const sgtTarget = _getSquadSgtTarget(b, unit);
+      const sgtInDirect = sgtTarget && directTargets.some(s => s.enemy === sgtTarget);
+
+      if (Math.random() < discipline && sgtInDirect) {
+        target = sgtTarget;
+      } else {
+        // Nearest directly spotted
+        let nearestDist = Infinity;
+        for (const s of directTargets) {
+          if (s.dist < nearestDist) { nearestDist = s.dist; target = s.enemy; }
+        }
+      }
+      targetDirect = true;
+    } else {
+      // No direct vision — use shared intel to MOVE toward, but don't fire
+      const sgtTarget = _getSquadSgtTarget(b, unit);
+      if (sgtTarget && !sgtTarget.dead) {
+        target = sgtTarget; // Move toward SGT's target
+      } else {
+        let nearestDist = Infinity;
+        for (const h of hostiles) {
+          if (h.dead || h.hp <= 0) continue;
+          const d = Math.hypot(h.x - unit.x, h.y - unit.y);
+          if (d < nearestDist) { nearestDist = d; target = h; }
+        }
+      }
+      targetDirect = false; // Can't fire — only move
+    }
+    unit._targetLockedUntil = now + 3000;
+  }
+  if (target !== prevTarget) {
+    unit._flankTarget = null;
+    unit._flankState = null;
+    unit._targetAcquiredAt = now;
+    unit._targetJustSwitched = true;
+  }
+  unit._currentTarget = target;
+  unit._targetDirect = targetDirect;
+
+  // 5. Distance + speed
+  let targetDist = target ? distanceBetween(unit, target) : Infinity;
+  const range = unit.range || 150;
+  let speed = unit.speed || 80;
+  if (unit._inFormation && unit._formationSpeed) speed = Math.min(speed, unit._formationSpeed);
+
+  // 6. Execute command directly (skip movement mode scoring)
+  const ctx = { target, targetDist, command: activeCommand, leader };
+  if (unit._panicking) {
+    executePanicFlee(b, unit, ctx, speed, dtSec, friendlies);
+  } else {
+    executeCommandMode(b, unit, ctx, range, speed, now, dtSec, friendlies);
+  }
+
+  // 7. Stability tracking
+  const moveDist = Math.hypot(unit.x - prevX, unit.y - prevY);
+  const expectedMove = (speed || 80) * dtSec;
+  const moveThreshold = Math.max(0.3, expectedMove * 0.2);
+  unit._movedThisFrame = moveDist > moveThreshold;
+  unit._moveDistThisFrame = moveDist;
+  updateStability(unit, dtSec, typeKey);
+
+  // 8. Minimal debug telemetry (terrain + command + verb only)
+  const unitTerrain = getTerrainAt(b, unit.x, unit.y);
+  unit._dbg = {
+    command: activeCommand,
+    state: unit._actionVerb || 'idle',
+    targetId: target?.id || null,
+    terrain: unitTerrain || 'open',
+    formation: unit._formationType || null,
+    slotDev: unit._slotTarget ? Math.round(Math.hypot(unit._slotTarget.x - unit.x, unit._slotTarget.y - unit.y)) : null
+  };
+
+}
+
+export function updateFollowerUnitAI(b, unit, hero, enemies, now, dtSec) {
+  if (unit.dead) return;
+  updateFollowerBrain(b, unit, hero, enemies, b.units || [], now, dtSec, Team.BLUE);
+}
+
+export function updateFollowerEnemyAI(b, enemy, hero, allies, now, dtSec) {
+  if (enemy.dead) return;
+  const hostiles = [];
+  if (hero && !hero.dead && hero.hp > 0 && hero.x > -1000) hostiles.push(hero);
+  if (allies) for (const a of allies) { if (!a.dead) hostiles.push(a); }
+  updateFollowerBrain(b, enemy, null, hostiles, b.enemies || [], now, dtSec, Team.RED);
+}
 
 export function updateUnitAI(b, unit, hero, enemies, now, dtSec) {
   if (unit.dead) return;
@@ -4987,6 +5291,9 @@ export function tryShoot(b, unit, targetX, targetY, now, targetEntity) {
 
   // Post-fire recoil — bigger guns drop more stability
   applyRecoilDrop(unit);
+
+  // Magazine: consume one round
+  consumeAmmo(unit);
 
   // Track shotsFired for roster metrics
   if (b._soldierMetrics) {
