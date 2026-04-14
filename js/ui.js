@@ -1141,94 +1141,10 @@ function _barracksTabHTML() {
   let rightPanel = '';
 
   if (subView === 'roster') {
-    // ── ROSTER VIEW ──
-    const alive = roster.filter(s => s.status !== 'kia');
-
-    // Role filter
-    const bRoleFilter = Game.hqRoleFilter || 'all';
-    const bRoleFilters = ['all', 'rifleman', 'medic', 'engineer', 'heavy_gunner', 'tc', 'gunner', 'driver'];
-    const bFilterBar = `
-      <div class="ops-filter-bar">
-        ${bRoleFilters.map(r => `<button class="ops-filter-btn ${bRoleFilter === r ? 'active' : ''}" data-action="hq-filter-role" data-role="${r}">${r === 'all' ? 'ALL' : getRoleLabel(r)}</button>`).join('')}
-      </div>`;
-
-    const filtered = bRoleFilter === 'all' ? alive
-      : alive.filter(s => s.role === bRoleFilter || (bRoleFilter === 'infantry' && s.pool === 'infantry') || (bRoleFilter === 'vehicle' && s.pool === 'vehicle'));
-
-    // Group by pool — no overlap, no dedup needed
-    const playerChar = filtered.filter(s => s.isPlayerCharacter);
-    const groups = [
-      { key: 'officers', label: 'OFFICERS', soldiers: filtered.filter(s => isOfficer(s)), accent: 'orange' },
-      ...(playerChar.length > 0 ? [{ key: 'command', label: 'COMMAND', soldiers: playerChar }] : []),
-      { key: 'infantry', label: 'INFANTRY', soldiers: filtered.filter(s => s.pool === 'infantry' && !s.isPlayerCharacter && !isOfficer(s)) },
-      { key: 'crew', label: 'VEHICLE CREW', soldiers: filtered.filter(s => s.pool === 'vehicle' && !isOfficer(s)) }
-    ];
-    // Add soldiers with no pool to infantry as fallback
-    const pooled = new Set(groups.flatMap(g => g.soldiers.map(s => s.id)));
-    const unpooled = filtered.filter(s => !pooled.has(s.id));
-    if (unpooled.length > 0) {
-      const infGroup = groups.find(g => g.key === 'infantry');
-      if (infGroup) infGroup.soldiers.push(...unpooled);
-    }
-    for (const g of groups) {
-      // Sort by role, then alphabetically by last name within role
-      g.soldiers.sort((a, b) => {
-        const roleA = (a.role || 'rifleman');
-        const roleB = (b.role || 'rifleman');
-        if (roleA !== roleB) return roleA.localeCompare(roleB);
-        return (a.name?.last || '').localeCompare(b.name?.last || '');
-      });
-    }
-
-    const collapsed = Game.hqCollapsedGroups || {};
-
-    const soldierRow = (s) => {
-      const rankName = getRankInfo(s).abbr;
-      const name = s.name?.last || s.name?.first || 'Unknown';
-      const role = getRoleLabel(s.role);
-      const isPC = s.isPlayerCharacter ? '<span class="pc-badge">YOU</span>' : '';
-      const isSelected = selected.includes(s.id);
-      return `
-        <div class="soldier-row ${isSelected ? 'selected' : ''} ${s.status}" data-action="hq-toggle-soldier" data-soldier="${s.id}">
-          <div class="soldier-main">
-            <canvas class="soldier-insignia" data-rank="${s.rankIndex}" width="64" height="64"></canvas>
-            <span class="soldier-name">${rankName} ${name} ${isPC}</span>
-            <span class="soldier-role-tag">${role}</span>
-            ${s.status !== 'kia' ? hpSegments(s.hpPercent) : ''}
-            ${statusLabel(s)}
-          </div>
-        </div>`;
-    };
-
-    const groupHTML = (g) => {
-      if (g.soldiers.length === 0) return '';
-      const isCollapsed = collapsed[g.key];
-      const woundedCount = g.soldiers.filter(s => s.status === 'wounded').length;
-      const woundedBadge = woundedCount > 0 ? `<span class="group-wounded-badge">${woundedCount} wounded</span>` : '';
-      const accentClass = g.accent ? `roster-group-${g.accent}` : '';
-      return `
-        <div class="roster-group ${accentClass}">
-          <div class="roster-group-header" data-action="hq-toggle-group" data-group="${g.key}">
-            <span class="group-chevron">${isCollapsed ? '▶' : '▼'}</span>
-            <span class="group-label">${g.label}</span>
-            <span class="group-count">(${g.soldiers.length})</span>
-            ${woundedBadge}
-          </div>
-          ${isCollapsed ? '' : `<div class="roster-group-list">${g.soldiers.map(soldierRow).join('')}</div>`}
-        </div>`;
-    };
-
-    leftContent = bFilterBar + groups.map(groupHTML).join('');
-
-    // Right panel — soldier card or comparison
-    const selectedSoldiers = selected.map(id => roster.find(s => s.id === id)).filter(Boolean);
-    if (selectedSoldiers.length === 1) {
-      rightPanel = _soldierCardHTML(selectedSoldiers[0]);
-    } else if (selectedSoldiers.length >= 2) {
-      rightPanel = _soldierCompareHTML(selectedSoldiers[0], selectedSoldiers[1]);
-    } else {
-      rightPanel = '<div class="panel-placeholder">Select a soldier to view details</div>';
-    }
+    // ── ROSTER TABLE VIEW ──
+    const rosterContent = _rosterTableView(roster, selected);
+    const detailModal = Game.hqDetailSoldier ? _soldierDetailModal(Game.hqDetailSoldier) : '';
+    return `<div class="barracks-tab">${subTabBar}${rosterContent}${detailModal}</div>`;
 
   } else if (subView === 'infirmary') {
     // ── INFIRMARY VIEW ──
@@ -2145,6 +2061,310 @@ function _opsDeployBar(ctx) {
 }
 
 /** CONFIG sub-view — map size, wave, record toggle. */
+// ── Roster Table View ──────────────────────────────────────
+
+/** Filter + sort roster soldiers for the table. */
+function _filterAndSortRoster(roster) {
+  const alive = roster.filter(s => s.status !== 'kia');
+  const roleFilter = Game.hqRoleFilter || 'all';
+  const filtered = roleFilter === 'all' ? alive
+    : alive.filter(s => s.role === roleFilter);
+
+  const sortKey = Game.hqSortKey || 'name';
+  const sortDir = Game.hqSortDir || 'desc';
+  const sorted = [...filtered].sort((a, b) => {
+    let va, vb;
+    switch (sortKey) {
+      case 'name': va = a.name?.last || ''; vb = b.name?.last || ''; break;
+      case 'rank': va = a.rankIndex || 0; vb = b.rankIndex || 0; break;
+      case 'role': va = a.role || ''; vb = b.role || ''; break;
+      case 'hp': va = a.hpPercent || 0; vb = b.hpPercent || 0; break;
+      case 'vis': va = a.physicals?.vision || 0; vb = b.physicals?.vision || 0; break;
+      case 'str': va = a.physicals?.strength || 0; vb = b.physicals?.strength || 0; break;
+      case 'ref': va = a.physicals?.reflexes || 0; vb = b.physicals?.reflexes || 0; break;
+      case 'end': va = a.physicals?.endurance || 0; vb = b.physicals?.endurance || 0; break;
+      case 'damage': { const ca = getEffectiveCombatStats(a); const cb = getEffectiveCombatStats(b); va = ca.damage; vb = cb.damage; break; }
+      case 'range': { const ca = getEffectiveCombatStats(a); const cb = getEffectiveCombatStats(b); va = ca.range; vb = cb.range; break; }
+      case 'speed': { const ca = getEffectiveCombatStats(a); const cb = getEffectiveCombatStats(b); va = ca.speed; vb = cb.speed; break; }
+      case 'battles': va = a.battlesServed || 0; vb = b.battlesServed || 0; break;
+      case 'kills': va = a.kills || 0; vb = b.kills || 0; break;
+      case 'mmr': va = a.mmr || 0; vb = b.mmr || 0; break;
+      case 'status': va = a.status || ''; vb = b.status || ''; break;
+      default: va = a.name?.last || ''; vb = b.name?.last || '';
+    }
+    const cmp = typeof va === 'string' ? va.localeCompare(vb) : va - vb;
+    return sortDir === 'desc' ? -cmp : cmp;
+  });
+  return { sorted, roleFilter };
+}
+
+/** Render a sortable column header. */
+function _sortHeader(label, key) {
+  const active = Game.hqSortKey === key;
+  const arrow = active ? (Game.hqSortDir === 'desc' ? ' ▼' : ' ▲') : '';
+  return `<th class="roster-th ${active ? 'sort-active' : ''}" data-action="hq-sort" data-key="${key}">${label}${arrow}</th>`;
+}
+
+/** Render a single table row for a soldier with effective combat stats. */
+function _rosterTableRow(s, selected) {
+  const rank = getRankInfo(s).abbr;
+  const name = s.name?.last || s.name?.first || 'Unknown';
+  const isPC = s.isPlayerCharacter;
+  const isChecked = selected.includes(s.id);
+  const cs = getEffectiveCombatStats(s);
+  const hpColor = cs.hp >= cs.maxHp * 0.8 ? 'var(--accent-green)' : cs.hp >= cs.maxHp * 0.5 ? 'var(--accent-yellow)' : 'var(--accent-red)';
+  const hpDiff = cs.hp - cs.maxHp;
+  const statusCls = s.status === 'wounded' ? 'status-wounded' : s.status === 'active' ? 'status-active' : 'status-kia';
+  const p = s.physicals || {};
+
+  return `<tr class="roster-tr ${isChecked ? 'checked' : ''}" data-action="hq-soldier-detail" data-soldier="${s.id}">
+    <td class="roster-td roster-td-check"><input type="checkbox" class="roster-check" ${isChecked ? 'checked' : ''} data-action="hq-compare-toggle" data-soldier="${s.id}" onclick="event.stopPropagation()"></td>
+    <td class="roster-td roster-td-rank"><canvas class="soldier-insignia" data-rank="${s.rankIndex}" width="32" height="32"></canvas> ${rank}</td>
+    <td class="roster-td roster-td-name">${name}${isPC ? ' <span class="pc-badge">YOU</span>' : ''}</td>
+    <td class="roster-td roster-td-role">${getRoleLabel(s.role)}</td>
+    <td class="roster-td roster-td-hp" style="color:${hpColor}">${cs.hp}/${cs.maxHp} <span style="font-size:0.6rem;color:${hpDiff < 0 ? 'var(--accent-red)' : 'var(--text-secondary)'}">${hpDiff !== 0 ? (hpDiff > 0 ? '+' : '') + hpDiff : ''}</span></td>
+    <td class="roster-td roster-td-stat">${p.vision ?? '—'}</td>
+    <td class="roster-td roster-td-stat">${p.strength ?? '—'}</td>
+    <td class="roster-td roster-td-stat">${p.reflexes ?? '—'}</td>
+    <td class="roster-td roster-td-stat">${p.endurance ?? '—'}</td>
+    <td class="roster-td roster-td-stat">${cs.damage || 0}</td>
+    <td class="roster-td roster-td-stat">${cs.range || 0}</td>
+    <td class="roster-td roster-td-stat">${cs.speed || 0}</td>
+    <td class="roster-td roster-td-stat">${s.battlesServed || 0}</td>
+    <td class="roster-td roster-td-stat">${s.kills || 0}</td>
+    <td class="roster-td roster-td-stat">${Math.round(s.mmr || 0)}</td>
+    <td class="roster-td"><span class="status-label ${statusCls}">${s.status === 'wounded' ? 'WND' : s.status === 'active' ? 'RDY' : 'KIA'}</span></td>
+  </tr>`;
+}
+
+/** Full roster table view with filter bar, sortable headers, compare button. */
+function _rosterTableView(roster, selected) {
+  const { sorted, roleFilter } = _filterAndSortRoster(roster);
+  const roleFilters = ['all', 'rifleman', 'medic', 'engineer', 'heavy_gunner', 'tc', 'gunner', 'driver'];
+  const compareCount = selected.length;
+
+  const filterBar = `
+    <div class="ops-filter-bar" style="margin-bottom:8px;">
+      ${roleFilters.map(r => `<button class="ops-filter-btn ${roleFilter === r ? 'active' : ''}" data-action="hq-filter-role" data-role="${r}">${r === 'all' ? 'ALL' : getRoleLabel(r)}</button>`).join('')}
+      ${compareCount >= 2 ? `<button class="ops-filter-btn" data-action="hq-compare" style="margin-left:auto;color:var(--accent-blue);border-color:var(--accent-blue);">COMPARE (${compareCount})</button>` : ''}
+      ${compareCount > 0 ? `<button class="ops-filter-btn" data-action="hq-clear-selection" style="color:var(--text-secondary);">CLEAR</button>` : ''}
+    </div>`;
+
+  const table = `
+    <div class="roster-table-wrap">
+      <table class="roster-table">
+        <thead>
+          <tr>
+            <th class="roster-th" style="width:30px;"></th>
+            ${_sortHeader('Rank', 'rank')}
+            ${_sortHeader('Name', 'name')}
+            ${_sortHeader('Role', 'role')}
+            ${_sortHeader('Health', 'hp')}
+            ${_sortHeader('VIS', 'vis')}
+            ${_sortHeader('STR', 'str')}
+            ${_sortHeader('REF', 'ref')}
+            ${_sortHeader('END', 'end')}
+            ${_sortHeader('DMG', 'damage')}
+            ${_sortHeader('RNG', 'range')}
+            ${_sortHeader('SPD', 'speed')}
+            ${_sortHeader('Btl', 'battles')}
+            ${_sortHeader('Kills', 'kills')}
+            ${_sortHeader('MMR', 'mmr')}
+            ${_sortHeader('Status', 'status')}
+          </tr>
+        </thead>
+        <tbody>
+          ${sorted.map(s => _rosterTableRow(s, selected)).join('')}
+        </tbody>
+      </table>
+    </div>`;
+
+  return filterBar + table;
+}
+
+/** Soldier detail modal — dossier card layout. */
+function _soldierDetailModal(soldierId) {
+  const roster = Game.roster || [];
+  const s = roster.find(r => r.id === soldierId);
+  if (!s) return '';
+
+  const selectedRole = Game.hqDetailRole || s.role || 'rifleman';
+  // Compute stats for the selected role (temporarily swap role for computation)
+  const origRole = s.role;
+  s.role = selectedRole;
+  const cs = getEffectiveCombatStats(s);
+  s.role = origRole;
+  const expanded = Game.hqDetailExpanded || null;
+  const detailTab = Game.hqDetailTab || 'combat';
+
+  let tabContent;
+  if (detailTab === 'personality') tabContent = _dossierPersonality(s);
+  else if (detailTab === 'service') tabContent = _dossierService(s);
+  else tabContent = _dossierCombatStats(s, cs, expanded) + _dossierPhysicals(s);
+
+  return `
+    <div class="soldier-detail-modal">
+      <div class="soldier-detail-backdrop" data-action="hq-close-detail"></div>
+      <div class="soldier-detail-content">
+        ${_dossierHeader(s)}
+        ${_dossierMosPicker(s, selectedRole)}
+        <div class="detail-tabs">
+          <button class="detail-tab ${detailTab === 'combat' ? 'active' : ''}" data-action="hq-detail-tab" data-tab="combat">COMBAT</button>
+          <button class="detail-tab ${detailTab === 'personality' ? 'active' : ''}" data-action="hq-detail-tab" data-tab="personality">PERSONALITY</button>
+          <button class="detail-tab ${detailTab === 'service' ? 'active' : ''}" data-action="hq-detail-tab" data-tab="service">SERVICE</button>
+        </div>
+        <div class="detail-body">${tabContent}</div>
+      </div>
+    </div>`;
+}
+
+function _dossierHeader(s) {
+  const rank = getRankInfo(s).abbr;
+  const name = `${s.name?.first || ''} ${s.name?.last || 'Unknown'}`.trim();
+  const statusCls = s.status === 'wounded' ? 'status-wounded' : 'status-active';
+  const statusTxt = s.status === 'wounded' ? 'WOUNDED' : 'READY';
+  return `
+    <div class="detail-header">
+      <div class="dossier-portrait"></div>
+      <div style="flex:1;min-width:0;">
+        <div class="dossier-name">${rank} ${name}${s.isPlayerCharacter ? ' <span class="pc-badge">YOU</span>' : ''}</div>
+        <span class="status-label ${statusCls}">${statusTxt}</span>
+      </div>
+      <button class="detail-close" data-action="hq-close-detail">✕</button>
+    </div>`;
+}
+
+function _dossierMosPicker(s, selectedRole) {
+  const training = s.training || {};
+  const roles = Object.keys(training).filter(r => training[r] > 0);
+  if (!roles.includes(s.mos)) roles.unshift(s.mos);
+  const tPct = Math.round((training[selectedRole] || 0) * 100);
+  const options = roles.map(r => {
+    const rPct = Math.round((training[r] || 0) * 100);
+    const isPrimary = r === s.mos;
+    return `<option value="${r}" ${r === selectedRole ? 'selected' : ''}>${getRoleLabel(r)} ${rPct}%${isPrimary ? ' ★' : ''}</option>`;
+  }).join('');
+  const isNotPrimary = selectedRole !== s.mos;
+  return `
+    <div class="dossier-mos">
+      <span class="detail-stat-label">MOS</span>
+      <select class="dossier-mos-select">${options}</select>
+      <span class="dossier-training">Training: ${tPct}%</span>
+      ${isNotPrimary ? `<button class="dossier-set-primary" data-action="hq-set-primary-mos" data-soldier="${s.id}" data-role="${selectedRole}">Set Primary</button>` : ''}
+    </div>`;
+}
+
+/** Two-tone stat bar: base color + modifier extension. Tap to expand breakdown. */
+function _dossierStatBar(label, baseVal, effectiveVal, maxVal, unit, mods, statKey, expanded) {
+  const basePct = Math.min(100, (baseVal / maxVal) * 100);
+  const effPct = Math.min(100, (effectiveVal / maxVal) * 100);
+  const modPct = effPct - basePct;
+  const isExpanded = expanded === statKey;
+
+  // Format display value with units
+  let display;
+  const useMetric = Game.settings?.useMetric !== false;
+  if (unit === 'rpm') display = `${Math.round(60000 / effectiveVal)} rpm`;
+  else if (unit === 'dist') display = `${Math.round(effectiveVal / 10)}m`;
+  else if (unit === 'speed') {
+    const mps = effectiveVal / 10;
+    display = useMetric ? `${Math.round(mps * 3.6)} km/h` : `${Math.round(mps * 2.237)} mph`;
+  }
+  else display = `${Math.round(effectiveVal)}`;
+
+  // Color-code modifiers by source
+  const modColors = { 'Toughness': '#f59e0b', 'Faster Reload': '#8b5cf6', 'Keen Eye': '#3b82f6', 'Stamina': '#10b981' };
+  const modColor = modPct < 0 ? 'var(--accent-red)' : (mods.length === 1 ? (modColors[mods[0].source] || 'var(--accent-blue)') : 'var(--accent-blue)');
+  const modColorMap = { 'Toughness': '#f59e0b', 'Faster Reload': '#8b5cf6', 'Keen Eye': '#3b82f6', 'Stamina': '#10b981' };
+  const breakdown = mods.length > 0 ? mods.map(m => {
+    const c = modColorMap[m.source] || (m.value > 0 ? 'var(--accent-green)' : 'var(--accent-red)');
+    return `<div class="detail-mod-row"><span style="color:${c}">${m.icon || '●'} ${m.source}: ${m.value > 0 ? '+' : ''}${Math.round(m.value)}</span></div>`;
+  }).join('') : '';
+
+  return `
+    <div class="dossier-stat" data-action="hq-detail-expand" data-stat="${statKey}">
+      <span class="detail-stat-label">${label}</span>
+      <div class="dossier-bar">
+        <div class="dossier-bar-base" style="width:${basePct}%"></div>
+        ${modPct > 0 ? `<div class="dossier-bar-mod" style="width:${modPct}%;left:${basePct}%;background:${modColor}"></div>` : ''}
+      </div>
+      <span class="detail-stat-val">${display}</span>
+    </div>
+    ${isExpanded && breakdown ? `<div class="dossier-breakdown">${breakdown}</div>` : ''}`;
+}
+
+function _dossierCombatStats(s, cs, expanded) {
+  const mods = cs.modifiers || [];
+  const hpMods = mods.filter(m => m.stat === 'hp');
+  const dmgMods = mods.filter(m => m.stat === 'damage');
+  const frMods = mods.filter(m => m.stat === 'fireRate');
+  const rngMods = mods.filter(m => m.stat === 'range');
+  const spdMods = mods.filter(m => m.stat === 'speed');
+
+  const baseHp = cs.maxHp - hpMods.reduce((s, m) => s + m.value, 0);
+  const baseDmg = cs.damage - dmgMods.reduce((s, m) => s + m.value, 0);
+  const baseFr = cs.fireRate - frMods.reduce((s, m) => s + m.value, 0);
+  const baseRng = cs.range - rngMods.reduce((s, m) => s + m.value, 0);
+  const baseSpd = cs.speed - spdMods.reduce((s, m) => s + m.value, 0);
+
+  return `
+    <div class="dossier-section">
+      ${_dossierStatBar('HP', baseHp, cs.hp, cs.maxHp * 1.2, 'hp', hpMods, 'hp', expanded)}
+      ${_dossierStatBar('DMG', baseDmg, cs.damage, 50, '', dmgMods, 'damage', expanded)}
+      ${_dossierStatBar('ROF', baseFr, cs.fireRate, 2000, 'rpm', frMods, 'fireRate', expanded)}
+      ${_dossierStatBar('RNG', baseRng, cs.range, 600, 'dist', rngMods, 'range', expanded)}
+      ${_dossierStatBar('SPD', baseSpd, cs.speed, 100, 'speed', spdMods, 'speed', expanded)}
+    </div>`;
+}
+
+function _dossierPhysicals(s) {
+  const p = s.physicals || {};
+  const segBar = (label, val) => {
+    const pct = Math.min(100, val || 0);
+    const segs = 10;
+    const filled = Math.round(segs * pct / 100);
+    const color = pct >= 60 ? 'var(--accent-green)' : pct >= 30 ? 'var(--accent-yellow)' : 'var(--accent-red)';
+    let bars = '';
+    for (let i = 0; i < segs; i++) bars += `<span class="hp-seg ${i < filled ? 'filled' : ''}" style="${i < filled ? 'background:' + color : ''}"></span>`;
+    return `<div class="detail-stat-row"><span class="detail-stat-label">${label}</span><div class="hp-segments" style="flex:1;margin:0 4px;">${bars}</div><span class="detail-stat-val">${Math.round(val)}</span></div>`;
+  };
+  return `
+    <div class="dossier-section">
+      <div class="dossier-phys-grid">
+        ${segBar('VIS', p.vision || 0)}
+        ${segBar('STR', p.strength || 0)}
+        ${segBar('REF', p.reflexes || 0)}
+        ${segBar('END', p.endurance || 0)}
+      </div>
+    </div>`;
+}
+
+function _dossierService(s) {
+  const row = (label, val) => `<div class="detail-stat-row"><span class="detail-stat-label">${label}</span><span class="detail-stat-val">${val}</span></div>`;
+  return `
+    ${row('Battles', s.battlesServed || 0)}
+    ${row('Kills', s.kills || 0)}
+    ${row('MMR', Math.round(s.mmr || 0))}
+    ${row('Streak', s.streak || 0)}
+    ${(s.heroicActions || []).length > 0 ? s.heroicActions.map(h => `<div class="detail-mod-row">★ ${h}</div>`).join('') : ''}`;
+}
+
+function _dossierPersonality(s) {
+  const pers = s.personality || {};
+  const row = (label, val) => {
+    const pct = Math.round((val || 0) * 100);
+    const segs = 10;
+    const filled = Math.round(segs * pct / 100);
+    let bars = '';
+    for (let i = 0; i < segs; i++) bars += `<span class="hp-seg ${i < filled ? 'filled' : ''}" style="${i < filled ? 'background:var(--accent-blue)' : ''}"></span>`;
+    return `<div class="detail-stat-row"><span class="detail-stat-label">${label}</span><div class="hp-segments" style="flex:1;margin:0 4px;">${bars}</div><span class="detail-stat-val">${pct}</span></div>`;
+  };
+  return `
+    ${row('AGG', pers.aggression)}${row('PAT', pers.patience)}
+    ${row('CRG', pers.courage)}${row('DIS', pers.discipline)}
+    ${row('INI', pers.initiative)}${row('AWR', pers.awareness)}`;
+}
+
 // _opsConfigView removed — map/wave config moved to deploy bar, record in settings
 
 /** FORMATION sub-view — grid editor (placeholder until canvas is built). */

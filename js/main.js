@@ -562,6 +562,10 @@ document.getElementById('app').addEventListener('click', e => {
   const action = e.target.closest('[data-action]');
   if (action) {
     const a = action.dataset.action;
+    // Debug: log modal interactions
+    if (Game.hqDetailSoldier) {
+      console.log('[CLICK]', a, 'target:', e.target.tagName, e.target.className?.substring?.(0, 40), 'action el:', action.tagName, action.className?.substring?.(0, 40));
+    }
     if (a === 'campaign') { initAudio(); goto(State.CAMPAIGN_ERA_SELECT); }
     else if (a === 'endless') { Game.endless = newEndlessRun(); Game.endless._record = Game.settings?.autoRecord !== false; initAudio(); fetchUnitVariants().then(() => { goto(State.ENDLESS_LOADOUT); render(); }); }
     else if (a === 'classic') { Game.settings.mode = 'classic'; initAudio(); goto(State.COUNTDOWN); }
@@ -827,6 +831,72 @@ document.getElementById('app').addEventListener('click', e => {
     }
     else if (a === 'hq-filter-role') {
       Game.hqRoleFilter = action.dataset.role;
+      render();
+    }
+    else if (a === 'hq-sort') {
+      const key = action.dataset.key;
+      if (Game.hqSortKey === key) {
+        Game.hqSortDir = Game.hqSortDir === 'desc' ? 'asc' : 'desc';
+      } else {
+        Game.hqSortKey = key;
+        Game.hqSortDir = 'desc';
+      }
+      render();
+    }
+    else if (a === 'hq-compare-toggle') {
+      const id = action.dataset.soldier;
+      if (!Game.hqSelectedSoldiers) Game.hqSelectedSoldiers = [];
+      const idx = Game.hqSelectedSoldiers.indexOf(id);
+      if (idx >= 0) Game.hqSelectedSoldiers.splice(idx, 1);
+      else Game.hqSelectedSoldiers.push(id);
+      render();
+    }
+    else if (a === 'hq-compare') {
+      // Open comparison modal with selected soldiers
+      const soldiers = (Game.hqSelectedSoldiers || []).map(id => (Game.roster || []).find(s => s.id === id)).filter(Boolean);
+      if (soldiers.length >= 2) {
+        Game.hqCompareModal = soldiers.map(s => s.id);
+        render();
+      }
+    }
+    else if (a === 'hq-clear-selection') {
+      Game.hqSelectedSoldiers = [];
+      render();
+    }
+    else if (a === 'hq-close-compare') {
+      Game.hqCompareModal = null;
+      render();
+    }
+    else if (a === 'hq-soldier-detail') {
+      Game.hqDetailSoldier = action.dataset.soldier;
+      Game.hqDetailTab = 'combat';
+      render();
+    }
+    else if (a === 'hq-close-detail') {
+      Game.hqDetailSoldier = null;
+      Game.hqDetailRole = null;
+      Game.hqDetailExpanded = null;
+      Game.hqDetailTab = null;
+      render();
+    }
+    else if (a === 'hq-detail-tab') {
+      Game.hqDetailTab = action.dataset.tab;
+      render();
+    }
+    else if (a === 'hq-detail-expand') {
+      const stat = action.dataset.stat;
+      Game.hqDetailExpanded = Game.hqDetailExpanded === stat ? null : stat;
+      render();
+    }
+    else if (a === 'hq-set-primary-mos') {
+      const soldierId = action.dataset.soldier;
+      const newRole = action.dataset.role;
+      const soldier = (Game.roster || []).find(s => s.id === soldierId);
+      if (soldier && newRole) {
+        soldier.mos = newRole;
+        soldier.role = newRole;
+        saveRoster();
+      }
       render();
     }
     else if (a === 'ops-deploy') {
@@ -2823,6 +2893,13 @@ document.getElementById('app').addEventListener('change', e => {
   // Operations wave select
   if (e.target.closest('.ops-wave-select') && Game.state === State.HQ) {
     if (Game.opsConfig) Game.opsConfig.startWave = parseInt(e.target.value) || 1;
+    return;
+  }
+
+  // Dossier MOS dropdown
+  if (e.target.closest('.dossier-mos-select')) {
+    Game.hqDetailRole = e.target.value;
+    render();
     return;
   }
 

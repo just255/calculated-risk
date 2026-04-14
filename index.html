@@ -1326,6 +1326,59 @@
     /* ── Operations Tab ────────────────────────── */
     .operations-tab { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 
+    /* Roster table */
+    .roster-table-wrap { overflow-x: auto; flex: 1; min-height: 0; }
+    .roster-table { width: 100%; border-collapse: collapse; font-family: 'Oxanium', monospace; font-size: 0.7rem; }
+    .roster-th { padding: 4px 6px; text-align: left; color: var(--text-secondary); font-size: 0.6rem; letter-spacing: 0.5px; cursor: pointer; white-space: nowrap; border-bottom: 1px solid var(--bg-light); user-select: none; }
+    .roster-th:hover { color: var(--accent-green); }
+    .roster-th.sort-active { color: var(--accent-green); }
+    .roster-tr { border-bottom: 1px solid rgba(255,255,255,0.04); cursor: pointer; }
+    .roster-tr:hover { background: rgba(74, 222, 128, 0.05); }
+    .roster-tr.checked { background: rgba(96, 165, 250, 0.08); }
+    .roster-td { padding: 3px 6px; white-space: nowrap; color: var(--text-primary); }
+    .roster-td-check { width: 24px; text-align: center; }
+    .roster-td-rank { white-space: nowrap; }
+    .roster-td-rank .soldier-insignia { width: 20px !important; height: 20px !important; vertical-align: middle; margin-right: 2px; }
+    .roster-td-name { font-weight: 600; }
+    .roster-td-role { color: var(--text-secondary); }
+    .roster-td-hp { font-variant-numeric: tabular-nums; }
+    .roster-td-stat { text-align: center; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+    .roster-check { accent-color: var(--accent-blue); cursor: pointer; }
+
+    /* Soldier detail modal — dossier card */
+    .soldier-detail-modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; z-index: 300; }
+    .soldier-detail-backdrop { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); }
+    .soldier-detail-content { position: relative; z-index: 1; background: var(--bg-dark); border: 1px solid var(--bg-light); border-radius: 6px; padding: 12px; max-width: 400px; width: 92%; max-height: 85vh; overflow-y: auto; font-family: 'Oxanium', monospace; }
+    .detail-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--bg-light); }
+    .dossier-portrait { width: 48px; height: 48px; background: var(--bg-medium); border: 1px solid var(--bg-light); border-radius: 4px; flex-shrink: 0; }
+    .dossier-name { font-size: 0.9rem; font-weight: 700; color: var(--text-primary); }
+    .detail-close { background: none; border: none; color: var(--text-secondary); font-size: 1.1rem; cursor: pointer; padding: 4px 8px; }
+    .dossier-mos { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--bg-light); font-size: 0.7rem; }
+    .dossier-mos-select { background: var(--bg-medium); border: 1px solid var(--bg-light); color: var(--text-primary); font-family: 'Oxanium', monospace; font-size: 0.7rem; padding: 2px 6px; }
+    .dossier-training { color: var(--accent-yellow); margin-left: auto; font-size: 0.65rem; }
+    .dossier-set-primary { padding: 1px 6px; font-family: 'Oxanium', monospace; font-size: 0.55rem; background: transparent; border: 1px solid var(--accent-green); color: var(--accent-green); cursor: pointer; }
+    .dossier-set-primary:hover { background: var(--accent-green); color: #0a0a0a; }
+    .detail-tabs { display: flex; gap: 2px; margin-bottom: 8px; }
+    .detail-tab { flex: 1; padding: 4px 0; font-family: 'Oxanium', monospace; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.5px; text-align: center; background: var(--bg-medium); border: 1px solid var(--bg-light); color: var(--text-secondary); cursor: pointer; }
+    .detail-tab.active { background: var(--bg-light); color: var(--accent-green); border-color: var(--accent-green); }
+    .detail-body { min-height: 100px; }
+    .dossier-section { margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+    .dossier-stat { display: flex; align-items: center; gap: 4px; padding: 2px 0; cursor: pointer; font-size: 0.7rem; }
+    .dossier-stat:hover { background: rgba(255,255,255,0.02); }
+    .dossier-bar { flex: 1; height: 6px; background: var(--bg-light); border-radius: 2px; position: relative; overflow: hidden; margin: 0 6px; }
+    .dossier-bar-base { height: 100%; background: var(--accent-green); border-radius: 2px; position: absolute; top: 0; left: 0; }
+    .dossier-bar-mod { height: 100%; border-radius: 2px; position: absolute; top: 0; }
+    .dossier-breakdown { padding: 2px 0 4px 86px; font-size: 0.6rem; }
+    .detail-stat-row { display: flex; align-items: center; gap: 4px; padding: 2px 0; font-size: 0.7rem; }
+    .detail-stat-label { color: var(--text-secondary); min-width: 36px; font-size: 0.65rem; }
+    .detail-stat-val { color: var(--text-primary); font-weight: 600; min-width: 40px; text-align: right; font-size: 0.7rem; }
+    .detail-mod-row { padding: 1px 0; font-size: 0.6rem; color: var(--text-secondary); }
+    .dossier-expand { margin-bottom: 2px; font-size: 0.7rem; }
+    .dossier-expand-title { color: var(--text-secondary); cursor: pointer; padding: 4px 0; font-size: 0.65rem; letter-spacing: 0.5px; }
+    .dossier-expand-title:hover { color: var(--accent-green); }
+    .dossier-expand-body { padding: 4px 0; }
+    .dossier-phys-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+
     /* Operations sub-tabs */
     .ops-sub-tabs { display: flex; gap: 4px; flex-shrink: 0; margin-bottom: 8px; }
     .ops-sub-tab { padding: 6px 16px; font-family: 'Oxanium', monospace; font-size: 0.75rem; font-weight: 700; letter-spacing: 1px; background: var(--bg-medium); border: 1px solid var(--bg-light); color: var(--text-secondary); cursor: pointer; }
