@@ -4,6 +4,7 @@
 
 import { Game } from './state.js';
 import { loadRoster, saveRoster, seedStarterRoster, loadVehicles, saveVehicles, seedStarterVehicles, loadMemorial } from './roster.js';
+import { loadArmory } from './armory.js';
 
 // ── Save slot system ─────────────────────────────────────────
 
@@ -165,6 +166,7 @@ export function load() {
     Game.memorial = [];
     Game.recentFallen = [];
     Game.hqRecruitPool = null;
+    Game.armory = { items: [], capacity: 50 };
 
     const data = JSON.parse(localStorage.getItem(slotKey(SAVE_KEY)));
     if (data) {
@@ -193,10 +195,11 @@ export function load() {
         }
       }
     }
-    // Load persistent roster + vehicles (separate storage keys)
+    // Load persistent roster + vehicles + armory (separate storage keys)
     loadRoster();
     loadVehicles();
     loadMemorial();
+    loadArmory();
     // Seed starters if first time
     seedStarterRoster();
     seedStarterVehicles();

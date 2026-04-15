@@ -4,6 +4,8 @@
 
 import { Game } from './state.js';
 import { RANK_TABLE, CREW_SCHEMAS, VEHICLE_ROLES, SCORE_WEIGHTS, STREAK_CONFIG, HEROIC_ACTIONS, COMMENDATIONS, OFFICER_RANKS, GREEN_TO_GOLD, CMD_SCORE_WEIGHTS, SGT_LEADERSHIP_WEIGHTS, INFANTRY_ARCHETYPES, UNIT_COMBAT_STATS, UNITS, PIXELS_TO_METERS, MOS_DEFINITIONS, PHYSICAL_RANGES, TRAINING_GROWTH_PER_BATTLE, MOS_GROWTH_MULTIPLIER, TRAINING_CAP, ALL_ROLES, CREW_MOD_FLOOR, CREW_MOD_CEILING } from './constants.js';
+import { createStandardIssue, getLoadout, getEquipped, unassignItem, destroyItem, saveArmory } from './armory.js';
+import { getGearTemplate, getWeaponTemplate, QUALITY_TIERS, RANGE_ZONE_RATIOS } from './gear-templates.js';
 
 // ─── Name pools ───────────────────────────────────────────────
 
@@ -138,6 +140,9 @@ export function createSoldier(opts) {
     assignedSlot: null,
     isSquadLeader: false,
 
+    // Gear loadout — armory item IDs per slot
+    loadout: { primary: null, sidearm: null, optic: null, attachment: null, armor: null, utility: null },
+
     battlesServed: 0,
     kills: 0,
     missionsWithVehicle: {}
@@ -148,7 +153,7 @@ export function createSoldier(opts) {
  * Generate a raw recruit — E-1, low stats, random name.
  */
 export function generateRecruit(pool, role) {
-  return createSoldier({
+  const soldier = createSoldier({
     pool,
     role,
     rankIndex: 0,
@@ -163,6 +168,8 @@ export function generateRecruit(pool, role) {
     survivability: 0.5,
     morale: 0.6
   });
+  equipSoldierStandardIssue(soldier);
+  return soldier;
 }
 
 // ─── Roster capacity ─────────────────────────────────────────
@@ -1255,109 +1262,166 @@ export function getEffectiveCombatStats(soldier, vehicle) {
     return { hp: 0, maxHp: 0, damage: 0, fireRate: 0, speed: 0, range: 0, special: null, modifiers: [], isOfficer: true };
   }
 
-  // Base stats from archetype
-  let base;
+  // Vehicle crew — stats come from the vehicle type (gear system for vehicles is future)
   if (soldier.pool === 'vehicle' && vehicle) {
-    // Vehicle crew — stats come from the vehicle type
     const unitDef = UNITS.find(u => u.id === vehicle.unitId);
     const stats = UNIT_COMBAT_STATS[vehicle.unitId] || {};
-    base = {
-      hp: unitDef?.hp || 300,
-      damage: unitDef?.damage || 30,
-      fireRate: stats.fireRate || 1500,
-      speed: stats.speed || 70,
-      range: stats.range || 450,
-      special: null
+    const effective = {
+      hp: unitDef?.hp || 300, maxHp: unitDef?.hp || 300,
+      damage: unitDef?.damage || 30, fireRate: stats.fireRate || 1500,
+      speed: stats.speed || 70, range: stats.range || 450,
+      special: null, modifiers: []
     };
-  } else {
-    // Infantry — stats from role archetype
-    const archetype = INFANTRY_ARCHETYPES[soldier.role] || INFANTRY_ARCHETYPES.rifleman;
-    base = { ...archetype };
+    effective.dps = effective.fireRate > 0 ? Math.round(effective.damage * (1000 / effective.fireRate) * 10) / 10 : 0;
+    effective.rpm = effective.fireRate > 0 ? Math.round(60000 / effective.fireRate) : 0;
+    effective.rangeM = Math.round(effective.range * PIXELS_TO_METERS);
+    effective.speedMs = Math.round(effective.speed * PIXELS_TO_METERS * 10) / 10;
+    return effective;
   }
 
+  // ── 1. Physical base (the human) ──
+  const ph = soldier.physicals || { vision: 50, strength: 50, reflexes: 50, endurance: 50 };
+  const PHYS_MAX = 100;
+  const scalePhys = (stat, min, max) => min + (stat / PHYS_MAX) * (max - min);
+
   let effective = {
-    hp: base.hp,
-    maxHp: base.hp,
-    damage: base.damage,
-    fireRate: base.fireRate,
-    speed: base.speed,
-    range: base.range,
-    special: base.special || null
+    hp: Math.round(scalePhys(ph.strength, 120, 220)),
+    maxHp: Math.round(scalePhys(ph.strength, 120, 220)),
+    speed: Math.round(scalePhys(ph.endurance, 35, 65)),
+    viewRange: Math.round(scalePhys(ph.vision, 400, 700)),
+    damage: 3,        // unarmed fallback
+    fireRate: 1500,
+    range: 50,
+    effectiveRange: 50,
+    accuracy: 0.5,
+    magSize: 0,
+    reloadTime: 2000,
+    spread: 0.3,
+    special: null,
+    weight: 0,
+    critChance: 0.02,
+    penetrationChance: 0
   };
 
-  // ── Equipment modifiers (future — from soldier.equipment[]) ──
-  if (soldier.equipment) {
-    for (const item of soldier.equipment) {
-      if (!item?.statMods) continue;
-      for (const [stat, val] of Object.entries(item.statMods)) {
-        if (effective[stat] !== undefined) {
-          effective[stat] += val;
-          modifiers.push({ source: item.name || 'Equipment', stat, value: val });
-        }
+  const t = soldier.training?.[soldier.role] ?? 0;
+
+  // ── 2. Weapon stats (if equipped) ──
+  const primaryItem = getEquipped(soldier.id, 'primary');
+  if (primaryItem) {
+    const wt = getWeaponTemplate(primaryItem.templateId);
+    if (wt) {
+      const q = QUALITY_TIERS[primaryItem.quality]?.mult || 1.0;
+      // Damage: weapon × quality (NOT scaled by training)
+      effective.damage = Math.round(wt.stats.damage * q);
+      modifiers.push({ source: wt.name, icon: '🔫', stat: 'damage', value: effective.damage, color: '#f59e0b' });
+
+      // ROF: fixed for auto, training improves semi
+      effective.fireRate = wt.stats.fireRate;
+      // Accuracy: weapon base (training applied in fire-decision.js)
+      effective.accuracy = wt.stats.accuracy * q;
+      // Range: weapon effective range (training extends effective zone)
+      effective.range = wt.stats.range;
+      effective.effectiveRange = Math.round(wt.stats.range * (0.6 + t * 0.4));
+      // Mag + reload
+      effective.magSize = wt.stats.magSize;
+      effective.reloadTime = Math.round(wt.stats.reloadTime * (1 - (ph.reflexes / PHYS_MAX) * t * 0.3));
+      modifiers.push({ source: 'Reflexes', icon: '⚡', stat: 'reloadTime', value: effective.reloadTime - wt.stats.reloadTime, color: '#8b5cf6' });
+      // Spread/recoil: weapon base, reduced by strength × training
+      effective.spread = Math.max(0.02, wt.stats.recoil * (1 - (ph.strength / PHYS_MAX) * t * 0.3));
+      // Weight
+      effective.weight += wt.stats.weight;
+      // Penetration from quality
+      effective.penetrationChance = q >= 1.1 ? (q - 1.0) * 0.5 : 0;
+      // Condition degradation
+      if (primaryItem.condition < 0.5) {
+        const condPenalty = (0.5 - primaryItem.condition) * 0.3;
+        effective.accuracy *= (1 - condPenalty);
+        modifiers.push({ source: 'Worn weapon', icon: '⚠', stat: 'accuracy', value: -condPenalty, color: '#f87171' });
       }
     }
   }
 
-  // ── Physical stat modifiers ──
-  // Each physical attribute modifies specific combat stats via roleEffectiveness
-  if (soldier.physicals) {
-    const ph = soldier.physicals;
-    const t = soldier.training?.[soldier.role] ?? 0;
-    const modRange = CREW_MOD_CEILING - CREW_MOD_FLOOR;
-
-    // Strength → max HP bonus (tougher body absorbs more damage)
-    const strMod = roleEffectiveness(ph.strength, t);
-    const hpBonus = Math.round(effective.maxHp * strMod * modRange);
-    if (hpBonus > 0) {
-      effective.maxHp += hpBonus;
-      effective.hp += hpBonus;
-      modifiers.push({ source: 'Toughness', icon: '💪', stat: 'hp', value: hpBonus });
-    }
-
-    // Reflexes → fire rate reduction (faster reload — fast hands)
-    const refMod = roleEffectiveness(ph.reflexes, t);
-    const reloadReduction = Math.round(effective.fireRate * refMod * modRange);
-    if (reloadReduction > 0) {
-      effective.fireRate -= reloadReduction;
-      modifiers.push({ source: 'Faster Reload', icon: '⚡', stat: 'fireRate', value: -reloadReduction });
-    }
-
-    // Vision → range bonus
-    const visMod = roleEffectiveness(ph.vision, t);
-    const rangeBonus = Math.round(effective.range * visMod * modRange);
-    if (rangeBonus > 0) {
-      effective.range += rangeBonus;
-      modifiers.push({ source: 'Keen Eye', icon: '👁', stat: 'range', value: rangeBonus });
-    }
-
-    // Endurance → speed bonus (stamina for sustained movement)
-    const endMod = roleEffectiveness(ph.endurance, t);
-    const speedBonus = Math.round(effective.speed * endMod * modRange * 10) / 10;
-    if (speedBonus > 0) {
-      effective.speed = Math.round((effective.speed + speedBonus) * 10) / 10;
-      modifiers.push({ source: 'Stamina', icon: '🏃', stat: 'speed', value: Math.round(speedBonus * 10) / 10 });
+  // ── 3. Optic mods (scaled by training) ──
+  const opticItem = getEquipped(soldier.id, 'optic');
+  if (opticItem) {
+    const ot = getGearTemplate(opticItem.templateId);
+    if (ot?.statMods) {
+      const q = QUALITY_TIERS[opticItem.quality]?.mult || 1.0;
+      for (const [stat, val] of Object.entries(ot.statMods)) {
+        const bonus = Math.round(val * q * t);
+        if (stat === 'range' && bonus > 0) { effective.range += bonus; effective.effectiveRange += bonus; }
+        else if (stat === 'accuracy') effective.accuracy += val * q * t;
+        else if (stat === 'viewRange') effective.viewRange += bonus;
+        if (bonus !== 0) modifiers.push({ source: ot.name, icon: '🔭', stat, value: bonus, color: '#3b82f6' });
+      }
+      effective.weight += ot.weight || 0;
     }
   }
 
-  // ── Condition modifiers ──
-  // HP scales by soldier's persistent health
+  // ── 4. Attachment mods (scaled by training) ──
+  const attachItem = getEquipped(soldier.id, 'attachment');
+  if (attachItem) {
+    const at = getGearTemplate(attachItem.templateId);
+    if (at?.statMods) {
+      const q = QUALITY_TIERS[attachItem.quality]?.mult || 1.0;
+      for (const [stat, val] of Object.entries(at.statMods)) {
+        const bonus = stat === 'magSize' ? val : Math.round(val * q * t * 100) / 100;
+        if (stat === 'recoil') effective.spread = Math.max(0.02, effective.spread + bonus);
+        else if (stat === 'accuracy') effective.accuracy += bonus;
+        else if (stat === 'fireRate') effective.fireRate = Math.max(100, effective.fireRate + bonus);
+        else if (stat === 'magSize') effective.magSize += bonus;
+        else if (stat === 'reloadTime') effective.reloadTime += bonus;
+        else if (stat === 'range') { effective.range += bonus; effective.effectiveRange += bonus; }
+        else if (stat === 'damage') effective.damage += Math.round(bonus);
+        if (bonus !== 0) modifiers.push({ source: at.name, icon: '🔧', stat, value: bonus, color: '#8b5cf6' });
+      }
+      effective.weight += at.weight || 0;
+    }
+  }
+
+  // ── 5. Armor (NOT scaled by training) ──
+  const armorItem = getEquipped(soldier.id, 'armor');
+  if (armorItem) {
+    const art = getGearTemplate(armorItem.templateId);
+    if (art?.statMods) {
+      if (art.statMods.hp) {
+        effective.maxHp += art.statMods.hp;
+        effective.hp += art.statMods.hp;
+        modifiers.push({ source: art.name, icon: '🛡', stat: 'hp', value: art.statMods.hp, color: '#10b981' });
+      }
+      effective.weight += art.weight || 0;
+    }
+  }
+
+  // ── 6. Speed penalty from weight ──
+  const speedMult = Math.max(0.4, 1 - (effective.weight / ((ph.strength || 50) + 50)));
+  if (speedMult < 1) {
+    const speedLoss = Math.round(effective.speed * (1 - speedMult));
+    effective.speed = Math.round(effective.speed * speedMult);
+    if (speedLoss > 0) modifiers.push({ source: 'Loadout weight', icon: '⚖', stat: 'speed', value: -speedLoss, color: '#94a3b8' });
+  }
+
+  // ── 7. Critical hit chance ──
+  effective.critChance = 0.02 + t * 0.05 + (ph.vision / PHYS_MAX) * 0.02 + ((soldier.personality?.awareness || 0.5) * 0.03);
+
+  // ── 8. Wound debuff ──
   const hpPercent = soldier.hpPercent ?? 1.0;
   if (hpPercent < 1.0) {
     const hpLoss = Math.round(effective.maxHp * (1 - hpPercent));
     effective.hp = effective.maxHp - hpLoss;
-    if (hpLoss > 0) modifiers.push({ source: 'Wounded', stat: 'hp', value: -hpLoss });
+    if (hpLoss > 0) modifiers.push({ source: 'Wounded', icon: '🩹', stat: 'hp', value: -hpLoss, color: '#f87171' });
   } else {
     effective.hp = effective.maxHp;
   }
 
-  // Injury debuffs (future — from soldier.injuries[])
+  // ── 9. Injury debuffs ──
   if (soldier.injuries) {
     for (const injury of soldier.injuries) {
       if (!injury?.statMods) continue;
       for (const [stat, val] of Object.entries(injury.statMods)) {
         if (effective[stat] !== undefined) {
           effective[stat] += val;
-          modifiers.push({ source: injury.name || 'Injury', stat, value: val });
+          modifiers.push({ source: injury.name || 'Injury', stat, value: val, color: '#f87171' });
         }
       }
     }
@@ -1521,6 +1585,48 @@ function _migrateRoster() {
       if (s.training[s.mos] !== undefined) {
         s.training[s.mos] = Math.min(TRAINING_CAP, s.training[s.mos] + bonus);
       }
+    }
+    // Loadout migration: give standard issue to soldiers without gear
+    if (!s.loadout) {
+      s.loadout = { primary: null, sidearm: null, optic: null, attachment: null, armor: null, utility: null };
+    }
+    if (s.pool !== 'vehicle' && s.pool !== 'officer' && !s.loadout.primary) {
+      equipSoldierStandardIssue(s);
+    }
+  }
+}
+
+/** Equip a soldier with standard issue gear for their MOS. */
+export function equipSoldierStandardIssue(soldier) {
+  const mos = soldier.role || soldier.mos || 'rifleman';
+  const items = createStandardIssue(mos, soldier.id);
+  if (!soldier.loadout) soldier.loadout = {};
+  for (const [slot, item] of Object.entries(items)) {
+    if (item) soldier.loadout[slot] = item.id;
+  }
+}
+
+/** Strip all gear from a soldier and return items to armory. */
+export function stripGear(soldier) {
+  if (!soldier?.loadout) return [];
+  const recovered = [];
+  for (const [slot, itemId] of Object.entries(soldier.loadout)) {
+    if (itemId) {
+      unassignItem(itemId);
+      recovered.push(itemId);
+      soldier.loadout[slot] = null;
+    }
+  }
+  return recovered;
+}
+
+/** Destroy all gear on a soldier (KIA + battle lost, POW). */
+export function destroyGear(soldier) {
+  if (!soldier?.loadout) return;
+  for (const [slot, itemId] of Object.entries(soldier.loadout)) {
+    if (itemId) {
+      destroyItem(itemId);
+      soldier.loadout[slot] = null;
     }
   }
 }
