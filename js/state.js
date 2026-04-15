@@ -9,7 +9,7 @@ import { hashString } from './world-builder/rng.js';
 import { createSergeant, DEFAULT_SERGEANT } from './sergeant.js';
 import { initBattleAI, applyBrainDefaults } from './ai-pipeline.js';
 import { findValidSpawnPos } from './terrain-utils.js';
-import { getPool, getAvailableVehicles, getRankName, getSoldier, getCrewForVehicle, assignToVehicle, createSoldier, saveRoster, getCrewModifiers } from './roster.js';
+import { getPool, getAvailableVehicles, getRankName, getSoldier, getCrewForVehicle, assignToVehicle, createSoldier, saveRoster, getCrewModifiers, getEffectiveCombatStats } from './roster.js';
 import { loadLastLoadout } from './storage.js';
 
 // Endless mode map sizes — user-chosen before starting, fixed for the entire run.
@@ -1388,21 +1388,30 @@ function buildDeploymentPool(filter) {
 
     const archetype = INFANTRY_ARCHETYPES[soldier.role] || INFANTRY_ARCHETYPES.rifleman;
     const renderUnitId = ROLE_TO_UNIT_ID[soldier.role] || 'infantry';
-    const maxHp = archetype.hp;
+    // Use gear-based stats if soldier has a loadout, fallback to archetype
+    const cs = getEffectiveCombatStats(soldier);
+    const maxHp = cs.maxHp || archetype.hp;
 
     pool.push(createUnit(renderUnitId, {
       id: `roster_inf_${i}`,
-      hp: Math.round(maxHp * soldier.hpPercent),
+      hp: cs.hp || Math.round(maxHp * soldier.hpPercent),
       maxHp,
-      damage: archetype.damage,
-      fireRate: archetype.fireRate,
-      speed: archetype.speed,
-      range: archetype.range,
+      damage: cs.damage || archetype.damage,
+      fireRate: cs.fireRate || archetype.fireRate,
+      speed: cs.speed || archetype.speed,
+      range: cs.range || archetype.range,
       _soldierId: soldier.id,
       _role: soldier.role,
       _special: archetype.special || null,
+      _gearAccuracy: cs.accuracy || null,
+      _gearSpread: cs.spread || null,
+      _gearReloadTime: cs.reloadTime || null,
+      _gearMagSize: cs.magSize || null,
+      _gearCritChance: cs.critChance || 0,
+      _gearPenetration: cs.penetrationChance || 0,
+      _gearEffectiveRange: cs.effectiveRange || cs.range,
       unitName: getRankName(soldier),
-      displayName: `${getRankName(soldier)} (${(INFANTRY_ARCHETYPES[soldier.role] ? soldier.role : 'rifleman')})`,
+      displayName: soldier.name?.last || 'Soldier',
       _insigniaSetId: soldier.insigniaSetId || Game.settings?.insigniaSetId || null,
       personality: { ...soldier.personality },
       _crewMods: getCrewModifiers(soldier, soldier.role)

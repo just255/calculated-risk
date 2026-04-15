@@ -5774,7 +5774,9 @@ function heroFire(b, hero, now, targetEntity) {
     type: projType,
     blastRadius,
     impactTarget: blastRadius > 0 ? { x: impactX, y: impactY } : null,
-    _bridgeElevation: hero._bridgeElevation || null
+    _bridgeElevation: hero._bridgeElevation || null,
+    _critChance: hero._gearCritChance || 0,
+    _penetration: hero._gearPenetration || 0
   });
 
   // Log fire event

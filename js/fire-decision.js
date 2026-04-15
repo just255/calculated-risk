@@ -169,11 +169,12 @@ export function getDamageFalloff(dist, range) {
 export function computeShotAccuracy(unit, target, opts = {}) {
   const factors = [];
 
-  // BASE ACCURACY — weapon system ceiling
+  // BASE ACCURACY — from gear if available, otherwise weapon system ceiling
   const combatStats = unit.unitId ? UNIT_COMBAT_STATS[unit.unitId] : null;
-  const baseAcc = Math.min(1.0, unit._accuracyBonus
+  const gearAcc = unit._gearAccuracy; // stamped from getEffectiveCombatStats at deploy
+  const baseAcc = Math.min(1.0, gearAcc ?? (unit._accuracyBonus
     ? (combatStats?.baseAccuracy ?? 0.80) + unit._accuracyBonus
-    : (combatStats?.baseAccuracy ?? 0.80));
+    : (combatStats?.baseAccuracy ?? 0.80)));
   let accuracy = baseAcc;
   factors.push({ name: 'base', value: baseAcc });
 

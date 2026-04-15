@@ -139,13 +139,29 @@ function _applyEnemyHitToBlue(b, p, unit, now, opts = {}) {
   }
   dmg = cover.dmg;
 
+  // Critical hit roll — source unit's crit chance
+  let isCrit = false;
+  if (p._critChance > 0 && Math.random() < p._critChance) {
+    dmg = Math.round(dmg * 1.5);
+    isCrit = true;
+  }
+
   unit.hp -= dmg;
-  p.dead = true;
+
+  // Penetration — projectile continues through target with reduced damage
+  if (p._penetration > 0 && Math.random() < p._penetration) {
+    p.damage = Math.round(p.damage * 0.5);
+    p._penetration = 0; // only penetrate once
+    // don't mark p.dead — it continues
+  } else {
+    p.dead = true;
+  }
 
   // Physics: stability drop, shock, suppression (reduced by cover)
   applyHitStabilityDrop(unit, dmg);
   unit._shockTimer = 2;
   unit._lastAttackerId = p.sourceId || null;
+  unit._lastCrit = isCrit;
   applySuppression(unit, dmg * cover.suppressionMult, unit.maxHp);
   recordDamage(unit, p.sourceId || '?', dmg);
 

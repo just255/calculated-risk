@@ -5286,7 +5286,9 @@ export function tryShoot(b, unit, targetX, targetY, now, targetEntity) {
     type: projType,
     blastRadius,
     impactTarget: blastRadius > 0 ? { x: impactX, y: impactY } : null,
-    _bridgeElevation: unit._bridgeElevation || null
+    _bridgeElevation: unit._bridgeElevation || null,
+    _critChance: unit._gearCritChance || 0,
+    _penetration: unit._gearPenetration || 0
   });
 
   // Post-fire recoil — bigger guns drop more stability
