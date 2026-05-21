@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MOS Proficiency — B2 Trim Variants</title>
+<link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Oxanium:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-dark: #1a1f2e; --bg-medium: #252b3d; --bg-light: #2f3749; --bg-lighter: #3d4559;
+    --accent-green: #4ade80; --accent-red: #f87171; --accent-yellow: #fbbf24;
+    --accent-blue: #60a5fa; --accent-orange: #fb923c; --accent-purple: #a78bfa;
+    --text-primary: #e2e8f0; --text-secondary: #94a3b8;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: 'Oxanium', sans-serif; background: #0f1320; color: var(--text-primary); margin: 0; padding: 24px; }
+  h1 { font-family: 'Black Ops One', cursive; color: var(--accent-green); margin: 0 0 4px; font-size: 1.3rem; }
+  .subhead { color: var(--text-secondary); margin: 0 0 24px; font-size: 0.85rem; max-width: 920px; }
+  .frame-cap { font-size: 0.7rem; color: var(--text-secondary); margin: 6px 0 24px; max-width: 440px; }
+  .frames { display: flex; gap: 24px; flex-wrap: wrap; }
+
+  .dossier-frame {
+    width: 440px;
+    background: var(--bg-dark);
+    border: 1px solid var(--bg-light);
+    border-radius: 6px;
+    padding: 14px 16px;
+    font-family: 'Oxanium', sans-serif;
+  }
+
+  .d-header { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
+  .d-portrait { width: 36px; height: 36px; background: var(--bg-medium); border-radius: 4px; flex-shrink: 0; }
+  .d-title { font-family: 'Black Ops One', cursive; font-size: 1rem; letter-spacing: 1px; }
+  .d-name-block { flex: 1; min-width: 0; }
+  .d-status {
+    display: inline-block;
+    font-family: 'Black Ops One', cursive; font-size: 0.55rem; letter-spacing: 1px;
+    color: var(--accent-green);
+    background: rgba(74,222,128,0.15);
+    border: 1px solid var(--accent-green);
+    padding: 2px 6px;
+    border-radius: 3px;
+  }
+  .d-close { background: none; border: 1px solid var(--bg-lighter); color: var(--text-secondary); width: 26px; height: 26px; border-radius: 3px; cursor: pointer; flex-shrink: 0; }
+
+  .d-mos-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+  .d-mos-label { font-family: 'Oxanium', sans-serif; font-size: 0.6rem; color: var(--text-secondary); letter-spacing: 1px; }
+  .d-mos-select {
+    background: var(--bg-medium); border: 1px solid var(--bg-lighter);
+    color: var(--text-primary); padding: 4px 8px;
+    font-family: 'Oxanium', sans-serif; font-size: 0.7rem; font-weight: 700;
+    border-radius: 3px;
+  }
+
+  .d-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--bg-light); margin-bottom: 10px; padding-bottom: 6px; margin-top: 8px; }
+  .d-tab { padding: 5px 12px; font-family: 'Black Ops One', cursive; font-size: 0.62rem; letter-spacing: 1px; background: none; border: none; color: var(--text-secondary); border-bottom: 2px solid transparent; cursor: pointer; }
+  .d-tab.active { color: var(--accent-green); border-bottom-color: var(--accent-green); }
+
+  .section-card { background: var(--bg-medium); border-radius: 5px; padding: 8px 10px; margin-bottom: 8px; }
+  .section-head { display: flex; align-items: center; gap: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--bg-light); margin-bottom: 6px; }
+  .section-title { font-family: 'Black Ops One', cursive; font-size: 0.7rem; letter-spacing: 1px; color: var(--text-primary); }
+  .section-sub { font-family: 'Share Tech Mono', monospace; font-size: 0.62rem; color: var(--text-secondary); margin-left: auto; }
+
+  .phys-row {
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr) 28px 14px minmax(0, 1.3fr) 12px;
+    align-items: center; gap: 6px;
+    padding: 6px 4px; font-size: 0.72rem;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+  }
+  .phys-row:last-of-type { border-bottom: none; }
+  .stat-label { font-family: 'Oxanium', sans-serif; font-size: 0.62rem; color: var(--text-secondary); letter-spacing: 0.5px; }
+  .stat-bar { flex: 1; height: 8px; background: var(--bg-dark); border-radius: 2px; position: relative; overflow: hidden; min-width: 0; }
+  .stat-bar-fill { height: 100%; border-radius: 2px; background: var(--accent-green); }
+  .phys-num { font-family: 'Share Tech Mono', monospace; font-size: 0.7rem; color: var(--text-secondary); text-align: right; }
+  .phys-arrow { color: var(--text-secondary); opacity: 0.5; font-size: 0.7rem; text-align: center; }
+  .phys-out { font-family: 'Oxanium', sans-serif; font-size: 0.72rem; color: var(--text-primary); display: flex; align-items: baseline; gap: 4px; min-width: 0; }
+  .phys-out .out-key { font-family: 'Black Ops One', cursive; font-size: 0.58rem; letter-spacing: 0.5px; color: var(--text-secondary); }
+  .phys-out .out-val { font-family: 'Share Tech Mono', monospace; font-weight: 700; }
+  .phys-chevron { color: var(--text-secondary); opacity: 0.35; font-size: 0.55rem; text-align: center; }
+
+  /* ── B1 chip (plain, baseline) ── */
+  .mos-chip {
+    margin-top: 6px;
+    padding: 7px 10px;
+    background: rgba(251,191,36,0.08);
+    border: 1px solid rgba(251,191,36,0.35);
+    border-left: 3px solid var(--accent-yellow);
+    border-radius: 3px;
+    display: grid;
+    align-items: center;
+    cursor: pointer;
+    gap: 10px;
+  }
+  .mos-chip.plain { grid-template-columns: auto auto 1fr auto; }
+  .mos-chip-label { font-family: 'Black Ops One', cursive; font-size: 0.58rem; letter-spacing: 1px; color: var(--accent-yellow); }
+  .mos-chip-val { font-family: 'Share Tech Mono', monospace; font-weight: 700; font-size: 0.8rem; color: var(--accent-yellow); }
+  .mos-chip-hint { font-family: 'Oxanium', sans-serif; font-size: 0.6rem; font-style: italic; color: var(--text-secondary); }
+  .mos-chip-chev { color: var(--accent-yellow); opacity: 0.5; font-size: 0.6rem; }
+
+  /* ── B2a — slim chip (trimmed) ── */
+  .mos-chip.slim {
+    grid-template-columns: auto auto auto auto auto;
+    justify-content: flex-start;
+    gap: 8px;
+    padding: 5px 9px;
+  }
+  .mos-chip.slim .mos-chip-val { font-size: 0.7rem; }
+  .mos-chip-pips {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.75rem;
+    letter-spacing: 1px;
+    color: var(--accent-yellow);
+    line-height: 1;
+  }
+  .mos-chip-pips .empty { color: var(--bg-lighter); }
+  .mos-chip-tier {
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.6rem;
+    letter-spacing: 1px;
+    color: var(--accent-yellow);
+    background: rgba(251,191,36,0.15);
+    border: 1px solid var(--accent-yellow);
+    padding: 1px 5px;
+    border-radius: 2px;
+  }
+
+  /* ── B2b — header inline (full info, fills upper-right dead space) ── */
+  .header-prof {
+    background: rgba(251,191,36,0.08);
+    border: 1px solid rgba(251,191,36,0.35);
+    border-left: 3px solid var(--accent-yellow);
+    border-radius: 3px;
+    padding: 3px 7px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    margin-left: auto;
+  }
+  .header-prof .h-pips {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 1px;
+    color: var(--accent-yellow);
+    line-height: 1;
+  }
+  .header-prof .h-pips .empty { color: var(--bg-lighter); }
+  .header-prof .h-tier {
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.55rem;
+    letter-spacing: 1px;
+    color: var(--accent-yellow);
+  }
+  .header-prof .h-val {
+    font-family: 'Share Tech Mono', monospace;
+    font-weight: 700;
+    font-size: 0.7rem;
+    color: var(--accent-yellow);
+  }
+  .header-prof .h-chev { color: var(--accent-yellow); opacity: 0.4; font-size: 0.55rem; }
+
+  /* ── B2c — header tier badge only (minimal) ── */
+  .header-tier-badge {
+    background: rgba(251,191,36,0.12);
+    border: 1px solid var(--accent-yellow);
+    color: var(--accent-yellow);
+    border-radius: 3px;
+    padding: 3px 8px;
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.65rem;
+    letter-spacing: 1px;
+    cursor: pointer;
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .header-tier-badge .h-pips {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 1px;
+    opacity: 0.85;
+  }
+  .header-tier-badge .h-pips .empty { color: var(--bg-lighter); }
+  .header-tier-badge .h-chev { opacity: 0.5; font-size: 0.55rem; }
+
+  .anno { background: var(--bg-medium); border-left: 3px solid var(--accent-yellow); padding: 10px 14px; margin: 8px 0 0; font-size: 0.78rem; color: var(--text-secondary); max-width: 920px; }
+  .anno strong { color: var(--text-primary); }
+  .anno ul { margin: 4px 0 0; padding-left: 20px; }
+  .opt-tag {
+    display: inline-block;
+    background: var(--accent-yellow); color: var(--bg-dark);
+    font-family: 'Black Ops One', cursive; font-size: 0.65rem;
+    padding: 2px 6px; border-radius: 2px;
+    margin-right: 6px;
+  }
+</style>
+</head>
+<body>
+
+<h1>MOS PROFICIENCY — B2 TRIM VARIANTS</h1>
+<p class="subhead">
+  Three ways to address B2's size + the empty upper-right corner of the dossier.
+  <strong>B2a</strong> trims the chip itself but keeps it below the header. <strong>B2b</strong> moves the full info up into the header to use the dead space.
+  <strong>B2c</strong> goes minimal — just a tier badge in the header with pips inside. B1 included on the left for reference.
+</p>
+
+<div class="frames">
+
+<!-- B1: Plain (reference) -->
+<div>
+  <div class="dossier-frame">
+    <div class="d-header">
+      <div class="d-portrait"></div>
+      <div class="d-name-block">
+        <div class="d-title">SGT Reyes <span class="d-status">READY</span></div>
+        <div class="d-mos-row"><span class="d-mos-label">MOS</span> <select class="d-mos-select"><option>HEAVY GUNNER</option></select></div>
+      </div>
+      <button class="d-close">✕</button>
+    </div>
+
+    <div class="mos-chip plain">
+      <span class="mos-chip-label">PROFICIENCY</span>
+      <span class="mos-chip-val">78%</span>
+      <span class="mos-chip-hint">scales all gear bonuses</span>
+      <span class="mos-chip-chev">▸</span>
+    </div>
+
+    <div class="d-tabs">
+      <button class="d-tab active">COMBAT</button>
+      <button class="d-tab">EQUIPMENT</button>
+      <button class="d-tab">PERSONALITY</button>
+      <button class="d-tab">SERVICE</button>
+    </div>
+
+    <div class="section-card">
+      <div class="section-head"><span class="section-title">SOLDIER</span><span class="section-sub">physical → produces</span></div>
+      <div class="phys-row"><span class="stat-label">VIS</span><div class="stat-bar"><div class="stat-bar-fill" style="width:62%"></div></div><span class="phys-num">62</span><span class="phys-arrow">→</span><span class="phys-out"><span class="out-key">SIGHT</span><span class="out-val">580m</span></span><span class="phys-chevron">▸</span></div>
+      <div class="phys-row"><span class="stat-label">STR</span><div class="stat-bar"><div class="stat-bar-fill" style="width:78%"></div></div><span class="phys-num">78</span><span class="phys-arrow">→</span><span class="phys-out"><span class="out-key">HP</span><span class="out-val">208</span></span><span class="phys-chevron">▸</span></div>
+      <div class="phys-row"><span class="stat-label">REF</span><div class="stat-bar"><div class="stat-bar-fill" style="width:55%"></div></div><span class="phys-num">55</span><span class="phys-arrow">→</span><span class="phys-out"><span class="out-key">RELOAD</span><span class="out-val">−17%</span></span><span class="phys-chevron">▸</span></div>
+      <div class="phys-row"><span class="stat-label">END</span><div class="stat-bar"><div class="stat-bar-fill" style="width:72%"></div></div><span class="phys-num">72</span><span class="phys-arrow">→</span><span class="phys-out"><span class="out-key">SPD</span><span class="out-val">9 km/h</span></span><span class="phys-chevron">▸</span></div>
+    </div>
+  </div>
+  <p class="frame-cap"><span class="opt-tag">B1</span>Reference — plain chip, baseline simplicity. No pips, no tier name.</p>
+</div>
+
+<!-- B2a: Slim chip (trimmed B2) -->
+<div>
+  <div class="dossier-frame">
+    <div class="d-header">
+      <div class="d-portrait"></div>
+      <div class="d-name-block">
+        <div class="d-title">SGT Reyes <span class="d-status">READY</span></div>
+        <div class="d-mos-row"><span class="d-mos-label">MOS</span> <select class="d-mos-select"><option>HEAVY GUNNER</option></select></div>
+      </div>
+      <button class="d-close">✕</button>
+    </div>
+
+    <div class="mos-chip slim">
+      <span class="mos-chip-label">PROFICIENCY</span>
+      <span class="mos-chip-pips">★★★★<span class="empty">★</span></span>
+      <span class="mos-chip-tier">VETERAN</span>
+      <span class="mos-chip-val">78%</span>
+      <span class="mos-chip-chev">▸</span>
+    </div>
+
+    <div class="d-tabs">
+      <button class="d-tab active">COMBAT</button>
+      <button class="d-tab">EQUIPMENT</button>
+      <button class="d-tab">PERSONALITY</button>
+      <button class="d-tab">SERVICE</button>
+    </div>
+
+    <div class="section-card">
+      <div class="section-head"><span class="section-title">SOLDIER</span><span class="section-sub">physical → produces</span></div>
+      <div class="phys-row"><span class="stat-label">VIS</span><div class="stat-bar"><div class="stat-bar-fill" style="width:62%"></div></div><span class="phys-num">62</span><span class="phys-arrow">→</span><span class="phys-out"><span class="out-key">SIGHT</span><span class="out-val">580m</span></span><span class="phys-chevron">▸</span></div>
+      <div class="phys-row"><span class="stat-label">STR</span><div class="stat-bar"><div class="stat-bar-fill" style="width:78%"></div></div><span class="phys-num">78</span><span class="phys-arrow">→</span><span class="phys-out"><span class="out-key">HP</span><span class="out-val">208</span></span><span class="phys-chevron">▸</span></div>
+      <div class="phys-row"><span class="stat-label">REF</span><div class="stat-bar"><div class="stat-bar-fill" style="width:55%"></div></div><span class="phys-num">55</span><span class="phys-arrow">→</span><span class="phys-out"><span class="out-key">RELOAD</span><span class="out-val">−17%</span></span><span class="phys-chevron">▸</span></div>
+      <div class="phys-row"><span class="stat-label">END</span><div class="stat-bar"><div class="stat-bar-fill" style="width:72%"></div></div><span class="phys-num">72</span><span class="phys-arrow">→</span><span class="phys-out"><span class="out-key">SPD</span><span class="out-val">9 km/h</span></span><span class="phys-chevron">▸</span></div>
+    </div>
+  </div>
+  <p class="frame-cap"><span class="opt-tag">B2a</span>Slim chip — dropped "scales all gear" hint, tightened padding. Same row, smaller. Still below header, so upper-right empty space remains.</p>
+</div>
+
+<!-- B2b: Header inline (full info, fills dead space) -->
+<div>
+  <div class="dossier-frame">
+    <div class="d-header">
+      <div class="d-portrait"></div>
+      <div class="d-name-block">
+        <div class="d-title">SGT Reyes <span class="d-status">READY</span></div>
+        <div class="d-mos-row">
+          <span class="d-mos-label">MOS</span>
+          <select class="d-mos-select"><option>HEAVY GUNNER</option></select>
+          <span class="header-prof">
+            <span class="h-pips">★★★★<span class="empty">★</span></span>
+            <span class="h-tier">VETERAN</span>
+            <span class="h-val">78%</span>
+            <span class="h-chev">▸</span>
+          </span>
+        </div>
+      </div>
+      <button class="d-close">✕</button>
+    </div>
+
+    <div class="d-tabs" style="margin-top:10px">
+      <button class="d-tab active">COMBAT</button>
+      <button class="d-tab">EQUIPMENT</button>
+      <button class="d-tab">PERSONALITY</button>
+      <button class="d-tab">SERVICE</button>
+    </div>
+
+    <div class="section-card">
+      <div class="section-head"><span class="section-title">SOLDIER</span><span class="section-sub">physical → produces</span></div>
+      <div class="phys-row"><span class="stat-label">VIS</span><div class="stat-bar"><div class="stat-bar-fill" style="width:62%"></div></div><span class="phys-num">62</span><span class="phys-arrow">→</span><span class="phys-out"><span class="out-key">SIGHT</span><span class="out-val">580m</span></span><span class="phys-chevron">▸</span></div>
+      <div class="phys-row"><span class="stat-label">STR</span><div class="stat-bar"><div class="stat-bar-fill" style="width:78%"></div></div><span class="phys-num">78</span><span class="phys-arrow">→</span><span class="phys-out"><span class="out-key">HP</span><span class="out-val">208</span></span><span class="phys-chevron">▸</span></div>
+      <div class="phys-row"><span class="stat-label">REF</span><div class="stat-bar"><div class="stat-bar-fill" style="width:55%"></div></div><span class="phys-num">55</span><span class="phys-arrow">→</span><span class="phys-out"><span class="out-key">RELOAD</span><span class="out-val">−17%</span></span><span class="phys-chevron">▸</span></div>
+      <div class="phys-row"><span class="stat-label">END</span><div class="stat-bar"><div class="stat-bar-fill" style="width:72%"></div></div><span class="phys-num">72</span><span class="phys-arrow">→</span><span class="phys-out"><span class="out-key">SPD</span><span class="out-val">9 km/h</span></span><span class="phys-chevron">▸</span></div>
+    </div>
+  </div>
+  <p class="frame-cap"><span class="opt-tag">B2b</span>Header inline — full pips + VETERAN + 78%, right-aligned on the MOS line. Fills the dead space, no separate chip row. Saves ~32px of vertical space.</p>
+</div>
+
+<!-- B2c: Header tier badge only (most minimal) -->
+<div>
+  <div class="dossier-frame">
+    <div class="d-header">
+      <div class="d-portrait"></div>
+      <div class="d-name-block">
+        <div class="d-title">SGT Reyes <span class="d-status">READY</span></div>
+        <div class="d-mos-row">
+          <span class="d-mos-label">MOS</span>
+          <select class="d-mos-select"><option>HEAVY GUNNER</option></select>
+          <span class="header-tier-badge">
+            <span class="h-pips">★★★★<span class="empty">★</span></span>
+            VETERAN
+            <span class="h-chev">▸</span>
+          </span>
+        </div>
+      </div>
+      <button class="d-close">✕</button>
+    </div>
+
+    <div class="d-tabs" style="margin-top:10px">
+      <button class="d-tab active">COMBAT</button>
+      <button class="d-tab">EQUIPMENT</button>
+      <button class="d-tab">PERSONALITY</button>
+      <button class="d-tab">SERVICE</button>
+    </div>
+
+    <div class="section-card">
+      <div class="section-head"><span class="section-title">SOLDIER</span><span class="section-sub">physical → produces</span></div>
+      <div class="phys-row"><span class="stat-label">VIS</span><div class="stat-bar"><div class="stat-bar-fill" style="width:62%"></div></div><span class="phys-num">62</span><span class="phys-arrow">→</span><span class="phys-out"><span class="out-key">SIGHT</span><span class="out-val">580m</span></span><span class="phys-chevron">▸</span></div>
+      <div class="phys-row"><span class="stat-label">STR</span><div class="stat-bar"><div class="stat-bar-fill" style="width:78%"></div></div><span class="phys-num">78</span><span class="phys-arrow">→</span><span class="phys-out"><span class="out-key">HP</span><span class="out-val">208</span></span><span class="phys-chevron">▸</span></div>
+      <div class="phys-row"><span class="stat-label">REF</span><div class="stat-bar"><div class="stat-bar-fill" style="width:55%"></div></div><span class="phys-num">55</span><span class="phys-arrow">→</span><span class="phys-out"><span class="out-key">RELOAD</span><span class="out-val">−17%</span></span><span class="phys-chevron">▸</span></div>
+      <div class="phys-row"><span class="stat-label">END</span><div class="stat-bar"><div class="stat-bar-fill" style="width:72%"></div></div><span class="phys-num">72</span><span class="phys-arrow">→</span><span class="phys-out"><span class="out-key">SPD</span><span class="out-val">9 km/h</span></span><span class="phys-chevron">▸</span></div>
+    </div>
+  </div>
+  <p class="frame-cap"><span class="opt-tag">B2c</span>Header badge only — pips + tier name, no % visible. Tap to expand reveals % and full breakdown. Most "rank insignia" feel. Tightest version.</p>
+</div>
+
+</div>
+
+<div class="anno" style="margin-top:32px">
+  <strong>B2a — Slim chip:</strong>
+  <ul>
+    <li>Pro: smallest delta from B2. Keeps the chip as a self-contained "stat row" pattern.</li>
+    <li>Pro: still shows % explicitly, which is useful info.</li>
+    <li>Con: doesn't fix the upper-right dead space — the chip is below the header.</li>
+    <li>Width drop: ~25%. Still wider than B1.</li>
+  </ul>
+</div>
+<div class="anno">
+  <strong>B2b — Header inline (full info):</strong>
+  <ul>
+    <li>Pro: fills the dead upper-right corner exactly. Two stones, one bird.</li>
+    <li>Pro: saves a full row of vertical space (~32px) which matters on mobile landscape.</li>
+    <li>Pro: ties MOS and proficiency visually as one unit — they belong together conceptually.</li>
+    <li>Con: harder to scan when comparing multiple soldiers — proficiency lives in the header rather than a predictable chip row.</li>
+    <li>Con: when MOS dropdown is long ("HEAVY GUNNER"), the inline pill might wrap on narrow screens. Need testing.</li>
+  </ul>
+</div>
+<div class="anno">
+  <strong>B2c — Header badge only:</strong>
+  <ul>
+    <li>Pro: most "rank insignia" feel. VETERAN reads as a *title* you've earned, not a metric.</li>
+    <li>Pro: tightest layout. Fits comfortably even on small screens.</li>
+    <li>Con: % is hidden until you tap. For min-maxers who want to see "am I at 78 or 79?" this is a friction.</li>
+    <li>Con: tier transitions become more important (going from 79 → 80 = REGULAR → VETERAN feels big; staying within a tier feels invisible).</li>
+  </ul>
+</div>
+<div class="anno">
+  <strong>My take:</strong>
+  <ul>
+    <li><strong>B2b</strong> is the cleanest solve for both complaints (size + dead space). You get the full tier flavor without losing the number, and you reclaim a row of vertical space.</li>
+    <li>If you want minimum-density / max-flavor, <strong>B2c</strong> is the tightest. The hidden % is fine if we expose it in the tap-to-expand state.</li>
+    <li>B2a only addresses size, not space — I'd skip it unless you want the chip pattern preserved for consistency reasons.</li>
+  </ul>
+</div>
+
+</body>
+</html>

@@ -77,12 +77,24 @@ function _inferSlot(templateId) {
  * Assign an item to a soldier's loadout slot.
  * @returns {boolean} success
  */
-export function assignItem(itemId, soldierId) {
+export function assignItem(itemId, soldierId, opts = {}) {
   const armory = _ensureArmory();
   const item = armory.items.find(i => i.id === itemId);
   if (!item) return false;
   if (item.assignedTo && item.assignedTo !== soldierId) return false;
   item.assignedTo = soldierId;
+  // Default to equipped=true unless caller specifies otherwise (e.g., kit storage).
+  if (opts.equipped !== false) {
+    // Unequip any other item the soldier has in this slot
+    for (const other of armory.items) {
+      if (other.assignedTo === soldierId && other.slot === item.slot && other.id !== item.id) {
+        other.equipped = false;
+      }
+    }
+    item.equipped = true;
+  } else {
+    item.equipped = false;
+  }
   return true;
 }
 
@@ -99,22 +111,157 @@ export function unassignItem(itemId) {
 }
 
 /**
- * Get the item equipped by a soldier in a specific slot.
+ * Get the item currently equipped (worn) by a soldier in a slot.
+ * An assigned item with equipped=true. Items in stored kits return null here.
  */
 export function getEquipped(soldierId, slot) {
   const armory = _ensureArmory();
-  return armory.items.find(i => i.assignedTo === soldierId && i.slot === slot) || null;
+  return armory.items.find(i => i.assignedTo === soldierId && i.slot === slot && i.equipped !== false) || null;
 }
 
 /**
- * Get all items equipped by a soldier.
+ * Get ALL items owned by a soldier (assigned to them), regardless of equipped state.
+ * Useful for kit management — soldiers can own multiple items per slot.
+ */
+export function getOwnedItems(soldierId, slot = null) {
+  const armory = _ensureArmory();
+  return armory.items.filter(i => i.assignedTo === soldierId && (!slot || i.slot === slot));
+}
+
+/**
+ * Get all items currently equipped by a soldier (worn now).
  */
 export function getLoadout(soldierId) {
   const armory = _ensureArmory();
-  const items = armory.items.filter(i => i.assignedTo === soldierId);
+  const items = armory.items.filter(i => i.assignedTo === soldierId && i.equipped !== false);
   const loadout = {};
   for (const item of items) loadout[item.slot] = item;
   return loadout;
+}
+
+/**
+ * Equip a specific owned item. Marks it equipped=true and unmarks any others in the same slot.
+ * Item must already be assigned to the soldier.
+ */
+export function equipItem(soldierId, itemId) {
+  const armory = _ensureArmory();
+  const item = armory.items.find(i => i.id === itemId);
+  if (!item || item.assignedTo !== soldierId) return false;
+  // Unequip others in the same slot owned by this soldier
+  for (const other of armory.items) {
+    if (other.assignedTo === soldierId && other.slot === item.slot && other.id !== item.id) {
+      other.equipped = false;
+    }
+  }
+  item.equipped = true;
+  return true;
+}
+
+/**
+ * Unequip the soldier's slot — marks all items in that slot for this soldier as not worn.
+ * They remain owned. To remove ownership, call unassignItem instead.
+ */
+export function unequipSlot(soldierId, slot) {
+  const armory = _ensureArmory();
+  for (const i of armory.items) {
+    if (i.assignedTo === soldierId && i.slot === slot) i.equipped = false;
+  }
+}
+
+/**
+ * Migrate older items that don't have an `equipped` field. Existing assigned items
+ * default to equipped=true (they were "worn" under the pre-kit model).
+ * Idempotent — safe to call multiple times.
+ */
+export function migrateItemsForKits() {
+  const armory = _ensureArmory();
+  for (const i of armory.items) {
+    if (i.equipped === undefined) i.equipped = !!i.assignedTo;
+  }
+}
+
+// ─── Kit save/load ────────────────────────────────────────────
+
+/** Snapshot the soldier's currently equipped items into a kit for the given MOS. */
+export function saveKit(soldier, mos) {
+  if (!soldier || !mos) return;
+  if (!soldier.kits) soldier.kits = {};
+  const armory = _ensureArmory();
+  const kit = {};
+  for (const i of armory.items) {
+    if (i.assignedTo === soldier.id && i.equipped !== false) {
+      kit[i.slot] = i.id;
+    }
+  }
+  soldier.kits[mos] = kit;
+}
+
+/**
+ * Apply the saved kit for a given MOS — equip items that are in the kit, unequip everything else
+ * owned by the soldier. If no kit exists, clear all equipped (items stay owned).
+ */
+export function loadKit(soldier, mos) {
+  if (!soldier) return;
+  const armory = _ensureArmory();
+  const kit = soldier.kits?.[mos] || null;
+  // Step 1: unequip everything the soldier owns
+  for (const i of armory.items) {
+    if (i.assignedTo === soldier.id) i.equipped = false;
+  }
+  if (!kit) return;
+  // Step 2: equip items listed in the kit (verify they're still owned by soldier)
+  for (const [slot, itemId] of Object.entries(kit)) {
+    const item = armory.items.find(x => x.id === itemId);
+    if (item && item.assignedTo === soldier.id && item.slot === slot) {
+      item.equipped = true;
+    }
+  }
+}
+
+/** Returns the saved kit for the soldier's given MOS, or null. */
+export function getKit(soldier, mos) {
+  return soldier?.kits?.[mos] || null;
+}
+
+/** Does the soldier have a saved kit for the given MOS? */
+export function hasKit(soldier, mos) {
+  return !!getKit(soldier, mos);
+}
+
+/**
+ * Compare the soldier's currently equipped items to the saved kit for an MOS.
+ * Returns true if they differ (or if no kit exists and the soldier has equipped items).
+ */
+export function kitIsDirty(soldier, mos) {
+  if (!soldier) return false;
+  const armory = _ensureArmory();
+  const equipped = {};
+  let hasAny = false;
+  for (const i of armory.items) {
+    if (i.assignedTo === soldier.id && i.equipped !== false) {
+      equipped[i.slot] = i.id;
+      hasAny = true;
+    }
+  }
+  const kit = getKit(soldier, mos);
+  if (!kit) return hasAny; // No saved kit, anything equipped = dirty
+  // Compare slot maps
+  const slots = new Set([...Object.keys(equipped), ...Object.keys(kit)]);
+  for (const s of slots) {
+    if (equipped[s] !== kit[s]) return true;
+  }
+  return false;
+}
+
+/**
+ * Lookup which of a soldier's saved kits contains an item. Returns the MOS key, or null.
+ */
+export function findKitForItem(soldier, itemId) {
+  if (!soldier?.kits) return null;
+  for (const [mos, kit] of Object.entries(soldier.kits)) {
+    if (Object.values(kit).includes(itemId)) return mos;
+  }
+  return null;
 }
 
 /**
@@ -360,6 +507,7 @@ export function loadArmory() {
       const data = JSON.parse(raw);
       Game.armory = data;
     }
+    migrateItemsForKits();
   } catch (e) {
     console.warn('[armory] Load failed:', e);
   }

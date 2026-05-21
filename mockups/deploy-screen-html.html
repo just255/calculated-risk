@@ -1,0 +1,1015 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deploy Screen — HTML Refactor Mockup</title>
+<link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Oxanium:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-dark: #1a1f2e; --bg-medium: #252b3d; --bg-light: #2f3749; --bg-lighter: #3d4559;
+    --accent-green: #4ade80; --accent-red: #f87171; --accent-yellow: #fbbf24;
+    --accent-blue: #60a5fa; --accent-orange: #fb923c; --accent-purple: #a78bfa;
+    --text-primary: #e2e8f0; --text-secondary: #94a3b8;
+    /* Deploy-screen olive palette (kept from the canvas era so the in-world map still matches) */
+    --deploy-olive-bg:     rgba(40, 55, 32, 0.95);
+    --deploy-olive-edge:   #8cb060;
+    --deploy-olive-dim:    rgba(140, 176, 96, 0.4);
+    --deploy-olive-text:   #b0c0a0;
+    --deploy-olive-text-2: #708060;
+  }
+  * { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: var(--bg-lighter) var(--bg-dark); }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--bg-lighter); border-radius: 4px; }
+
+  body { font-family: 'Oxanium', sans-serif; background: #0f1320; color: var(--text-primary); margin: 0; padding: 16px; }
+  h1 { font-family: 'Black Ops One', cursive; color: var(--accent-green); margin: 0 0 4px; font-size: 1.2rem; letter-spacing: 1px; }
+  .subhead { color: var(--text-secondary); margin: 0 0 16px; font-size: 0.78rem; max-width: 1100px; }
+  .frame-cap { font-size: 0.7rem; color: var(--text-secondary); margin: 6px 0 24px; max-width: 1100px; }
+
+  /* ──────────────────── Phone frame ──────────────────── */
+  .phone {
+    /* Approx mobile landscape — 1100×500 logical (the user's tested viewport) */
+    width: 1100px;
+    height: 500px;
+    background: #0a0d18; /* battle map placeholder */
+    background-image:
+      radial-gradient(ellipse at 50% 30%, rgba(80, 110, 60, 0.25), transparent 60%),
+      linear-gradient(180deg, #1a2818 0%, #0a140a 100%);
+    border: 1px solid var(--bg-light);
+    border-radius: 12px;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+    margin: 0 0 8px;
+  }
+
+  /* Fake battle map artifacts */
+  .fake-zone {
+    position: absolute; top: 0; bottom: 50%;
+    background: rgba(120, 70, 55, 0.06);
+    border-left: 1px dashed rgba(110, 80, 65, 0.2);
+    border-right: 1px dashed rgba(110, 80, 65, 0.2);
+  }
+  .fake-zone.selected {
+    background: linear-gradient(90deg, rgba(200,60,40,0.25) 0%, transparent 18%, transparent 82%, rgba(200,60,40,0.25) 100%);
+    border-color: rgba(180, 110, 80, 0.6);
+  }
+  .fake-minimap {
+    position: absolute; top: 8px; right: 8px;
+    width: 80px; height: 80px;
+    background: rgba(20, 30, 18, 0.85);
+    border: 1px solid var(--deploy-olive-edge);
+    border-radius: 4px;
+    z-index: 5;
+  }
+  .fake-hud {
+    position: absolute; top: 8px; left: 8px;
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(20, 30, 18, 0.85);
+    border: 1px solid var(--bg-light);
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-family: 'Oxanium', sans-serif;
+    font-size: 0.7rem;
+    z-index: 5;
+  }
+  .fake-hud .hp-bar { width: 80px; height: 10px; background: var(--bg-dark); border: 1px solid var(--bg-lighter); border-radius: 2px; position: relative; overflow: hidden; }
+  .fake-hud .hp-bar .hp-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 100%; background: linear-gradient(90deg, #ff6b6b, #f87171); }
+  .fake-hud .hp-text { font-family: 'Share Tech Mono', monospace; font-size: 0.6rem; color: var(--accent-yellow); }
+  .fake-hud .label { color: var(--accent-yellow); font-weight: 700; font-size: 0.62rem; }
+
+  /* ──────────────────── Deploy panel (HTML) ──────────────────── */
+  .deploy-panel {
+    position: absolute;
+    left: 4px; right: 4px; bottom: 4px;
+    /* When expanded: takes up bottom 60% */
+    height: 60%;
+    background: var(--deploy-olive-bg);
+    border-top: 2px solid var(--deploy-olive-edge);
+    border-left: 1px solid var(--deploy-olive-dim);
+    border-right: 1px solid var(--deploy-olive-dim);
+    border-radius: 6px 6px 4px 4px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    z-index: 10;
+  }
+  .deploy-panel.collapsed { height: auto; }
+
+  /* Top header bar — slim. */
+  .dp-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    background: rgba(70, 95, 55, 0.6);
+    border-bottom: 1px solid var(--deploy-olive-dim);
+    flex-shrink: 0;
+    min-height: 26px;
+  }
+  .dp-zone-name {
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.78rem;
+    letter-spacing: 1.2px;
+    color: #e0e8d0;
+    flex-shrink: 0;
+  }
+  .dp-mode-toggle {
+    display: inline-flex;
+    border: 1px solid rgba(120, 160, 80, 0.3);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-left: auto;
+  }
+  .dp-mode-toggle button {
+    padding: 2px 8px;
+    background: rgba(40, 55, 30, 0.4);
+    color: var(--deploy-olive-text-2);
+    border: none;
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.55rem;
+    letter-spacing: 1px;
+    cursor: pointer;
+  }
+  .dp-mode-toggle button.active {
+    background: rgba(100, 150, 60, 0.5);
+    color: #e0f0c0;
+  }
+  .dp-collapse-btn {
+    padding: 2px 8px;
+    background: rgba(60, 80, 45, 0.5);
+    border: 1px solid rgba(120, 160, 80, 0.3);
+    color: var(--deploy-olive-text);
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 0.58rem;
+  }
+  .dp-deploy-btn {
+    padding: 3px 14px;
+    background: rgba(100, 150, 60, 0.7);
+    border: 1.5px solid #a0d060;
+    color: #e0f0c0;
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.7rem;
+    letter-spacing: 1.2px;
+    animation: pulse 1.5s infinite;
+  }
+  @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 rgba(160,208,96,0); } 50% { box-shadow: 0 0 12px rgba(160,208,96,0.5); } }
+
+  /* Body — 3 columns on landscape, 4 when drawer is open.
+     LOADOUTS is the widest fixed column (preset cards need horizontal room);
+     SQUAD and POOL each take an equal share of the remaining space.
+     When drawer is open, the drawer takes its own fixed width and SQUAD/POOL
+     each shrink by half of it — they stay equal to each other. */
+  .dp-body {
+    display: grid;
+    grid-template-columns: 260px 1fr 1fr;
+    gap: 6px;
+    padding: 6px;
+    flex: 1;
+    min-height: 0;
+  }
+  .dp-body.with-drawer {
+    grid-template-columns: 260px 1fr 1fr 240px;
+  }
+  .dp-col {
+    background: rgba(28, 38, 22, 0.6);
+    border: 1px solid rgba(80, 100, 60, 0.2);
+    border-radius: 4px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .dp-col-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-bottom: 4px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid rgba(100, 130, 70, 0.3);
+    flex-shrink: 0;
+  }
+  .dp-col-title {
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.62rem;
+    letter-spacing: 1px;
+    color: var(--deploy-olive-text);
+  }
+  .dp-col-count {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.6rem;
+    color: var(--deploy-olive-text-2);
+    margin-left: auto;
+  }
+  .dp-col-scroll {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0;
+  }
+
+  /* Preset card */
+  .preset-card {
+    background: rgba(40, 55, 30, 0.4);
+    border: 1px solid transparent;
+    border-radius: 3px;
+    padding: 5px 6px;
+    margin-bottom: 4px;
+    cursor: pointer;
+    position: relative;
+  }
+  .preset-card:hover { background: rgba(60, 80, 40, 0.5); }
+  .preset-card.active {
+    background: rgba(140, 180, 90, 0.12);
+    border-color: rgba(140, 180, 90, 0.5);
+  }
+  .preset-name {
+    font-family: 'Oxanium', sans-serif;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #d0e0b0;
+  }
+  .preset-tagline {
+    font-size: 0.58rem;
+    color: var(--deploy-olive-text-2);
+    margin-top: 1px;
+    font-style: italic;
+  }
+  .preset-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .preset-icons {
+    display: flex;
+    gap: 1px;
+    flex: 1;
+    flex-wrap: nowrap;
+    overflow: hidden;
+  }
+  .unit-ico {
+    width: 14px; height: 14px;
+    background: var(--bg-light);
+    border-radius: 2px;
+    flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 0.55rem;
+    color: var(--deploy-olive-text);
+  }
+  .unit-ico.hero { background: rgba(140, 180, 90, 0.25); color: #c0d0a0; }
+  .unit-ico.vehicle { background: rgba(100, 130, 70, 0.3); }
+  .preset-stats {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.55rem;
+    color: var(--deploy-olive-text-2);
+    text-align: right;
+    line-height: 1.15;
+  }
+  .preset-stats .gold { color: #d0c068; }
+  /* Formation preview canvas — small */
+  .fmt-mini {
+    width: 22px; height: 22px;
+    background: rgba(20, 30, 18, 0.6);
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  /* Squad column */
+  .squad-fmt-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+  .squad-fmt-label {
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.55rem;
+    letter-spacing: 0.5px;
+    color: var(--deploy-olive-text-2);
+  }
+  .squad-fmt-select {
+    flex: 1;
+    background: rgba(20, 30, 18, 0.7);
+    border: 1px solid rgba(100, 130, 70, 0.3);
+    color: #c0d0a0;
+    padding: 3px 8px;
+    border-radius: 2px;
+    font-family: 'Oxanium', sans-serif;
+    font-size: 0.65rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .squad-fmt-preview {
+    width: 28px; height: 28px;
+    background: rgba(20, 30, 18, 0.6);
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+  .lineup-list {
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .lineup-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 5px;
+    background: rgba(40, 55, 30, 0.35);
+    border-radius: 2px;
+    font-size: 0.66rem;
+    cursor: pointer;
+  }
+  .lineup-row:hover { background: rgba(60, 80, 40, 0.55); }
+  .lineup-row.hero { background: rgba(140, 180, 90, 0.12); border-left: 2px solid var(--accent-yellow); }
+  .lineup-row.selected { background: rgba(140, 180, 90, 0.2); }
+  .lineup-rank {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.55rem;
+    color: var(--deploy-olive-text-2);
+    width: 28px;
+    flex-shrink: 0;
+  }
+  .lineup-name {
+    flex: 1;
+    color: #c0d0a0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .lineup-role {
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.5rem;
+    color: var(--accent-blue);
+    background: rgba(96, 165, 250, 0.12);
+    padding: 1px 4px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+  .lineup-remove {
+    background: none; border: none;
+    color: var(--accent-red);
+    opacity: 0.4;
+    cursor: pointer;
+    padding: 0 2px;
+    font-size: 0.7rem;
+  }
+  .lineup-remove:hover { opacity: 1; }
+  .ghost-slot {
+    border: 1px dashed rgba(100, 130, 70, 0.25);
+    border-radius: 2px;
+    padding: 3px 5px;
+    text-align: center;
+    font-size: 0.6rem;
+    color: var(--deploy-olive-text-2);
+    font-style: italic;
+    background: transparent;
+  }
+
+  /* Pool column */
+  .pool-tabs {
+    display: flex; gap: 1px;
+    margin-bottom: 4px;
+    flex-shrink: 0;
+  }
+  .pool-tab {
+    flex: 1;
+    background: rgba(40, 55, 30, 0.3);
+    border: none;
+    color: var(--deploy-olive-text-2);
+    padding: 4px 6px;
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.55rem;
+    letter-spacing: 1px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+  }
+  .pool-tab.active {
+    background: rgba(80, 110, 55, 0.5);
+    color: #c0d0a0;
+    border-bottom-color: rgba(140, 180, 90, 0.6);
+  }
+  .pool-group {
+    margin-bottom: 4px;
+  }
+  .pool-group-head {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(40, 55, 30, 0.4);
+    padding: 3px 5px;
+    border-radius: 2px 2px 0 0;
+    margin-bottom: 1px;
+  }
+  .pool-group-icon {
+    width: 12px; height: 12px;
+    background: var(--bg-light);
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+  .pool-group-name {
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.55rem;
+    color: var(--deploy-olive-text);
+    letter-spacing: 0.5px;
+  }
+  .pool-group-count {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.55rem;
+    color: var(--deploy-olive-text-2);
+    margin-left: auto;
+  }
+  .pool-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    font-size: 0.65rem;
+    cursor: pointer;
+    border-left: 2px solid transparent;
+  }
+  .pool-row:hover { background: rgba(60, 80, 40, 0.4); }
+  .pool-row.selected { background: rgba(160, 200, 110, 0.15); border-left-color: var(--accent-green); }
+  .pool-row .name { flex: 1; color: var(--deploy-olive-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pool-row.selected .name { color: #d0e0b0; }
+  .pool-add {
+    background: rgba(60, 100, 50, 0.3);
+    border: none;
+    color: var(--deploy-olive-text);
+    padding: 0;
+    width: 16px; height: 16px;
+    border-radius: 2px;
+    cursor: pointer;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .pool-add:hover { background: rgba(100, 160, 60, 0.4); color: #c0d0a0; }
+
+  /* Selected unit card drawer — inline 4th column of the body grid.
+     Pushes POOL over instead of covering it. */
+  .dp-drawer {
+    background: rgba(28, 38, 22, 0.97);
+    border: 1px solid var(--deploy-olive-edge);
+    border-radius: 4px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    min-height: 0;
+  }
+  .drawer-head {
+    display: flex; align-items: center; gap: 6px;
+    padding-bottom: 5px; border-bottom: 1px solid rgba(100, 130, 70, 0.3);
+    margin-bottom: 6px;
+  }
+  .drawer-title {
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.65rem;
+    letter-spacing: 1px;
+    color: #c0d0a0;
+    flex: 1;
+  }
+  .drawer-close {
+    background: none; border: 1px solid rgba(120, 160, 80, 0.3);
+    color: var(--deploy-olive-text-2);
+    width: 18px; height: 18px;
+    border-radius: 2px;
+    cursor: pointer;
+    font-size: 0.7rem;
+  }
+  .drawer-unit {
+    font-family: 'Oxanium', sans-serif;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #d0e0b0;
+    margin-bottom: 4px;
+  }
+  .drawer-unit-sub {
+    font-size: 0.62rem;
+    color: var(--deploy-olive-text-2);
+    font-style: italic;
+    margin-bottom: 8px;
+  }
+  /* Radar canvas placeholder */
+  .drawer-radar {
+    width: 100%; height: 130px;
+    background: rgba(20, 30, 18, 0.5);
+    border: 1px solid rgba(100, 130, 70, 0.15);
+    border-radius: 3px;
+    margin-bottom: 6px;
+  }
+  .drawer-stat {
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 0;
+    font-size: 0.62rem;
+  }
+  .drawer-stat-label { color: var(--deploy-olive-text-2); }
+  .drawer-stat-val { color: #c0d0a0; font-family: 'Share Tech Mono', monospace; font-weight: 700; }
+
+  /* Bottom strip (collapsed zones) */
+  .dp-bottom-strip {
+    display: flex;
+    gap: 4px;
+    padding: 4px;
+    background: rgba(28, 38, 22, 0.6);
+    border-top: 1px solid rgba(100, 130, 70, 0.2);
+    flex-shrink: 0;
+  }
+  .zone-chip {
+    flex: 1;
+    background: rgba(38, 45, 32, 0.9);
+    border: 1px solid rgba(80, 100, 65, 0.3);
+    border-top: 2px solid #5a6e48;
+    border-radius: 0 0 3px 3px;
+    padding: 5px 8px;
+    cursor: pointer;
+    min-height: 56px;
+    display: flex;
+    flex-direction: column;
+  }
+  .zone-chip.selected {
+    background: rgba(50, 70, 40, 0.92);
+    border-top-color: var(--deploy-olive-edge);
+    border-left-color: rgba(140, 176, 96, 0.4);
+    border-right-color: rgba(140, 176, 96, 0.4);
+  }
+  .zone-chip.expanded { background: rgba(70, 95, 55, 0.7); }
+  .zone-chip-name {
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.68rem;
+    letter-spacing: 1px;
+    color: #c0d0a0;
+  }
+  .zone-chip.selected .zone-chip-name { color: #e0e8d0; }
+  .zone-chip-comp {
+    font-size: 0.6rem;
+    color: var(--deploy-olive-text-2);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .zone-chip-side {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.55rem;
+    color: var(--deploy-olive-text-2);
+    margin-top: auto;
+  }
+
+  /* When the panel is collapsed (no zone expanded), show only the bottom strip */
+  .deploy-panel.collapsed .dp-header,
+  .deploy-panel.collapsed .dp-body { display: none; }
+  .deploy-panel.collapsed { background: transparent; border: none; }
+
+  /* ──────────────────── Annotations ──────────────────── */
+  .anno { background: var(--bg-medium); border-left: 3px solid var(--accent-yellow); padding: 10px 14px; margin: 8px 0 0; font-size: 0.78rem; color: var(--text-secondary); max-width: 1100px; }
+  .anno strong { color: var(--text-primary); }
+  .anno ul { margin: 4px 0 0; padding-left: 20px; }
+  .anno code { background: rgba(255,255,255,0.05); padding: 1px 4px; border-radius: 2px; font-family: 'Share Tech Mono', monospace; font-size: 0.85em; color: var(--accent-yellow); }
+</style>
+</head>
+<body>
+
+<h1>DEPLOY SCREEN — HTML REFACTOR</h1>
+<p class="subhead">
+  Two frames: <strong>(1) zone expanded</strong> (the big planning panel with a selected unit drawer) and <strong>(2) zones collapsed</strong> (just the three zone chips at the bottom — overlay for picking the deploy lane).
+  Battle map (and its in-world zone highlights) stays on canvas. Everything else is HTML.
+</p>
+
+<!-- Frame 1: expanded panel + unit drawer -->
+<div class="phone">
+  <!-- Battle map placeholder -->
+  <div class="fake-zone" style="left:0; width:33.33%"></div>
+  <div class="fake-zone selected" style="left:33.33%; width:33.34%"></div>
+  <div class="fake-zone" style="left:66.67%; width:33.33%"></div>
+  <div class="fake-hud">
+    <div class="hp-bar"><div class="hp-fill"></div></div>
+    <span class="hp-text">180 / 180</span>
+    <span class="label">WAVE 1</span>
+    <span style="color:var(--text-secondary); font-size:0.62rem">Kills 0</span>
+    <span style="color:var(--accent-green); font-size:0.62rem">60 FPS</span>
+  </div>
+  <div class="fake-minimap"></div>
+
+  <!-- Deploy panel (expanded) -->
+  <div class="deploy-panel">
+    <div class="dp-header">
+      <span class="dp-zone-name">BRAVO</span>
+      <div class="dp-mode-toggle">
+        <button class="active">UNIT</button>
+        <button>CMD</button>
+      </div>
+      <button class="dp-collapse-btn">▼ Collapse</button>
+      <button class="dp-deploy-btn">DEPLOY ▶</button>
+    </div>
+
+    <div class="dp-body with-drawer">
+      <!-- Col 1: LOADOUTS -->
+      <div class="dp-col">
+        <div class="dp-col-head">
+          <span class="dp-col-title">LOADOUTS</span>
+          <span class="dp-col-count">5 presets</span>
+        </div>
+        <div class="dp-col-scroll">
+          <div class="preset-card active">
+            <div class="preset-name">Spearhead</div>
+            <div class="preset-tagline">Heavy + 2 RFL</div>
+            <div class="preset-row">
+              <div class="preset-icons">
+                <div class="unit-ico hero">★</div>
+                <div class="unit-ico vehicle">🚛</div>
+                <div class="unit-ico">⚀</div>
+                <div class="unit-ico">⚀</div>
+              </div>
+              <canvas class="fmt-mini" width="44" height="44"></canvas>
+              <div class="preset-stats">
+                <div>4 units</div>
+                <div class="gold">28 DPS</div>
+              </div>
+            </div>
+          </div>
+          <div class="preset-card">
+            <div class="preset-name">Recon Wedge</div>
+            <div class="preset-tagline">Scout-heavy, fast</div>
+            <div class="preset-row">
+              <div class="preset-icons">
+                <div class="unit-ico hero">★</div>
+                <div class="unit-ico">⚀</div>
+                <div class="unit-ico">⚀</div>
+              </div>
+              <canvas class="fmt-mini" width="44" height="44"></canvas>
+              <div class="preset-stats">
+                <div>3 units</div>
+                <div class="gold">18 DPS</div>
+              </div>
+            </div>
+          </div>
+          <div class="preset-card">
+            <div class="preset-name">Tank Column</div>
+            <div class="preset-tagline">Armored push</div>
+            <div class="preset-row">
+              <div class="preset-icons">
+                <div class="unit-ico hero">★</div>
+                <div class="unit-ico vehicle">🚛</div>
+                <div class="unit-ico vehicle">🚛</div>
+              </div>
+              <canvas class="fmt-mini" width="44" height="44"></canvas>
+              <div class="preset-stats">
+                <div>3 units</div>
+                <div class="gold">45 DPS</div>
+              </div>
+            </div>
+          </div>
+          <div class="preset-card">
+            <div class="preset-name">Defensive Line</div>
+            <div class="preset-tagline">Hold ground</div>
+            <div class="preset-row">
+              <div class="preset-icons">
+                <div class="unit-ico hero">★</div>
+                <div class="unit-ico">⚀</div>
+                <div class="unit-ico">⚀</div>
+                <div class="unit-ico">⚀</div>
+                <div class="unit-ico">⚕</div>
+              </div>
+              <canvas class="fmt-mini" width="44" height="44"></canvas>
+              <div class="preset-stats">
+                <div>5 units</div>
+                <div class="gold">22 DPS</div>
+              </div>
+            </div>
+          </div>
+          <div class="preset-card">
+            <div class="preset-name">Custom</div>
+            <div class="preset-tagline">Build your own</div>
+            <div class="preset-row">
+              <div class="preset-icons">
+                <div class="unit-ico hero">★</div>
+              </div>
+              <canvas class="fmt-mini" width="44" height="44"></canvas>
+              <div class="preset-stats">
+                <div>—</div>
+                <div class="gold">—</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Col 2: SQUAD (lineup + formation) -->
+      <div class="dp-col">
+        <div class="dp-col-head">
+          <span class="dp-col-title">SQUAD</span>
+          <span class="dp-col-count">4 / 8</span>
+        </div>
+        <div class="squad-fmt-row">
+          <span class="squad-fmt-label">FORMATION</span>
+          <select class="squad-fmt-select">
+            <option>Wedge</option>
+            <option>Line</option>
+            <option>Column</option>
+            <option>Spread</option>
+          </select>
+          <canvas class="squad-fmt-preview" width="56" height="56"></canvas>
+        </div>
+        <div class="dp-col-scroll">
+          <div class="lineup-list">
+            <div class="lineup-row hero">
+              <span class="lineup-rank">SGT</span>
+              <span class="lineup-name">Simmons</span>
+              <span class="lineup-role">RFL</span>
+              <button class="lineup-remove" disabled style="opacity:0.2">★</button>
+            </div>
+            <div class="lineup-row">
+              <span class="lineup-rank">PV2</span>
+              <span class="lineup-name">Anderson</span>
+              <span class="lineup-role">RFL</span>
+              <button class="lineup-remove">✕</button>
+            </div>
+            <div class="lineup-row selected">
+              <span class="lineup-rank">PV2</span>
+              <span class="lineup-name">Morgan</span>
+              <span class="lineup-role">RFL</span>
+              <button class="lineup-remove">✕</button>
+            </div>
+            <div class="lineup-row">
+              <span class="lineup-rank">PV2</span>
+              <span class="lineup-name">SHERMAN</span>
+              <span class="lineup-role" style="color:var(--accent-orange); background:rgba(251,146,60,0.12)">VEH</span>
+              <button class="lineup-remove">✕</button>
+            </div>
+            <div class="ghost-slot">+ slot 5 (empty)</div>
+            <div class="ghost-slot">+ slot 6 (empty)</div>
+            <div class="ghost-slot">+ slot 7 (empty)</div>
+            <div class="ghost-slot">+ slot 8 (empty)</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Col 3: POOL (BARRACKS / MOTOR POOL) -->
+      <div class="dp-col">
+        <div class="dp-col-head">
+          <span class="dp-col-title">POOL</span>
+          <span class="dp-col-count">22 available</span>
+        </div>
+        <div class="pool-tabs">
+          <button class="pool-tab active">BARRACKS</button>
+          <button class="pool-tab">MOTOR POOL</button>
+        </div>
+        <div class="dp-col-scroll">
+          <div class="pool-group">
+            <div class="pool-group-head">
+              <div class="pool-group-icon"></div>
+              <span class="pool-group-name">RIFLEMAN</span>
+              <span class="pool-group-count">8</span>
+            </div>
+            <div class="pool-row selected">
+              <span class="name">PV2 Jackson</span>
+              <button class="pool-add">+</button>
+            </div>
+            <div class="pool-row">
+              <span class="name">PV2 Walker</span>
+              <button class="pool-add">+</button>
+            </div>
+            <div class="pool-row">
+              <span class="name">PV2 Hayes</span>
+              <button class="pool-add">+</button>
+            </div>
+          </div>
+          <div class="pool-group">
+            <div class="pool-group-head">
+              <div class="pool-group-icon" style="background:rgba(248,113,113,0.25)"></div>
+              <span class="pool-group-name">MEDIC</span>
+              <span class="pool-group-count">2</span>
+            </div>
+            <div class="pool-row">
+              <span class="name">CPL Reyes</span>
+              <button class="pool-add">+</button>
+            </div>
+            <div class="pool-row">
+              <span class="name">PV2 Park</span>
+              <button class="pool-add">+</button>
+            </div>
+          </div>
+          <div class="pool-group">
+            <div class="pool-group-head">
+              <div class="pool-group-icon" style="background:rgba(96,165,250,0.25)"></div>
+              <span class="pool-group-name">HEAVY GUNNER</span>
+              <span class="pool-group-count">3</span>
+            </div>
+            <div class="pool-row">
+              <span class="name">SGT Carter</span>
+              <button class="pool-add">+</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Col 4 (only when a unit is selected): unit drawer -->
+      <div class="dp-drawer">
+        <div class="drawer-head">
+          <span class="drawer-title">PV2 MORGAN</span>
+          <button class="drawer-close">✕</button>
+        </div>
+        <div class="drawer-unit">RIFLEMAN</div>
+        <div class="drawer-unit-sub">Reg · 50% prof · 192 HP</div>
+        <canvas class="drawer-radar" width="200" height="130"></canvas>
+        <div class="drawer-stat"><span class="drawer-stat-label">DMG</span><span class="drawer-stat-val">14</span></div>
+        <div class="drawer-stat"><span class="drawer-stat-label">RNG</span><span class="drawer-stat-val">210m</span></div>
+        <div class="drawer-stat"><span class="drawer-stat-label">ACC</span><span class="drawer-stat-val">82%</span></div>
+        <div class="drawer-stat"><span class="drawer-stat-label">RLD</span><span class="drawer-stat-val">2.5s</span></div>
+        <div class="drawer-stat"><span class="drawer-stat-label">SPD</span><span class="drawer-stat-val">12 km/h</span></div>
+      </div>
+    </div>
+
+    <!-- Bottom zone chip strip -->
+    <div class="dp-bottom-strip">
+      <div class="zone-chip">
+        <span class="zone-chip-name">ALPHA</span>
+        <span class="zone-chip-comp">Empty</span>
+        <span class="zone-chip-side">Left flank</span>
+      </div>
+      <div class="zone-chip selected expanded">
+        <span class="zone-chip-name">BRAVO</span>
+        <span class="zone-chip-comp">SGT Simmons (YOU), 2× RFL, 1× SHERMAN</span>
+        <span class="zone-chip-side">Center · ▲ open</span>
+      </div>
+      <div class="zone-chip">
+        <span class="zone-chip-name">CHARLIE</span>
+        <span class="zone-chip-comp">Empty</span>
+        <span class="zone-chip-side">Right flank</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+<p class="frame-cap"><strong>Frame 1 — Expanded.</strong> BRAVO selected, panel filling the bottom 60% of the screen. Drawer on the right shows the currently-selected unit (PV2 Morgan in the lineup). Battle map + minimap + HP HUD still visible above.</p>
+
+<!-- Frame 2: collapsed strip only -->
+<div class="phone">
+  <div class="fake-zone" style="left:0; width:33.33%"></div>
+  <div class="fake-zone" style="left:33.33%; width:33.34%"></div>
+  <div class="fake-zone" style="left:66.67%; width:33.33%"></div>
+  <div class="fake-hud">
+    <div class="hp-bar"><div class="hp-fill"></div></div>
+    <span class="hp-text">180 / 180</span>
+    <span class="label">WAVE 1</span>
+    <span style="color:var(--text-secondary); font-size:0.62rem">Kills 0</span>
+    <span style="color:var(--accent-green); font-size:0.62rem">60 FPS</span>
+  </div>
+  <div class="fake-minimap"></div>
+
+  <div class="deploy-panel collapsed">
+    <div class="dp-bottom-strip">
+      <div class="zone-chip">
+        <span class="zone-chip-name">ALPHA</span>
+        <span class="zone-chip-comp">Empty</span>
+        <span class="zone-chip-side">Left flank</span>
+      </div>
+      <div class="zone-chip">
+        <span class="zone-chip-name">BRAVO</span>
+        <span class="zone-chip-comp">SGT Simmons, 2× RFL, 1× SHERMAN</span>
+        <span class="zone-chip-side">Center</span>
+      </div>
+      <div class="zone-chip">
+        <span class="zone-chip-name">CHARLIE</span>
+        <span class="zone-chip-comp">1× RFL</span>
+        <span class="zone-chip-side">Right flank</span>
+      </div>
+    </div>
+  </div>
+</div>
+<p class="frame-cap"><strong>Frame 2 — Collapsed.</strong> No zone expanded. Just the three zone chips at the bottom. Tap a chip to open its expanded panel. Map + HUD remain unobstructed.</p>
+
+<div class="anno" style="margin-top:32px">
+  <strong>Mobile layout (landscape default):</strong>
+  <ul>
+    <li>Expanded panel takes the bottom 60% of the screen — leaves enough room for the map + HUD on top.</li>
+    <li>3-column body: LOADOUTS / SQUAD / POOL. Drawer slides over the right side when a unit is selected (overlays POOL).</li>
+    <li>Header bar holds the zone name, UNIT/CMD toggle, Collapse arrow, and the DEPLOY button (always visible).</li>
+    <li>Bottom strip is always-present — switching zones is a single tap, not a navigation.</li>
+  </ul>
+</div>
+<div class="anno">
+  <strong>What stays on canvas:</strong>
+  <ul>
+    <li>The battle map itself (terrain, unit sprites).</li>
+    <li>In-world zone highlights — the red gradient down the sides of the selected zone, dashed dividers between zones.</li>
+    <li>The minimap (already its own canvas).</li>
+    <li>Inside HTML containers: small canvases for the formation preview thumbnails (<code>fmt-mini</code> + <code>squad-fmt-preview</code>) and the radar chart in the drawer (<code>drawer-radar</code>). These mount once and only redraw when their inputs change — no per-frame redraw.</li>
+  </ul>
+</div>
+<div class="anno">
+  <strong>Action wiring (preview):</strong>
+  <ul>
+    <li><code>data-action="dp-zone"</code> · zone chip click → set selected zone, expand panel</li>
+    <li><code>data-action="dp-collapse"</code> · collapse the expanded panel back to just the strip</li>
+    <li><code>data-action="dp-preset"</code> · pick a preset loadout</li>
+    <li><code>data-action="dp-formation"</code> · change formation (or use <code>&lt;select onchange&gt;</code>)</li>
+    <li><code>data-action="dp-pool-tab"</code> · switch BARRACKS / MOTOR POOL</li>
+    <li><code>data-action="dp-pool-select"</code> · click a pool row → opens drawer</li>
+    <li><code>data-action="dp-pool-add"</code> · click the + → add to current zone's lineup</li>
+    <li><code>data-action="dp-lineup-remove"</code> · pull a unit out of the lineup</li>
+    <li><code>data-action="dp-mode"</code> · UNIT / CMD toggle</li>
+    <li><code>data-action="dp-deploy"</code> · confirm deployment, sets <code>b.deployReady.blue = true</code></li>
+  </ul>
+</div>
+<div class="anno">
+  <strong>Open questions for sign-off:</strong>
+  <ul>
+    <li>Drawer position — overlay the POOL column from the right (as drawn) or become a 4th column when there's screen room?</li>
+    <li>Drawer auto-open on lineup row click, or only on pool row click? Both feel reasonable.</li>
+    <li>Should we add an "Auto-balance" button somewhere (push reserves into zones in a sane default)?</li>
+    <li>Portrait phones — should the panel become a full-screen modal with vertical scroll, or stack columns?</li>
+  </ul>
+</div>
+
+<script>
+  // Render small canvases (formation previews + radar) — illustrative only
+  function dot(ctx, x, y, r, color = '#a0d060') {
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = color; ctx.fill();
+  }
+  // Formation preview mini canvases — different shapes for each card
+  const formations = [
+    [[0,-8],[-5,3],[5,3],[0,8]],     // Wedge
+    [[-8,0],[-3,0],[3,0],[8,0]],     // Line
+    [[0,-9],[0,-3],[0,3],[0,9]],     // Column
+    [[-9,-4],[9,-4],[-9,4],[9,4]],   // Spread
+    [[0,-8],[5,0],[0,8],[-5,0]]      // Diamond
+  ];
+  document.querySelectorAll('.fmt-mini').forEach((c, i) => {
+    const ctx = c.getContext('2d');
+    ctx.clearRect(0,0,44,44);
+    const fmt = formations[i % formations.length];
+    for (let j = 0; j < fmt.length; j++) {
+      const x = 22 + fmt[j][0] * 1.5;
+      const y = 22 + fmt[j][1] * 1.5;
+      dot(ctx, x, y, j === 0 ? 3.5 : 2.5, j === 0 ? '#fbbf24' : '#a0d060');
+    }
+  });
+  document.querySelectorAll('.squad-fmt-preview').forEach(c => {
+    const ctx = c.getContext('2d');
+    ctx.clearRect(0,0,56,56);
+    const fmt = formations[0]; // Wedge
+    for (let j = 0; j < fmt.length; j++) {
+      const x = 28 + fmt[j][0] * 2.2;
+      const y = 28 + fmt[j][1] * 2.2;
+      dot(ctx, x, y, j === 0 ? 4 : 3, j === 0 ? '#fbbf24' : '#a0d060');
+    }
+  });
+  // Radar chart (mock)
+  document.querySelectorAll('.drawer-radar').forEach(c => {
+    const ctx = c.getContext('2d');
+    const w = c.width, h = c.height;
+    const cx = w / 2, cy = h / 2;
+    const r = Math.min(w, h) / 2 - 18;
+    const labels = ['FPW', 'DUR', 'SPD', 'RNG', 'RCN', 'ACC'];
+    const values = [0.55, 0.42, 0.6, 0.5, 0.45, 0.65];
+    const n = labels.length;
+    // Grid
+    for (let ring = 1; ring <= 4; ring++) {
+      ctx.beginPath();
+      for (let i = 0; i <= n; i++) {
+        const a = -Math.PI/2 + i * (Math.PI*2/n);
+        const rr = r * ring / 4;
+        const x = cx + Math.cos(a) * rr;
+        const y = cy + Math.sin(a) * rr;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.strokeStyle = `rgba(80, 100, 65, ${ring === 4 ? 0.45 : 0.15})`;
+      ctx.lineWidth = 1; ctx.stroke();
+    }
+    // Polygon
+    ctx.beginPath();
+    for (let i = 0; i <= n; i++) {
+      const a = -Math.PI/2 + (i % n) * (Math.PI*2/n);
+      const v = values[i % n];
+      const x = cx + Math.cos(a) * r * v;
+      const y = cy + Math.sin(a) * r * v;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(140, 190, 80, 0.22)';
+    ctx.strokeStyle = 'rgba(160, 208, 96, 0.8)';
+    ctx.lineWidth = 1.5;
+    ctx.fill(); ctx.stroke();
+    // Axis labels
+    ctx.fillStyle = '#90a880';
+    ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (let i = 0; i < n; i++) {
+      const a = -Math.PI/2 + i * (Math.PI*2/n);
+      const x = cx + Math.cos(a) * (r + 10);
+      const y = cy + Math.sin(a) * (r + 10);
+      ctx.fillText(labels[i], x, y);
+    }
+  });
+</script>
+</body>
+</html>

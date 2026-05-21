@@ -1,14 +1,14 @@
 {
   "roster": [
     {
-      "id": "sol_mnxfdz4d_1",
+      "id": "sol_movo0m46_1",
       "name": {
         "first": "Justin",
         "last": "Simmons",
         "nickname": null
       },
       "callsign": null,
-      "rankIndex": 1,
+      "rankIndex": 9,
       "experience": 0,
       "personality": {
         "aggression": 0.5,
@@ -19,12 +19,12 @@
         "awareness": 0.5
       },
       "physicals": {
-        "vision": 58,
-        "strength": 43,
-        "reflexes": 57,
-        "endurance": 41
+        "vision": 42,
+        "strength": 45,
+        "reflexes": 39,
+        "endurance": 59
       },
-      "mos": "rifleman",
+      "mos": "heavy_gunner",
       "training": {
         "rifleman": 0.5,
         "medic": 0.1,
@@ -32,7 +32,7 @@
         "heavy_gunner": 0.15
       },
       "pool": "infantry",
-      "role": "rifleman",
+      "role": "heavy_gunner",
       "insigniaSetId": null,
       "vehicleExpertise": {},
       "status": "active",
@@ -42,45 +42,69 @@
       "survivability": 0.5,
       "woundedBattlesLeft": 0,
       "traits": [],
-      "commendations": [],
-      "mmr": 472.3,
-      "mmrFloor": 0,
-      "streak": 1,
+      "commendations": [
+        "bronzeStar",
+        "silverStar",
+        "purpleHeart"
+      ],
+      "mmr": 3572.4000000000005,
+      "mmrFloor": 80,
+      "streak": 5,
       "heroicActions": [
-        "multiKill"
+        "firstBlood",
+        "multiKill",
+        "lastStand",
+        "ironWill"
       ],
       "bonds": {},
       "assignedVehicleId": null,
       "assignedSlot": null,
       "isSquadLeader": false,
-      "battlesServed": 1,
-      "kills": 10,
+      "loadout": {
+        "primary": "wpn_mp3nwtfz_1",
+        "sidearm": "wpn_mp3nwtfz_2",
+        "optic": "opt_mp3nwtfz_3",
+        "attachment": null,
+        "armor": "arm_mp3nwtfz_4",
+        "utility": "uti_mp3nwtfz_5"
+      },
+      "battlesServed": 9,
+      "kills": 70,
       "missionsWithVehicle": {},
-      "isPlayerCharacter": true
+      "isPlayerCharacter": true,
+      "kits": {
+        "heavy_gunner": {
+          "primary": "wpn_mp3mm7x6_1",
+          "sidearm": "wpn_mp3mm7x6_2",
+          "optic": "opt_mp3mm7x6_3",
+          "utility": "uti_mp3mm7x6_5",
+          "armor": "arm_mp3nwtfz_4"
+        }
+      }
     },
     {
-      "id": "sol_mnxfdz4e_2",
+      "id": "sol_movo0m47_2",
       "name": {
-        "first": "Troy",
-        "last": "Edwards",
+        "first": "Jin",
+        "last": "Wilson",
         "nickname": null
       },
       "callsign": null,
-      "rankIndex": 0,
+      "rankIndex": 1,
       "experience": 0,
       "personality": {
-        "aggression": 0.4918402496685193,
-        "patience": 0.415921996185529,
-        "courage": 0.6693296966910849,
-        "discipline": 0.43120604413108665,
-        "initiative": 0.40853213558741097,
-        "awareness": 0.3227086963221972
+        "aggression": 0.359457365867876,
+        "patience": 0.5038347406269628,
+        "courage": 0.4232944042404664,
+        "discipline": 0.32177830944112634,
+        "initiative": 0.4183243533924019,
+        "awareness": 0.5451489498676706
       },
       "physicals": {
-        "vision": 36,
-        "strength": 39,
-        "reflexes": 43,
-        "endurance": 52
+        "vision": 42,
+        "strength": 55,
+        "reflexes": 48,
+        "endurance": 36
       },
       "mos": "rifleman",
       "training": {
@@ -100,96 +124,55 @@
       "survivability": 0.5,
       "woundedBattlesLeft": 0,
       "traits": [],
-      "commendations": [],
-      "mmr": 0,
-      "mmrFloor": 0,
-      "streak": 0,
-      "heroicActions": [],
+      "commendations": [
+        "combatAction"
+      ],
+      "mmr": 158.5,
+      "mmrFloor": 10,
+      "streak": 1,
+      "heroicActions": [
+        "multiKill",
+        "untouchable"
+      ],
       "bonds": {},
       "assignedVehicleId": null,
       "assignedSlot": null,
       "isSquadLeader": false,
-      "battlesServed": 0,
-      "kills": 0,
-      "missionsWithVehicle": {}
+      "loadout": {
+        "primary": "wpn_mp3nwtfz_6",
+        "sidearm": "wpn_mp3nwtfz_7",
+        "optic": "opt_mp3nwtfz_8",
+        "attachment": null,
+        "armor": "arm_mp3nwtfz_9",
+        "utility": "uti_mp3nwtfz_a"
+      },
+      "battlesServed": 1,
+      "kills": 4,
+      "missionsWithVehicle": {},
+      "kits": {}
     },
     {
-      "id": "sol_mnxfdz4e_3",
+      "id": "sol_movo0m47_3",
       "name": {
-        "first": "Mason",
-        "last": "Hall",
+        "first": "Eric",
+        "last": "Chen",
         "nickname": null
       },
       "callsign": null,
-      "rankIndex": 0,
+      "rankIndex": 1,
       "experience": 0,
       "personality": {
-        "aggression": 0.5531778539412073,
-        "patience": 0.44494891336089143,
-        "courage": 0.3344631367641563,
-        "discipline": 0.5339306502538065,
-        "initiative": 0.47428021126001885,
-        "awareness": 0.618591448219937
+        "aggression": 0.6736960776997822,
+        "patience": 0.6090818389587049,
+        "courage": 0.6205139425384268,
+        "discipline": 0.6348950711984016,
+        "initiative": 0.39895740265562896,
+        "awareness": 0.347902979999378
       },
       "physicals": {
-        "vision": 59,
-        "strength": 41,
-        "reflexes": 40,
-        "endurance": 41
-      },
-      "mos": "rifleman",
-      "training": {
-        "rifleman": 0.5,
-        "medic": 0.1,
-        "engineer": 0.1,
-        "heavy_gunner": 0.15
-      },
-      "pool": "infantry",
-      "role": "rifleman",
-      "insigniaSetId": null,
-      "vehicleExpertise": {},
-      "status": "active",
-      "hpPercent": 1,
-      "morale": 0.7,
-      "fatigue": 0,
-      "survivability": 0.5,
-      "woundedBattlesLeft": 0,
-      "traits": [],
-      "commendations": [],
-      "mmr": 0,
-      "mmrFloor": 0,
-      "streak": 0,
-      "heroicActions": [],
-      "bonds": {},
-      "assignedVehicleId": null,
-      "assignedSlot": null,
-      "isSquadLeader": false,
-      "battlesServed": 0,
-      "kills": 0,
-      "missionsWithVehicle": {}
-    },
-    {
-      "id": "sol_mnxfdz4e_4",
-      "name": {
-        "first": "Chase",
-        "last": "Jackson",
-        "nickname": null
-      },
-      "callsign": null,
-      "rankIndex": 0,
-      "experience": 0,
-      "personality": {
-        "aggression": 0.3157327684072872,
-        "patience": 0.38126471616829655,
-        "courage": 0.475140154715657,
-        "discipline": 0.5511481455356788,
-        "initiative": 0.436591344007767,
-        "awareness": 0.5399794047544547
-      },
-      "physicals": {
-        "vision": 36,
-        "strength": 51,
-        "reflexes": 41,
+        "vision": 46,
+        "strength": 55,
+        "reflexes": 50,
         "endurance": 40
       },
       "mos": "rifleman",
@@ -210,40 +193,121 @@
       "survivability": 0.5,
       "woundedBattlesLeft": 0,
       "traits": [],
-      "commendations": [],
-      "mmr": 0,
-      "mmrFloor": 0,
-      "streak": 0,
-      "heroicActions": [],
+      "commendations": [
+        "combatAction"
+      ],
+      "mmr": 76.5,
+      "mmrFloor": 10,
+      "streak": 1,
+      "heroicActions": [
+        "untouchable"
+      ],
       "bonds": {},
       "assignedVehicleId": null,
       "assignedSlot": null,
       "isSquadLeader": false,
-      "battlesServed": 0,
+      "loadout": {
+        "primary": "wpn_mp3nwtfz_b",
+        "sidearm": "wpn_mp3nwtfz_c",
+        "optic": "opt_mp3nwtfz_d",
+        "attachment": null,
+        "armor": "arm_mp3nwtfz_e",
+        "utility": "uti_mp3nwtfz_f"
+      },
+      "battlesServed": 1,
+      "kills": 2,
+      "missionsWithVehicle": {},
+      "kits": {}
+    },
+    {
+      "id": "sol_movo0m47_4",
+      "name": {
+        "first": "Diego",
+        "last": "Kim",
+        "nickname": null
+      },
+      "callsign": null,
+      "rankIndex": 1,
+      "experience": 0,
+      "personality": {
+        "aggression": 0.4572164141786026,
+        "patience": 0.5747479548717778,
+        "courage": 0.4136986736818815,
+        "discipline": 0.6985916394418776,
+        "initiative": 0.4881915691523991,
+        "awareness": 0.6886773823823544
+      },
+      "physicals": {
+        "vision": 38,
+        "strength": 42,
+        "reflexes": 53,
+        "endurance": 46
+      },
+      "mos": "rifleman",
+      "training": {
+        "rifleman": 0.5,
+        "medic": 0.1,
+        "engineer": 0.1,
+        "heavy_gunner": 0.15
+      },
+      "pool": "infantry",
+      "role": "rifleman",
+      "insigniaSetId": null,
+      "vehicleExpertise": {},
+      "status": "active",
+      "hpPercent": 1,
+      "morale": 0.7,
+      "fatigue": 0,
+      "survivability": 0.5,
+      "woundedBattlesLeft": 0,
+      "traits": [],
+      "commendations": [
+        "combatAction"
+      ],
+      "mmr": 88.4,
+      "mmrFloor": 10,
+      "streak": 1,
+      "heroicActions": [
+        "untouchable"
+      ],
+      "bonds": {},
+      "assignedVehicleId": null,
+      "assignedSlot": null,
+      "isSquadLeader": false,
+      "loadout": {
+        "primary": "wpn_mp3nwtfz_g",
+        "sidearm": "wpn_mp3nwtfz_h",
+        "optic": "opt_mp3nwtfz_i",
+        "attachment": null,
+        "armor": "arm_mp3nwtfz_j",
+        "utility": "uti_mp3nwtfz_k"
+      },
+      "battlesServed": 1,
       "kills": 0,
-      "missionsWithVehicle": {}
+      "missionsWithVehicle": {},
+      "kits": {}
     }
   ],
   "vehicles": [
     {
-      "id": "veh_mnxfi4bw_a",
+      "id": "veh_movo0m47_5",
       "unitId": "sherman",
       "name": "Fury",
-      "hpPercent": 0,
+      "hpPercent": 1,
       "condition": 1,
-      "status": "destroyed",
+      "status": "active",
       "insigniaSetId": null,
       "battlesServed": 1,
       "totalDamageTaken": 0,
       "_isReinforcement": true
     },
     {
-      "id": "veh_mnxfi4bw_b",
+      "id": "veh_movo0m47_6",
       "unitId": "sherman",
       "name": "Warhorse",
-      "hpPercent": 0.18666666666666668,
+      "hpPercent": 1,
       "condition": 1,
-      "status": "damaged",
+      "status": "active",
       "insigniaSetId": null,
       "battlesServed": 1,
       "totalDamageTaken": 0,

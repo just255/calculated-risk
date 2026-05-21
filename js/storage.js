@@ -196,10 +196,11 @@ export function load() {
       }
     }
     // Load persistent roster + vehicles + armory (separate storage keys)
+    // Armory loads first so roster migration can check for orphaned item references.
+    loadArmory();
     loadRoster();
     loadVehicles();
     loadMemorial();
-    loadArmory();
     // Seed starters if first time
     seedStarterRoster();
     seedStarterVehicles();

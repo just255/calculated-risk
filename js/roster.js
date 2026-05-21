@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { Game } from './state.js';
-import { RANK_TABLE, CREW_SCHEMAS, VEHICLE_ROLES, SCORE_WEIGHTS, STREAK_CONFIG, HEROIC_ACTIONS, COMMENDATIONS, OFFICER_RANKS, GREEN_TO_GOLD, CMD_SCORE_WEIGHTS, SGT_LEADERSHIP_WEIGHTS, INFANTRY_ARCHETYPES, UNIT_COMBAT_STATS, UNITS, PIXELS_TO_METERS, MOS_DEFINITIONS, PHYSICAL_RANGES, TRAINING_GROWTH_PER_BATTLE, MOS_GROWTH_MULTIPLIER, TRAINING_CAP, ALL_ROLES, CREW_MOD_FLOOR, CREW_MOD_CEILING } from './constants.js';
+import { RANK_TABLE, CREW_SCHEMAS, VEHICLE_ROLES, SCORE_WEIGHTS, STREAK_CONFIG, HEROIC_ACTIONS, COMMENDATIONS, OFFICER_RANKS, GREEN_TO_GOLD, CMD_SCORE_WEIGHTS, SGT_LEADERSHIP_WEIGHTS, INFANTRY_ARCHETYPES, UNIT_COMBAT_STATS, UNITS, PIXELS_TO_METERS, DISPLAY_RANGE_M, DISPLAY_SPEED_KMH, MOS_DEFINITIONS, PHYSICAL_RANGES, TRAINING_GROWTH_PER_BATTLE, MOS_GROWTH_MULTIPLIER, TRAINING_CAP, ALL_ROLES, CREW_MOD_FLOOR, CREW_MOD_CEILING } from './constants.js';
 import { createStandardIssue, getLoadout, getEquipped, unassignItem, destroyItem, saveArmory } from './armory.js';
 import { getGearTemplate, getWeaponTemplate, QUALITY_TIERS, RANGE_ZONE_RATIOS } from './gear-templates.js';
 
@@ -142,6 +142,9 @@ export function createSoldier(opts) {
 
     // Gear loadout — armory item IDs per slot
     loadout: { primary: null, sidearm: null, optic: null, attachment: null, armor: null, utility: null },
+
+    // Saved kits — map of MOS → { slot: itemId } for that MOS's saved loadout
+    kits: {},
 
     battlesServed: 0,
     kills: 0,
@@ -1274,7 +1277,8 @@ export function getEffectiveCombatStats(soldier, vehicle) {
     };
     effective.dps = effective.fireRate > 0 ? Math.round(effective.damage * (1000 / effective.fireRate) * 10) / 10 : 0;
     effective.rpm = effective.fireRate > 0 ? Math.round(60000 / effective.fireRate) : 0;
-    effective.rangeM = Math.round(effective.range * PIXELS_TO_METERS);
+    effective.rangeM = Math.round(effective.range * DISPLAY_RANGE_M);
+    effective.speedKmh = Math.round(effective.speed * DISPLAY_SPEED_KMH);
     effective.speedMs = Math.round(effective.speed * PIXELS_TO_METERS * 10) / 10;
     return effective;
   }
@@ -1306,8 +1310,16 @@ export function getEffectiveCombatStats(soldier, vehicle) {
   const t = soldier.training?.[soldier.role] ?? 0;
 
   // ── 2. Weapon stats (if equipped) ──
+  // Zero the weapon-derived defaults before applying weapon mods. With these baselines
+  // at 0, each modifier represents the FULL weapon contribution (not a delta against
+  // a phantom "unarmed" value). The dossier then renders the bar cleanly: base=0,
+  // mod = total weapon value.
   const primaryItem = getEquipped(soldier.id, 'primary');
   if (primaryItem) {
+    effective.damage = 0;
+    effective.fireRate = 0;
+    effective.range = 0;
+    effective.effectiveRange = 0;
     const wt = getWeaponTemplate(primaryItem.templateId);
     if (wt) {
       const q = QUALITY_TIERS[primaryItem.quality]?.mult || 1.0;
@@ -1317,11 +1329,14 @@ export function getEffectiveCombatStats(soldier, vehicle) {
 
       // ROF: fixed for auto, training improves semi
       effective.fireRate = wt.stats.fireRate;
+      modifiers.push({ source: wt.name, icon: '🔫', stat: 'fireRate', value: effective.fireRate, color: '#f59e0b' });
+
       // Accuracy: weapon base (training applied in fire-decision.js)
       effective.accuracy = wt.stats.accuracy * q;
       // Range: weapon effective range (training extends effective zone)
       effective.range = wt.stats.range;
       effective.effectiveRange = Math.round(wt.stats.range * (0.6 + t * 0.4));
+      modifiers.push({ source: wt.name, icon: '🔫', stat: 'range', value: effective.range, color: '#f59e0b' });
       // Mag + reload
       effective.magSize = wt.stats.magSize;
       effective.reloadTime = Math.round(wt.stats.reloadTime * (1 - (ph.reflexes / PHYS_MAX) * t * 0.3));
@@ -1586,13 +1601,23 @@ function _migrateRoster() {
         s.training[s.mos] = Math.min(TRAINING_CAP, s.training[s.mos] + bonus);
       }
     }
-    // Loadout migration: give standard issue to soldiers without gear
+    // Loadout migration: give standard issue to soldiers without gear, or whose
+    // loadout references items that no longer exist (orphaned IDs from older saves).
     if (!s.loadout) {
       s.loadout = { primary: null, sidearm: null, optic: null, attachment: null, armor: null, utility: null };
     }
-    if (s.pool !== 'vehicle' && s.pool !== 'officer' && !s.loadout.primary) {
-      equipSoldierStandardIssue(s);
+    if (s.pool !== 'vehicle' && s.pool !== 'officer') {
+      const items = Game.armory?.items || [];
+      const primaryItem = s.loadout.primary ? items.find(i => i.id === s.loadout.primary) : null;
+      const orphaned = s.loadout.primary && !primaryItem;
+      const noGear = !s.loadout.primary;
+      if (orphaned || noGear) {
+        // Clear stale references and re-equip standard issue
+        s.loadout = { primary: null, sidearm: null, optic: null, attachment: null, armor: null, utility: null };
+        equipSoldierStandardIssue(s);
+      }
     }
+    if (!s.kits) s.kits = {};
   }
 }
 
@@ -1602,8 +1627,14 @@ export function equipSoldierStandardIssue(soldier) {
   const items = createStandardIssue(mos, soldier.id);
   if (!soldier.loadout) soldier.loadout = {};
   for (const [slot, item] of Object.entries(items)) {
-    if (item) soldier.loadout[slot] = item.id;
+    if (item) {
+      // Mark fresh standard-issue items as currently equipped (worn).
+      item.equipped = true;
+      soldier.loadout[slot] = item.id;
+    }
   }
+  // Persist the armory so newly-created items survive reload.
+  saveArmory();
 }
 
 /** Strip all gear from a soldier and return items to armory. */

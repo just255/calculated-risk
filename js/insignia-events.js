@@ -6,10 +6,20 @@
 import { Game } from './state.js';
 import { InsigniaEditor } from './insignia-editor.js';
 import { render } from './ui.js';
-import { RANK_NAMES } from './constants.js';
+import { RANK_NAMES, HQTab, State } from './constants.js';
 import * as pxl from './insignia-pixel.js';
 import { buildPreset } from './insignia-presets.js';
 import { cacheInsigniaSet } from './insignia-renderer.js';
+
+/**
+ * True when the user is currently viewing the insignia editor
+ * (Barracks tab, INSIGNIA sub-view). All insignia event handlers gate on this.
+ */
+export function isInsigniaActive() {
+  return Game.state === State.HQ
+    && Game.hqTab === HQTab.BARRACKS
+    && Game.hqBarracksView === 'insignia';
+}
 
 // ─── Initialization ────────────────────────────────────────────
 

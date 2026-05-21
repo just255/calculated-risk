@@ -17,10 +17,14 @@ export function createRecorder(b, mode) {
   if (hasHero) {
     unitDefs.push({ id: 'hero', team: 'blue', unitId: b.hero.unitId, maxHp: b.hero.maxHp, isHero: true });
   }
-  // Capture unit definitions for blue team
+  // Capture unit definitions for blue team (include gear stats for debugging)
   if (b.units) {
     for (const u of b.units) {
-      unitDefs.push({ id: u.id, team: 'blue', unitId: u.unitId, maxHp: u.maxHp, rank: u._rank ?? 0, insigniaSetId: u._insigniaSetId || null });
+      unitDefs.push({
+        id: u.id, team: 'blue', unitId: u.unitId, maxHp: u.maxHp, rank: u._rank ?? 0,
+        insigniaSetId: u._insigniaSetId || null,
+        gear: u._gearAccuracy != null ? { acc: u._gearAccuracy, dmg: u.damage, rng: u.range, spd: u.speed, crit: u._gearCritChance, pen: u._gearPenetration } : null
+      });
     }
   }
   // Capture unit definitions for red team

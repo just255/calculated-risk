@@ -6,16 +6,18 @@ import { State, SubState, HQTab, UNITS, PROJECTILES, UNIT_PROJECTILES, SquadOrde
 import { Game, newBattlePlan, newCampaign, createAdvancingScenario, createFrontlineScenario, newZoneBattle, newEndlessRun, newFireRangeRun, ENDLESS_MAP_SIZES } from './state.js';
 import { initAudio, sound } from './audio.js';
 import { save, load, saveFRConfig, loadFRConfig, saveFRNamedConfig, loadFRNamedConfigs, deleteFRNamedConfig, migrateFRConfig } from './storage.js';
-import { goto, deploy, switchUnit, stopLoop, stopFireRangeLoop, formatFireRangeLog, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, endlessKeyDown, endlessKeyUp, endlessMouseMove, endlessMouseDown, endlessMouseUp, handleDeployClick, fireRangeKeyDown, fireRangeKeyUp, fireRangeWheel, updateEventLog, extractFromRun, battleMouseDown, battleMouseUp, battleSetAimAngle, battleClearAimAngle, battleSetJoystick, battleClearJoystick, battleSetAimDepth, battleClearAimDepth, getActiveBattle, getHeroTouchConfig } from './game.js';
+import { goto, deploy, switchUnit, stopLoop, stopFireRangeLoop, formatFireRangeLog, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, endlessKeyDown, endlessKeyUp, endlessMouseMove, endlessMouseDown, endlessMouseUp, handleDeployClick, confirmDeployment, selectDeployZone, fireRangeKeyDown, fireRangeKeyUp, fireRangeWheel, updateEventLog, extractFromRun, battleMouseDown, battleMouseUp, battleSetAimAngle, battleClearAimAngle, battleSetJoystick, battleClearJoystick, battleSetAimDepth, battleClearAimDepth, getActiveBattle, getHeroTouchConfig } from './game.js';
+import { applyPreset } from './loadouts.js';
 import { FR_PRESETS } from './fire-range-presets.js';
-import { render, updateBarracksPanel, updateOpsPanel, setSubState, fetchAvailableVehicles, fetchUnitVariants, fetchVariantData, getUnitVariants, fireRangeResultsHTML, replayTheaterHTML, newGameSetupHTML, removeIntroSeed, saveIntroSeed } from './ui.js';
+import { render, updateBarracksPanel, updateOpsPanel, setSubState, fetchAvailableVehicles, fetchUnitVariants, fetchVariantData, getUnitVariants, fireRangeResultsHTML, replayTheaterHTML, newGameSetupHTML, removeIntroSeed, saveIntroSeed, renderDeployPanel } from './ui.js';
 import { setActiveSlot, migrateLegacySave, updateActiveSlotMeta, deleteSlot } from './storage.js';
 import { advanceDialog, isDialogPaused, launchFirstTimeMission } from './mission.js';
 import { ReplayPlayer } from './replay-player.js';
 import { cameraKeyDown, cameraKeyUp, cameraZoom, cameraPanStart, cameraPanMove, cameraPanEnd } from './camera.js';
 import { initController, getControllerInput, updateButtonStates, setControllerCallbacks, isControllerConnected } from './controller.js';
 import { initGestures, setResetJoysticksCallback } from './gestures.js';
-import { generateRecruit, saveRoster, createSoldier, removeFromMemorial, addToMemorial, replaceOnMemorial, saveMemorial, getRecentFallen, hasRosterRoom, dismissRecruit, promoteToOfficer, retireSoldier, debugSetRank, debugSetMMR, debugSetPhysicals, debugSetTraining, debugSetAllTraining, debugMaxSoldier, debugResetSoldier, getSoldier, generatePhysicals, rushHeal } from './roster.js';
+import { generateRecruit, saveRoster, createSoldier, removeFromMemorial, addToMemorial, replaceOnMemorial, saveMemorial, getRecentFallen, hasRosterRoom, dismissRecruit, promoteToOfficer, retireSoldier, debugSetRank, debugSetMMR, debugSetPhysicals, debugSetTraining, debugSetAllTraining, debugMaxSoldier, debugResetSoldier, getSoldier, generatePhysicals, rushHeal, getCrewForVehicle, assignToVehicle, unassignFromVehicle, getAvailableVehicles } from './roster.js';
+import { getEquipped, assignItem, unassignItem, saveArmory, saveKit, loadKit, hasKit, kitIsDirty } from './armory.js';
 import { Objective, assignObjective } from './commander.js';
 import { PERSONALITY_PRESETS } from './ai-pipeline.js';
 import { EntityRenderer } from './entity-renderer.js';
@@ -23,7 +25,7 @@ import { moveJoystick, shootJoystick, getNearJoystickAnchor, setJoystickAnchor, 
 import * as sprites from './sprites.js';
 const { initSprites } = sprites;
 import { loadTerrainImages } from './world-builder/battle-terrain.js';
-import { initInsigniaTab, handleInsigniaClick, handleInsigniaInput, handleInsigniaKeyDown, handleInsigniaKeyUp } from './insignia-events.js';
+import { initInsigniaTab, handleInsigniaClick, handleInsigniaInput, handleInsigniaKeyDown, handleInsigniaKeyUp, isInsigniaActive } from './insignia-events.js';
 import { cacheInsigniaSet } from './insignia-renderer.js';
 import { handlePanelWheel } from './panel-scroll.js';
 import { logEvent } from './battle-log.js';
@@ -373,6 +375,27 @@ function processControllerBattle(input) {
   }
 }
 
+/**
+ * Render while preserving the dossier modal's scroll position.
+ * Used for in-modal toggles (phys-row expand, prof-pill expand, mos dropdown)
+ * so the user doesn't lose their place when interacting with stats below the fold.
+ * Uses requestAnimationFrame so the assignment happens after layout, otherwise
+ * the browser's reflow can reset scrollTop after we set it.
+ */
+function _renderPreservingDossierScroll() {
+  const before = document.querySelector('.soldier-detail-content');
+  const scrollTop = before ? before.scrollTop : 0;
+  render();
+  // Set scrollTop synchronously AND on next frame — covers both the case where
+  // the new element is laid out immediately and the case where layout is deferred.
+  const apply = () => {
+    const after = document.querySelector('.soldier-detail-content');
+    if (after) after.scrollTop = scrollTop;
+  };
+  apply();
+  requestAnimationFrame(apply);
+}
+
 function setupEventHandlers() {
 // ═══════════════════════════════════════════════════════════════
 // EVENT HANDLING
@@ -554,7 +577,7 @@ document.getElementById('app').addEventListener('click', e => {
   }
 
   // Insignia editor click events (HQ tab) — must be before generic data-action handler
-  if (Game.state === State.HQ && Game.hqTab === HQTab.INSIGNIA) {
+  if (isInsigniaActive()) {
     if (handleInsigniaClick(e.target, e)) return;
   }
 
@@ -573,7 +596,7 @@ document.getElementById('app').addEventListener('click', e => {
     else if (a === 'play') { initAudio(); goto(State.COUNTDOWN); }
     else if (a === 'settings') goto(State.SETTINGS);
     else if (a === 'stats') goto(State.STATS);
-    else if (a === 'hq') { goto(State.HQ); if (Game.hqTab === HQTab.INSIGNIA) setTimeout(() => initInsigniaTab(), 0); }
+    else if (a === 'hq') { goto(State.HQ); if (isInsigniaActive()) setTimeout(() => initInsigniaTab(), 0); }
     // Save slot actions
     else if (a === 'slot-select') {
       const idx = parseInt(action.dataset.slot);
@@ -721,100 +744,192 @@ document.getElementById('app').addEventListener('click', e => {
       if (Game.opsConfig) Game.opsConfig.record = !Game.opsConfig.record;
       render();
     }
-    else if (a === 'ops-select-slot') {
-      const slotType = action.dataset.slotType;
-      const squad = parseInt(action.dataset.squad) || 0;
-      const idx = parseInt(action.dataset.slotIdx) || 0;
-      Game.opsSelectedSlot = { type: slotType, squad, idx, crewRole: action.dataset.crewRole };
-      Game.opsPreviewSoldier = null;
-      // Auto-filter to matching roles for the selected slot
-      if (slotType === 'crew') Game.opsRoleFilter = action.dataset.crewRole || 'all';
-      else if (slotType === 'infantry-add') Game.opsRoleFilter = 'infantry';
-      else if (slotType === 'vehicle') Game.opsRoleFilter = 'all';
-      // hero is no longer a slot type — it's a flag on an assigned unit
+    // ─── Barracks ▸ SQUADS — popover, drawer, filter/sort ───
+    else if (a === 'sq-toggle-popover') {
+      const type = action.dataset.popoverType;
+      const current = Game.sqPopover;
+      const wasOpen = current && current.type === type
+        && current.soldierId === (action.dataset.soldier || null)
+        && current.vehicleId === (action.dataset.vehicle || null)
+        && current.squadIdx === (action.dataset.squad !== undefined ? parseInt(action.dataset.squad) : null);
+      Game.sqPopover = wasOpen ? null : {
+        type,
+        soldierId: action.dataset.soldier || null,
+        vehicleId: action.dataset.vehicle || null,
+        squadIdx: action.dataset.squad !== undefined ? parseInt(action.dataset.squad) : null
+      };
       render();
     }
-    else if (a === 'ops-preview-unit') {
-      Game.opsPreviewUnit = {
-        type: action.dataset.unitType,
-        squad: parseInt(action.dataset.squad) || 0,
-        idx: parseInt(action.dataset.unitIdx) || 0,
-        soldierId: action.dataset.soldier || null
-      };
-      Game.opsPreviewSoldier = null;
-      updateOpsPanel();
+    else if (a === 'sq-close-popover') {
+      Game.sqPopover = null;
+      render();
+    }
+    else if (a === 'sq-filter') {
+      Game.sqRosterFilter = action.dataset.role;
+      render();
+    }
+    else if (a === 'sq-sort') {
+      const key = action.dataset.key;
+      if (Game.sqSortKey === key) {
+        Game.sqSortDir = Game.sqSortDir === 'desc' ? 'asc' : 'desc';
+      } else {
+        Game.sqSortKey = key;
+        Game.sqSortDir = key === 'name' ? 'asc' : 'desc';
+      }
+      render();
+    }
+    else if (a === 'hq-detail-vehicle') {
+      Game.hqDetailVehicle = action.dataset.vehicle;
+      Game.sqPopover = null;
+      render();
+    }
+    else if (a === 'hq-close-vehicle') {
+      Game.hqDetailVehicle = null;
+      render();
+    }
+    else if (a === 'hq-vehicle-repair') {
+      // Placeholder — full gear/repair system pending. For now restores HP.
+      const vehicleId = action.dataset.vehicle;
+      const v = getAvailableVehicles().find(x => x.id === vehicleId);
+      if (v) { v.hpPercent = 1; saveRoster(); }
+      render();
+    }
+    else if (a === 'hq-view-in-motor-pool') {
+      Game.hqDetailVehicle = null;
+      Game.hqTab = HQTab.MOTOR_POOL;
+      Game.hqMotorPoolHighlight = action.dataset.vehicle;
+      render();
+    }
+    // ─── Squad assignment handlers (used by Barracks ▸ SQUADS) ───
+    else if (a === 'ops-move-to-squad') {
+      const soldierId = action.dataset.soldier;
+      const target = parseInt(action.dataset.targetSquad);
+      if (!Game.opsConfig || !soldierId) { render(); return; }
+      const ops = Game.opsConfig;
+      // Remove from current squad if assigned
+      for (const sq of ops.squads) {
+        const i = sq.units.indexOf(soldierId);
+        if (i >= 0) {
+          sq.units.splice(i, 1);
+          if (sq.leaderId === soldierId) {
+            sq.leaderId = sq.units[0] || null;
+          }
+        }
+      }
+      // Add to new squad if not Reserve (-1)
+      if (target >= 0 && ops.squads[target]) {
+        ops.squads[target].units.push(soldierId);
+        if (!ops.squads[target].leaderId) {
+          ops.squads[target].leaderId = soldierId;
+        }
+      }
+      // Keep selection on the moved soldier
+      Game.sqPopover = null;
+      render();
+    }
+    else if (a === 'ops-move-vehicle') {
+      const vehicleId = action.dataset.vehicle;
+      const target = parseInt(action.dataset.targetSquad);
+      if (!Game.opsConfig || !vehicleId) { render(); return; }
+      const ops = Game.opsConfig;
+      // Remove from current squad
+      for (const sq of ops.squads) {
+        if (sq.vehicleId === vehicleId) sq.vehicleId = null;
+      }
+      // Add to target if not Motor Pool (-1)
+      if (target >= 0 && ops.squads[target] && !ops.squads[target].vehicleId) {
+        ops.squads[target].vehicleId = vehicleId;
+      }
+      Game.sqPopover = null;
+      render();
+    }
+    else if (a === 'ops-make-leader') {
+      const soldierId = action.dataset.soldier;
+      const sqIdx = parseInt(action.dataset.squad);
+      if (Game.opsConfig?.squads[sqIdx] && Game.opsConfig.squads[sqIdx].units.includes(soldierId)) {
+        Game.opsConfig.squads[sqIdx].leaderId = soldierId;
+      }
+      render();
     }
     else if (a === 'ops-set-hero') {
-      if (Game.opsConfig) {
-        Game.opsConfig.heroUnit = action.dataset.soldier;
-      }
-      updateOpsPanel();
-    }
-    else if (a === 'ops-preview-soldier') {
-      Game.opsPreviewSoldier = action.dataset.soldier;
-      Game.opsPreviewUnit = null;
-      updateOpsPanel();
-    }
-    else if (a === 'ops-assign-soldier') {
-      const soldierId = action.dataset.soldier;
-      const slot = Game.opsSelectedSlot;
-      if (!slot || !Game.opsConfig) { render(); return; }
-      if (slot.type === 'hero') {
-        Game.opsConfig.heroUnit = soldierId;
-      } else if (slot.type === 'infantry-add') {
-        Game.opsConfig.squads[slot.squad]?.units.push(soldierId);
-      } else if (slot.type === 'crew') {
-        // TODO: assign crew to vehicle slot
-      }
-      Game.opsPreviewSoldier = null;
+      const id = action.dataset.soldier || action.dataset.vehicle;
+      if (Game.opsConfig && id) Game.opsConfig.heroUnit = id;
       render();
     }
-    else if (a === 'ops-swap-soldier') {
-      const oldId = action.dataset.old;
-      const newId = action.dataset.new;
-      const sqIdx = parseInt(action.dataset.squad) || 0;
-      const unitIdx = parseInt(action.dataset.idx) || 0;
-      if (Game.opsConfig) {
-        const sq = Game.opsConfig.squads[sqIdx];
-        if (sq && sq.units[unitIdx] === oldId) {
-          sq.units[unitIdx] = newId;
-        }
-        // If swapped unit was hero, transfer hero to new unit
-        if (Game.opsConfig.heroUnit === oldId) Game.opsConfig.heroUnit = newId;
+    else if (a === 'ops-swap-crew-role') {
+      const soldierId = action.dataset.soldier;
+      const vehicleId = action.dataset.vehicle;
+      const slot = action.dataset.slot;
+      const crew = getCrewForVehicle(vehicleId) || {};
+      const occupant = crew[slot];
+      const currentSlot = Object.keys(crew).find(s => crew[s]?.id === soldierId);
+      // Move the displaced occupant into the soldier's old slot (swap), or unassign
+      if (occupant && currentSlot) {
+        assignToVehicle(occupant.id, vehicleId, currentSlot);
+      } else if (occupant) {
+        unassignFromVehicle(occupant.id);
       }
-      Game.opsPreviewSoldier = null;
-      Game.opsPreviewUnit = null;
+      assignToVehicle(soldierId, vehicleId, slot);
+      Game.sqPopover = null;
+      render();
+    }
+    else if (a === 'ops-move-out-of-vehicle') {
+      const soldierId = action.dataset.soldier;
+      const target = parseInt(action.dataset.targetSquad);
+      unassignFromVehicle(soldierId);
+      // Add to squad infantry (or leave in reserve)
+      if (target >= 0 && Game.opsConfig?.squads[target]) {
+        const sq = Game.opsConfig.squads[target];
+        if (!sq.units.includes(soldierId)) sq.units.push(soldierId);
+        if (!sq.leaderId) sq.leaderId = soldierId;
+      }
+      Game.sqPopover = null;
+      render();
+    }
+    else if (a === 'ops-assign-to-crew') {
+      const soldierId = action.dataset.soldier;
+      const vehicleId = action.dataset.vehicle;
+      const slot = action.dataset.slot;
+      // Remove from current squad if any
+      for (const sq of (Game.opsConfig?.squads || [])) {
+        const i = sq.units.indexOf(soldierId);
+        if (i >= 0) {
+          sq.units.splice(i, 1);
+          if (sq.leaderId === soldierId) sq.leaderId = sq.units[0] || null;
+        }
+      }
+      assignToVehicle(soldierId, vehicleId, slot);
+      Game.sqPopover = null;
+      render();
+    }
+    else if (a === 'ops-assign-vehicle-to-squad') {
+      const vehicleId = action.dataset.vehicle;
+      const target = parseInt(action.dataset.targetSquad);
+      if (Game.opsConfig?.squads[target]) {
+        // Remove vehicle from any other squad
+        for (const sq of Game.opsConfig.squads) {
+          if (sq.vehicleId === vehicleId) sq.vehicleId = null;
+        }
+        Game.opsConfig.squads[target].vehicleId = vehicleId;
+      }
+      Game.sqPopover = null;
       render();
     }
     else if (a === 'ops-assign-cmd') {
       if (Game.opsConfig) {
         Game.opsConfig.cmdOfficerId = action.dataset.soldier;
-        Game.opsSelectedSlot = null;
       }
+      Game.sqPopover = null;
       render();
     }
-    else if (a === 'ops-assign-vehicle') {
-      const vehicleId = action.dataset.vehicle;
-      const slot = Game.opsSelectedSlot;
-      if (slot?.type === 'vehicle' && Game.opsConfig) {
-        Game.opsConfig.squads[slot.squad].vehicleId = vehicleId;
-      }
-      Game.opsSelectedSlot = null;
-      render();
-    }
-    else if (a === 'ops-unassign') {
-      const slotType = action.dataset.slotType;
-      const squad = parseInt(action.dataset.squad) || 0;
-      const idx = parseInt(action.dataset.slotIdx) || 0;
-      if (!Game.opsConfig) { render(); return; }
-      if (slotType === 'hero') Game.opsConfig.heroUnit = null;
-      else if (slotType === 'vehicle') Game.opsConfig.squads[squad].vehicleId = null;
-      else if (slotType === 'infantry') Game.opsConfig.squads[squad]?.units.splice(idx, 1);
+    else if (a === 'ops-unassign-cmd') {
+      if (Game.opsConfig) Game.opsConfig.cmdOfficerId = null;
+      Game.sqPopover = null;
       render();
     }
     else if (a === 'ops-add-squad') {
       if (Game.opsConfig) {
-        Game.opsConfig.squads.push({ units: [], vehicleId: null });
+        Game.opsConfig.squads.push({ units: [], vehicleId: null, leaderId: null, formation: { preset: 'wedge', positions: [], spacing: 80, facing: 0 } });
         render();
       }
     }
@@ -822,12 +937,9 @@ document.getElementById('app').addEventListener('click', e => {
       const sqIdx = parseInt(action.dataset.squad);
       if (Game.opsConfig && sqIdx > 0) {
         Game.opsConfig.squads.splice(sqIdx, 1);
+        Game.sqPopover = null;
         render();
       }
-    }
-    else if (a === 'ops-filter-role') {
-      Game.opsRoleFilter = action.dataset.role;
-      render();
     }
     else if (a === 'hq-filter-role') {
       Game.hqRoleFilter = action.dataset.role;
@@ -872,30 +984,194 @@ document.getElementById('app').addEventListener('click', e => {
       Game.hqDetailTab = 'combat';
       render();
     }
+    // ─── Armory filters / sort ───
+    else if (a === 'armory-filter') {
+      Game.armoryFilter = action.dataset.filter;
+      render();
+    }
+    else if (a === 'armory-sort') {
+      const key = action.dataset.key;
+      if (Game.armorySortKey === key) {
+        Game.armorySortDir = Game.armorySortDir === 'desc' ? 'asc' : 'desc';
+      } else {
+        Game.armorySortKey = key;
+        Game.armorySortDir = key === 'name' ? 'asc' : 'desc';
+      }
+      render();
+    }
+    else if (a === 'armory-toggle-unassigned') {
+      Game.armoryUnassignedOnly = !Game.armoryUnassignedOnly;
+      render();
+    }
+    else if (a === 'armory-toggle-damaged') {
+      Game.armoryDamagedOnly = !Game.armoryDamagedOnly;
+      render();
+    }
+    else if (a === 'armory-detail') {
+      // Tap an armory row — if the item is assigned, open that soldier's dossier on EQUIPMENT tab
+      const itemId = action.dataset.item;
+      const item = (Game.armory?.items || []).find(i => i.id === itemId);
+      if (item?.assignedTo) {
+        Game.hqDetailSoldier = item.assignedTo;
+        Game.hqDetailTab = 'equipment';
+        render();
+      }
+      // Unassigned items: no-op for now (future: item detail drawer)
+    }
+    // ─── Equipment picker (dossier EQUIPMENT tab) ───
+    else if (a === 'equip-open-picker') {
+      Game.equipPicker = { soldierId: action.dataset.soldier, slot: action.dataset.slot };
+      render();
+    }
+    else if (a === 'equip-close-picker') {
+      Game.equipPicker = null;
+      render();
+    }
+    else if (a === 'equip-assign') {
+      const itemId = action.dataset.item;
+      const picker = Game.equipPicker;
+      if (picker && itemId) {
+        // Unequip whatever's in that slot now
+        const current = getEquipped(picker.soldierId, picker.slot);
+        if (current) unassignItem(current.id);
+        // Assign the new item
+        assignItem(itemId, picker.soldierId);
+        saveArmory();
+      }
+      Game.equipPicker = null;
+      render();
+    }
+    else if (a === 'equip-unequip') {
+      const picker = Game.equipPicker;
+      const current = picker ? getEquipped(picker.soldierId, picker.slot) : null;
+      if (current) {
+        unassignItem(current.id);
+        saveArmory();
+      }
+      Game.equipPicker = null;
+      render();
+    }
     else if (a === 'hq-close-detail') {
       Game.hqDetailSoldier = null;
       Game.hqDetailRole = null;
       Game.hqDetailExpanded = null;
       Game.hqDetailTab = null;
+      Game.hqDetailProfExpanded = false;
+      Game.hqDetailMosOpen = false;
       render();
     }
     else if (a === 'hq-detail-tab') {
       Game.hqDetailTab = action.dataset.tab;
+      Game.hqDetailProfExpanded = false;
+      Game.hqDetailMosOpen = false;
       render();
     }
     else if (a === 'hq-detail-expand') {
       const stat = action.dataset.stat;
       Game.hqDetailExpanded = Game.hqDetailExpanded === stat ? null : stat;
+      _renderPreservingDossierScroll();
+    }
+    else if (a === 'hq-detail-prof-toggle') {
+      Game.hqDetailProfExpanded = !Game.hqDetailProfExpanded;
+      Game.hqDetailMosOpen = false;
+      _renderPreservingDossierScroll();
+    }
+    else if (a === 'hq-detail-mos-toggle') {
+      Game.hqDetailMosOpen = !Game.hqDetailMosOpen;
+      Game.hqDetailProfExpanded = false;
+      _renderPreservingDossierScroll();
+    }
+    else if (a === 'hq-mos-select') {
+      const soldierId = action.dataset.soldier;
+      const newRole = action.dataset.role;
+      const soldier = (Game.roster || []).find(s => s.id === soldierId);
+      Game.hqDetailMosOpen = false;
+      if (!soldier || !newRole) { render(); return; }
+      // If picking a different MOS, route through dirty-check + switch logic
+      if (newRole !== soldier.mos) {
+        const oldMos = soldier.mos || soldier.role;
+        if (kitIsDirty(soldier, oldMos)) {
+          Game.mosSwitchPrompt = {
+            soldierId, oldMos, newMos: newRole,
+            kitExists: hasKit(soldier, oldMos)
+          };
+          render();
+          return;
+        }
+        soldier.mos = newRole;
+        soldier.role = newRole;
+        loadKit(soldier, newRole);
+        saveRoster();
+        saveArmory();
+      }
+      Game.hqDetailRole = newRole;
       render();
     }
     else if (a === 'hq-set-primary-mos') {
       const soldierId = action.dataset.soldier;
       const newRole = action.dataset.role;
       const soldier = (Game.roster || []).find(s => s.id === soldierId);
-      if (soldier && newRole) {
-        soldier.mos = newRole;
-        soldier.role = newRole;
+      if (!soldier || !newRole || newRole === soldier.mos) { render(); return; }
+
+      const oldMos = soldier.mos || soldier.role;
+      // Dirty check: if current loadout differs from saved kit for old MOS, prompt
+      if (kitIsDirty(soldier, oldMos)) {
+        Game.mosSwitchPrompt = {
+          soldierId, oldMos, newMos: newRole,
+          kitExists: hasKit(soldier, oldMos)
+        };
+        render();
+        return;
+      }
+      // No prompt needed — switch silently and load new kit
+      soldier.mos = newRole;
+      soldier.role = newRole;
+      loadKit(soldier, newRole);
+      saveRoster();
+      saveArmory();
+      render();
+    }
+    else if (a === 'mos-save-and-switch') {
+      const p = Game.mosSwitchPrompt;
+      if (!p) { render(); return; }
+      const soldier = (Game.roster || []).find(s => s.id === p.soldierId);
+      if (soldier) {
+        saveKit(soldier, p.oldMos);
+        soldier.mos = p.newMos;
+        soldier.role = p.newMos;
+        loadKit(soldier, p.newMos);
         saveRoster();
+        saveArmory();
+      }
+      Game.mosSwitchPrompt = null;
+      render();
+    }
+    else if (a === 'mos-discard-and-switch') {
+      const p = Game.mosSwitchPrompt;
+      if (!p) { render(); return; }
+      const soldier = (Game.roster || []).find(s => s.id === p.soldierId);
+      if (soldier) {
+        soldier.mos = p.newMos;
+        soldier.role = p.newMos;
+        loadKit(soldier, p.newMos);
+        saveRoster();
+        saveArmory();
+      }
+      Game.mosSwitchPrompt = null;
+      render();
+    }
+    else if (a === 'mos-cancel-switch') {
+      Game.mosSwitchPrompt = null;
+      render();
+    }
+    else if (a === 'equip-save-kit') {
+      const soldierId = action.dataset.soldier;
+      const mos = action.dataset.mos;
+      const soldier = (Game.roster || []).find(s => s.id === soldierId);
+      if (soldier && mos) {
+        saveKit(soldier, mos);
+        saveRoster();
+        saveArmory();
       }
       render();
     }
@@ -960,6 +1236,9 @@ document.getElementById('app').addEventListener('click', e => {
       Game.hqBarracksView = action.dataset.view;
       Game.hqSelectedSoldiers = []; // Clear selection on view switch
       render();
+      if (Game.hqBarracksView === 'insignia') {
+        setTimeout(() => initInsigniaTab(), 0);
+      }
     }
     else if (a === 'hq-rush-heal') {
       const soldierId = action.dataset.soldier;
@@ -1907,6 +2186,89 @@ document.getElementById('app').addEventListener('click', e => {
         extractFromRun();
       }
     }
+    // ── Deploy panel (HTML) actions ────────────────────────────
+    // IMPORTANT: use renderDeployPanel() (not render()) — full render destroys
+    // the battle canvas because endlessBattleHTML re-runs and replaces it.
+    else if (a === 'dp-deploy') {
+      const b = Game.endless?.battle;
+      // confirmDeployment flips b.deployReady.blue which advances the phase
+      // out of 'deploying' — the panel will disappear naturally on next tick.
+      if (b) { confirmDeployment(b); renderDeployPanel(); }
+    }
+    else if (a === 'dp-zone') {
+      const b = Game.endless?.battle;
+      const zoneName = action.dataset.zone;
+      if (b && zoneName) { selectDeployZone(b, zoneName); renderDeployPanel(); }
+    }
+    else if (a === 'dp-collapse') {
+      const b = Game.endless?.battle;
+      const selZone = b?.deployZones?.blue?.find(z => z.selected);
+      if (selZone) { selZone._expanded = false; renderDeployPanel(); }
+    }
+    else if (a === 'dp-preset') {
+      const b = Game.endless?.battle;
+      const presetId = action.dataset.preset;
+      if (b && presetId) { applyPreset(b, presetId); renderDeployPanel(); }
+    }
+    else if (a === 'dp-formation') { /* handled by change event below */ }
+    else if (a === 'dp-pool-tab') {
+      const b = Game.endless?.battle;
+      const tab = action.dataset.tab;
+      if (b && tab) { b._poolTab = tab; renderDeployPanel(); }
+    }
+    else if (a === 'dp-pool-select') {
+      const b = Game.endless?.battle;
+      const unitId = action.dataset.unitId;
+      if (b && unitId) {
+        const ref = (b.reservePool || []).find(r => r.id === unitId);
+        b._selectedUnit = ref || null;
+        renderDeployPanel();
+      }
+    }
+    else if (a === 'dp-pool-add') {
+      const b = Game.endless?.battle;
+      const unitId = action.dataset.unitId;
+      if (!b || !unitId) return;
+      const reserves = b.reservePool || (b.reservePool = []);
+      const units = b.units || (b.units = []);
+      const idx = reserves.findIndex(r => r.id === unitId);
+      if (idx >= 0) {
+        units.push(reserves.splice(idx, 1)[0]);
+        renderDeployPanel();
+      }
+    }
+    else if (a === 'dp-lineup-remove') {
+      const b = Game.endless?.battle;
+      const idx = parseInt(action.dataset.idx, 10);
+      if (!b || isNaN(idx)) return;
+      const units = b.units || [];
+      if (idx >= 0 && idx < units.length) {
+        const removed = units.splice(idx, 1)[0];
+        (b.reservePool || (b.reservePool = [])).push(removed);
+        if (b._selectedUnit === removed) b._selectedUnit = null;
+        renderDeployPanel();
+      }
+    }
+    else if (a === 'dp-lineup-select') {
+      const b = Game.endless?.battle;
+      const idx = parseInt(action.dataset.idx, 10);
+      if (!b || isNaN(idx)) return;
+      const unit = (b.units || [])[idx];
+      if (unit) { b._selectedUnit = unit; renderDeployPanel(); }
+    }
+    else if (a === 'dp-drawer-close') {
+      const b = Game.endless?.battle;
+      if (b) { b._selectedUnit = null; renderDeployPanel(); }
+    }
+    else if (a === 'dp-mode') {
+      const b = Game.endless?.battle;
+      const mode = action.dataset.mode;
+      if (b && mode) {
+        b.playMode = mode;
+        if (Game.endless) Game.endless.playMode = mode;
+        renderDeployPanel();
+      }
+    }
     else if (a === 'endless-retry') {
       Game.endless = null;
       goto(State.HQ);
@@ -2601,7 +2963,7 @@ document.getElementById('app').addEventListener('click', e => {
     Game.hqSelectedUnit = null;  // Clear unit selection when switching tabs
     render();
     // Initialize insignia editor when tab opens
-    if (Game.hqTab === HQTab.INSIGNIA) {
+    if (isInsigniaActive()) {
       setTimeout(() => initInsigniaTab(), 0);
     }
     return;
@@ -2886,8 +3248,26 @@ window._debug = {
 // Change events (for dropdowns)
 document.getElementById('app').addEventListener('change', e => {
   // Insignia editor checkboxes (flipX, flipY, fillEnabled)
-  if (Game.state === State.HQ && Game.hqTab === HQTab.INSIGNIA) {
+  if (isInsigniaActive()) {
     if (handleInsigniaInput(e.target)) return;
+  }
+
+  // Roster compare checkboxes (Barracks ▸ ROSTER)
+  if (e.target.classList?.contains('roster-compare-check')) {
+    const id = e.target.dataset.soldier;
+    if (!Game.hqSelectedSoldiers) Game.hqSelectedSoldiers = [];
+    const idx = Game.hqSelectedSoldiers.indexOf(id);
+    if (idx >= 0) Game.hqSelectedSoldiers.splice(idx, 1);
+    else Game.hqSelectedSoldiers.push(id);
+    render();
+    return;
+  }
+
+  // Deploy panel formation select
+  if (e.target.classList?.contains('squad-fmt-select')) {
+    const b = Game.endless?.battle;
+    if (b) { b._deployFormation = e.target.value; render(); }
+    return;
   }
 
   // Operations wave select
@@ -3007,7 +3387,7 @@ document.getElementById('app').addEventListener('input', e => {
     return;
   }
   // Insignia editor sliders / toggles / color pickers
-  if (Game.state === State.HQ && Game.hqTab === HQTab.INSIGNIA) {
+  if (isInsigniaActive()) {
     if (handleInsigniaInput(e.target)) return;
   }
 
@@ -3131,7 +3511,7 @@ window.addEventListener('debug-watch-replay', async (e) => {
 
 document.addEventListener('keydown', e => {
   // Insignia editor keyboard shortcuts (Ctrl+C/V/A/D, Delete)
-  if (Game.state === State.HQ && Game.hqTab === HQTab.INSIGNIA) {
+  if (isInsigniaActive()) {
     if (handleInsigniaKeyDown(e)) return;
   }
   if (Game.state === State.CAMPAIGN_BATTLE) {
@@ -3157,7 +3537,7 @@ document.addEventListener('keydown', e => {
 });
 
 document.addEventListener('keyup', e => {
-  if (Game.state === State.HQ && Game.hqTab === HQTab.INSIGNIA) {
+  if (isInsigniaActive()) {
     handleInsigniaKeyUp(e);
   }
   if (Game.state === State.CAMPAIGN_BATTLE) {

@@ -64,9 +64,17 @@ export const HQTab = {
   BARRACKS: 'barracks',
   ARMORY: 'armory',
   MOTOR_POOL: 'motor_pool',
-  OPERATIONS: 'operations',
-  INSIGNIA: 'insignia'
+  PROVING_GROUND: 'proving_ground',
+  REPLAYS: 'replays'
 };
+
+// Tabs that render content directly in the HQ shell. PROVING_GROUND and REPLAYS
+// are nav-only (they goto a separate state on click), so they aren't rendered.
+export const HQ_RENDER_TABS = [
+  HQTab.BARRACKS,
+  HQTab.ARMORY,
+  HQTab.MOTOR_POOL
+];
 
 export const RANK_NAMES = ['PVT', 'PV2', 'PFC', 'SPC', 'CPL', 'SGT'];
 export const RANK_LABELS = ['Private', 'Private 2nd Class', 'Private First Class', 'Specialist', 'Corporal', 'Sergeant'];
@@ -637,6 +645,12 @@ export const DEFAULT_MAX_SPREAD_DEG = 7.5;
 /** Check if a unitId is an infantry type (foot soldier, not a vehicle). */
 // Unit conversion: pixels to meters for display
 export const PIXELS_TO_METERS = 0.3;
+
+// Display calibration — game-space units → real-world display units.
+// Separate factors per stat type because speed and range scale differently in reality.
+// Internal physics still uses raw game units; these factors only affect display.
+export const DISPLAY_SPEED_KMH = 0.25;  // 50 px/s → ~12.5 km/h (combat pace)
+export const DISPLAY_RANGE_M  = 0.6;   // 350 px → 210m (M4A1), 600 px → 360m (sniper)
 
 export function isInfantryUnit(unitId) {
   return unitId === 'infantry' || unitId === 'medic' || unitId === 'specops' || unitId === 'stinger';

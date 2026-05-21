@@ -2,7 +2,7 @@
 // GAME - Battle logic, game loop, update, draw
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, UNITS, ENEMIES, getTypeMultiplier, UNIT_COSTS, H2H_BUDGET, PROJECTILES, UNIT_PROJECTILES, UNIT_COMBAT_STATS, UNIT_DESCRIPTIONS, getTerrainSVG, getStanceModifier, getEnemyStance, ZoneOwner, ScenarioType, SHADOW_CONFIG, Team, Owner, FORMATION_OFFSETS, getFormationPositions, CREW_SCHEMAS, RANK_TABLE, DEFAULT_MAX_SPREAD_DEG, isInfantryUnit, WAVE_POWER_CURVE, ENEMY_POWER_COSTS, INFANTRY_ARCHETYPES, ROLE_TO_UNIT_ID, FIRST_MISSION } from './constants.js';
+import { State, SubState, HQTab, HQ_RENDER_TABS, UNITS, ENEMIES, getTypeMultiplier, UNIT_COSTS, H2H_BUDGET, PROJECTILES, UNIT_PROJECTILES, UNIT_COMBAT_STATS, UNIT_DESCRIPTIONS, getTerrainSVG, getStanceModifier, getEnemyStance, ZoneOwner, ScenarioType, SHADOW_CONFIG, Team, Owner, FORMATION_OFFSETS, getFormationPositions, CREW_SCHEMAS, RANK_TABLE, DEFAULT_MAX_SPREAD_DEG, isInfantryUnit, WAVE_POWER_CURVE, ENEMY_POWER_COSTS, INFANTRY_ARCHETYPES, ROLE_TO_UNIT_ID, FIRST_MISSION } from './constants.js';
 import { renderBaseTerrainToCanvas, renderCanopyToCanvas } from './world-builder/terrain-renderer.js';
 import { Game, newBattle, newH2H, newCampaign, newCampaignBattle, newEndlessBattle, newFireRangeRun, newFireRangeBattle, createUnit } from './state.js';
 import { sound } from './audio.js';
@@ -442,6 +442,13 @@ export function goto(newState, data = {}) {
   Game.state = newState;
   Game.subState = SubState.PLAYING;
 
+  // Hide any leftover joystick visuals when leaving a battle state. The joystick
+  // touch handler re-shows them on next touch; this just clears the stuck visuals.
+  const battleStates = ['battle', 'h2h_battle', 'campaign_battle', 'endless_battle', 'countdown'];
+  if (battleStates.includes(prev) && !battleStates.includes(newState)) {
+    document.querySelectorAll('.joystick-visual').forEach(el => { el.style.display = 'none'; });
+  }
+
   switch (newState) {
     case State.COUNTDOWN:
       Game.battle = newBattle();
@@ -479,7 +486,16 @@ export function goto(newState, data = {}) {
       break;
 
     case State.HQ:
-      Game.hqTab = Game.hqTab || HQTab.BARRACKS;
+      // Migrate legacy top-level tabs into Barracks sub-views
+      if (Game.hqTab === 'insignia') {
+        Game.hqTab = HQTab.BARRACKS;
+        Game.hqBarracksView = 'insignia';
+      }
+      if (Game.hqTab === 'operations') {
+        Game.hqTab = HQTab.BARRACKS;
+        Game.hqBarracksView = 'squads';
+      }
+      if (!HQ_RENDER_TABS.includes(Game.hqTab)) Game.hqTab = HQTab.BARRACKS;
       render();
       break;
 
@@ -644,6 +660,12 @@ export function goto(newState, data = {}) {
           if (!hero.id) hero.id = `hero_${Date.now()}`;
         }
         console.log('[game] Created endless battle for wave', Game.endless.wave, 'mode:', Game.endless.battle.playMode);
+        // Log gear stats for deployed blue units
+        const eb = Game.endless.battle;
+        if (eb?.hero) console.log('[gear] Hero:', eb.hero.unitId, 'dmg:', eb.hero.damage, 'rng:', eb.hero.range, 'acc:', eb.hero._gearAccuracy?.toFixed(2), 'hp:', eb.hero.maxHp);
+        for (const u of (eb?.units || [])) {
+          console.log('[gear]', u.id, u.unitId, 'dmg:', u.damage, 'rng:', u.range, 'acc:', u._gearAccuracy?.toFixed(2), 'hp:', u.maxHp, 'crit:', u._gearCritChance?.toFixed(2));
+        }
 
         // Auto-deploy for wave 2+ — position in staging area and skip deploy phase
         if (Game.endless._autoDeployNextWave) {
@@ -714,7 +736,12 @@ export function goto(newState, data = {}) {
       if (Game.endless._record) {
         createRecorder(Game.endless.battle, 'endless');
       }
-      createRadioHUD();
+      // Radio HUD is created when the deploy phase ends — not now. Battles that
+      // skip the deploy phase (first-run mission, auto-deploy wave 2+) create
+      // it inline above where their phase is set to 'active'.
+      if (Game.endless.battle?.phase === 'active') {
+        createRadioHUD();
+      }
       startEndlessLoop();
       break;
 
@@ -2279,6 +2306,8 @@ function updateDeployment(b, now) {
   if (b.deployReady.blue && b.deployReady.red) {
     b.phase = 'countdown';
     b.countdownStart = now;
+    // Deploy is done — now we show the radio HUD for the actual game.
+    createRadioHUD();
   }
 }
 
@@ -4074,6 +4103,10 @@ function drawDeployZones(ctx, b, screenW, screenH, zoom) {
   }
 
   // ── Panel UI (screen-space) ──
+  // Skip canvas-drawn deploy panel — the HTML deployPanelHTML() in ui.js owns this now.
+  // In-world zone highlights above remain on canvas (they have to align with terrain).
+  if (true /* USE_HTML_DEPLOY_PANEL */) return;
+
   const dpr = window.devicePixelRatio || 1;
   ctx.save();
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -5810,6 +5843,68 @@ function heroFire(b, hero, now, targetEntity) {
 }
 
 // ── Deployment click handler ────────────────────────────────
+
+/**
+ * Confirm deployment for the currently-selected zone.
+ * Pulled out of handleDeployClick so the HTML deploy panel (in main.js) can
+ * trigger the same logic without going through canvas hit-testing.
+ */
+export function confirmDeployment(b) {
+  if (!b || !b.deployZones?.blue) return false;
+  const selZone = b.deployZones.blue.find(z => z.selected);
+  if (!selZone) return false;
+
+  const zoneCenter = selZone.x + selZone.width / 2;
+  const stageY = b.mapHeight + b.stageDepth / 2;
+  const fmt = b._deployFormation || 'line';
+  const totalUnits = 1 + (b.units?.length || 0);
+  const positions = getFormationPositions(fmt, zoneCenter, stageY, totalUnits);
+
+  // Position 0 is leader (hero), rest are squad
+  b.hero.x = positions[0]?.x ?? zoneCenter;
+  b.hero.y = positions[0]?.y ?? stageY;
+
+  selZone.units = b.units || [];
+  const units = b.units || [];
+  for (let i = 0; i < units.length; i++) {
+    const pos = positions[i + 1];
+    if (pos) {
+      units[i].x = pos.x;
+      units[i].y = pos.y;
+    } else {
+      units[i].x = zoneCenter + (Math.random() - 0.5) * 120;
+      units[i].y = stageY + 100 + (i - positions.length + 1) * 40;
+    }
+  }
+  _stampRosterData(b);
+  saveLastLoadout(b);
+  b.deployReady.blue = true;
+  return true;
+}
+
+/**
+ * Click on a zone chip / map zone — mirrors the canvas tab-click logic.
+ * If the zone is already selected+expanded → collapse. If selected+collapsed → expand.
+ * Otherwise → switch to it (and expand).
+ */
+export function selectDeployZone(b, zoneName) {
+  if (!b?.deployZones?.blue) return false;
+  const zones = b.deployZones.blue;
+  const zone = zones.find(z => z.name === zoneName);
+  if (!zone) return false;
+  if (zone.selected && zone._expanded) {
+    zone._expanded = false;
+    b._fmtDropdownOpen = false;
+  } else if (zone.selected && !zone._expanded) {
+    zone._expanded = true;
+  } else {
+    for (const z of zones) { z.selected = false; z._expanded = false; }
+    b._fmtDropdownOpen = false;
+    zone.selected = true;
+    zone._expanded = true;
+  }
+  return true;
+}
 
 export function handleDeployClick(b, screenX, screenY, ctrlKey) {
   if (!b || b.phase !== 'deploying' || !b.deployZones?.blue) return false;

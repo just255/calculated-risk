@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Operations — Battle Roster (mobile)</title>
+<link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Oxanium:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-dark: #1a1f2e;
+    --bg-medium: #252b3d;
+    --bg-light: #2f3749;
+    --bg-lighter: #3d4559;
+    --accent-green: #4ade80;
+    --accent-red: #f87171;
+    --accent-yellow: #fbbf24;
+    --accent-blue: #60a5fa;
+    --accent-orange: #fb923c;
+    --text-primary: #e2e8f0;
+    --text-secondary: #94a3b8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Oxanium', sans-serif;
+    background: #0f1320;
+    color: var(--text-primary);
+    margin: 0;
+    padding: 24px;
+  }
+  h1 { font-family: 'Black Ops One', cursive; color: var(--accent-green); margin: 0 0 4px; font-size: 1.3rem; }
+  .subhead { color: var(--text-secondary); margin: 0 0 24px; font-size: 0.85rem; max-width: 680px; }
+  .row { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+  .col-label { font-size: 0.7rem; color: var(--text-secondary); letter-spacing: 1px; margin: 0 0 8px; font-family: 'Black Ops One', cursive; }
+
+  /* ── Phone frame ────────────────────────── */
+  .phone {
+    width: 420px;
+    background: var(--bg-dark);
+    border: 1px solid var(--bg-lighter);
+    border-radius: 12px;
+    overflow: hidden;
+    position: relative;
+    height: 760px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* HQ chrome */
+  .hq-header {
+    display: flex;
+    align-items: center;
+    padding: 6px 8px;
+    background: var(--bg-medium);
+    border-bottom: 2px solid var(--accent-green);
+    gap: 6px;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+  .hq-title { font-family: 'Black Ops One', cursive; font-size: 0.8rem; margin: 0; white-space: nowrap; }
+  .hq-resources { display: flex; gap: 6px; font-family: 'Share Tech Mono', monospace; font-size: 0.7rem; margin-right: auto; }
+  .hq-deploy-bar { display: flex; align-items: center; gap: 6px; padding: 3px 6px; background: var(--bg-light); border: 1px solid var(--bg-lighter); border-radius: 4px; }
+  .hq-map-btn { width: 20px; height: 20px; background: var(--bg-medium); border: 1px solid var(--bg-lighter); color: var(--text-secondary); font-size: 0.6rem; border-radius: 3px; display: flex; align-items: center; justify-content: center; }
+  .hq-map-btn.active { background: var(--accent-green); color: var(--bg-dark); border-color: var(--accent-green); }
+  .hq-deploy-btn { background: var(--accent-green); color: var(--bg-dark); padding: 4px 8px; font-family: 'Black Ops One', cursive; font-size: 0.65rem; border-radius: 3px; border: none; }
+  .hq-tab-bar { display: flex; background: var(--bg-dark); border-bottom: 1px solid var(--bg-light); }
+  .hq-tab { padding: 8px 6px; background: none; border: none; color: var(--text-secondary); font-family: 'Black Ops One', cursive; font-size: 0.6rem; letter-spacing: 0.5px; flex: 1; border-bottom: 3px solid transparent; }
+  .hq-tab.active { color: var(--accent-green); border-bottom-color: var(--accent-green); }
+  .ops-sub-tabs { display: flex; gap: 4px; padding: 8px 8px 0; }
+  .ops-sub-tab { padding: 5px 12px; font-family: 'Black Ops One', cursive; font-size: 0.65rem; letter-spacing: 1px; background: var(--bg-medium); border: 1px solid var(--bg-light); color: var(--text-secondary); border-radius: 4px; }
+  .ops-sub-tab.active { color: var(--accent-green); border-color: var(--accent-green); background: var(--bg-light); }
+
+  /* ── Content (scroll surface) ──────────────── */
+  .ops-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+  }
+
+  /* CMD banner */
+  .cmd-banner {
+    background: rgba(251,146,60,0.05);
+    border: 1px solid rgba(251,146,60,0.25);
+    border-style: dashed;
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .cmd-label { font-family: 'Black Ops One', cursive; font-size: 0.55rem; color: var(--accent-orange); letter-spacing: 1px; }
+  .cmd-msg { font-size: 0.65rem; color: var(--text-secondary); font-style: italic; margin-left: auto; }
+  .cmd-chevron { color: var(--accent-orange); font-size: 0.65rem; }
+
+  /* Section header */
+  .section-header {
+    display: flex;
+    align-items: center;
+    padding: 6px 4px;
+    gap: 8px;
+    margin-top: 6px;
+  }
+  .section-header.hero { color: var(--accent-yellow); }
+  .section-title { font-family: 'Black Ops One', cursive; font-size: 0.75rem; letter-spacing: 1px; }
+  .section-fill { flex: 1; height: 1px; background: var(--bg-light); }
+  .section-count { font-family: 'Share Tech Mono', monospace; font-size: 0.7rem; color: var(--text-secondary); }
+  .section-menu { color: var(--text-secondary); font-size: 1rem; padding: 0 6px; }
+
+  /* Squad container */
+  .squad {
+    background: var(--bg-medium);
+    border-radius: 6px;
+    margin-bottom: 8px;
+    overflow: hidden;
+  }
+  .squad-empty {
+    padding: 20px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 0.7rem;
+    font-style: italic;
+  }
+
+  /* Soldier row */
+  .roster-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    min-height: 48px;
+  }
+  .roster-row:last-child { border-bottom: none; }
+  .roster-row.reserve { background: var(--bg-medium); }
+  .roster-row.crew { padding-left: 28px; background: rgba(0,0,0,0.15); }
+  .role-tag { font-family: 'Black Ops One', cursive; font-size: 0.55rem; color: var(--text-secondary); padding: 2px 5px; border: 1px solid var(--bg-lighter); border-radius: 3px; letter-spacing: 0.5px; }
+  .role-tag.ldr { color: var(--accent-yellow); border-color: var(--accent-yellow); }
+  .role-tag.hero { color: var(--accent-yellow); border-color: var(--accent-yellow); background: rgba(251,191,36,0.1); }
+  .soldier-rank { font-family: 'Share Tech Mono', monospace; font-size: 0.7rem; color: var(--text-secondary); }
+  .soldier-name { font-size: 0.85rem; color: var(--text-primary); font-weight: 600; flex: 1; min-width: 0; }
+  .soldier-star { color: var(--accent-yellow); font-size: 0.9rem; }
+
+  /* The chip — the universal move affordance */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 10px;
+    min-height: 32px;
+    background: rgba(74, 222, 128, 0.12);
+    border: 1px solid rgba(74, 222, 128, 0.4);
+    color: var(--accent-green);
+    font-family: 'Oxanium', sans-serif;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    border-radius: 4px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .chip.reserve {
+    background: var(--bg-light);
+    border-color: var(--bg-lighter);
+    color: var(--text-secondary);
+  }
+  .chip.vehicle {
+    background: rgba(96, 165, 250, 0.12);
+    border-color: rgba(96, 165, 250, 0.4);
+    color: var(--accent-blue);
+  }
+  .chip-arrow { opacity: 0.6; font-size: 0.65rem; }
+
+  /* Vehicle row + nested crew */
+  .vehicle-row {
+    padding: 10px 10px;
+    background: rgba(96, 165, 250, 0.05);
+    border-top: 1px solid rgba(96, 165, 250, 0.15);
+    border-bottom: 1px solid rgba(96, 165, 250, 0.15);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 48px;
+  }
+  .vehicle-icon { font-size: 1.1rem; }
+  .vehicle-name { font-size: 0.85rem; color: var(--text-primary); font-weight: 700; flex: 1; }
+  .vehicle-hp { font-family: 'Share Tech Mono', monospace; font-size: 0.7rem; color: var(--accent-green); }
+  .crew-list { background: rgba(0,0,0,0.2); }
+  .crew-slot-label {
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.55rem;
+    color: var(--accent-blue);
+    letter-spacing: 1px;
+    width: 32px;
+    flex-shrink: 0;
+  }
+  .crew-empty {
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    font-style: italic;
+    flex: 1;
+  }
+  .chip.crew-empty-chip {
+    background: var(--bg-light);
+    border: 1px dashed var(--bg-lighter);
+    color: var(--text-secondary);
+  }
+
+  /* Bottom sheet overlay */
+  .sheet-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    display: flex;
+    align-items: flex-end;
+  }
+  .sheet {
+    width: 100%;
+    background: var(--bg-medium);
+    border-top: 2px solid var(--accent-green);
+    border-radius: 12px 12px 0 0;
+    padding: 14px 16px 18px;
+    max-height: 70%;
+    overflow-y: auto;
+  }
+  .sheet-handle {
+    width: 40px; height: 4px;
+    background: var(--bg-lighter);
+    border-radius: 2px;
+    margin: 0 auto 12px;
+  }
+  .sheet-title {
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    margin: 0 0 4px;
+    letter-spacing: 1px;
+  }
+  .sheet-subtitle {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    margin: 0 0 14px;
+  }
+  .sheet-section-label {
+    font-family: 'Oxanium', sans-serif;
+    font-size: 0.6rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin: 14px 0 6px;
+  }
+  .sheet-section-label:first-of-type { margin-top: 0; }
+  .sheet-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 10px;
+    min-height: 48px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-bottom: 2px;
+  }
+  .sheet-option:hover { background: var(--bg-light); }
+  .sheet-option.current {
+    background: rgba(74,222,128,0.1);
+    border-left: 3px solid var(--accent-green);
+  }
+  .sheet-option .label { flex: 1; font-size: 0.85rem; color: var(--text-primary); }
+  .sheet-option .meta { font-family: 'Share Tech Mono', monospace; font-size: 0.7rem; color: var(--text-secondary); }
+  .sheet-option .radio { width: 16px; height: 16px; border: 2px solid var(--bg-lighter); border-radius: 50%; flex-shrink: 0; position: relative; }
+  .sheet-option.current .radio { border-color: var(--accent-green); }
+  .sheet-option.current .radio::after {
+    content: '';
+    position: absolute;
+    inset: 3px;
+    background: var(--accent-green);
+    border-radius: 50%;
+  }
+  .sheet-option .icon { width: 20px; text-align: center; font-size: 1rem; }
+  .sheet-option.destructive { color: var(--accent-red); }
+  .sheet-option.destructive .label { color: var(--accent-red); }
+
+  /* Mini stat preview (replaces bottom detail panel) */
+  .sheet-stats {
+    background: var(--bg-dark);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+  }
+  .sheet-stat { text-align: center; }
+  .sheet-stat-label { font-size: 0.55rem; color: var(--text-secondary); letter-spacing: 0.5px; }
+  .sheet-stat-val { font-family: 'Share Tech Mono', monospace; font-size: 0.9rem; color: var(--text-primary); font-weight: 700; }
+
+  /* Annotation */
+  .anno {
+    background: var(--bg-medium);
+    border-left: 3px solid var(--accent-yellow);
+    padding: 10px 14px;
+    margin: 0 0 16px;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    max-width: 420px;
+  }
+  .anno strong { color: var(--text-primary); display: block; margin-bottom: 4px; }
+
+  .add-squad-btn {
+    width: 100%;
+    padding: 12px;
+    background: transparent;
+    border: 1px dashed var(--bg-lighter);
+    color: var(--text-secondary);
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.7rem;
+    letter-spacing: 1px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-top: 4px;
+  }
+  .add-squad-btn:hover { color: var(--accent-green); border-color: var(--accent-green); }
+</style>
+</head>
+<body>
+
+<h1>OPERATIONS — Battle Roster (mobile mockup)</h1>
+<p class="subhead">
+  Single-column layout. Every soldier and vehicle has a <strong>squad chip</strong> — tap to open the action sheet with all moves/options.
+  The current chrome (HQ header, deploy bar, sub-tabs) is preserved.
+</p>
+
+<div class="row">
+
+  <!-- ─────────── FRAME 1: Default state ─────────── -->
+  <div>
+    <p class="col-label">1 — DEFAULT VIEW</p>
+    <div class="phone">
+      <div class="hq-header">
+        <h2 class="hq-title">HQ</h2>
+        <div class="hq-resources">⬡ 1240 ◈ 18</div>
+        <div class="hq-deploy-bar">
+          <button class="hq-map-btn">S</button>
+          <button class="hq-map-btn active">M</button>
+          <button class="hq-map-btn">L</button>
+          <button class="hq-deploy-btn">DEPLOY ▶</button>
+        </div>
+      </div>
+      <div class="hq-tab-bar">
+        <button class="hq-tab">BARR</button>
+        <button class="hq-tab">ARM</button>
+        <button class="hq-tab">MP</button>
+        <button class="hq-tab active">OPS</button>
+        <button class="hq-tab">PG</button>
+        <button class="hq-tab">REP</button>
+      </div>
+      <div class="ops-sub-tabs">
+        <button class="ops-sub-tab active">SQUADS</button>
+        <button class="ops-sub-tab">FORMATION</button>
+      </div>
+
+      <div class="ops-content">
+        <!-- Collapsed CMD banner (locked) -->
+        <div class="cmd-banner">
+          <span class="cmd-label">COMMANDING OFFICER</span>
+          <span class="cmd-msg">Unlocks at Wave 3</span>
+          <span class="cmd-chevron">⌄</span>
+        </div>
+
+        <!-- HERO SQUAD -->
+        <div class="section-header hero">
+          <span class="section-title">★ HERO SQUAD</span>
+          <span class="section-fill"></span>
+          <span class="section-count">3 / 8</span>
+          <span class="section-menu">⋮</span>
+        </div>
+        <div class="squad">
+          <div class="roster-row">
+            <span class="soldier-star">★</span>
+            <span class="soldier-rank">PV2</span>
+            <span class="soldier-name">Anderson</span>
+            <span class="role-tag ldr">LDR</span>
+            <span class="chip">Sq 1 <span class="chip-arrow">▾</span></span>
+          </div>
+          <div class="roster-row">
+            <span class="soldier-rank">PV2</span>
+            <span class="soldier-name">Jackson</span>
+            <span class="role-tag">RFL</span>
+            <span class="chip">Sq 1 <span class="chip-arrow">▾</span></span>
+          </div>
+          <div class="roster-row">
+            <span class="soldier-rank">PV2</span>
+            <span class="soldier-name">Morgan</span>
+            <span class="role-tag">MED</span>
+            <span class="chip">Sq 1 <span class="chip-arrow">▾</span></span>
+          </div>
+        </div>
+
+        <!-- SQUAD 2 (has a vehicle with crew) -->
+        <div class="section-header">
+          <span class="section-title">SQUAD 2</span>
+          <span class="section-fill"></span>
+          <span class="section-count">4 / 8</span>
+          <span class="section-menu">⋮</span>
+        </div>
+        <div class="squad">
+          <div class="vehicle-row">
+            <span class="vehicle-icon">🚗</span>
+            <span class="vehicle-name">M4 SHERMAN</span>
+            <span class="vehicle-hp">100%</span>
+            <span class="chip vehicle">Sq 2 <span class="chip-arrow">▾</span></span>
+          </div>
+          <div class="crew-list">
+            <div class="roster-row crew">
+              <span class="crew-slot-label">TC</span>
+              <span class="soldier-rank">PV2</span>
+              <span class="soldier-name">Smith</span>
+              <span class="chip vehicle">TC <span class="chip-arrow">▾</span></span>
+            </div>
+            <div class="roster-row crew">
+              <span class="crew-slot-label">GNR</span>
+              <span class="soldier-rank">PV2</span>
+              <span class="soldier-name">Davis</span>
+              <span class="chip vehicle">GNR <span class="chip-arrow">▾</span></span>
+            </div>
+            <div class="roster-row crew">
+              <span class="crew-slot-label">DRV</span>
+              <span class="crew-empty">empty</span>
+              <span class="chip crew-empty-chip">+ DRV <span class="chip-arrow">▾</span></span>
+            </div>
+          </div>
+          <div class="roster-row">
+            <span class="soldier-rank">PV2</span>
+            <span class="soldier-name">Reyes</span>
+            <span class="role-tag">ENG</span>
+            <span class="chip">Sq 2 <span class="chip-arrow">▾</span></span>
+          </div>
+        </div>
+
+        <button class="add-squad-btn">+ ADD SQUAD (2/3)</button>
+
+        <!-- RESERVE -->
+        <div class="section-header">
+          <span class="section-title">RESERVE</span>
+          <span class="section-fill"></span>
+          <span class="section-count">4 avail</span>
+        </div>
+        <div class="squad">
+          <div class="roster-row reserve">
+            <span class="soldier-rank">PFC</span>
+            <span class="soldier-name">Carter</span>
+            <span class="role-tag">RFL</span>
+            <span class="chip reserve">+ Sq <span class="chip-arrow">▾</span></span>
+          </div>
+          <div class="roster-row reserve">
+            <span class="soldier-rank">PV2</span>
+            <span class="soldier-name">Wallace</span>
+            <span class="role-tag">RFL</span>
+            <span class="chip reserve">+ Sq <span class="chip-arrow">▾</span></span>
+          </div>
+          <div class="roster-row reserve">
+            <span class="soldier-rank">PV2</span>
+            <span class="soldier-name">Brooks</span>
+            <span class="role-tag">MED</span>
+            <span class="chip reserve">+ Sq <span class="chip-arrow">▾</span></span>
+          </div>
+          <div class="roster-row reserve">
+            <span class="soldier-rank">PV2</span>
+            <span class="soldier-name">Holt</span>
+            <span class="role-tag">ENG</span>
+            <span class="chip reserve">+ Sq <span class="chip-arrow">▾</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─────────── FRAME 2: Soldier action sheet ─────────── -->
+  <div>
+    <p class="col-label">2 — TAP CHIP → SOLDIER SHEET</p>
+    <div class="phone">
+      <div class="hq-header">
+        <h2 class="hq-title">HQ</h2>
+        <div class="hq-resources">⬡ 1240 ◈ 18</div>
+        <div class="hq-deploy-bar">
+          <button class="hq-map-btn">S</button>
+          <button class="hq-map-btn active">M</button>
+          <button class="hq-map-btn">L</button>
+          <button class="hq-deploy-btn">DEPLOY ▶</button>
+        </div>
+      </div>
+      <div class="hq-tab-bar">
+        <button class="hq-tab">BARR</button>
+        <button class="hq-tab">ARM</button>
+        <button class="hq-tab">MP</button>
+        <button class="hq-tab active">OPS</button>
+        <button class="hq-tab">PG</button>
+        <button class="hq-tab">REP</button>
+      </div>
+      <div class="ops-sub-tabs">
+        <button class="ops-sub-tab active">SQUADS</button>
+        <button class="ops-sub-tab">FORMATION</button>
+      </div>
+      <div class="ops-content" style="opacity: 0.3;">
+        <div class="cmd-banner"><span class="cmd-label">CMD</span><span class="cmd-msg">…</span></div>
+        <div class="section-header hero"><span class="section-title">★ HERO SQUAD</span><span class="section-fill"></span><span class="section-count">3 / 8</span></div>
+      </div>
+
+      <!-- Sheet overlay -->
+      <div class="sheet-backdrop">
+        <div class="sheet">
+          <div class="sheet-handle"></div>
+          <h3 class="sheet-title">PV2 Anderson</h3>
+          <p class="sheet-subtitle">Rifleman · Hero Squad · Leader</p>
+
+          <div class="sheet-stats">
+            <div class="sheet-stat"><div class="sheet-stat-val">192</div><div class="sheet-stat-label">HP</div></div>
+            <div class="sheet-stat"><div class="sheet-stat-val">14</div><div class="sheet-stat-label">DMG</div></div>
+            <div class="sheet-stat"><div class="sheet-stat-val">350</div><div class="sheet-stat-label">RNG</div></div>
+            <div class="sheet-stat"><div class="sheet-stat-val">49</div><div class="sheet-stat-label">SPD</div></div>
+          </div>
+
+          <div class="sheet-section-label">Move to</div>
+          <div class="sheet-option current">
+            <span class="radio"></span>
+            <span class="label">Hero Squad</span>
+            <span class="meta">3 / 8</span>
+          </div>
+          <div class="sheet-option">
+            <span class="radio"></span>
+            <span class="label">Squad 2</span>
+            <span class="meta">4 / 8</span>
+          </div>
+          <div class="sheet-option">
+            <span class="radio"></span>
+            <span class="label">Reserve</span>
+          </div>
+
+          <div class="sheet-section-label">Role</div>
+          <div class="sheet-option"><span class="icon">⚐</span><span class="label">Step down as Leader</span></div>
+          <div class="sheet-option"><span class="icon">★</span><span class="label">Already Hero</span><span class="meta">—</span></div>
+          <div class="sheet-option destructive"><span class="icon">✕</span><span class="label">Remove from roster</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─────────── FRAME 3: Vehicle action sheet ─────────── -->
+  <div>
+    <p class="col-label">3 — TAP CHIP → VEHICLE SHEET</p>
+    <div class="phone">
+      <div class="hq-header">
+        <h2 class="hq-title">HQ</h2>
+        <div class="hq-resources">⬡ 1240 ◈ 18</div>
+        <div class="hq-deploy-bar">
+          <button class="hq-map-btn">S</button>
+          <button class="hq-map-btn active">M</button>
+          <button class="hq-map-btn">L</button>
+          <button class="hq-deploy-btn">DEPLOY ▶</button>
+        </div>
+      </div>
+      <div class="hq-tab-bar">
+        <button class="hq-tab">BARR</button>
+        <button class="hq-tab">ARM</button>
+        <button class="hq-tab">MP</button>
+        <button class="hq-tab active">OPS</button>
+        <button class="hq-tab">PG</button>
+        <button class="hq-tab">REP</button>
+      </div>
+      <div class="ops-sub-tabs">
+        <button class="ops-sub-tab active">SQUADS</button>
+        <button class="ops-sub-tab">FORMATION</button>
+      </div>
+      <div class="ops-content" style="opacity: 0.3;">
+        <div class="cmd-banner"><span class="cmd-label">CMD</span><span class="cmd-msg">…</span></div>
+      </div>
+
+      <div class="sheet-backdrop">
+        <div class="sheet">
+          <div class="sheet-handle"></div>
+          <h3 class="sheet-title">M4 SHERMAN</h3>
+          <p class="sheet-subtitle">Tank · Squad 2 · 100% condition</p>
+
+          <div class="sheet-stats">
+            <div class="sheet-stat"><div class="sheet-stat-val">450</div><div class="sheet-stat-label">HP</div></div>
+            <div class="sheet-stat"><div class="sheet-stat-val">75</div><div class="sheet-stat-label">DMG</div></div>
+            <div class="sheet-stat"><div class="sheet-stat-val">420</div><div class="sheet-stat-label">RNG</div></div>
+            <div class="sheet-stat"><div class="sheet-stat-val">22</div><div class="sheet-stat-label">SPD</div></div>
+          </div>
+
+          <div class="sheet-section-label">Assign to squad</div>
+          <div class="sheet-option">
+            <span class="radio"></span>
+            <span class="label">Hero Squad</span>
+            <span class="meta">no veh</span>
+          </div>
+          <div class="sheet-option current">
+            <span class="radio"></span>
+            <span class="label">Squad 2</span>
+            <span class="meta">current</span>
+          </div>
+          <div class="sheet-option">
+            <span class="radio"></span>
+            <span class="label">Motor Pool</span>
+            <span class="meta">unassign</span>
+          </div>
+
+          <div class="sheet-section-label">Crew (2/3 assigned)</div>
+          <div class="sheet-option"><span class="icon">👁</span><span class="label">Inspect crew loadout</span></div>
+          <div class="sheet-option"><span class="icon">★</span><span class="label">Set as Hero unit</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─────────── FRAME 4: Crew slot sheet ─────────── -->
+  <div>
+    <p class="col-label">4 — TAP CREW CHIP → CREW SHEET</p>
+    <div class="phone">
+      <div class="hq-header">
+        <h2 class="hq-title">HQ</h2>
+        <div class="hq-resources">⬡ 1240 ◈ 18</div>
+        <div class="hq-deploy-bar">
+          <button class="hq-map-btn">S</button>
+          <button class="hq-map-btn active">M</button>
+          <button class="hq-map-btn">L</button>
+          <button class="hq-deploy-btn">DEPLOY ▶</button>
+        </div>
+      </div>
+      <div class="hq-tab-bar">
+        <button class="hq-tab">BARR</button>
+        <button class="hq-tab">ARM</button>
+        <button class="hq-tab">MP</button>
+        <button class="hq-tab active">OPS</button>
+        <button class="hq-tab">PG</button>
+        <button class="hq-tab">REP</button>
+      </div>
+      <div class="ops-sub-tabs">
+        <button class="ops-sub-tab active">SQUADS</button>
+        <button class="ops-sub-tab">FORMATION</button>
+      </div>
+      <div class="ops-content" style="opacity: 0.3;">
+        <div class="cmd-banner"><span class="cmd-label">CMD</span><span class="cmd-msg">…</span></div>
+      </div>
+
+      <div class="sheet-backdrop">
+        <div class="sheet">
+          <div class="sheet-handle"></div>
+          <h3 class="sheet-title">PV2 Smith</h3>
+          <p class="sheet-subtitle">Crew · M4 Sherman · Tank Commander</p>
+
+          <div class="sheet-stats">
+            <div class="sheet-stat"><div class="sheet-stat-val">160</div><div class="sheet-stat-label">HP</div></div>
+            <div class="sheet-stat"><div class="sheet-stat-val">10</div><div class="sheet-stat-label">DMG</div></div>
+            <div class="sheet-stat"><div class="sheet-stat-val">200</div><div class="sheet-stat-label">RNG</div></div>
+            <div class="sheet-stat"><div class="sheet-stat-val">42</div><div class="sheet-stat-label">SPD</div></div>
+          </div>
+
+          <div class="sheet-section-label">Crew role</div>
+          <div class="sheet-option current">
+            <span class="radio"></span>
+            <span class="label">Tank Commander</span>
+            <span class="meta">current</span>
+          </div>
+          <div class="sheet-option">
+            <span class="radio"></span>
+            <span class="label">Gunner</span>
+            <span class="meta">PV2 Davis</span>
+          </div>
+          <div class="sheet-option">
+            <span class="radio"></span>
+            <span class="label">Driver</span>
+            <span class="meta">empty</span>
+          </div>
+
+          <div class="sheet-section-label">Move out of vehicle</div>
+          <div class="sheet-option"><span class="icon">→</span><span class="label">Squad 2 infantry</span></div>
+          <div class="sheet-option"><span class="icon">→</span><span class="label">Hero Squad</span></div>
+          <div class="sheet-option"><span class="icon">→</span><span class="label">Reserve</span></div>
+          <div class="sheet-option destructive"><span class="icon">✕</span><span class="label">Remove from roster</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div style="margin-top: 32px; max-width: 880px;">
+  <div class="anno">
+    <strong>How it answers the four questions</strong>
+    1. Bottom detail panel → gone. Stat preview lives inside the chip sheet (4-stat grid at top).<br>
+    2. Leader & Hero → action items in the soldier sheet under "Role".<br>
+    3. Vehicle has its own chip (blue variant) and its own sheet for squad reassign.<br>
+    4. Crew chips are blue and show the slot label (TC/GNR/DRV). Tapping opens a crew-specific sheet to swap roles or eject the soldier from the vehicle.
+  </div>
+  <div class="anno">
+    <strong>Touch target audit</strong>
+    Every chip is 32px tall (visually) but its tap surface extends ~10px around (effectively 44+px with hit-slop). Every row is 48px min. Sheet options are 48px min.
+    No more ghost ✕ buttons — destructive actions live in sheets with proper labeling.
+  </div>
+  <div class="anno">
+    <strong>Desktop parity</strong>
+    Same UI. Chip tap → popover (not bottom sheet) anchored to the chip. All other behavior identical. Single codepath for the action sheet content.
+  </div>
+</div>
+
+</body>
+</html>

@@ -162,6 +162,7 @@ function _applyEnemyHitToBlue(b, p, unit, now, opts = {}) {
   unit._shockTimer = 2;
   unit._lastAttackerId = p.sourceId || null;
   unit._lastCrit = isCrit;
+  if (isCrit) console.log(`[CRIT] ${p.sourceId} → ${unit.id} dmg:${dmg} (1.5×)`);
   applySuppression(unit, dmg * cover.suppressionMult, unit.maxHp);
   recordDamage(unit, p.sourceId || '?', dmg);
 

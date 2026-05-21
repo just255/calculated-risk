@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deploy Bar Mockups — A vs B</title>
+<link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Oxanium:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-dark: #1a1f2e;
+    --bg-medium: #252b3d;
+    --bg-light: #2f3749;
+    --bg-lighter: #3d4559;
+    --accent-green: #4ade80;
+    --accent-red: #f87171;
+    --accent-yellow: #fbbf24;
+    --accent-blue: #60a5fa;
+    --text-primary: #e2e8f0;
+    --text-secondary: #94a3b8;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Oxanium', sans-serif;
+    background: #0f1320;
+    color: var(--text-primary);
+    margin: 0;
+    padding: 24px;
+  }
+
+  h1 { font-family: 'Black Ops One', cursive; color: var(--accent-green); margin: 0 0 4px; }
+  .subhead { color: var(--text-secondary); margin: 0 0 24px; font-size: 0.9rem; }
+  .label { font-family: 'Black Ops One', cursive; color: var(--accent-yellow); font-size: 1rem; margin: 32px 0 8px; letter-spacing: 1px; }
+  .sublabel { color: var(--text-secondary); font-size: 0.8rem; margin: 0 0 12px; }
+
+  /* Frame around each mock so they look like screenshots */
+  .frame {
+    background: var(--bg-dark);
+    border: 1px solid var(--bg-lighter);
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 8px;
+    max-width: 1100px;
+  }
+  .frame-mobile { max-width: 420px; }
+
+  /* ── HQ chrome (matches index.html) ────────────────────── */
+  .hq-header {
+    display: flex;
+    align-items: center;
+    padding: 10px 20px;
+    background: var(--bg-medium);
+    border-bottom: 2px solid var(--accent-green);
+    gap: 16px;
+  }
+  .hq-title { font-family: 'Black Ops One', cursive; font-size: 1.1rem; margin: 0; white-space: nowrap; }
+  .hq-resources { display: flex; gap: 12px; font-family: 'Share Tech Mono', monospace; font-size: 0.85rem; flex: 1; }
+  .hq-res-scrap { color: var(--accent-yellow); }
+  .hq-res-parts { color: var(--accent-blue); }
+  .hq-header-actions { display: flex; gap: 6px; }
+  .hq-header-btn { background: none; border: 1px solid var(--bg-light); color: var(--text-secondary); padding: 4px 8px; border-radius: 4px; font-size: 0.85rem; cursor: pointer; }
+
+  .hq-tab-bar {
+    display: flex;
+    background: var(--bg-dark);
+    border-bottom: 1px solid var(--bg-light);
+    overflow-x: auto;
+  }
+  .hq-tab {
+    padding: 10px 18px;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-family: 'Oxanium', sans-serif;
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 1px;
+    border-bottom: 3px solid transparent;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .hq-tab.active { color: var(--accent-green); border-bottom-color: var(--accent-green); }
+
+  .hq-content {
+    padding: 20px;
+    min-height: 360px;
+    color: var(--text-secondary);
+  }
+  .placeholder {
+    border: 1px dashed var(--bg-lighter);
+    border-radius: 6px;
+    padding: 40px;
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+  }
+  .placeholder strong { color: var(--text-primary); display: block; margin-bottom: 6px; font-family: 'Black Ops One', cursive; letter-spacing: 1px; }
+
+  /* ── Deploy bar (canonical, shared bits) ───────────────── */
+  .deploy-config-label { font-size: 0.55rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; }
+  .map-btn { background: var(--bg-light); border: 1px solid var(--bg-lighter); color: var(--text-secondary); padding: 4px 8px; font-size: 0.7rem; border-radius: 3px; cursor: pointer; }
+  .map-btn.active { background: var(--accent-green); color: var(--bg-dark); border-color: var(--accent-green); }
+  .wave-select { background: var(--bg-light); border: 1px solid var(--bg-lighter); color: var(--text-primary); padding: 4px 8px; font-size: 0.75rem; border-radius: 3px; }
+  .stat-display { display: flex; flex-direction: column; align-items: center; }
+  .stat-label { font-size: 0.55rem; color: var(--text-secondary); letter-spacing: 0.5px; }
+  .stat-val { font-size: 0.95rem; font-weight: 700; color: var(--text-primary); font-family: 'Share Tech Mono', monospace; }
+  .deploy-btn {
+    background: var(--accent-green);
+    color: var(--bg-dark);
+    border: none;
+    padding: 8px 18px;
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.9rem;
+    letter-spacing: 1px;
+    border-radius: 4px;
+    cursor: pointer;
+    box-shadow: 0 0 0 1px var(--accent-green), 0 2px 8px rgba(74, 222, 128, 0.3);
+  }
+
+  /* ── Option A: Header-integrated ──────────────────────── */
+  .header-deploy {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 8px;
+    background: var(--bg-light);
+    border-radius: 4px;
+    border: 1px solid var(--bg-lighter);
+  }
+  .header-deploy .map-icons { display: flex; gap: 2px; }
+  .header-deploy .icon-btn {
+    width: 22px; height: 22px;
+    background: var(--bg-medium);
+    border: 1px solid var(--bg-lighter);
+    color: var(--text-secondary);
+    font-size: 0.65rem;
+    border-radius: 3px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+  }
+  .header-deploy .icon-btn.active { background: var(--accent-green); color: var(--bg-dark); border-color: var(--accent-green); }
+  .header-deploy .wave-pill {
+    background: var(--bg-medium);
+    border: 1px solid var(--bg-lighter);
+    color: var(--text-primary);
+    padding: 3px 8px;
+    font-size: 0.75rem;
+    border-radius: 3px;
+    font-family: 'Share Tech Mono', monospace;
+    cursor: pointer;
+  }
+  .header-deploy .deploy-btn-compact {
+    background: var(--accent-green);
+    color: var(--bg-dark);
+    border: none;
+    padding: 5px 14px;
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.8rem;
+    letter-spacing: 1px;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  .header-deploy .units-pill {
+    color: var(--text-secondary);
+    font-size: 0.7rem;
+    font-family: 'Share Tech Mono', monospace;
+    padding: 0 6px;
+    border-left: 1px solid var(--bg-lighter);
+    margin-left: 2px;
+  }
+  .header-deploy .units-pill .v { color: var(--text-primary); }
+
+  /* ── Option B: Sticky bottom ──────────────────────────── */
+  .frame.has-bottom { position: relative; padding-bottom: 0; }
+  .bottom-deploy {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 16px;
+    background: var(--bg-medium);
+    border-top: 2px solid var(--accent-green);
+    flex-shrink: 0;
+  }
+  .bottom-deploy .group { display: flex; align-items: center; gap: 6px; }
+  .bottom-deploy .map-buttons { display: flex; gap: 4px; }
+  .bottom-deploy .deploy-btn { margin-left: auto; }
+
+  /* Annotations */
+  .anno {
+    background: var(--bg-medium);
+    border-left: 3px solid var(--accent-yellow);
+    padding: 10px 14px;
+    margin: 8px 0 24px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    max-width: 1100px;
+  }
+  .anno strong { color: var(--text-primary); }
+  .anno ul { margin: 6px 0 0; padding-left: 20px; }
+
+  .row { display: flex; gap: 24px; flex-wrap: wrap; }
+  .col { flex: 1; min-width: 380px; }
+
+  .device-label { font-size: 0.7rem; color: var(--text-secondary); margin: 4px 0; letter-spacing: 1px; }
+</style>
+</head>
+<body>
+
+<h1>DEPLOY BAR — A vs B</h1>
+<p class="subhead">Both options shown at desktop and mobile widths. Same data, different placement.</p>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- OPTION A — Header-integrated                            -->
+<!-- ═══════════════════════════════════════════════════════ -->
+
+<div class="label">OPTION A — HEADER-INTEGRATED</div>
+<p class="sublabel">Deploy controls collapse into the top header. Visible from any HQ tab.</p>
+
+<div class="device-label">DESKTOP</div>
+<div class="frame">
+  <div class="hq-header">
+    <h2 class="hq-title">HEADQUARTERS</h2>
+    <div class="hq-resources">
+      <span class="hq-res-scrap">⬡ 1240</span>
+      <span class="hq-res-parts">◈ 18</span>
+    </div>
+
+    <!-- Compact deploy controls -->
+    <div class="header-deploy">
+      <div class="map-icons" title="Map size">
+        <button class="icon-btn">S</button>
+        <button class="icon-btn active">M</button>
+        <button class="icon-btn">L</button>
+      </div>
+      <button class="wave-pill">W4 ▾</button>
+      <span class="units-pill">UNITS <span class="v">12</span> · POW <span class="v">94</span></span>
+      <button class="deploy-btn-compact">DEPLOY ▶</button>
+    </div>
+
+    <div class="hq-header-actions">
+      <button class="hq-header-btn">▶</button>
+      <button class="hq-header-btn">⚙</button>
+    </div>
+  </div>
+  <div class="hq-tab-bar">
+    <button class="hq-tab">BARRACKS</button>
+    <button class="hq-tab">ARMORY</button>
+    <button class="hq-tab">MOTOR POOL</button>
+    <button class="hq-tab active">OPERATIONS</button>
+    <button class="hq-tab">INSIGNIA</button>
+  </div>
+  <div class="hq-content">
+    <div class="placeholder"><strong>OPERATIONS TAB CONTENT</strong>squad builder · formation editor · leader slots<br>(deploy controls live in the header — no bottom bar needed)</div>
+  </div>
+</div>
+
+<div class="device-label">MOBILE (~420px)</div>
+<div class="frame frame-mobile">
+  <div class="hq-header" style="padding: 8px 10px; gap: 8px; flex-wrap: wrap;">
+    <h2 class="hq-title" style="font-size: 0.95rem;">HQ</h2>
+    <div class="hq-resources" style="font-size: 0.75rem; gap: 8px;">
+      <span class="hq-res-scrap">⬡ 1240</span>
+      <span class="hq-res-parts">◈ 18</span>
+    </div>
+    <div class="header-deploy" style="gap: 6px; padding: 3px 6px; flex-basis: 100%; justify-content: space-between;">
+      <div class="map-icons">
+        <button class="icon-btn">S</button>
+        <button class="icon-btn active">M</button>
+        <button class="icon-btn">L</button>
+      </div>
+      <button class="wave-pill">W4 ▾</button>
+      <button class="deploy-btn-compact">DEPLOY ▶</button>
+    </div>
+  </div>
+  <div class="hq-tab-bar" style="font-size: 0.7rem;">
+    <button class="hq-tab" style="padding: 8px 10px;">BARR</button>
+    <button class="hq-tab" style="padding: 8px 10px;">ARM</button>
+    <button class="hq-tab" style="padding: 8px 10px;">MP</button>
+    <button class="hq-tab active" style="padding: 8px 10px;">OPS</button>
+    <button class="hq-tab" style="padding: 8px 10px;">INS</button>
+  </div>
+  <div class="hq-content" style="min-height: 200px; padding: 12px;">
+    <div class="placeholder" style="padding: 20px;"><strong>OPERATIONS</strong>squad builder…</div>
+  </div>
+</div>
+
+<div class="anno">
+  <strong>Tradeoffs:</strong>
+  <ul>
+    <li>✓ Visible from any tab — one-tap deploy</li>
+    <li>✓ Saves vertical space inside Operations</li>
+    <li>✗ Header gets dense — on mobile it wraps to two rows (units/power dropped)</li>
+    <li>✗ Tapping wave-pill or map size needs popovers (more state to manage)</li>
+    <li>✗ "Deploy from Memorial?" feels weird without context</li>
+  </ul>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- OPTION B — Sticky bottom bar                            -->
+<!-- ═══════════════════════════════════════════════════════ -->
+
+<div class="label">OPTION B — STICKY BOTTOM BAR</div>
+<p class="sublabel">Persistent across all HQ tabs. Thumb-reach on mobile. Header stays clean.</p>
+
+<div class="device-label">DESKTOP</div>
+<div class="frame">
+  <div class="hq-header">
+    <h2 class="hq-title">HEADQUARTERS</h2>
+    <div class="hq-resources">
+      <span class="hq-res-scrap">⬡ 1240</span>
+      <span class="hq-res-parts">◈ 18</span>
+    </div>
+    <div class="hq-header-actions">
+      <button class="hq-header-btn">▶</button>
+      <button class="hq-header-btn">⚙</button>
+    </div>
+  </div>
+  <div class="hq-tab-bar">
+    <button class="hq-tab">BARRACKS</button>
+    <button class="hq-tab">ARMORY</button>
+    <button class="hq-tab">MOTOR POOL</button>
+    <button class="hq-tab active">OPERATIONS</button>
+    <button class="hq-tab">INSIGNIA</button>
+  </div>
+  <div class="hq-content" style="min-height: 280px;">
+    <div class="placeholder"><strong>OPERATIONS TAB CONTENT</strong>squad builder · formation editor · leader slots<br>(more vertical breathing room — deploy bar is at the bottom)</div>
+  </div>
+  <!-- Sticky bottom bar -->
+  <div class="bottom-deploy">
+    <div class="group">
+      <span class="deploy-config-label">MAP</span>
+      <div class="map-buttons">
+        <button class="map-btn">S</button>
+        <button class="map-btn active">M</button>
+        <button class="map-btn">L</button>
+      </div>
+    </div>
+    <div class="group">
+      <span class="deploy-config-label">WAVE</span>
+      <select class="wave-select"><option>Wave 4</option></select>
+    </div>
+    <div class="stat-display"><span class="stat-label">UNITS</span><span class="stat-val">12</span></div>
+    <div class="stat-display"><span class="stat-label">POWER</span><span class="stat-val">94</span></div>
+    <button class="deploy-btn">DEPLOY ▶</button>
+  </div>
+</div>
+
+<div class="device-label">MOBILE (~420px)</div>
+<div class="frame frame-mobile">
+  <div class="hq-header" style="padding: 8px 10px; gap: 8px;">
+    <h2 class="hq-title" style="font-size: 0.95rem;">HQ</h2>
+    <div class="hq-resources" style="font-size: 0.75rem; gap: 8px;">
+      <span class="hq-res-scrap">⬡ 1240</span>
+      <span class="hq-res-parts">◈ 18</span>
+    </div>
+    <div class="hq-header-actions">
+      <button class="hq-header-btn">⚙</button>
+    </div>
+  </div>
+  <div class="hq-tab-bar" style="font-size: 0.7rem;">
+    <button class="hq-tab" style="padding: 8px 10px;">BARR</button>
+    <button class="hq-tab" style="padding: 8px 10px;">ARM</button>
+    <button class="hq-tab" style="padding: 8px 10px;">MP</button>
+    <button class="hq-tab active" style="padding: 8px 10px;">OPS</button>
+    <button class="hq-tab" style="padding: 8px 10px;">INS</button>
+  </div>
+  <div class="hq-content" style="min-height: 200px; padding: 12px;">
+    <div class="placeholder" style="padding: 20px;"><strong>OPERATIONS</strong>squad builder…</div>
+  </div>
+  <div class="bottom-deploy" style="padding: 8px 10px; gap: 8px; flex-wrap: wrap;">
+    <div class="group" style="gap: 4px;">
+      <div class="map-buttons" style="gap: 2px;">
+        <button class="map-btn" style="padding: 3px 6px;">S</button>
+        <button class="map-btn active" style="padding: 3px 6px;">M</button>
+        <button class="map-btn" style="padding: 3px 6px;">L</button>
+      </div>
+    </div>
+    <select class="wave-select" style="padding: 3px 6px;"><option>W4</option></select>
+    <span class="stat-val" style="font-size: 0.75rem;">12u · 94p</span>
+    <button class="deploy-btn" style="margin-left: auto; padding: 6px 12px; font-size: 0.8rem;">DEPLOY ▶</button>
+  </div>
+</div>
+
+<div class="anno">
+  <strong>Tradeoffs:</strong>
+  <ul>
+    <li>✓ Header stays uncluttered — keeps current chrome</li>
+    <li>✓ Bottom-anchored matches mobile thumb reach</li>
+    <li>✓ All deploy controls inline — no popovers needed</li>
+    <li>✓ Visual weight at bottom signals "this is the action"</li>
+    <li>✗ Eats ~50px from content area (matters less on Operations than other tabs)</li>
+    <li>✗ Slightly redundant when you're on Operations (still bottom of screen, same as today)</li>
+  </ul>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- Summary                                                  -->
+<!-- ═══════════════════════════════════════════════════════ -->
+
+<div class="label">SIDE BY SIDE</div>
+<div class="row">
+  <div class="col">
+    <h3 style="color: var(--accent-green); margin: 0 0 8px;">A — Header</h3>
+    <p style="font-size: 0.85rem; color: var(--text-secondary); margin: 0;">Best when deploy is a frequent action across tabs and you want maximum signal that it's always available. Works if you commit to popovers for map/wave selection.</p>
+  </div>
+  <div class="col">
+    <h3 style="color: var(--accent-green); margin: 0 0 8px;">B — Bottom</h3>
+    <p style="font-size: 0.85rem; color: var(--text-secondary); margin: 0;">Best when deploy is a "ready when you are" action. All controls visible without extra clicks. Mobile-first ergonomics.</p>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- CONSOLIDATED FINAL LAYOUT                                -->
+<!-- ═══════════════════════════════════════════════════════ -->
+
+<div class="label" style="color: var(--accent-green); margin-top: 48px;">★ FINAL LAYOUT — Header deploy bar + restructured tabs</div>
+<p class="sublabel">
+  Tabs: <strong>BARRACKS · ARMORY · MOTOR POOL · OPERATIONS · PROVING GROUND · REPLAYS</strong> + ⚙ icon.
+  Barracks gains <em>ROSTER / LEGACY / INSIGNIA</em> sub-tabs.
+  Fire Range renamed → Proving Ground.
+</p>
+
+<div class="device-label">DESKTOP — OPERATIONS TAB</div>
+<div class="frame">
+  <div class="hq-header">
+    <h2 class="hq-title">HEADQUARTERS</h2>
+    <div class="hq-resources">
+      <span class="hq-res-scrap">⬡ 1240</span>
+      <span class="hq-res-parts">◈ 18</span>
+    </div>
+    <div class="header-deploy">
+      <div class="map-icons" title="Map size">
+        <button class="icon-btn">S</button>
+        <button class="icon-btn active">M</button>
+        <button class="icon-btn">L</button>
+      </div>
+      <button class="wave-pill">W4 ▾</button>
+      <span class="units-pill">UNITS <span class="v">12</span> · POW <span class="v">94</span></span>
+      <button class="deploy-btn-compact">DEPLOY ▶</button>
+    </div>
+    <div class="hq-header-actions">
+      <button class="hq-header-btn">⚙</button>
+    </div>
+  </div>
+  <div class="hq-tab-bar">
+    <button class="hq-tab">BARRACKS</button>
+    <button class="hq-tab">ARMORY</button>
+    <button class="hq-tab">MOTOR POOL</button>
+    <button class="hq-tab active">OPERATIONS</button>
+    <button class="hq-tab">PROVING GROUND</button>
+    <button class="hq-tab">REPLAYS</button>
+  </div>
+  <div class="hq-content">
+    <div class="placeholder"><strong>OPERATIONS</strong>squad builder · formation editor · leader slots<br>full vertical space — no bottom deploy bar</div>
+  </div>
+</div>
+
+<div class="device-label">DESKTOP — BARRACKS TAB (with sub-tabs)</div>
+<div class="frame">
+  <div class="hq-header">
+    <h2 class="hq-title">HEADQUARTERS</h2>
+    <div class="hq-resources">
+      <span class="hq-res-scrap">⬡ 1240</span>
+      <span class="hq-res-parts">◈ 18</span>
+    </div>
+    <div class="header-deploy">
+      <div class="map-icons">
+        <button class="icon-btn">S</button>
+        <button class="icon-btn active">M</button>
+        <button class="icon-btn">L</button>
+      </div>
+      <button class="wave-pill">W4 ▾</button>
+      <span class="units-pill">UNITS <span class="v">12</span> · POW <span class="v">94</span></span>
+      <button class="deploy-btn-compact">DEPLOY ▶</button>
+    </div>
+    <div class="hq-header-actions">
+      <button class="hq-header-btn">⚙</button>
+    </div>
+  </div>
+  <div class="hq-tab-bar">
+    <button class="hq-tab active">BARRACKS</button>
+    <button class="hq-tab">ARMORY</button>
+    <button class="hq-tab">MOTOR POOL</button>
+    <button class="hq-tab">OPERATIONS</button>
+    <button class="hq-tab">PROVING GROUND</button>
+    <button class="hq-tab">REPLAYS</button>
+  </div>
+  <!-- Sub-tabs -->
+  <div style="display:flex; gap:6px; padding: 10px 20px 0; background: var(--bg-dark);">
+    <button style="padding: 6px 14px; background: var(--bg-medium); border: 1px solid var(--accent-green); border-radius: 4px; color: var(--accent-green); font-family: 'Oxanium', sans-serif; font-size: 0.72rem; font-weight: 700; letter-spacing: 1px; cursor: pointer;">ROSTER</button>
+    <button style="padding: 6px 14px; background: var(--bg-medium); border: 1px solid var(--bg-light); border-radius: 4px; color: var(--text-secondary); font-family: 'Oxanium', sans-serif; font-size: 0.72rem; font-weight: 700; letter-spacing: 1px; cursor: pointer;">LEGACY</button>
+    <button style="padding: 6px 14px; background: var(--bg-medium); border: 1px solid var(--bg-light); border-radius: 4px; color: var(--text-secondary); font-family: 'Oxanium', sans-serif; font-size: 0.72rem; font-weight: 700; letter-spacing: 1px; cursor: pointer;">INSIGNIA</button>
+  </div>
+  <div class="hq-content">
+    <div class="placeholder"><strong>ROSTER TABLE</strong>name · rank · MOS · stats · battles · status…<br>(legacy = memorial wall · insignia = full-screen editor)</div>
+  </div>
+</div>
+
+<div class="device-label">MOBILE (~420px) — OPERATIONS TAB</div>
+<div class="frame frame-mobile">
+  <div class="hq-header" style="padding: 8px 10px; gap: 8px; flex-wrap: wrap;">
+    <h2 class="hq-title" style="font-size: 0.95rem;">HQ</h2>
+    <div class="hq-resources" style="font-size: 0.75rem; gap: 8px;">
+      <span class="hq-res-scrap">⬡ 1240</span>
+      <span class="hq-res-parts">◈ 18</span>
+    </div>
+    <button class="hq-header-btn">⚙</button>
+    <div class="header-deploy" style="gap: 6px; padding: 3px 6px; flex-basis: 100%; justify-content: space-between;">
+      <div class="map-icons">
+        <button class="icon-btn">S</button>
+        <button class="icon-btn active">M</button>
+        <button class="icon-btn">L</button>
+      </div>
+      <button class="wave-pill">W4 ▾</button>
+      <button class="deploy-btn-compact">DEPLOY ▶</button>
+    </div>
+  </div>
+  <div class="hq-tab-bar" style="font-size: 0.7rem;">
+    <button class="hq-tab" style="padding: 8px 9px;">BARR</button>
+    <button class="hq-tab" style="padding: 8px 9px;">ARM</button>
+    <button class="hq-tab" style="padding: 8px 9px;">MP</button>
+    <button class="hq-tab active" style="padding: 8px 9px;">OPS</button>
+    <button class="hq-tab" style="padding: 8px 9px;">PG</button>
+    <button class="hq-tab" style="padding: 8px 9px;">REP</button>
+  </div>
+  <div class="hq-content" style="min-height: 200px; padding: 12px;">
+    <div class="placeholder" style="padding: 20px;"><strong>OPERATIONS</strong>squad builder…</div>
+  </div>
+</div>
+
+<div class="anno">
+  <strong>What changes vs today:</strong>
+  <ul>
+    <li><strong>Header:</strong> Adds compact deploy bar between resources and ⚙ icon. Replay button removed (now a tab).</li>
+    <li><strong>Tab bar:</strong> INSIGNIA removed (sub-tab under Barracks). PROVING GROUND + REPLAYS added. Net: +1 tab (5 → 6).</li>
+    <li><strong>Barracks:</strong> New INSIGNIA sub-tab joins ROSTER and LEGACY.</li>
+    <li><strong>Fire Range:</strong> renamed → Proving Ground throughout (state name, HTML, CSS, copy).</li>
+    <li><strong>Operations:</strong> Loses bottom deploy bar — gains vertical space for squad/formation editing.</li>
+  </ul>
+  <strong>Mobile abbreviations:</strong> BARR · ARM · MP · OPS · PG · REP — six tabs fit without scrolling at 420px.
+</div>
+
+</body>
+</html>

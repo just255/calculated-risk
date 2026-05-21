@@ -4,7 +4,7 @@
 
 import { Game, newEndlessRun } from './state.js';
 import { FIRST_MISSION, FIRST_MISSION_DIALOG, Team } from './constants.js';
-import { createSoldier, generatePhysicals, saveRoster, createVehicle } from './roster.js';
+import { createSoldier, generatePhysicals, saveRoster, createVehicle, equipSoldierStandardIssue } from './roster.js';
 import { save } from './storage.js';
 import { cameraSetZoomTarget, cameraUpdateTransition, cameraStartTransition, cameraIsTransitioning } from './camera.js';
 import { radioMessage, setRadioObjective, setRadioFocus } from './radio-hud.js';
@@ -52,6 +52,7 @@ export function launchMission(missionId) {
       rankIndex: 0,
     });
     soldier.isPlayerCharacter = true;
+    equipSoldierStandardIssue(soldier);
     Game.roster.push(soldier);
     save();
   } else {
@@ -186,7 +187,7 @@ export function initFirstTimeMission(b) {
 export function generateMissionReinforcements() {
   const reinforcements = [];
   for (let i = 0; i < FIRST_MISSION.reinforcementCount; i++) {
-    reinforcements.push(createSoldier({
+    const soldier = createSoldier({
       pool: 'infantry',
       role: 'rifleman',
       physicals: generatePhysicals('starter'),
@@ -198,7 +199,9 @@ export function generateMissionReinforcements() {
         initiative: 0.3 + Math.random() * 0.4,
         awareness: 0.3 + Math.random() * 0.4
       }
-    }));
+    });
+    equipSoldierStandardIssue(soldier);
+    reinforcements.push(soldier);
   }
   return reinforcements;
 }

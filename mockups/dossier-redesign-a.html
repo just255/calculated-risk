@@ -1,0 +1,1065 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dossier Redesign — Option A (split soldier / weapon)</title>
+<link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Oxanium:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-dark: #1a1f2e; --bg-medium: #252b3d; --bg-light: #2f3749; --bg-lighter: #3d4559;
+    --accent-green: #4ade80; --accent-red: #f87171; --accent-yellow: #fbbf24;
+    --accent-blue: #60a5fa; --accent-orange: #fb923c; --accent-purple: #a78bfa;
+    --text-primary: #e2e8f0; --text-secondary: #94a3b8;
+  }
+  * { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: var(--bg-lighter) var(--bg-dark); }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: var(--bg-dark); }
+  ::-webkit-scrollbar-thumb { background: var(--bg-lighter); border-radius: 4px; }
+
+  body { font-family: 'Oxanium', sans-serif; background: #0f1320; color: var(--text-primary); margin: 0; padding: 24px; }
+  h1 { font-family: 'Black Ops One', cursive; color: var(--accent-green); margin: 0 0 4px; font-size: 1.3rem; }
+  .subhead { color: var(--text-secondary); margin: 0 0 24px; font-size: 0.85rem; max-width: 880px; }
+  .frame-cap { font-size: 0.7rem; color: var(--text-secondary); margin: 6px 0 24px; }
+  .frames { display: flex; gap: 20px; flex-wrap: wrap; }
+
+  /* Dossier modal frame */
+  .dossier-frame {
+    width: 440px;
+    background: var(--bg-dark);
+    border: 1px solid var(--bg-light);
+    border-radius: 6px;
+    padding: 14px 16px;
+    font-family: 'Oxanium', sans-serif;
+    max-height: 700px;
+    overflow-y: auto;
+  }
+
+  .d-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .d-portrait { width: 36px; height: 36px; background: var(--bg-medium); border-radius: 4px; }
+  .d-title { font-family: 'Black Ops One', cursive; font-size: 1rem; letter-spacing: 1px; }
+  .d-name-block { flex: 1; }
+  .d-status {
+    display: inline-block;
+    font-family: 'Black Ops One', cursive; font-size: 0.55rem; letter-spacing: 1px;
+    color: var(--accent-green);
+    background: rgba(74,222,128,0.15);
+    border: 1px solid var(--accent-green);
+    padding: 2px 6px;
+    border-radius: 3px;
+    margin-top: 2px;
+  }
+  .d-status.wounded { color: var(--accent-yellow); background: rgba(251,191,36,0.15); border-color: var(--accent-yellow); }
+  .d-close { background: none; border: 1px solid var(--bg-lighter); color: var(--text-secondary); width: 26px; height: 26px; border-radius: 3px; cursor: pointer; }
+  .you-tag { background: var(--accent-green); color: var(--bg-dark); font-size: 0.55rem; padding: 1px 5px; border-radius: 3px; font-weight: 700; letter-spacing: 0.5px; }
+
+  .d-mos-inline { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+  .d-mos-label { font-family: 'Oxanium', sans-serif; font-size: 0.6rem; color: var(--text-secondary); letter-spacing: 1px; }
+  .d-mos-select {
+    background: var(--bg-medium); border: 1px solid var(--bg-lighter);
+    color: var(--text-primary); padding: 4px 8px;
+    font-family: 'Oxanium', sans-serif; font-size: 0.7rem; font-weight: 700;
+    border-radius: 3px;
+  }
+  .d-training { color: var(--accent-yellow); font-size: 0.65rem; margin-left: auto; }
+
+  /* ── B2b: Header proficiency pill (fills upper-right dead space) ── */
+  .header-prof {
+    background: rgba(251,191,36,0.08);
+    border: 1px solid rgba(251,191,36,0.35);
+    border-left: 3px solid var(--accent-yellow);
+    border-radius: 3px;
+    padding: 3px 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    cursor: pointer;
+    margin-left: auto;
+  }
+  .header-prof .h-pips {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.75rem;
+    letter-spacing: 1px;
+    color: var(--accent-yellow);
+    line-height: 1;
+  }
+  .header-prof .h-pips .empty { color: var(--bg-lighter); }
+  .header-prof .h-tier {
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.55rem;
+    letter-spacing: 1px;
+    color: var(--accent-yellow);
+  }
+  .header-prof .h-val {
+    font-family: 'Share Tech Mono', monospace;
+    font-weight: 700;
+    font-size: 0.7rem;
+    color: var(--accent-yellow);
+  }
+  .header-prof .h-chev { color: var(--accent-yellow); opacity: 0.4; font-size: 0.55rem; transition: transform 0.15s ease; }
+  .header-prof.expanded { background: rgba(251,191,36,0.15); border-color: var(--accent-yellow); }
+  .header-prof.expanded .h-chev { transform: rotate(90deg); opacity: 1; }
+
+  /* Fake MOS selector for open-state demo (Frame 5) */
+  .mos-select-fake {
+    background: var(--bg-medium); border: 1px solid var(--bg-lighter);
+    color: var(--text-primary); padding: 4px 22px 4px 8px;
+    font-family: 'Oxanium', sans-serif; font-size: 0.7rem; font-weight: 700;
+    border-radius: 3px;
+    display: inline-flex; align-items: center;
+    cursor: pointer; position: relative;
+  }
+  .mos-select-fake::after {
+    content: '▼'; position: absolute; right: 6px; top: 50%;
+    transform: translateY(-50%); font-size: 0.55rem; color: var(--text-secondary);
+  }
+  .mos-select-fake .mos-prof-inline {
+    font-family: 'Share Tech Mono', monospace; color: var(--accent-yellow);
+    margin-left: 6px; font-weight: 700; font-size: 0.68rem;
+  }
+  .mos-select-fake.active { border-color: var(--accent-yellow); background: rgba(251,191,36,0.05); }
+
+  .mos-dropdown-panel {
+    position: absolute; top: 100%; left: 28px;
+    margin-top: 4px;
+    background: var(--bg-medium);
+    border: 1px solid var(--accent-yellow);
+    border-radius: 3px;
+    padding: 4px;
+    min-width: 290px;
+    z-index: 10;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+  .mos-option {
+    display: grid;
+    grid-template-columns: 95px 80px 60px 50px;
+    gap: 8px; align-items: center;
+    padding: 6px 8px; border-radius: 2px;
+    font-size: 0.7rem; cursor: pointer;
+  }
+  .mos-option:hover { background: var(--bg-lighter); }
+  .mos-option.current {
+    background: rgba(251,191,36,0.1);
+    border-left: 2px solid var(--accent-yellow);
+    padding-left: 6px;
+  }
+  .mos-option .opt-name { font-family: 'Black Ops One', cursive; font-size: 0.62rem; letter-spacing: 0.5px; }
+  .mos-option .opt-stars { font-family: 'Share Tech Mono', monospace; font-size: 0.72rem; color: var(--accent-yellow); letter-spacing: 1px; }
+  .mos-option .opt-stars .empty { color: var(--bg-lighter); }
+  .mos-option .opt-tier { font-family: 'Black Ops One', cursive; font-size: 0.55rem; letter-spacing: 0.5px; color: var(--accent-yellow); opacity: 0.85; }
+  .mos-option .opt-pct { font-family: 'Share Tech Mono', monospace; font-weight: 700; color: var(--accent-yellow); font-size: 0.68rem; text-align: right; }
+  .mos-option.locked { opacity: 0.45; cursor: not-allowed; }
+  .mos-option.locked .opt-tier, .mos-option.locked .opt-pct { color: var(--text-secondary); }
+  .mos-option.locked .opt-stars { color: var(--bg-lighter); }
+  .d-mos-inline { position: relative; }
+
+  /* Expanded proficiency panel — appears below tabs when pill is tapped */
+  .prof-panel {
+    background: rgba(251,191,36,0.06);
+    border: 1px solid rgba(251,191,36,0.3);
+    border-left: 3px solid var(--accent-yellow);
+    border-radius: 3px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    font-size: 0.68rem;
+  }
+  .prof-panel-head {
+    display: flex; align-items: center; gap: 8px;
+    padding-bottom: 6px; margin-bottom: 6px;
+    border-bottom: 1px solid rgba(251,191,36,0.2);
+  }
+  .prof-panel-title {
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.7rem; letter-spacing: 1px;
+    color: var(--accent-yellow);
+  }
+  .prof-panel-sub {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.6rem;
+    color: var(--text-secondary);
+    margin-left: auto;
+  }
+  .prof-section-label {
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.55rem; letter-spacing: 1px;
+    color: var(--text-secondary);
+    margin: 6px 0 4px;
+  }
+  .prof-effect-row {
+    display: grid;
+    grid-template-columns: 130px 60px 1fr;
+    gap: 8px;
+    padding: 3px 0;
+    line-height: 1.3;
+  }
+  .prof-effect-key {
+    font-family: 'Oxanium', sans-serif;
+    color: var(--text-primary);
+  }
+  .prof-effect-mult {
+    font-family: 'Share Tech Mono', monospace;
+    font-weight: 700;
+    color: var(--accent-yellow);
+    text-align: right;
+  }
+  .prof-effect-note {
+    color: var(--text-secondary);
+    font-size: 0.62rem;
+  }
+  .prof-ladder {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 4px;
+    margin-top: 4px;
+  }
+  .prof-tier-cell {
+    text-align: center;
+    padding: 4px 2px;
+    border-radius: 3px;
+    background: var(--bg-dark);
+    border: 1px solid var(--bg-light);
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.5rem;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+  }
+  .prof-tier-cell .tier-range {
+    display: block;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.5rem;
+    color: var(--text-secondary);
+    margin-top: 2px;
+    opacity: 0.7;
+  }
+  .prof-tier-cell.current {
+    background: rgba(251,191,36,0.18);
+    border-color: var(--accent-yellow);
+    color: var(--accent-yellow);
+  }
+  .prof-tier-cell.current .tier-range { color: var(--accent-yellow); opacity: 1; }
+  .prof-next {
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px dashed rgba(251,191,36,0.2);
+    font-size: 0.62rem;
+    color: var(--text-secondary);
+    font-style: italic;
+  }
+  .prof-next strong { color: var(--accent-yellow); font-style: normal; }
+
+  .d-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--bg-light); margin-bottom: 10px; padding-bottom: 6px; }
+  .d-tab { padding: 5px 12px; font-family: 'Black Ops One', cursive; font-size: 0.62rem; letter-spacing: 1px; background: none; border: none; color: var(--text-secondary); border-bottom: 2px solid transparent; cursor: pointer; }
+  .d-tab.active { color: var(--accent-green); border-bottom-color: var(--accent-green); }
+
+  /* Section header */
+  .section-card {
+    background: var(--bg-medium);
+    border-radius: 5px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+  }
+  .section-card.weapon {
+    background: rgba(96,165,250,0.10);
+    border: 1px solid rgba(96,165,250,0.25);
+    border-left: 3px solid var(--accent-blue);
+    padding-left: 9px;
+  }
+  .section-card.physicals { background: var(--bg-medium); }
+
+  .section-head {
+    display: flex; align-items: center; gap: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--bg-light);
+    margin-bottom: 6px;
+  }
+  .section-head.weapon { border-bottom-color: rgba(96,165,250,0.2); }
+  .section-title {
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.7rem;
+    letter-spacing: 1px;
+    color: var(--text-primary);
+  }
+  .section-title.weapon { color: var(--accent-blue); }
+  .section-sub {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.62rem;
+    color: var(--text-secondary);
+    margin-left: auto;
+  }
+
+  /* 2-column stat grid */
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 12px; }
+  .stat-grid .stat-row { padding: 4px 0; }
+  .stat-grid .stat-val { min-width: 0; }
+  .stat-grid .stat-bar { min-width: 0; }
+
+  /* Stat row */
+  .stat-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 0;
+    font-size: 0.72rem;
+    cursor: pointer;
+  }
+  .stat-row:hover { background: rgba(255,255,255,0.02); }
+  .stat-label {
+    font-family: 'Oxanium', sans-serif;
+    font-size: 0.62rem;
+    color: var(--text-secondary);
+    letter-spacing: 0.5px;
+    width: 36px;
+    flex-shrink: 0;
+  }
+  .stat-bar {
+    flex: 1;
+    height: 8px;
+    background: var(--bg-dark);
+    border-radius: 2px;
+    position: relative;
+    overflow: hidden;
+  }
+  .stat-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+  }
+  .stat-bar-fill.soldier { background: var(--accent-green); }
+  .stat-bar-fill.weapon  { background: var(--accent-blue); }
+  .stat-bar-fill.armor   { background: var(--accent-orange); }
+  .stat-bar-mod {
+    position: absolute;
+    height: 100%;
+    border-radius: 0 2px 2px 0;
+  }
+  .stat-val {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--text-primary);
+    font-weight: 700;
+    text-align: right;
+    min-width: 60px;
+  }
+  .stat-unit {
+    font-size: 0.55rem;
+    color: var(--text-secondary);
+    margin-left: 2px;
+  }
+
+  /* Quality badge */
+  .quality-badge { font-family: 'Black Ops One', cursive; font-size: 0.5rem; letter-spacing: 0.5px; padding: 1px 4px; border-radius: 2px; }
+  .quality-badge.standard { color: #94a3b8; border: 1px solid #94a3b8; }
+  .quality-badge.improved { color: var(--accent-green); border: 1px solid var(--accent-green); background: rgba(74,222,128,0.08); }
+  .quality-badge.rare     { color: var(--accent-blue); border: 1px solid var(--accent-blue); background: rgba(96,165,250,0.08); }
+
+  /* Inline weapon condition bar (replaces "100%" text in section header) */
+  .cond-segments { display: inline-flex; gap: 1px; margin-left: auto; }
+  .cond-seg { width: 4px; height: 8px; background: var(--bg-dark); border-radius: 1px; border: 1px solid #333; }
+  .cond-seg.filled { border-color: transparent; }
+
+  /* Inline category-max marker after stat value */
+  .stat-max { font-family: 'Share Tech Mono', monospace; font-size: 0.58rem; color: var(--text-secondary); margin-left: 2px; opacity: 0.7; }
+
+  /* Physical row — physical (left) → output (right), inline on one row.
+     Tap the row to expand a breakdown of all effects this physical drives. */
+  .phys-row {
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr) 28px 14px minmax(0, 1.3fr) 12px;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 4px;
+    font-size: 0.72rem;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    cursor: pointer;
+    border-radius: 3px;
+    transition: background 0.12s ease;
+  }
+  .phys-row:last-of-type { border-bottom: none; }
+  .phys-row:hover { background: rgba(255,255,255,0.03); }
+  .phys-row.expanded { background: rgba(74,222,128,0.06); border-bottom-color: transparent; }
+
+  .phys-num {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    text-align: right;
+  }
+  .phys-arrow {
+    color: var(--text-secondary);
+    opacity: 0.5;
+    font-size: 0.7rem;
+    text-align: center;
+  }
+  .phys-out {
+    font-family: 'Oxanium', sans-serif;
+    font-size: 0.72rem;
+    color: var(--text-primary);
+    line-height: 1.15;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+  }
+  .phys-out .out-key {
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.58rem;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+  }
+  .phys-out .out-val {
+    font-family: 'Share Tech Mono', monospace;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+  .phys-out .out-val.wounded { color: var(--accent-yellow); }
+  .phys-out .out-max {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.58rem;
+    color: var(--text-secondary);
+    opacity: 0.7;
+  }
+
+  .phys-chevron {
+    color: var(--text-secondary);
+    opacity: 0.35;
+    font-size: 0.55rem;
+    text-align: center;
+    transition: transform 0.15s ease, opacity 0.15s ease;
+  }
+  .phys-row:hover .phys-chevron { opacity: 0.7; }
+  .phys-row.expanded .phys-chevron { transform: rotate(90deg); opacity: 1; color: var(--accent-green); }
+
+  /* Expanded detail block — appears under a row when tapped */
+  .phys-detail {
+    background: rgba(74,222,128,0.04);
+    border-left: 2px solid var(--accent-green);
+    padding: 6px 10px 8px;
+    margin: 0 0 4px 4px;
+    border-radius: 0 3px 3px 0;
+    font-size: 0.66rem;
+  }
+  .phys-detail-row {
+    display: grid;
+    grid-template-columns: 92px 1fr;
+    gap: 8px;
+    padding: 2px 0;
+    line-height: 1.3;
+  }
+  .phys-detail-key {
+    color: var(--text-secondary);
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.55rem;
+    letter-spacing: 0.5px;
+  }
+  .phys-detail-val {
+    color: var(--text-primary);
+    font-family: 'Oxanium', sans-serif;
+  }
+  .phys-detail-val .num {
+    font-family: 'Share Tech Mono', monospace;
+    font-weight: 700;
+    color: var(--accent-green);
+  }
+  .phys-detail-val .num.dim { color: var(--text-secondary); font-weight: 400; }
+  .phys-detail-val .pend {
+    font-style: italic;
+    color: var(--text-secondary);
+    font-size: 0.6rem;
+    opacity: 0.7;
+  }
+
+  /* Section sub for the SOLDIER card to clarify cause→effect */
+  .section-sub.cause-effect::before { content: ''; }
+
+  /* Empty state for weapon section */
+  .no-weapon { color: var(--text-secondary); font-style: italic; font-size: 0.72rem; padding: 8px 0; text-align: center; }
+
+  .anno { background: var(--bg-medium); border-left: 3px solid var(--accent-yellow); padding: 10px 14px; margin: 8px 0 0; font-size: 0.78rem; color: var(--text-secondary); max-width: 880px; }
+  .anno strong { color: var(--text-primary); }
+  .anno ul { margin: 4px 0 0; padding-left: 20px; }
+</style>
+</head>
+<body>
+
+<h1>DOSSIER REDESIGN — OPTION A</h1>
+<p class="subhead">
+  <strong>Final consolidated dossier</strong>. Division of labor:
+  <strong>pill</strong> shows stars (S5: 1 star per 20% threshold) + tier name — at-a-glance rank insignia.
+  <strong>MOS dropdown</strong> carries the precise % (closed) and full per-MOS comparison (open, Frame 5).
+  <strong>Pill expand</strong> reveals what proficiency scales + tier ladder (Frame 4).
+  Frames 1–3 = collapsed states for three soldiers at different tiers. Frame 4 = pill expanded. Frame 5 = MOS dropdown open.
+</p>
+
+<div class="frames">
+
+<!-- Frame 1: PV2 Anderson (Rifleman, M4A1 Standard) -->
+<div>
+  <div class="dossier-frame">
+    <div class="d-header">
+      <div class="d-portrait"></div>
+      <div class="d-name-block">
+        <div class="d-title">PV2 Anderson <span class="you-tag">YOU</span> <span class="d-status">READY</span></div>
+        <div class="d-mos-inline">
+          <span class="d-mos-label">MOS</span>
+          <select class="d-mos-select"><option>RIFLEMAN · 50%</option></select>
+          <span class="header-prof">
+            <span class="h-pips">★★<span class="empty">★★★</span></span>
+            <span class="h-tier">REGULAR</span>
+            <span class="h-chev">▸</span>
+          </span>
+        </div>
+      </div>
+      <button class="d-close">✕</button>
+    </div>
+
+    <div class="d-tabs">
+      <button class="d-tab active">COMBAT</button>
+      <button class="d-tab">EQUIPMENT</button>
+      <button class="d-tab">PERSONALITY</button>
+      <button class="d-tab">SERVICE</button>
+    </div>
+
+    <!-- SOLDIER section: physical → primary output. Tap a row to expand the full breakdown. -->
+    <div class="section-card">
+      <div class="section-head">
+        <span class="section-title">SOLDIER</span>
+        <span class="section-sub cause-effect">physical → produces · tap to expand</span>
+      </div>
+      <div class="phys-row">
+        <span class="stat-label">VIS</span>
+        <div class="stat-bar"><div class="stat-bar-fill soldier" style="width:50%"></div></div>
+        <span class="phys-num">50</span>
+        <span class="phys-arrow">→</span>
+        <span class="phys-out"><span class="out-key">SIGHT</span><span class="out-val">500m</span></span>
+        <span class="phys-chevron">▸</span>
+      </div>
+      <div class="phys-row">
+        <span class="stat-label">STR</span>
+        <div class="stat-bar"><div class="stat-bar-fill soldier" style="width:58%"></div></div>
+        <span class="phys-num">58</span>
+        <span class="phys-arrow">→</span>
+        <span class="phys-out"><span class="out-key">HP</span><span class="out-val">192</span></span>
+        <span class="phys-chevron">▸</span>
+      </div>
+      <div class="phys-row">
+        <span class="stat-label">REF</span>
+        <div class="stat-bar"><div class="stat-bar-fill soldier" style="width:43%"></div></div>
+        <span class="phys-num">43</span>
+        <span class="phys-arrow">→</span>
+        <span class="phys-out"><span class="out-key">RELOAD</span><span class="out-val">−13%</span></span>
+        <span class="phys-chevron">▸</span>
+      </div>
+      <div class="phys-row">
+        <span class="stat-label">END</span>
+        <div class="stat-bar"><div class="stat-bar-fill soldier" style="width:58%"></div></div>
+        <span class="phys-num">58</span>
+        <span class="phys-arrow">→</span>
+        <span class="phys-out"><span class="out-key">SPD</span><span class="out-val">12 km/h</span></span>
+        <span class="phys-chevron">▸</span>
+      </div>
+    </div>
+
+    <!-- EQUIPPED section -->
+    <div class="section-card weapon">
+      <div class="section-head weapon">
+        <span class="section-title weapon">🔫 M4A1</span>
+        <span class="quality-badge standard">STANDARD</span>
+        <span class="cond-segments" data-cond="100"></span>
+      </div>
+      <div class="stat-grid">
+      <div class="stat-row">
+        <span class="stat-label">DMG</span>
+        <div class="stat-bar"><div class="stat-bar-fill weapon" style="width:18%"></div></div>
+        <span class="stat-val">14<span class="stat-max">/80</span></span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">ROF</span>
+        <div class="stat-bar"><div class="stat-bar-fill weapon" style="width:8%"></div></div>
+        <span class="stat-val">100<span class="stat-unit">rpm</span><span class="stat-max">/1200</span></span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">RNG</span>
+        <div class="stat-bar"><div class="stat-bar-fill weapon" style="width:52%"></div></div>
+        <span class="stat-val">210<span class="stat-unit">m</span><span class="stat-max">/400</span></span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">ACC</span>
+        <div class="stat-bar"><div class="stat-bar-fill weapon" style="width:82%"></div></div>
+        <span class="stat-val">82%</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">MAG</span>
+        <div class="stat-bar"><div class="stat-bar-fill weapon" style="width:15%"></div></div>
+        <span class="stat-val">30<span class="stat-max">/200</span></span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">RLD</span>
+        <div class="stat-bar"><div class="stat-bar-fill weapon" style="width:50%"></div></div>
+        <span class="stat-val">2.5<span class="stat-unit">s</span></span>
+      </div>
+      </div>
+    </div>
+  </div>
+  <p class="frame-cap">PV2 Anderson · REGULAR (2 stars, 50%). Default state. MOS dropdown carries the precise %, pill carries the rank.</p>
+</div>
+
+<!-- Frame 2: Heavy Gunner with M249 + improved tier -->
+<div>
+  <div class="dossier-frame">
+    <div class="d-header">
+      <div class="d-portrait"></div>
+      <div class="d-name-block">
+        <div class="d-title">SGT Reyes <span class="d-status">READY</span></div>
+        <div class="d-mos-inline">
+          <span class="d-mos-label">MOS</span>
+          <select class="d-mos-select"><option>HEAVY GUNNER · 78%</option></select>
+          <span class="header-prof">
+            <span class="h-pips">★★★<span class="empty">★★</span></span>
+            <span class="h-tier">VETERAN</span>
+            <span class="h-chev">▸</span>
+          </span>
+        </div>
+      </div>
+      <button class="d-close">✕</button>
+    </div>
+
+    <div class="d-tabs">
+      <button class="d-tab active">COMBAT</button>
+      <button class="d-tab">EQUIPMENT</button>
+      <button class="d-tab">PERSONALITY</button>
+      <button class="d-tab">SERVICE</button>
+    </div>
+
+    <div class="section-card">
+      <div class="section-head">
+        <span class="section-title">SOLDIER</span>
+        <span class="section-sub cause-effect">physical → produces · tap to expand</span>
+      </div>
+      <div class="phys-row">
+        <span class="stat-label">VIS</span>
+        <div class="stat-bar"><div class="stat-bar-fill soldier" style="width:62%"></div></div>
+        <span class="phys-num">62</span>
+        <span class="phys-arrow">→</span>
+        <span class="phys-out"><span class="out-key">SIGHT</span><span class="out-val">580m</span></span>
+        <span class="phys-chevron">▸</span>
+      </div>
+      <div class="phys-row">
+        <span class="stat-label">STR</span>
+        <div class="stat-bar"><div class="stat-bar-fill soldier" style="width:78%"></div></div>
+        <span class="phys-num">78</span>
+        <span class="phys-arrow">→</span>
+        <span class="phys-out"><span class="out-key">HP</span><span class="out-val">208</span></span>
+        <span class="phys-chevron">▸</span>
+      </div>
+
+      <!-- REF expanded — shows full breakdown of what this physical drives -->
+      <div class="phys-row expanded">
+        <span class="stat-label">REF</span>
+        <div class="stat-bar"><div class="stat-bar-fill soldier" style="width:55%"></div></div>
+        <span class="phys-num">55</span>
+        <span class="phys-arrow">→</span>
+        <span class="phys-out"><span class="out-key">RELOAD</span><span class="out-val">−17%</span></span>
+        <span class="phys-chevron">▸</span>
+      </div>
+      <div class="phys-detail">
+        <div class="phys-detail-row">
+          <span class="phys-detail-key">RELOAD</span>
+          <span class="phys-detail-val"><span class="num">−17%</span> faster reload <span class="num dim">(M249: 6.0s → 5.0s)</span></span>
+        </div>
+        <div class="phys-detail-row">
+          <span class="phys-detail-key">STABILITY</span>
+          <span class="phys-detail-val"><span class="num">+22%</span> recoil settles faster between bursts</span>
+        </div>
+        <div class="phys-detail-row">
+          <span class="phys-detail-key">TURN RATE</span>
+          <span class="phys-detail-val"><span class="num">+12%</span> swing onto new threats (vehicles)</span>
+        </div>
+        <div class="phys-detail-row">
+          <span class="phys-detail-key">TARGET ACQ</span>
+          <span class="phys-detail-val"><span class="pend">driven by Awareness — see Personality tab</span></span>
+        </div>
+      </div>
+
+      <div class="phys-row">
+        <span class="stat-label">END</span>
+        <div class="stat-bar"><div class="stat-bar-fill soldier" style="width:72%"></div></div>
+        <span class="phys-num">72</span>
+        <span class="phys-arrow">→</span>
+        <span class="phys-out"><span class="out-key">SPD</span><span class="out-val">9 km/h</span></span>
+        <span class="phys-chevron">▸</span>
+      </div>
+    </div>
+
+    <div class="section-card weapon">
+      <div class="section-head weapon">
+        <span class="section-title weapon">🔫 M249 SAW</span>
+        <span class="quality-badge improved">IMPROVED</span>
+        <span class="cond-segments" data-cond="88"></span>
+      </div>
+      <div class="stat-grid">
+      <div class="stat-row"><span class="stat-label">DMG</span><div class="stat-bar"><div class="stat-bar-fill weapon" style="width:28%"></div></div><span class="stat-val">22<span class="stat-max">/80</span></span></div>
+      <div class="stat-row"><span class="stat-label">ROF</span><div class="stat-bar"><div class="stat-bar-fill weapon" style="width:9%"></div></div><span class="stat-val">109<span class="stat-unit">rpm</span><span class="stat-max">/1200</span></span></div>
+      <div class="stat-row"><span class="stat-label">RNG</span><div class="stat-bar"><div class="stat-bar-fill weapon" style="width:60%"></div></div><span class="stat-val">240<span class="stat-unit">m</span><span class="stat-max">/400</span></span></div>
+      <div class="stat-row"><span class="stat-label">ACC</span><div class="stat-bar"><div class="stat-bar-fill weapon" style="width:77%"></div></div><span class="stat-val">77%</span></div>
+      <div class="stat-row"><span class="stat-label">MAG</span><div class="stat-bar"><div class="stat-bar-fill weapon" style="width:100%"></div></div><span class="stat-val">200<span class="stat-max">/200</span></span></div>
+      <div class="stat-row"><span class="stat-label">RLD</span><div class="stat-bar"><div class="stat-bar-fill weapon" style="width:83%"></div></div><span class="stat-val">5.0<span class="stat-unit">s</span></span></div>
+      </div>
+    </div>
+  </div>
+  <p class="frame-cap">SGT Reyes · VETERAN (3 stars, 78%). REF row expanded — reveals reload, stability, turn rate, and the target acq note.</p>
+</div>
+
+<!-- Frame 3: Sniper with rare M24 -->
+<div>
+  <div class="dossier-frame">
+    <div class="d-header">
+      <div class="d-portrait"></div>
+      <div class="d-name-block">
+        <div class="d-title">CPL Carter <span class="d-status wounded">WOUNDED</span></div>
+        <div class="d-mos-inline">
+          <span class="d-mos-label">MOS</span>
+          <select class="d-mos-select"><option>MARKSMAN · 85%</option></select>
+          <span class="header-prof">
+            <span class="h-pips">★★★★<span class="empty">★</span></span>
+            <span class="h-tier">MASTER</span>
+            <span class="h-chev">▸</span>
+          </span>
+        </div>
+      </div>
+      <button class="d-close">✕</button>
+    </div>
+
+    <div class="d-tabs">
+      <button class="d-tab active">COMBAT</button>
+      <button class="d-tab">EQUIPMENT</button>
+      <button class="d-tab">PERSONALITY</button>
+      <button class="d-tab">SERVICE</button>
+    </div>
+
+    <div class="section-card">
+      <div class="section-head">
+        <span class="section-title">SOLDIER</span>
+        <span class="section-sub cause-effect">physical → produces · tap to expand</span>
+      </div>
+      <div class="phys-row">
+        <span class="stat-label">VIS</span>
+        <div class="stat-bar"><div class="stat-bar-fill soldier" style="width:88%"></div></div>
+        <span class="phys-num">88</span>
+        <span class="phys-arrow">→</span>
+        <span class="phys-out"><span class="out-key">SIGHT</span><span class="out-val">680m</span></span>
+        <span class="phys-chevron">▸</span>
+      </div>
+      <div class="phys-row">
+        <span class="stat-label">STR</span>
+        <div class="stat-bar"><div class="stat-bar-fill soldier" style="width:52%"></div></div>
+        <span class="phys-num">52</span>
+        <span class="phys-arrow">→</span>
+        <span class="phys-out"><span class="out-key">HP</span><span class="out-val wounded">90</span><span class="out-max">/175</span></span>
+        <span class="phys-chevron">▸</span>
+      </div>
+      <div class="phys-row">
+        <span class="stat-label">REF</span>
+        <div class="stat-bar"><div class="stat-bar-fill soldier" style="width:75%"></div></div>
+        <span class="phys-num">75</span>
+        <span class="phys-arrow">→</span>
+        <span class="phys-out"><span class="out-key">RELOAD</span><span class="out-val">−23%</span></span>
+        <span class="phys-chevron">▸</span>
+      </div>
+      <div class="phys-row">
+        <span class="stat-label">END</span>
+        <div class="stat-bar"><div class="stat-bar-fill soldier" style="width:60%"></div></div>
+        <span class="phys-num">60</span>
+        <span class="phys-arrow">→</span>
+        <span class="phys-out"><span class="out-key">SPD</span><span class="out-val">13 km/h</span></span>
+        <span class="phys-chevron">▸</span>
+      </div>
+    </div>
+
+    <div class="section-card weapon">
+      <div class="section-head weapon">
+        <span class="section-title weapon">🔫 M24 SWS</span>
+        <span class="quality-badge rare">RARE</span>
+        <span class="cond-segments" data-cond="100"></span>
+      </div>
+      <div class="stat-grid">
+      <div class="stat-row"><span class="stat-label">DMG</span><div class="stat-bar"><div class="stat-bar-fill weapon" style="width:97%"></div></div><span class="stat-val">78<span class="stat-max">/80</span></span></div>
+      <div class="stat-row"><span class="stat-label">ROF</span><div class="stat-bar"><div class="stat-bar-fill weapon" style="width:2%"></div></div><span class="stat-val">30<span class="stat-unit">rpm</span><span class="stat-max">/1200</span></span></div>
+      <div class="stat-row"><span class="stat-label">RNG</span><div class="stat-bar"><div class="stat-bar-fill weapon" style="width:90%"></div></div><span class="stat-val">360<span class="stat-unit">m</span><span class="stat-max">/400</span></span></div>
+      <div class="stat-row"><span class="stat-label">ACC</span><div class="stat-bar"><div class="stat-bar-fill weapon" style="width:95%"></div></div><span class="stat-val">95%</span></div>
+      <div class="stat-row"><span class="stat-label">MAG</span><div class="stat-bar"><div class="stat-bar-fill weapon" style="width:2%"></div></div><span class="stat-val">5<span class="stat-max">/200</span></span></div>
+      <div class="stat-row"><span class="stat-label">RLD</span><div class="stat-bar"><div class="stat-bar-fill weapon" style="width:60%"></div></div><span class="stat-val">3.0<span class="stat-unit">s</span></span></div>
+      </div>
+    </div>
+  </div>
+  <p class="frame-cap">CPL Carter · MASTER (4 stars, 85%), WOUNDED. STR row shows yellow HP. 5th star unlocks at 100%.</p>
+</div>
+
+<!-- Frame 4: Proficiency pill expanded — full breakdown of what training scales -->
+<div>
+  <div class="dossier-frame">
+    <div class="d-header">
+      <div class="d-portrait"></div>
+      <div class="d-name-block">
+        <div class="d-title">SGT Reyes <span class="d-status">READY</span></div>
+        <div class="d-mos-inline">
+          <span class="d-mos-label">MOS</span>
+          <select class="d-mos-select"><option>HEAVY GUNNER · 78%</option></select>
+          <span class="header-prof expanded">
+            <span class="h-pips">★★★<span class="empty">★★</span></span>
+            <span class="h-tier">VETERAN</span>
+            <span class="h-chev">▸</span>
+          </span>
+        </div>
+      </div>
+      <button class="d-close">✕</button>
+    </div>
+
+    <div class="d-tabs">
+      <button class="d-tab active">COMBAT</button>
+      <button class="d-tab">EQUIPMENT</button>
+      <button class="d-tab">PERSONALITY</button>
+      <button class="d-tab">SERVICE</button>
+    </div>
+
+    <!-- Expanded proficiency detail panel -->
+    <div class="prof-panel">
+      <div class="prof-panel-head">
+        <span class="prof-panel-title">PROFICIENCY</span>
+        <span class="prof-panel-sub">VETERAN · 78% · ×0.78 to gear</span>
+      </div>
+
+      <div class="prof-section-label">WHAT IT SCALES</div>
+      <div class="prof-effect-row">
+        <span class="prof-effect-key">Optic stat bonuses</span>
+        <span class="prof-effect-mult">×0.78</span>
+        <span class="prof-effect-note">scope range +12m of +15m max</span>
+      </div>
+      <div class="prof-effect-row">
+        <span class="prof-effect-key">Attachment bonuses</span>
+        <span class="prof-effect-mult">×0.78</span>
+        <span class="prof-effect-note">foregrip recoil −8% of −10% max</span>
+      </div>
+      <div class="prof-effect-row">
+        <span class="prof-effect-key">Effective range</span>
+        <span class="prof-effect-mult">91% max</span>
+        <span class="prof-effect-note">untrained 60% → you 91% → master 100%</span>
+      </div>
+      <div class="prof-effect-row">
+        <span class="prof-effect-key">Reload (× REF 55)</span>
+        <span class="prof-effect-mult">−13%</span>
+        <span class="prof-effect-note">M249: 6.0s → 5.0s</span>
+      </div>
+      <div class="prof-effect-row">
+        <span class="prof-effect-key">Recoil (× STR 78)</span>
+        <span class="prof-effect-mult">−18%</span>
+        <span class="prof-effect-note">tighter groupings under fire</span>
+      </div>
+
+      <div class="prof-section-label">TIER LADDER · stars accrue at thresholds</div>
+      <div class="prof-ladder">
+        <div class="prof-tier-cell">☆<br>TRAINEE<span class="tier-range">0–19</span></div>
+        <div class="prof-tier-cell">★<br>RECRUIT<span class="tier-range">20–39</span></div>
+        <div class="prof-tier-cell">★★<br>REGULAR<span class="tier-range">40–59</span></div>
+        <div class="prof-tier-cell current">★★★<br>VETERAN<span class="tier-range">60–79</span></div>
+        <div class="prof-tier-cell">★★★★<br>MASTER<span class="tier-range">80–100</span></div>
+      </div>
+
+      <div class="prof-next">
+        +2% to reach <strong>MASTER</strong> (4 stars) — unlocks full optic / attachment / effective range scaling.
+      </div>
+    </div>
+
+    <!-- SOLDIER section collapsed for focus -->
+    <div class="section-card">
+      <div class="section-head">
+        <span class="section-title">SOLDIER</span>
+        <span class="section-sub cause-effect">physical → produces · tap to expand</span>
+      </div>
+      <div class="phys-row">
+        <span class="stat-label">VIS</span>
+        <div class="stat-bar"><div class="stat-bar-fill soldier" style="width:62%"></div></div>
+        <span class="phys-num">62</span>
+        <span class="phys-arrow">→</span>
+        <span class="phys-out"><span class="out-key">SIGHT</span><span class="out-val">580m</span></span>
+        <span class="phys-chevron">▸</span>
+      </div>
+      <div class="phys-row">
+        <span class="stat-label">STR</span>
+        <div class="stat-bar"><div class="stat-bar-fill soldier" style="width:78%"></div></div>
+        <span class="phys-num">78</span>
+        <span class="phys-arrow">→</span>
+        <span class="phys-out"><span class="out-key">HP</span><span class="out-val">208</span></span>
+        <span class="phys-chevron">▸</span>
+      </div>
+      <div class="phys-row">
+        <span class="stat-label">REF</span>
+        <div class="stat-bar"><div class="stat-bar-fill soldier" style="width:55%"></div></div>
+        <span class="phys-num">55</span>
+        <span class="phys-arrow">→</span>
+        <span class="phys-out"><span class="out-key">RELOAD</span><span class="out-val">−17%</span></span>
+        <span class="phys-chevron">▸</span>
+      </div>
+      <div class="phys-row">
+        <span class="stat-label">END</span>
+        <div class="stat-bar"><div class="stat-bar-fill soldier" style="width:72%"></div></div>
+        <span class="phys-num">72</span>
+        <span class="phys-arrow">→</span>
+        <span class="phys-out"><span class="out-key">SPD</span><span class="out-val">9 km/h</span></span>
+        <span class="phys-chevron">▸</span>
+      </div>
+    </div>
+  </div>
+  <p class="frame-cap">SGT Reyes · Proficiency pill <strong>expanded</strong>. Yellow panel slides in below the tabs. Shows what training scales (with concrete numbers), the tier ladder with stars accruing at thresholds, and the delta to the next tier.</p>
+</div>
+
+<!-- Frame 5: MOS dropdown OPEN — shows per-MOS proficiency comparison -->
+<div>
+  <div class="dossier-frame" style="overflow:visible">
+    <div class="d-header">
+      <div class="d-portrait"></div>
+      <div class="d-name-block">
+        <div class="d-title">SGT Reyes <span class="d-status">READY</span></div>
+        <div class="d-mos-inline">
+          <span class="d-mos-label">MOS</span>
+          <span class="mos-select-fake active">
+            HEAVY GUNNER
+            <span class="mos-prof-inline">78%</span>
+          </span>
+          <span class="header-prof">
+            <span class="h-pips">★★★<span class="empty">★★</span></span>
+            <span class="h-tier">VETERAN</span>
+            <span class="h-chev">▸</span>
+          </span>
+
+          <!-- Open dropdown panel -->
+          <div class="mos-dropdown-panel">
+            <div class="mos-option current">
+              <span class="opt-name">HEAVY GUNNER</span>
+              <span class="opt-stars">★★★<span class="empty">★★</span></span>
+              <span class="opt-tier">VETERAN</span>
+              <span class="opt-pct">78%</span>
+            </div>
+            <div class="mos-option">
+              <span class="opt-name">RIFLEMAN</span>
+              <span class="opt-stars">★★<span class="empty">★★★</span></span>
+              <span class="opt-tier">REGULAR</span>
+              <span class="opt-pct">45%</span>
+            </div>
+            <div class="mos-option">
+              <span class="opt-name">MEDIC</span>
+              <span class="opt-stars">★<span class="empty">★★★★</span></span>
+              <span class="opt-tier">RECRUIT</span>
+              <span class="opt-pct">22%</span>
+            </div>
+            <div class="mos-option locked">
+              <span class="opt-name">GRENADIER</span>
+              <span class="opt-stars"><span class="empty">★★★★★</span></span>
+              <span class="opt-tier">TRAINEE</span>
+              <span class="opt-pct">0%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <button class="d-close">✕</button>
+    </div>
+
+    <!-- Spacer below the floating panel -->
+    <div style="height: 165px"></div>
+
+    <div class="d-tabs">
+      <button class="d-tab active">COMBAT</button>
+      <button class="d-tab">EQUIPMENT</button>
+      <button class="d-tab">PERSONALITY</button>
+      <button class="d-tab">SERVICE</button>
+    </div>
+
+    <div class="section-card">
+      <div class="section-head">
+        <span class="section-title">SOLDIER</span>
+        <span class="section-sub cause-effect">physical → produces · tap to expand</span>
+      </div>
+      <div class="phys-row">
+        <span class="stat-label">VIS</span>
+        <div class="stat-bar"><div class="stat-bar-fill soldier" style="width:62%"></div></div>
+        <span class="phys-num">62</span>
+        <span class="phys-arrow">→</span>
+        <span class="phys-out"><span class="out-key">SIGHT</span><span class="out-val">580m</span></span>
+        <span class="phys-chevron">▸</span>
+      </div>
+      <div class="phys-row">
+        <span class="stat-label">STR</span>
+        <div class="stat-bar"><div class="stat-bar-fill soldier" style="width:78%"></div></div>
+        <span class="phys-num">78</span>
+        <span class="phys-arrow">→</span>
+        <span class="phys-out"><span class="out-key">HP</span><span class="out-val">208</span></span>
+        <span class="phys-chevron">▸</span>
+      </div>
+    </div>
+  </div>
+  <p class="frame-cap">SGT Reyes · MOS dropdown <strong>open</strong>. Custom panel shows every MOS Reyes has trained with their stars, tier, and %. Current MOS highlighted yellow; untrained MOS (GRENADIER 0%) dimmed. Lets you compare before switching.</p>
+</div>
+
+</div>
+
+<div class="anno" style="margin-top:32px">
+  <strong>Final spec — three places proficiency lives:</strong>
+  <ul>
+    <li><strong>MOS dropdown</strong> (closed): <code>HEAVY GUNNER · 78%</code>. Precise number lives on the role selector. When open (Frame 5) it shows every MOS Reyes has trained with stars + tier + % so you can compare before switching.</li>
+    <li><strong>Pill</strong> (closed): <code>★★★☆☆ VETERAN ▸</code>. At-a-glance rank insignia. Stars accrue at 20% thresholds (S5 scheme). Pill carries the rank, dropdown carries the number — no info double-up.</li>
+    <li><strong>Pill expand</strong> (Frame 4): yellow panel slides in showing WHAT IT SCALES (×0.78 to gear, +31% effective range, −13% reload, −18% recoil) and the TIER LADDER (where you are, what's next).</li>
+  </ul>
+</div>
+<div class="anno">
+  <strong>Star threshold mapping (S5):</strong>
+  <ul>
+    <li>0–19% → ☆☆☆☆☆ <strong>TRAINEE</strong></li>
+    <li>20–39% → ★☆☆☆☆ <strong>RECRUIT</strong></li>
+    <li>40–59% → ★★☆☆☆ <strong>REGULAR</strong> (Anderson 50%)</li>
+    <li>60–79% → ★★★☆☆ <strong>VETERAN</strong> (Reyes 78%)</li>
+    <li>80–99% → ★★★★☆ <strong>MASTER</strong> (Carter 85%)</li>
+    <li>100% → ★★★★★ <strong>MASTER</strong> (5th star is the mastery flourish)</li>
+  </ul>
+</div>
+<div class="anno">
+  <strong>Tap-to-expand pattern:</strong>
+  <ul>
+    <li>Default row stays clean — just the headline output (SIGHT, HP, RELOAD, SPD).</li>
+    <li>Tap any row to reveal the full breakdown inline. Tap again (or another row) to collapse.</li>
+    <li>Expanded rows get a soft green tint + a left-rule that visually groups the detail under its parent row.</li>
+    <li>Chevron ▸ rotates to ▾ when expanded so the affordance is obvious.</li>
+    <li>Each detail line shows: effect name, number, and a plain-English note. Unimplemented effects are italicized as "pending" so we don't over-promise.</li>
+  </ul>
+</div>
+<div class="anno">
+  <strong>What each physical actually drives (Frame 2's REF expansion is verbatim from the code):</strong>
+  <ul>
+    <li><strong>VIS</strong> → sight range, future crit chance bonus.</li>
+    <li><strong>STR</strong> → HP max, recoil reduction (stability under fire).</li>
+    <li><strong>REF</strong> → reload speed (−%), recoil settle, vehicle turn rate. <em>Not</em> target acquisition (that's Awareness/Initiative).</li>
+    <li><strong>END</strong> → movement speed, suppression resistance.</li>
+  </ul>
+</div>
+<div class="anno">
+  <strong>Implementation notes:</strong>
+  <ul>
+    <li>The expand state is per-row, not per-stat — only one row open at a time keeps the dossier compact.</li>
+    <li>Mobile-friendly: full row is the tap target (~44px tall once padding lands).</li>
+    <li>The wounded HP styling (yellow current + dim max) reuses the same row, no special-case layout.</li>
+  </ul>
+</div>
+
+<script>
+  // Render weapon-condition segment bars from data-cond percentages.
+  document.querySelectorAll('.cond-segments[data-cond]').forEach(el => {
+    const pct = parseInt(el.dataset.cond);
+    const segs = 10;
+    const filled = Math.round(segs * pct / 100);
+    const color = pct > 60 ? 'var(--accent-green)' : pct > 30 ? 'var(--accent-yellow)' : 'var(--accent-red)';
+    let html = '';
+    for (let i = 0; i < segs; i++) {
+      html += `<span class="cond-seg ${i < filled ? 'filled' : ''}" style="${i < filled ? 'background:' + color : ''}"></span>`;
+    }
+    el.innerHTML = html;
+  });
+</script>
+</body>
+</html>

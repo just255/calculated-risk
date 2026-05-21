@@ -2,7 +2,7 @@
 // UI - HTML rendering functions
 // ═══════════════════════════════════════════════════════════════
 
-import { State, SubState, HQTab, UnitType, UNITS, ENEMIES, UNIT_COSTS, H2H_BUDGET, VEHICLE_UNITS, TYPE_CHART, UNIT_PROJECTILES, PROJECTILES, UNIT_DESCRIPTIONS, CAMPAIGN_ERAS, CAMPAIGN_MOS, SquadOrder, TargetPriority, Formation, VEHICLE_CATEGORIES, ENDLESS_VEHICLES, PART_CATEGORY_CONFIG, SYSTEM_DEFINITIONS, UNIT_PART_SLOTS, UNIT_TYPE_MAP, Team, RANK_NAMES, INSIGNIA_SHAPE_TYPES, RANK_TABLE, HEROIC_ACTIONS, GAME_VERSION_STRING, UNIT_COMBAT_STATS, WAVE_POWER_CURVE, CREW_SCHEMAS, getRoleLabel, PHYSICAL_LABELS, TRAINING_CAP, ALL_ROLES, MOS_DEFINITIONS, OFFICER_RANKS, PIXELS_TO_METERS, DEFAULT_INTRO_SEED } from './constants.js';
+import { State, SubState, HQTab, UnitType, UNITS, ENEMIES, UNIT_COSTS, H2H_BUDGET, VEHICLE_UNITS, TYPE_CHART, UNIT_PROJECTILES, PROJECTILES, UNIT_DESCRIPTIONS, CAMPAIGN_ERAS, CAMPAIGN_MOS, SquadOrder, TargetPriority, Formation, VEHICLE_CATEGORIES, ENDLESS_VEHICLES, PART_CATEGORY_CONFIG, SYSTEM_DEFINITIONS, UNIT_PART_SLOTS, UNIT_TYPE_MAP, Team, RANK_NAMES, INSIGNIA_SHAPE_TYPES, RANK_TABLE, HEROIC_ACTIONS, GAME_VERSION_STRING, UNIT_COMBAT_STATS, WAVE_POWER_CURVE, CREW_SCHEMAS, getRoleLabel, PHYSICAL_LABELS, TRAINING_CAP, ALL_ROLES, MOS_DEFINITIONS, OFFICER_RANKS, PIXELS_TO_METERS, DISPLAY_SPEED_KMH, DISPLAY_RANGE_M, DEFAULT_INTRO_SEED } from './constants.js';
 import { Game, ENDLESS_MAP_SIZES } from './state.js';
 import { getCachedInsignia } from './insignia-renderer.js';
 import { save, getSlotMetas, getMaxSlots, slotExists } from './storage.js';
@@ -14,6 +14,9 @@ import { PERSONALITY_PRESETS } from './ai-pipeline.js';
 import { EntityRenderer } from './entity-renderer.js';
 import { INSIGNIA_PRESETS } from './insignia-presets.js';
 import { getMemorial, getMemorialTier, computeLegacyScore, getMemorialLineageInfluence, processKIAToFallen, getRecentFallen, hasMemorialSlot, MEMORIAL_THRESHOLD, MEMORIAL_MAX_SLOTS, getRosterCapacity, getNextRosterUnlock, hasRosterRoom, fillRecruitSlots, getAvailableVehicles, getCrewForVehicle, getRoster, getRankInfo, isOfficer, computeCmdEffects, checkGreenToGold, computeLeadership, getEffectiveCombatStats, generatePhysicals } from './roster.js';
+import { getEquipped, getLoadout, getOwnedItems, getAvailableItems, canEquip, hasKit, kitIsDirty, findKitForItem } from './armory.js';
+import { getGearTemplate, getWeaponTemplate, QUALITY_TIERS, WEAPON_CATEGORIES, MOS_WEAPON_ACCESS } from './gear-templates.js';
+import { SQUAD_PRESETS, getPresetStats } from './loadouts.js';
 
 // ─── Shared stat display helpers ─────────────────────────────
 // Used by both Operations and Barracks for consistent stat rendering.
@@ -31,6 +34,21 @@ function statRowSummary(cs, soldier) {
   }
   const special = cs.special ? `<span class="stat-special-icon">${cs.special === 'heal' ? '✚' : cs.special === 'repair' ? '🔧' : '⚡'}</span>` : '';
   return `<span class="stat-row-summary">❤${cs.hp} ⚔${cs.dps} ◎${cs.rangeM}m ${special}</span>`;
+}
+
+/** 10-segment HP bar — color-coded green/yellow/red. Shared across Barracks/Operations.
+ * @param {number} hp 0..1 (hpPercent), defaults to 1 if falsy
+ */
+function hpSegments(hp) {
+  const pct = Math.round((hp || 1) * 100);
+  const segs = 10;
+  const filled = Math.round(segs * pct / 100);
+  const color = pct > 60 ? 'var(--accent-green)' : pct > 30 ? 'var(--accent-yellow)' : 'var(--accent-red)';
+  let bars = '';
+  for (let i = 0; i < segs; i++) {
+    bars += `<span class="hp-seg ${i < filled ? 'filled' : ''}" style="${i < filled ? 'background:' + color : ''}"></span>`;
+  }
+  return `<div class="hp-segments">${bars}</div>`;
 }
 
 /** Physical stats bar for detail panels */
@@ -348,178 +366,11 @@ export function updateBarracksPanel() {
 }
 
 /**
- * Targeted update for Operations — updates bottom panel + row highlighting only.
+ * Stub kept for callers — Operations now re-renders fully on state changes
+ * since the action panel is part of the main render tree.
  */
-export function updateOpsPanel() {
-  const opsTab = document.querySelector('.operations-tab');
-  if (!opsTab) { render(); return; }
+export function updateOpsPanel() { render(); }
 
-  const ops = Game.opsConfig;
-  if (!ops) { render(); return; }
-
-  const roster = getRoster().filter(s => s.status === 'active');
-  const vehicles = getAvailableVehicles();
-
-  // Update row highlighting
-  document.querySelectorAll('.ops-available-row').forEach(row => {
-    row.classList.toggle('previewing', row.dataset.soldier === Game.opsPreviewSoldier);
-  });
-  document.querySelectorAll('.ops-slot').forEach(slot => {
-    const pu = Game.opsPreviewUnit;
-    const isPreview = pu && slot.dataset.unitType === pu.type &&
-      parseInt(slot.dataset.squad) === pu.squad && parseInt(slot.dataset.unitIdx) === pu.idx;
-    slot.classList.toggle('previewing', !!isPreview);
-  });
-
-  // Update hero stars
-  document.querySelectorAll('.ops-hero-star').forEach(el => el.remove());
-  document.querySelectorAll('.ops-slot[data-soldier]').forEach(slot => {
-    if (slot.dataset.soldier === ops.heroUnit) {
-      const nameEl = slot.querySelector('.ops-slot-name');
-      if (nameEl && !slot.querySelector('.ops-hero-star')) {
-        nameEl.insertAdjacentHTML('beforebegin', '<span class="ops-hero-star">★</span>');
-      }
-    }
-  });
-
-  // Build bottom panel
-  const bottomPanel = _buildOpsBottomPanel(ops, roster, vehicles);
-
-  // Replace existing or insert new
-  const existing = opsTab.querySelector('.ops-detail-panel');
-  if (existing) existing.remove();
-  if (bottomPanel) {
-    const deployBar = opsTab.querySelector('.ops-deploy-bar');
-    if (deployBar) deployBar.insertAdjacentHTML('beforebegin', bottomPanel);
-  }
-
-  _renderBarracksInsignia();
-}
-
-/** Build the Operations bottom detail panel HTML. Extracted for targeted updates. */
-function _buildOpsBottomPanel(ops, roster, vehicles) {
-  if (!ops) return '';
-
-  const previewUnit = Game.opsPreviewUnit || null;
-  const previewId = Game.opsPreviewSoldier || null;
-  const previewSoldier = previewId ? roster.find(s => s.id === previewId) : null;
-  const selectedSlot = Game.opsSelectedSlot || null;
-
-  let assignedSoldier = null;
-  let assignedVehicle = null;
-  let assignedUnitId = null;
-
-  if (previewUnit) {
-    if (previewUnit.type === 'infantry') {
-      const sq = ops.squads[previewUnit.squad];
-      const sid = sq?.units[previewUnit.idx];
-      assignedSoldier = sid ? roster.find(s => s.id === sid) : null;
-      assignedUnitId = sid;
-    } else if (previewUnit.type === 'vehicle') {
-      const sq = ops.squads[previewUnit.squad];
-      assignedUnitId = sq?.vehicleId;
-      assignedVehicle = assignedUnitId ? vehicles.find(v => v.id === assignedUnitId) : null;
-    } else if (previewUnit.type === 'crew' && previewUnit.soldierId) {
-      assignedSoldier = roster.find(s => s.id === previewUnit.soldierId);
-      assignedUnitId = previewUnit.soldierId;
-    }
-  }
-
-  const _col = (s, label) => {
-    if (!s) return '';
-    const rn = getRankInfo(s).abbr;
-    const cs = getEffectiveCombatStats(s);
-    const p = s.personality || {};
-    const pctBar = (lbl, val) => {
-      const pct = Math.round((val || 0) * 100);
-      return `<div class="ops-cmp-stat"><span class="ops-cmp-label">${lbl}</span><div class="card-stat-bar"><div class="card-stat-fill" style="width:${pct}%"></div></div><span class="ops-cmp-val">${pct}</span></div>`;
-    };
-    return `
-      <div class="ops-cmp-col">
-        <div class="ops-cmp-header">
-          <span class="ops-cmp-tag">${label}</span>
-          <canvas class="soldier-insignia" data-rank="${s.rankIndex}" width="64" height="64"></canvas>
-          <div class="ops-cmp-identity">
-            <span class="ops-cmp-name">${rn} ${s.name?.last || 'Unknown'}</span>
-            <span class="ops-cmp-role">${getRoleLabel(s.role)}</span>
-          </div>
-        </div>
-        ${statDetailBlock(cs, s)}
-        <div class="ops-cmp-record">
-          <span>${s.battlesServed || 0} btl</span>
-          <span>${s.kills || 0} kills</span>
-          <span>MMR ${Math.round(s.mmr || 0)}</span>
-        </div>
-        <details class="ops-personality-details">
-          <summary>Personality</summary>
-          <div class="ops-cmp-stats">
-            ${pctBar('AGG', p.aggression)}
-            ${pctBar('PAT', p.patience)}
-            ${pctBar('CRG', p.courage)}
-            ${pctBar('DIS', p.discipline)}
-            ${pctBar('INI', p.initiative)}
-            ${pctBar('AWR', p.awareness)}
-          </div>
-        </details>
-      </div>`;
-  };
-
-  if (assignedSoldier && previewSoldier) {
-    const canAssign = selectedSlot && (selectedSlot.type === 'infantry-add' || selectedSlot.type === 'crew');
-    const slotLabel = selectedSlot ? (selectedSlot.type === 'crew' ? getRoleLabel(selectedSlot.crewRole) : `SQUAD ${(selectedSlot.squad || 0) + 1}`) : '';
-    const isHero = ops.heroUnit === assignedUnitId;
-    return `
-      <div class="ops-detail-panel ops-compare-panel">
-        <div class="ops-cmp-columns">
-          ${_col(assignedSoldier, 'ASSIGNED')}
-          <div class="ops-cmp-divider"><span class="ops-cmp-vs">VS</span></div>
-          ${_col(previewSoldier, 'CANDIDATE')}
-        </div>
-        <div class="ops-detail-actions ops-cmp-actions">
-          ${!isHero ? `<button class="ops-hero-btn" data-action="ops-set-hero" data-soldier="${assignedUnitId}">★ SET HERO</button>` : '<span class="ops-hero-current">★ HERO</span>'}
-          ${canAssign ? `<button class="ops-assign-btn" data-action="ops-assign-soldier" data-soldier="${previewSoldier.id}">ASSIGN TO ${slotLabel}</button>` : ''}
-          <button class="ops-swap-btn" data-action="ops-swap-soldier" data-old="${assignedUnitId}" data-new="${previewSoldier.id}" data-squad="${previewUnit?.squad || 0}" data-idx="${previewUnit?.idx || 0}">SWAP ⇄</button>
-        </div>
-      </div>`;
-  } else if (assignedSoldier) {
-    const isHero = ops.heroUnit === assignedUnitId;
-    return `
-      <div class="ops-detail-panel">
-        <div class="ops-cmp-columns">${_col(assignedSoldier, 'ASSIGNED')}</div>
-        <div class="ops-detail-actions">
-          ${isHero ? '<span class="ops-hero-current">★ CURRENT HERO</span>' : `<button class="ops-hero-btn" data-action="ops-set-hero" data-soldier="${assignedUnitId}">SET AS HERO ★</button>`}
-        </div>
-      </div>`;
-  } else if (assignedVehicle) {
-    const isHero = ops.heroUnit === assignedUnitId;
-    return `
-      <div class="ops-detail-panel">
-        <div class="ops-detail-header">
-          <span class="ops-slot-icon" style="font-size:1.5rem">🚗</span>
-          <div class="ops-detail-identity">
-            <span class="ops-detail-name">${isHero ? '★ ' : ''}${assignedVehicle.unitId.toUpperCase()}</span>
-            <span class="ops-detail-role">VEHICLE — ${Math.round(assignedVehicle.hpPercent * 100)}% HP</span>
-          </div>
-        </div>
-        <div class="ops-detail-actions">
-          ${isHero ? '<span class="ops-hero-current">★ CURRENT HERO</span>' : `<button class="ops-hero-btn" data-action="ops-set-hero" data-soldier="${assignedUnitId}">PLAY AS THIS VEHICLE ★</button>`}
-        </div>
-      </div>`;
-  } else if (previewSoldier) {
-    const canAssign = selectedSlot && (selectedSlot.type === 'infantry-add' || selectedSlot.type === 'crew');
-    const slotLabel = selectedSlot ? (selectedSlot.type === 'crew' ? getRoleLabel(selectedSlot.crewRole) : `SQUAD ${(selectedSlot.squad || 0) + 1}`) : '';
-    return `
-      <div class="ops-detail-panel">
-        <div class="ops-cmp-columns">${_col(previewSoldier, 'CANDIDATE')}</div>
-        <div class="ops-detail-actions">
-          ${canAssign
-            ? `<button class="ops-assign-btn" data-action="ops-assign-soldier" data-soldier="${previewSoldier.id}">ASSIGN TO ${slotLabel}</button>`
-            : '<span class="ops-detail-hint">Select a slot first, then assign</span>'}
-        </div>
-      </div>`;
-  }
-  return '';
-}
 
 export function render() {
   const app = document.getElementById('app');
@@ -766,7 +617,7 @@ function menuHTML() {
         <div class="slot-grid">${slotCards.join('')}</div>
         <div class="menu-buttons">
           <button class="menu-btn secondary" data-action="settings">Settings</button>
-          <button class="menu-btn secondary" data-action="fire-range">Fire Range</button>
+          <button class="menu-btn secondary" data-action="fire-range">Proving Ground</button>
           <button class="menu-btn secondary" data-action="sprite-editor">Sprite Editor</button>
           <button class="menu-btn secondary" data-action="terrain-editor">Terrain Editor</button>
         </div>
@@ -1063,6 +914,7 @@ function gameOverHTML(win) {
 
 function headquartersHTML() {
   const tab = Game.hqTab;
+  const deployBar = _hqHeaderDeployBar();
   return `
     <div class="screen hq-screen">
       <div class="hq-header">
@@ -1071,8 +923,8 @@ function headquartersHTML() {
           <span class="hq-res-scrap">⬡ ${Game.resources.scrap}</span>
           <span class="hq-res-parts">◈ ${Game.resources.parts || 0}</span>
         </div>
+        ${deployBar}
         <div class="hq-header-actions">
-          <button class="hq-header-btn" data-action="hq-replays" title="Replays">▶</button>
           <button class="hq-header-btn" data-action="hq-settings" title="Settings">⚙</button>
         </div>
       </div>
@@ -1080,15 +932,13 @@ function headquartersHTML() {
         <button class="hq-tab ${tab===HQTab.BARRACKS?'active':''}" data-hq-tab="${HQTab.BARRACKS}">BARRACKS</button>
         <button class="hq-tab ${tab===HQTab.ARMORY?'active':''}" data-hq-tab="${HQTab.ARMORY}">ARMORY</button>
         <button class="hq-tab ${tab===HQTab.MOTOR_POOL?'active':''}" data-hq-tab="${HQTab.MOTOR_POOL}">MOTOR POOL</button>
-        <button class="hq-tab ${tab===HQTab.OPERATIONS?'active':''}" data-hq-tab="${HQTab.OPERATIONS}">OPERATIONS</button>
-        <button class="hq-tab ${tab===HQTab.INSIGNIA?'active':''}" data-hq-tab="${HQTab.INSIGNIA}">INSIGNIA</button>
+        <button class="hq-tab" data-action="hq-fire-range">PROVING GROUND</button>
+        <button class="hq-tab" data-action="hq-replays">REPLAYS</button>
       </div>
       <div class="hq-content">
         ${tab === HQTab.BARRACKS ? _barracksTabHTML() : ''}
         ${tab === HQTab.ARMORY ? _armoryTabHTML() : ''}
         ${tab === HQTab.MOTOR_POOL ? _motorPoolTabHTML() : ''}
-        ${tab === HQTab.OPERATIONS ? _operationsTabHTML() : ''}
-        ${tab === HQTab.INSIGNIA ? insigniaTabHTML() : ''}
       </div>
     </div>
   `;
@@ -1099,18 +949,6 @@ function _barracksTabHTML() {
   const selected = Game.hqSelectedSoldiers || [];
   const subView = Game.hqBarracksView || 'roster'; // 'roster' or 'legacy'
 
-  // Shared helpers
-  const hpSegments = (hp) => {
-    const pct = Math.round((hp || 1) * 100);
-    const segs = 10;
-    const filled = Math.round(segs * pct / 100);
-    let color = pct > 60 ? 'var(--accent-green)' : pct > 30 ? 'var(--accent-yellow)' : 'var(--accent-red)';
-    let bars = '';
-    for (let i = 0; i < segs; i++) {
-      bars += `<span class="hp-seg ${i < filled ? 'filled' : ''}" style="${i < filled ? 'background:' + color : ''}"></span>`;
-    }
-    return `<div class="hp-segments">${bars}</div>`;
-  };
 
   const statusLabel = (s) => {
     if (s.status === 'kia') return '<span class="status-label status-kia">KIA</span>';
@@ -1133,8 +971,11 @@ function _barracksTabHTML() {
   const subTabBar = `
     <div class="barracks-sub-tabs">
       <button class="barracks-sub-tab ${subView === 'roster' ? 'active' : ''}" data-action="hq-barracks-view" data-view="roster" ${unlockHint}>ROSTER (${aliveCount}/${rosterCap})</button>
+      <button class="barracks-sub-tab ${subView === 'squads' ? 'active' : ''}" data-action="hq-barracks-view" data-view="squads">SQUADS</button>
+      <button class="barracks-sub-tab ${subView === 'formation' ? 'active' : ''}" data-action="hq-barracks-view" data-view="formation">FORMATION</button>
       <button class="barracks-sub-tab ${subView === 'infirmary' ? 'active' : ''}" data-action="hq-barracks-view" data-view="infirmary">INFIRMARY${woundedCount > 0 ? ` (${woundedCount})` : ''}</button>
       <button class="barracks-sub-tab ${subView === 'legacy' ? 'active' : ''}" data-action="hq-barracks-view" data-view="legacy">LEGACY ${legacyBadge ? `(${legacyBadge})` : ''}</button>
+      <button class="barracks-sub-tab ${subView === 'insignia' ? 'active' : ''}" data-action="hq-barracks-view" data-view="insignia">INSIGNIA</button>
     </div>`;
 
   let leftContent = '';
@@ -1143,8 +984,20 @@ function _barracksTabHTML() {
   if (subView === 'roster') {
     // ── ROSTER TABLE VIEW ──
     const rosterContent = _rosterTableView(roster, selected);
-    const detailModal = Game.hqDetailSoldier ? _soldierDetailModal(Game.hqDetailSoldier) : '';
-    return `<div class="barracks-tab">${subTabBar}${rosterContent}${detailModal}</div>`;
+    const detailDrawer = Game.hqDetailSoldier ? _soldierDetailModal(Game.hqDetailSoldier) : '';
+    return `<div class="barracks-tab">${subTabBar}${rosterContent}${detailDrawer}</div>`;
+
+  } else if (subView === 'squads') {
+    // ── SQUADS BUILDER ──
+    return `<div class="barracks-tab">${subTabBar}${_squadsView()}</div>`;
+
+  } else if (subView === 'formation') {
+    // ── FORMATION EDITOR ──
+    return `<div class="barracks-tab">${subTabBar}${_formationView()}</div>`;
+
+  } else if (subView === 'insignia') {
+    // ── INSIGNIA EDITOR ──
+    return `<div class="barracks-tab barracks-tab-insignia">${subTabBar}${insigniaTabHTML()}</div>`;
 
   } else if (subView === 'infirmary') {
     // ── INFIRMARY VIEW ──
@@ -1894,16 +1747,194 @@ function _describePersonality(p) {
   return traits.slice(0, 2).join(' and ');
 }
 
+// ═══════════════════════════════════════════════════════════════
+// ARMORY TAB — Inventory management
+// ═══════════════════════════════════════════════════════════════
+
+// Filter chips and their predicates. Order = display order.
+const ARMORY_FILTERS = [
+  { key: 'all',      label: 'All' },
+  { key: 'ar',       label: 'AR',       pred: (i, t) => t?.category === 'assault_rifle' },
+  { key: 'smg',      label: 'SMG',      pred: (i, t) => t?.category === 'smg' },
+  { key: 'lmg',      label: 'LMG',      pred: (i, t) => t?.category === 'lmg' },
+  { key: 'sr',       label: 'SR',       pred: (i, t) => t?.category === 'sniper_rifle' || t?.category === 'dmr' },
+  { key: 'sg',       label: 'SG',       pred: (i, t) => t?.category === 'shotgun' },
+  { key: 'pistol',   label: 'Pistol',   pred: (i) => i.slot === 'sidearm' },
+  { key: 'optic',    label: 'Optic',    pred: (i) => i.slot === 'optic' },
+  { key: 'attach',   label: 'Attach',   pred: (i) => i.slot === 'attachment' },
+  { key: 'armor',    label: 'Armor',    pred: (i) => i.slot === 'armor' },
+  { key: 'utility',  label: 'Utility',  pred: (i) => i.slot === 'utility' }
+];
+
+const CAT_BADGE_MAP = {
+  assault_rifle: { label: 'AR',  cls: 'ar' },
+  battle_rifle:  { label: 'BR',  cls: 'ar' },
+  carbine:       { label: 'CRB', cls: 'ar' },
+  smg:           { label: 'SMG', cls: 'smg' },
+  lmg:           { label: 'LMG', cls: 'lmg' },
+  sniper_rifle:  { label: 'SR',  cls: 'sr' },
+  dmr:           { label: 'DMR', cls: 'sr' },
+  shotgun:       { label: 'SG',  cls: 'sg' },
+  pistol:        { label: 'PS',  cls: 'ps' },
+  launcher:      { label: 'AT',  cls: 'lmg' }
+};
+
 function _armoryTabHTML() {
+  const armory = Game.armory || { items: [], capacity: 50 };
+  const items = armory.items || [];
+  const filterKey = Game.armoryFilter || 'all';
+  const sortKey = Game.armorySortKey || 'name';
+  const sortDir = Game.armorySortDir || 'asc';
+  const showUnassigned = !!Game.armoryUnassignedOnly;
+  const showDamaged = !!Game.armoryDamagedOnly;
+
+  // Counts per filter
+  const counts = { all: items.length };
+  for (const f of ARMORY_FILTERS) {
+    if (f.key === 'all') continue;
+    counts[f.key] = items.filter(i => {
+      const t = getGearTemplate(i.templateId);
+      return f.pred(i, t);
+    }).length;
+  }
+  const unassignedCount = items.filter(i => !i.assignedTo).length;
+  const damagedCount = items.filter(i => (i.condition || 1) < 1).length;
+
+  // Apply filters
+  let filtered = items;
+  if (filterKey !== 'all') {
+    const f = ARMORY_FILTERS.find(x => x.key === filterKey);
+    if (f && f.pred) filtered = filtered.filter(i => f.pred(i, getGearTemplate(i.templateId)));
+  }
+  if (showUnassigned) filtered = filtered.filter(i => !i.assignedTo);
+  if (showDamaged) filtered = filtered.filter(i => (i.condition || 1) < 1);
+
+  // Sort
+  filtered.sort((a, b) => {
+    const ta = getGearTemplate(a.templateId);
+    const tb = getGearTemplate(b.templateId);
+    let va, vb;
+    switch (sortKey) {
+      case 'type': va = ta?.category || ta?.slot || ''; vb = tb?.category || tb?.slot || ''; break;
+      case 'quality': {
+        const order = { standard_issue: 0, common: 1, improved: 2, rare: 3 };
+        va = order[a.quality] ?? 0; vb = order[b.quality] ?? 0;
+        break;
+      }
+      case 'condition': va = a.condition ?? 1; vb = b.condition ?? 1; break;
+      case 'assigned': va = a.assignedTo || ''; vb = b.assignedTo || ''; break;
+      default: va = ta?.name || a.templateId; vb = tb?.name || b.templateId;
+    }
+    const cmp = typeof va === 'string' ? va.localeCompare(vb) : va - vb;
+    return sortDir === 'desc' ? -cmp : cmp;
+  });
+
+  // Filter chips
+  const filterChips = ARMORY_FILTERS.map(f => {
+    const count = counts[f.key] || 0;
+    return `<button class="sq-filter-chip ${filterKey === f.key ? 'active' : ''}" data-action="armory-filter" data-filter="${f.key}">${f.label}${f.key === 'all' ? ` (${count})` : count > 0 ? ` (${count})` : ''}</button>`;
+  }).join('');
+  const stateChips = `
+    <button class="sq-filter-chip ${showUnassigned ? 'active' : ''}" data-action="armory-toggle-unassigned" style="margin-left:auto">Unassigned (${unassignedCount})</button>
+    <button class="sq-filter-chip ${showDamaged ? 'active' : ''}" data-action="armory-toggle-damaged">Damaged (${damagedCount})</button>`;
+
+  const sortArrow = (k) => sortKey === k ? (sortDir === 'desc' ? ' ▼' : ' ▲') : '';
+  const sortHead = (label, k, colClass) => `<button class="sq-th ${colClass} ${sortKey === k ? 'active' : ''}" data-action="armory-sort" data-key="${k}">${label}${sortArrow(k)}</button>`;
+
   return `
     <div class="armory-tab">
-      <div class="empty-state">
-        <h3>ARMORY</h3>
-        <p>Weapons and equipment manufacturing coming soon.</p>
-        <p class="text-secondary">Complete runs to earn scrap and unlock manufacturing.</p>
+      <div class="sq-filter-bar">
+        ${filterChips}
+        ${stateChips}
       </div>
-    </div>
-  `;
+      <div class="sq-roster-table">
+        <div class="sq-th-row">
+          ${sortHead('TYPE', 'type', 'ar-col-type')}
+          ${sortHead('NAME', 'name', 'ar-col-name')}
+          ${sortHead('QUALITY', 'quality', 'ar-col-quality')}
+          <span class="sq-th ar-col-stats">STATS</span>
+          ${sortHead('CONDITION', 'condition', 'ar-col-condition')}
+          ${sortHead('ASSIGNED', 'assigned', 'ar-col-assigned')}
+        </div>
+        <div class="sq-tbody">
+          ${filtered.length > 0 ? filtered.map(item => _armoryRow(item)).join('') : '<div class="sq-empty">No items match this filter.</div>'}
+        </div>
+      </div>
+    </div>`;
+}
+
+function _armoryRow(item) {
+  const template = getGearTemplate(item.templateId);
+  if (!template) return '';
+  const cat = template.category ? CAT_BADGE_MAP[template.category] : null;
+  const slotBadge = cat || ({
+    optic: { label: 'OPTIC', cls: 'optic' },
+    attachment: { label: 'ATTCH', cls: 'attach' },
+    armor: { label: 'ARMR', cls: 'armor' },
+    utility: { label: 'UTIL', cls: 'utility' }
+  }[item.slot] || { label: '?', cls: 'utility' });
+
+  const qInfo = QUALITY_TIERS[item.quality] || QUALITY_TIERS.common;
+  const qClass = item.quality === 'standard_issue' ? 'standard' : item.quality;
+
+  // Stats summary varies by slot type
+  let statsSummary = '';
+  if (item.slot === 'primary' || item.slot === 'sidearm') {
+    const dmg = Math.round(template.stats.damage * qInfo.mult);
+    const rpm = template.stats.fireRate ? Math.round(60000 / template.stats.fireRate) : '—';
+    const rng = template.stats.range ? Math.round(template.stats.range * DISPLAY_RANGE_M) : '—';
+    statsSummary = `DMG ${dmg} · RNG ${rng}m · ${rpm}rpm`;
+  } else if (item.slot === 'optic') {
+    const mods = template.statMods || {};
+    const parts = [];
+    if (mods.viewRange) parts.push(`+VIS ${mods.viewRange}`);
+    if (mods.accuracy) parts.push(`+ACC ${Math.round(mods.accuracy * 100)}%`);
+    if (mods.range) parts.push(`+RNG ${Math.round(mods.range * 100)}%`);
+    statsSummary = parts.join(' · ') || '—';
+  } else if (item.slot === 'armor') {
+    const mods = template.statMods || {};
+    statsSummary = mods.hp ? `+${mods.hp} HP · ${template.weight}kg` : '—';
+  } else if (item.slot === 'attachment') {
+    const mods = template.statMods || {};
+    const parts = [];
+    if (mods.recoil) parts.push(`${mods.recoil > 0 ? '+' : ''}RECOIL ${Math.round(mods.recoil * 100)}%`);
+    if (mods.accuracy) parts.push(`+ACC ${Math.round(mods.accuracy * 100)}%`);
+    if (mods.fireRate) parts.push(`ROF ${mods.fireRate > 0 ? '+' : ''}${mods.fireRate}ms`);
+    if (mods.magSize) parts.push(`MAG +${mods.magSize}`);
+    statsSummary = parts.join(' · ') || template.name;
+  } else if (item.slot === 'utility') {
+    statsSummary = template.ability ? `${template.ability.toUpperCase()} · ${template.charges} uses` : '—';
+  }
+
+  // Condition
+  const condPct = Math.round((item.condition ?? 1) * 100);
+  const condColor = condPct > 60 ? 'var(--accent-green)' : condPct > 30 ? 'var(--accent-yellow)' : 'var(--accent-red)';
+
+  // Assigned to (with kit context — items in saved kits but not currently worn show the MOS kit name)
+  const roster = Game.roster || [];
+  const assignee = item.assignedTo ? roster.find(r => r.id === item.assignedTo) : null;
+  let assignedChip;
+  if (!assignee) {
+    assignedChip = `<span class="assigned-chip unassigned">Unassigned</span>`;
+  } else {
+    const isWorn = item.equipped !== false;
+    let suffix = '';
+    if (!isWorn) {
+      const kitMos = findKitForItem(assignee, item.id);
+      suffix = kitMos ? ` · ${getRoleLabel(kitMos)} kit` : ' · stored';
+    }
+    assignedChip = `<span class="assigned-chip">${getRankInfo(assignee).abbr} ${assignee.name?.last || ''}${suffix}</span>`;
+  }
+
+  return `
+    <div class="sq-row" data-action="armory-detail" data-item="${item.id}">
+      <span class="ar-col-type"><span class="cat-badge ${slotBadge.cls}">${slotBadge.label}</span></span>
+      <span class="ar-col-name"><span class="ar-name">${template.name}</span></span>
+      <span class="ar-col-quality"><span class="quality-badge ${qClass}">${qInfo.label.toUpperCase()}</span></span>
+      <span class="ar-col-stats">${statsSummary}</span>
+      <span class="ar-col-condition"><div class="cond-bar"><div class="cond-fill" style="width:${condPct}%;background:${condColor}"></div></div><span class="cond-num">${condPct}%</span></span>
+      <span class="ar-col-assigned">${assignedChip}</span>
+    </div>`;
 }
 
 function _motorPoolTabHTML() {
@@ -1996,7 +2027,6 @@ function _initOpsState() {
 
 function _operationsTabHTML() {
   const ctx = _initOpsState();
-  const { ops } = ctx;
   const opsView = Game.opsView || 'squads';
 
   // Sub-tab bar
@@ -2014,47 +2044,38 @@ function _operationsTabHTML() {
     content = _opsSquadsView(ctx);
   }
 
-  // Deploy bar (shared across all views)
-  const deployBar = _opsDeployBar(ctx);
-
   return `
     <div class="operations-tab">
       ${subTabs}
       ${content}
-      ${deployBar}
     </div>
   `;
 }
 
-/** Deploy bar — shared footer with map/wave config + deploy button. */
-function _opsDeployBar(ctx) {
+/** Compact deploy bar rendered in the HQ header — visible on every tab. */
+function _hqHeaderDeployBar() {
+  const ctx = _initOpsState();
   const { ops, highestWave } = ctx;
   const wp = WAVE_POWER_CURVE;
   const wavePower = Math.round(wp.base + ops.startWave * wp.linear + ops.startWave * ops.startWave * wp.quadratic);
   const totalUnits = ops.squads.reduce((sum, sq) => sum + sq.units.length + (sq.vehicleId ? 1 : 0), 0);
   const canDeploy = ops.heroUnit && totalUnits > 0;
 
-  const mapSizeButtons = Object.entries(ENDLESS_MAP_SIZES).map(([key, cfg]) =>
-    `<button class="ops-map-btn ${ops.mapSize === key ? 'active' : ''}" data-action="ops-set-map" data-size="${key}">${cfg.label}</button>`
+  const mapBtns = Object.entries(ENDLESS_MAP_SIZES).map(([key, cfg]) =>
+    `<button class="hq-map-btn ${ops.mapSize === key ? 'active' : ''}" data-action="ops-set-map" data-size="${key}" title="${cfg.label}">${(cfg.label || key)[0].toUpperCase()}</button>`
   ).join('');
+
   const waveOptions = [];
   for (let w = 1; w <= Math.max(1, highestWave || 1); w++) {
-    waveOptions.push(`<option value="${w}" ${w === ops.startWave ? 'selected' : ''}>Wave ${w}</option>`);
+    waveOptions.push(`<option value="${w}" ${w === ops.startWave ? 'selected' : ''}>W${w}</option>`);
   }
 
   return `
-    <div class="ops-deploy-bar">
-      <div class="ops-config-group"><span class="ops-config-label">MAP</span><div class="ops-map-buttons">${mapSizeButtons}</div></div>
-      <div class="ops-config-group"><span class="ops-config-label">WAVE</span><select class="ops-wave-select" data-action="ops-set-wave">${waveOptions.join('')}</select></div>
-      <div class="ops-power-display">
-        <span class="ops-power-label">UNITS</span>
-        <span class="ops-power-val">${totalUnits}</span>
-      </div>
-      <div class="ops-power-display">
-        <span class="ops-power-label">POWER</span>
-        <span class="ops-power-val">${wavePower}</span>
-      </div>
-      <button class="ops-deploy-btn ${canDeploy ? '' : 'disabled'}" data-action="ops-deploy" ${canDeploy ? '' : 'disabled'}>
+    <div class="hq-deploy-bar">
+      <div class="hq-deploy-group"><span class="hq-deploy-label">MAP</span><div class="hq-map-buttons">${mapBtns}</div></div>
+      <div class="hq-deploy-group"><span class="hq-deploy-label">WAVE</span><select class="hq-wave-select" data-action="ops-set-wave">${waveOptions.join('')}</select></div>
+      <div class="hq-deploy-group"><span class="hq-deploy-label">POW</span><span class="hq-deploy-val">${wavePower}</span></div>
+      <button class="hq-deploy-btn ${canDeploy ? '' : 'disabled'}" data-action="ops-deploy" ${canDeploy ? '' : 'disabled'}>
         ${canDeploy ? 'DEPLOY ▶' : 'ASSIGN HERO'}
       </button>
     </div>`;
@@ -2110,76 +2131,78 @@ function _rosterTableRow(s, selected) {
   const rank = getRankInfo(s).abbr;
   const name = s.name?.last || s.name?.first || 'Unknown';
   const isPC = s.isPlayerCharacter;
+  const isHero = Game.opsConfig?.heroUnit === s.id;
   const isChecked = selected.includes(s.id);
   const cs = getEffectiveCombatStats(s);
-  const hpColor = cs.hp >= cs.maxHp * 0.8 ? 'var(--accent-green)' : cs.hp >= cs.maxHp * 0.5 ? 'var(--accent-yellow)' : 'var(--accent-red)';
-  const hpDiff = cs.hp - cs.maxHp;
+  const pctColor = s.hpPercent > 0.6 ? 'var(--accent-green)' : s.hpPercent > 0.3 ? 'var(--accent-yellow)' : 'var(--accent-red)';
   const statusCls = s.status === 'wounded' ? 'status-wounded' : s.status === 'active' ? 'status-active' : 'status-kia';
+  const statusTxt = s.status === 'wounded' ? 'WND' : s.status === 'active' ? 'RDY' : 'KIA';
   const p = s.physicals || {};
 
-  return `<tr class="roster-tr ${isChecked ? 'checked' : ''}" data-action="hq-soldier-detail" data-soldier="${s.id}">
-    <td class="roster-td roster-td-check"><input type="checkbox" class="roster-check" ${isChecked ? 'checked' : ''} data-action="hq-compare-toggle" data-soldier="${s.id}" onclick="event.stopPropagation()"></td>
-    <td class="roster-td roster-td-rank"><canvas class="soldier-insignia" data-rank="${s.rankIndex}" width="32" height="32"></canvas> ${rank}</td>
-    <td class="roster-td roster-td-name">${name}${isPC ? ' <span class="pc-badge">YOU</span>' : ''}</td>
-    <td class="roster-td roster-td-role">${getRoleLabel(s.role)}</td>
-    <td class="roster-td roster-td-hp" style="color:${hpColor}">${cs.hp}/${cs.maxHp} <span style="font-size:0.6rem;color:${hpDiff < 0 ? 'var(--accent-red)' : 'var(--text-secondary)'}">${hpDiff !== 0 ? (hpDiff > 0 ? '+' : '') + hpDiff : ''}</span></td>
-    <td class="roster-td roster-td-stat">${p.vision ?? '—'}</td>
-    <td class="roster-td roster-td-stat">${p.strength ?? '—'}</td>
-    <td class="roster-td roster-td-stat">${p.reflexes ?? '—'}</td>
-    <td class="roster-td roster-td-stat">${p.endurance ?? '—'}</td>
-    <td class="roster-td roster-td-stat">${cs.damage || 0}</td>
-    <td class="roster-td roster-td-stat">${cs.range || 0}</td>
-    <td class="roster-td roster-td-stat">${cs.speed || 0}</td>
-    <td class="roster-td roster-td-stat">${s.battlesServed || 0}</td>
-    <td class="roster-td roster-td-stat">${s.kills || 0}</td>
-    <td class="roster-td roster-td-stat">${Math.round(s.mmr || 0)}</td>
-    <td class="roster-td"><span class="status-label ${statusCls}">${s.status === 'wounded' ? 'WND' : s.status === 'active' ? 'RDY' : 'KIA'}</span></td>
-  </tr>`;
+  return `
+    <div class="sq-row ${isChecked ? 'checked' : ''}" data-action="hq-soldier-detail" data-soldier="${s.id}">
+      <span class="r-col-check"><input type="checkbox" class="roster-compare-check" ${isChecked ? 'checked' : ''} data-soldier="${s.id}" onclick="event.stopPropagation()"></span>
+      <span class="sq-col-mos"><span class="sq-mos-tag">${mosAbbrev(s.role)}</span></span>
+      <span class="sq-col-rank">${rank}</span>
+      <span class="sq-col-name"><span class="sq-name">${name}</span>${isHero ? '<span class="sq-star">★</span>' : ''}${isPC ? '<span class="pc-badge">YOU</span>' : ''}</span>
+      <span class="sq-col-hp">${hpSegments(s.hpPercent)}<span class="sq-hp-num" style="color:${pctColor}">${cs.hp}/${cs.maxHp}</span></span>
+      <span class="r-col-phys">${p.vision ?? '—'}</span>
+      <span class="r-col-phys">${p.strength ?? '—'}</span>
+      <span class="r-col-phys">${p.reflexes ?? '—'}</span>
+      <span class="r-col-phys">${p.endurance ?? '—'}</span>
+      <span class="sq-col-dmg">${cs.damage || '—'}</span>
+      <span class="sq-col-rng">${cs.rangeM || cs.range || '—'}m</span>
+      <span class="sq-col-spd">${cs.speedKmh ?? Math.round((cs.speed || 0) * DISPLAY_SPEED_KMH)}</span>
+      <span class="r-col-num">${s.battlesServed || 0}</span>
+      <span class="r-col-num">${s.kills || 0}</span>
+      <span class="r-col-mmr">${Math.round(s.mmr || 0)}</span>
+      <span class="r-col-status ${statusCls}">${statusTxt}</span>
+    </div>`;
 }
 
 /** Full roster table view with filter bar, sortable headers, compare button. */
 function _rosterTableView(roster, selected) {
   const { sorted, roleFilter } = _filterAndSortRoster(roster);
+  const sortKey = Game.hqSortKey || 'name';
+  const sortDir = Game.hqSortDir || 'desc';
   const roleFilters = ['all', 'rifleman', 'medic', 'engineer', 'heavy_gunner', 'tc', 'gunner', 'driver'];
   const compareCount = selected.length;
 
   const filterBar = `
-    <div class="ops-filter-bar" style="margin-bottom:8px;">
-      ${roleFilters.map(r => `<button class="ops-filter-btn ${roleFilter === r ? 'active' : ''}" data-action="hq-filter-role" data-role="${r}">${r === 'all' ? 'ALL' : getRoleLabel(r)}</button>`).join('')}
-      ${compareCount >= 2 ? `<button class="ops-filter-btn" data-action="hq-compare" style="margin-left:auto;color:var(--accent-blue);border-color:var(--accent-blue);">COMPARE (${compareCount})</button>` : ''}
-      ${compareCount > 0 ? `<button class="ops-filter-btn" data-action="hq-clear-selection" style="color:var(--text-secondary);">CLEAR</button>` : ''}
+    <div class="sq-filter-bar">
+      ${roleFilters.map(r => `<button class="sq-filter-chip ${roleFilter === r ? 'active' : ''}" data-action="hq-filter-role" data-role="${r}">${r === 'all' ? 'All' : getRoleLabel(r)}</button>`).join('')}
+      ${compareCount >= 2 ? `<button class="sq-filter-chip" data-action="hq-compare" style="color:var(--accent-blue);border-color:var(--accent-blue);margin-left:auto;">COMPARE (${compareCount})</button>` : ''}
+      ${compareCount > 0 ? `<button class="sq-filter-chip" data-action="hq-clear-selection">CLEAR</button>` : ''}
     </div>`;
 
-  const table = `
-    <div class="roster-table-wrap">
-      <table class="roster-table">
-        <thead>
-          <tr>
-            <th class="roster-th" style="width:30px;"></th>
-            ${_sortHeader('Rank', 'rank')}
-            ${_sortHeader('Name', 'name')}
-            ${_sortHeader('Role', 'role')}
-            ${_sortHeader('Health', 'hp')}
-            ${_sortHeader('VIS', 'vis')}
-            ${_sortHeader('STR', 'str')}
-            ${_sortHeader('REF', 'ref')}
-            ${_sortHeader('END', 'end')}
-            ${_sortHeader('DMG', 'damage')}
-            ${_sortHeader('RNG', 'range')}
-            ${_sortHeader('SPD', 'speed')}
-            ${_sortHeader('Btl', 'battles')}
-            ${_sortHeader('Kills', 'kills')}
-            ${_sortHeader('MMR', 'mmr')}
-            ${_sortHeader('Status', 'status')}
-          </tr>
-        </thead>
-        <tbody>
-          ${sorted.map(s => _rosterTableRow(s, selected)).join('')}
-        </tbody>
-      </table>
-    </div>`;
+  const sortArrow = (key) => sortKey === key ? (sortDir === 'desc' ? ' ▼' : ' ▲') : '';
+  const sortHead = (label, key, colClass) => `<button class="sq-th ${colClass} ${sortKey === key ? 'active' : ''}" data-action="hq-sort" data-key="${key}">${label}${sortArrow(key)}</button>`;
 
-  return filterBar + table;
+  return `
+    ${filterBar}
+    <div class="sq-roster-table">
+      <div class="sq-th-row">
+        <span class="sq-th r-col-check"></span>
+        ${sortHead('MOS', 'role', 'sq-col-mos')}
+        ${sortHead('RNK', 'rank', 'sq-col-rank')}
+        ${sortHead('NAME', 'name', 'sq-col-name')}
+        ${sortHead('HEALTH', 'hp', 'sq-col-hp')}
+        ${sortHead('VIS', 'vis', 'r-col-phys')}
+        ${sortHead('STR', 'str', 'r-col-phys')}
+        ${sortHead('REF', 'ref', 'r-col-phys')}
+        ${sortHead('END', 'end', 'r-col-phys')}
+        ${sortHead('DMG', 'damage', 'sq-col-dmg')}
+        ${sortHead('RNG', 'range', 'sq-col-rng')}
+        ${sortHead('SPD', 'speed', 'sq-col-spd')}
+        ${sortHead('BTL', 'battles', 'r-col-num')}
+        ${sortHead('KILLS', 'kills', 'r-col-num')}
+        ${sortHead('MMR', 'mmr', 'r-col-mmr')}
+        ${sortHead('STATUS', 'status', 'r-col-status')}
+      </div>
+      <div class="sq-tbody">
+        ${sorted.map(s => _rosterTableRow(s, selected)).join('') || '<div class="sq-empty">No soldiers match this filter.</div>'}
+      </div>
+    </div>`;
 }
 
 /** Soldier detail modal — dossier card layout. */
@@ -2200,7 +2223,8 @@ function _soldierDetailModal(soldierId) {
   let tabContent;
   if (detailTab === 'personality') tabContent = _dossierPersonality(s);
   else if (detailTab === 'service') tabContent = _dossierService(s);
-  else tabContent = _dossierCombatStats(s, cs, expanded) + _dossierPhysicals(s);
+  else if (detailTab === 'equipment') tabContent = _dossierEquipment(s, cs);
+  else tabContent = _dossierCombatTab(s, cs);
 
   return `
     <div class="soldier-detail-modal">
@@ -2210,10 +2234,13 @@ function _soldierDetailModal(soldierId) {
         ${_dossierMosPicker(s, selectedRole)}
         <div class="detail-tabs">
           <button class="detail-tab ${detailTab === 'combat' ? 'active' : ''}" data-action="hq-detail-tab" data-tab="combat">COMBAT</button>
+          <button class="detail-tab ${detailTab === 'equipment' ? 'active' : ''}" data-action="hq-detail-tab" data-tab="equipment">EQUIPMENT</button>
           <button class="detail-tab ${detailTab === 'personality' ? 'active' : ''}" data-action="hq-detail-tab" data-tab="personality">PERSONALITY</button>
           <button class="detail-tab ${detailTab === 'service' ? 'active' : ''}" data-action="hq-detail-tab" data-tab="service">SERVICE</button>
         </div>
         <div class="detail-body">${tabContent}</div>
+        ${_renderEquipPicker()}
+        ${_renderMosSwitchPrompt()}
       </div>
     </div>`;
 }
@@ -2236,49 +2263,99 @@ function _dossierHeader(s) {
 
 function _dossierMosPicker(s, selectedRole) {
   const training = s.training || {};
-  const roles = Object.keys(training).filter(r => training[r] > 0);
-  if (!roles.includes(s.mos)) roles.unshift(s.mos);
+  // Show all trained roles plus the current MOS, sorted: current first, then by training desc
+  const roles = Array.from(new Set([s.mos, ...Object.keys(training)]));
+  roles.sort((a, b) => {
+    if (a === selectedRole) return -1;
+    if (b === selectedRole) return 1;
+    return (training[b] || 0) - (training[a] || 0);
+  });
+
   const tPct = Math.round((training[selectedRole] || 0) * 100);
-  const options = roles.map(r => {
+  const tier = proficiencyTier(tPct);
+  const stars = proficiencyStars(tPct);
+  const open = Game.hqDetailMosOpen;
+  const profExpanded = Game.hqDetailProfExpanded;
+
+  const optionsHtml = roles.map(r => {
     const rPct = Math.round((training[r] || 0) * 100);
-    const isPrimary = r === s.mos;
-    return `<option value="${r}" ${r === selectedRole ? 'selected' : ''}>${getRoleLabel(r)} ${rPct}%${isPrimary ? ' ★' : ''}</option>`;
+    const rTier = proficiencyTier(rPct);
+    const rStars = proficiencyStars(rPct);
+    const isCurrent = r === selectedRole;
+    const locked = rPct === 0 && r !== s.mos;
+    return `
+      <div class="mos-option ${isCurrent ? 'current' : ''} ${locked ? 'locked' : ''}"
+           data-action="hq-mos-select" data-soldier="${s.id}" data-role="${r}">
+        <span class="opt-name">${getRoleLabel(r)}</span>
+        <span class="opt-stars">${renderStarPips(rStars)}</span>
+        <span class="opt-tier">${rTier.name}</span>
+        <span class="opt-pct">${rPct}%</span>
+      </div>`;
   }).join('');
-  const isNotPrimary = selectedRole !== s.mos;
+
   return `
     <div class="dossier-mos">
       <span class="detail-stat-label">MOS</span>
-      <select class="dossier-mos-select">${options}</select>
-      <span class="dossier-training">Training: ${tPct}%</span>
-      ${isNotPrimary ? `<button class="dossier-set-primary" data-action="hq-set-primary-mos" data-soldier="${s.id}" data-role="${selectedRole}">Set Primary</button>` : ''}
+      <span class="mos-select-fake ${open ? 'active' : ''}" data-action="hq-detail-mos-toggle">
+        ${getRoleLabel(selectedRole)}
+        <span class="mos-prof-inline">${tPct}%</span>
+      </span>
+      <span class="header-prof ${profExpanded ? 'expanded' : ''}" data-action="hq-detail-prof-toggle">
+        <span class="h-pips">${renderStarPips(stars)}</span>
+        <span class="h-tier">${tier.name}</span>
+        <span class="h-chev">▸</span>
+      </span>
+      ${open ? `<div class="mos-dropdown-panel">${optionsHtml}</div>` : ''}
     </div>`;
 }
 
+// ─── Proficiency tier + star helpers (S5: 1 star per 20% threshold) ────
+const PROF_TIERS = [
+  { min: 0,  max: 19,  stars: 0, name: 'TRAINEE' },
+  { min: 20, max: 39,  stars: 1, name: 'RECRUIT' },
+  { min: 40, max: 59,  stars: 2, name: 'REGULAR' },
+  { min: 60, max: 79,  stars: 3, name: 'VETERAN' },
+  { min: 80, max: 100, stars: 4, name: 'MASTER'  }
+];
+
+function proficiencyTier(pct) {
+  for (const t of PROF_TIERS) if (pct >= t.min && pct <= t.max) return t;
+  return PROF_TIERS[0];
+}
+function proficiencyStars(pct) {
+  if (pct >= 100) return 5;
+  return Math.min(5, Math.floor(pct / 20));
+}
+function nextProfTier(pct) {
+  for (const t of PROF_TIERS) if (pct < t.min) return { name: t.name, threshold: t.min, delta: t.min - pct };
+  if (pct < 100) return { name: 'MASTER (5★)', threshold: 100, delta: 100 - pct };
+  return null;
+}
+function renderStarPips(filled, max = 5) {
+  let html = '';
+  for (let i = 0; i < max; i++) html += i < filled ? '★' : '<span class="empty">★</span>';
+  return html;
+}
+
 /** Two-tone stat bar: base color + modifier extension. Tap to expand breakdown. */
+/**
+ * Render a stat row with a base/mod bar. Values are already in display units
+ * (rpm, meters, km/h, etc.) — caller does the conversion. `unit` is just the
+ * suffix string appended to the value and to each modifier delta.
+ */
 function _dossierStatBar(label, baseVal, effectiveVal, maxVal, unit, mods, statKey, expanded) {
   const basePct = Math.min(100, (baseVal / maxVal) * 100);
   const effPct = Math.min(100, (effectiveVal / maxVal) * 100);
   const modPct = effPct - basePct;
   const isExpanded = expanded === statKey;
+  const display = `${Math.round(effectiveVal)}${unit}`;
 
-  // Format display value with units
-  let display;
-  const useMetric = Game.settings?.useMetric !== false;
-  if (unit === 'rpm') display = `${Math.round(60000 / effectiveVal)} rpm`;
-  else if (unit === 'dist') display = `${Math.round(effectiveVal / 10)}m`;
-  else if (unit === 'speed') {
-    const mps = effectiveVal / 10;
-    display = useMetric ? `${Math.round(mps * 3.6)} km/h` : `${Math.round(mps * 2.237)} mph`;
-  }
-  else display = `${Math.round(effectiveVal)}`;
-
-  // Color-code modifiers by source
   const modColors = { 'Toughness': '#f59e0b', 'Faster Reload': '#8b5cf6', 'Keen Eye': '#3b82f6', 'Stamina': '#10b981' };
   const modColor = modPct < 0 ? 'var(--accent-red)' : (mods.length === 1 ? (modColors[mods[0].source] || 'var(--accent-blue)') : 'var(--accent-blue)');
-  const modColorMap = { 'Toughness': '#f59e0b', 'Faster Reload': '#8b5cf6', 'Keen Eye': '#3b82f6', 'Stamina': '#10b981' };
   const breakdown = mods.length > 0 ? mods.map(m => {
-    const c = modColorMap[m.source] || (m.value > 0 ? 'var(--accent-green)' : 'var(--accent-red)');
-    return `<div class="detail-mod-row"><span style="color:${c}">${m.icon || '●'} ${m.source}: ${m.value > 0 ? '+' : ''}${Math.round(m.value)}</span></div>`;
+    const c = modColors[m.source] || (m.value >= 0 ? 'var(--accent-green)' : 'var(--accent-red)');
+    const sign = m.value >= 0 ? '+' : '';
+    return `<div class="detail-mod-row"><span style="color:${c}">${m.icon || '●'} ${m.source}: ${sign}${Math.round(m.value)}${unit}</span></div>`;
   }).join('') : '';
 
   return `
@@ -2293,49 +2370,373 @@ function _dossierStatBar(label, baseVal, effectiveVal, maxVal, unit, mods, statK
     ${isExpanded && breakdown ? `<div class="dossier-breakdown">${breakdown}</div>` : ''}`;
 }
 
-function _dossierCombatStats(s, cs, expanded) {
-  const mods = cs.modifiers || [];
-  const hpMods = mods.filter(m => m.stat === 'hp');
-  const dmgMods = mods.filter(m => m.stat === 'damage');
-  const frMods = mods.filter(m => m.stat === 'fireRate');
-  const rngMods = mods.filter(m => m.stat === 'range');
-  const spdMods = mods.filter(m => m.stat === 'speed');
+// ─── Combat tab — pill expand + SOLDIER + EQUIPPED ─────────────
 
-  const baseHp = cs.maxHp - hpMods.reduce((s, m) => s + m.value, 0);
-  const baseDmg = cs.damage - dmgMods.reduce((s, m) => s + m.value, 0);
-  const baseFr = cs.fireRate - frMods.reduce((s, m) => s + m.value, 0);
-  const baseRng = cs.range - rngMods.reduce((s, m) => s + m.value, 0);
-  const baseSpd = cs.speed - spdMods.reduce((s, m) => s + m.value, 0);
+function _dossierCombatTab(s, cs) {
+  return _dossierProfPanel(s, cs) + _dossierSoldierSection(s, cs) + _dossierEquippedSection(s, cs);
+}
+
+function _dossierProfPanel(s, cs) {
+  if (!Game.hqDetailProfExpanded) return '';
+  const role = Game.hqDetailRole || s.role;
+  const tPct = Math.round((s.training?.[role] || 0) * 100);
+  const t = tPct / 100;
+  const tier = proficiencyTier(tPct);
+  const next = nextProfTier(tPct);
+  const ph = s.physicals || {};
+  const effRangePct = Math.round((0.6 + t * 0.4) * 100);
+  const reloadPct = Math.round((ph.reflexes / 100) * t * 0.3 * 100);
+  const recoilPct = Math.round((ph.strength / 100) * t * 0.3 * 100);
+  const tMult = t.toFixed(2);
+
+  const ladder = PROF_TIERS.map(tt => {
+    const isCurrent = tt.min === tier.min;
+    const starStr = tt.stars === 0 ? '☆' : '★'.repeat(tt.stars);
+    return `<div class="prof-tier-cell ${isCurrent ? 'current' : ''}">${starStr}<br>${tt.name}<span class="tier-range">${tt.min}–${tt.max}</span></div>`;
+  }).join('');
 
   return `
-    <div class="dossier-section">
-      ${_dossierStatBar('HP', baseHp, cs.hp, cs.maxHp * 1.2, 'hp', hpMods, 'hp', expanded)}
-      ${_dossierStatBar('DMG', baseDmg, cs.damage, 50, '', dmgMods, 'damage', expanded)}
-      ${_dossierStatBar('ROF', baseFr, cs.fireRate, 2000, 'rpm', frMods, 'fireRate', expanded)}
-      ${_dossierStatBar('RNG', baseRng, cs.range, 600, 'dist', rngMods, 'range', expanded)}
-      ${_dossierStatBar('SPD', baseSpd, cs.speed, 100, 'speed', spdMods, 'speed', expanded)}
+    <div class="prof-panel">
+      <div class="prof-panel-head">
+        <span class="prof-panel-title">PROFICIENCY</span>
+        <span class="prof-panel-sub">${tier.name} · ${tPct}% · ×${tMult} to gear</span>
+      </div>
+      <div class="prof-section-label">WHAT IT SCALES</div>
+      <div class="prof-effect-row">
+        <span class="prof-effect-key">Optic bonuses</span>
+        <span class="prof-effect-mult">×${tMult}</span>
+        <span class="prof-effect-note">range / accuracy / sight bonuses</span>
+      </div>
+      <div class="prof-effect-row">
+        <span class="prof-effect-key">Attachment bonuses</span>
+        <span class="prof-effect-mult">×${tMult}</span>
+        <span class="prof-effect-note">recoil / accuracy / mag mods</span>
+      </div>
+      <div class="prof-effect-row">
+        <span class="prof-effect-key">Effective range</span>
+        <span class="prof-effect-mult">${effRangePct}% max</span>
+        <span class="prof-effect-note">untrained 60% → you ${effRangePct}% → master 100%</span>
+      </div>
+      <div class="prof-effect-row">
+        <span class="prof-effect-key">Reload (× REF ${ph.reflexes || 0})</span>
+        <span class="prof-effect-mult">−${reloadPct}%</span>
+        <span class="prof-effect-note">REF × proficiency × 0.3 of base reload</span>
+      </div>
+      <div class="prof-effect-row">
+        <span class="prof-effect-key">Recoil (× STR ${ph.strength || 0})</span>
+        <span class="prof-effect-mult">−${recoilPct}%</span>
+        <span class="prof-effect-note">STR × proficiency tightens groupings</span>
+      </div>
+      <div class="prof-section-label">TIER LADDER · stars accrue at thresholds</div>
+      <div class="prof-ladder">${ladder}</div>
+      ${next ? `<div class="prof-next">+${next.delta}% to reach <strong>${next.name}</strong>${next.threshold === 100 ? ' — 5-star mastery' : ''}.</div>` : ''}
     </div>`;
 }
 
-function _dossierPhysicals(s) {
-  const p = s.physicals || {};
-  const segBar = (label, val) => {
-    const pct = Math.min(100, val || 0);
-    const segs = 10;
-    const filled = Math.round(segs * pct / 100);
-    const color = pct >= 60 ? 'var(--accent-green)' : pct >= 30 ? 'var(--accent-yellow)' : 'var(--accent-red)';
-    let bars = '';
-    for (let i = 0; i < segs; i++) bars += `<span class="hp-seg ${i < filled ? 'filled' : ''}" style="${i < filled ? 'background:' + color : ''}"></span>`;
-    return `<div class="detail-stat-row"><span class="detail-stat-label">${label}</span><div class="hp-segments" style="flex:1;margin:0 4px;">${bars}</div><span class="detail-stat-val">${Math.round(val)}</span></div>`;
-  };
+function _dossierSoldierSection(s, cs) {
+  const ph = s.physicals || {};
+  const expanded = Game.hqDetailExpanded || null;
+  const visPct = ph.vision || 0;
+  const strPct = ph.strength || 0;
+  const refPct = ph.reflexes || 0;
+  const endPct = ph.endurance || 0;
+
+  const sightM = Math.round((cs.viewRange || 400) * DISPLAY_RANGE_M);
+  const hpCur = Math.round(cs.hp);
+  const hpMax = Math.round(cs.maxHp);
+  const wounded = hpCur < hpMax;
+  const role = Game.hqDetailRole || s.role;
+  const t = s.training?.[role] || 0;
+  const reloadPct = Math.round((refPct / 100) * t * 0.3 * 100);
+  const spdKmh = cs.speedKmh != null ? cs.speedKmh : Math.round((cs.speed || 0) * DISPLAY_SPEED_KMH);
+
+  const rows = [
+    {
+      key: 'vis', label: 'VIS', pct: visPct,
+      outKey: 'SIGHT', outVal: `${sightM}m`,
+      details: [
+        { key: 'SIGHT', val: `${sightM}m`, note: 'view range — see units at distance (untrained ~400m, max ~700m)' },
+        { key: 'CRIT', val: 'pending', note: 'small crit chance bonus (planned)' }
+      ]
+    },
+    {
+      key: 'str', label: 'STR', pct: strPct,
+      outKey: 'HP',
+      outVal: wounded ? `${hpCur}` : `${hpMax}`,
+      outClass: wounded ? 'wounded' : '',
+      outMax: wounded ? `/${hpMax}` : '',
+      details: [
+        { key: 'HP MAX', val: `${hpMax}`, note: `STR ${strPct} → HP base (range 120–220) + armor` },
+        { key: 'RECOIL', val: 'tighter', note: 'STR × proficiency reduces spread under fire' }
+      ]
+    },
+    {
+      key: 'ref', label: 'REF', pct: refPct,
+      outKey: 'RELOAD', outVal: `−${reloadPct}%`,
+      details: [
+        { key: 'RELOAD', val: `−${reloadPct}%`, note: 'REF × proficiency × 0.3 of weapon base reload' },
+        { key: 'STABILITY', val: 'recoil settle', note: 'faster recoil recovery between bursts' },
+        { key: 'TURN RATE', val: '+vehicle', note: 'faster turret swing onto new targets' },
+        { key: 'TARGET ACQ', val: 'see Personality', note: 'currently driven by Awareness/Initiative, not REF' }
+      ]
+    },
+    {
+      key: 'end', label: 'END', pct: endPct,
+      outKey: 'SPD', outVal: `${spdKmh} km/h`,
+      details: [
+        { key: 'SPEED', val: `${spdKmh} km/h`, note: `END ${endPct} → base movement, reduced by armor weight` },
+        { key: 'SUPPRESS', val: 'resist', note: 'less affected by incoming fire suppression' }
+      ]
+    }
+  ];
+
   return `
-    <div class="dossier-section">
-      <div class="dossier-phys-grid">
-        ${segBar('VIS', p.vision || 0)}
-        ${segBar('STR', p.strength || 0)}
-        ${segBar('REF', p.reflexes || 0)}
-        ${segBar('END', p.endurance || 0)}
+    <div class="section-card soldier-card">
+      <div class="section-head">
+        <span class="section-title">SOLDIER</span>
+        <span class="section-sub">physical → produces · tap to expand</span>
       </div>
+      ${rows.map(r => _dossierPhysRow(r, expanded === r.key)).join('')}
+    </div>`;
+}
+
+function _dossierPhysRow(r, isExpanded) {
+  const detailHtml = isExpanded ? `
+    <div class="phys-detail">
+      ${r.details.map(d => `
+        <div class="phys-detail-row">
+          <span class="phys-detail-key">${d.key}</span>
+          <span class="phys-detail-val"><span class="num">${d.val}</span> ${d.note}</span>
+        </div>`).join('')}
+    </div>` : '';
+  return `
+    <div class="phys-row ${isExpanded ? 'expanded' : ''}" data-action="hq-detail-expand" data-stat="${r.key}">
+      <span class="stat-label">${r.label}</span>
+      <div class="stat-bar"><div class="stat-bar-fill soldier" style="width:${r.pct}%"></div></div>
+      <span class="phys-num">${r.pct}</span>
+      <span class="phys-arrow">→</span>
+      <span class="phys-out">
+        <span class="out-key">${r.outKey}</span>
+        <span class="out-val ${r.outClass || ''}">${r.outVal}</span>
+        ${r.outMax ? `<span class="out-max">${r.outMax}</span>` : ''}
+      </span>
+      <span class="phys-chevron">▸</span>
+    </div>
+    ${detailHtml}`;
+}
+
+function _dossierEquippedSection(s, cs) {
+  const primary = getEquipped(s.id, 'primary');
+  if (!primary) {
+    return `
+      <div class="section-card weapon">
+        <div class="section-head weapon">
+          <span class="section-title weapon">🔫 NO PRIMARY EQUIPPED</span>
+        </div>
+        <div class="no-weapon">Equip a weapon in the EQUIPMENT tab.</div>
+      </div>`;
+  }
+  const template = getWeaponTemplate(primary.templateId);
+  if (!template) return '';
+  const qInfo = QUALITY_TIERS[primary.quality] || QUALITY_TIERS.common;
+  const qClass = primary.quality === 'standard_issue' ? 'standard' : primary.quality;
+  const condPct = Math.round((primary.condition ?? 1) * 100);
+
+  const rpm = cs.fireRate > 0 ? Math.round(60000 / cs.fireRate) : 0;
+  const rngM = Math.round((cs.range || 0) * DISPLAY_RANGE_M);
+  const accPct = Math.round((cs.accuracy || 0) * 100);
+  const magSize = cs.magSize || 0;
+  const reloadS = ((cs.reloadTime || 0) / 1000).toFixed(1);
+
+  const segs = 10;
+  const filled = Math.round(segs * condPct / 100);
+  const condColor = condPct > 60 ? 'var(--accent-green)' : condPct > 30 ? 'var(--accent-yellow)' : 'var(--accent-red)';
+  let condSegs = '';
+  for (let i = 0; i < segs; i++) {
+    condSegs += `<span class="cond-seg ${i < filled ? 'filled' : ''}" style="${i < filled ? 'background:' + condColor : ''}"></span>`;
+  }
+
+  const statRow = (label, val, max, unit, extra) => {
+    const pct = max > 0 ? Math.min(100, (val / max) * 100) : 0;
+    return `
+      <div class="weapon-stat-row">
+        <span class="stat-label">${label}</span>
+        <div class="stat-bar"><div class="stat-bar-fill weapon" style="width:${pct}%"></div></div>
+        <span class="stat-val">${val}${unit || ''}${extra || `<span class="stat-max">/${max}</span>`}</span>
+      </div>`;
+  };
+
+  return `
+    <div class="section-card weapon">
+      <div class="section-head weapon">
+        <span class="section-title weapon">🔫 ${template.name}</span>
+        <span class="quality-badge ${qClass}">${qInfo.label.toUpperCase()}</span>
+        <span class="cond-segments">${condSegs}</span>
+      </div>
+      <div class="weapon-stat-grid">
+        ${statRow('DMG', cs.damage, 80, '')}
+        ${statRow('ROF', rpm, 1200, ' rpm')}
+        ${statRow('RNG', rngM, 400, 'm')}
+        ${statRow('ACC', accPct, 100, '%', '<span class="stat-max"></span>')}
+        ${statRow('MAG', magSize, 200, '')}
+        ${statRow('RLD', reloadS, 6, 's', '<span class="stat-max"></span>')}
+      </div>
+    </div>`;
+}
+
+// ─── Soldier dossier — EQUIPMENT tab ──────────────────────────
+
+const EQUIP_SLOTS = [
+  { key: 'primary',    label: 'PRIMARY' },
+  { key: 'sidearm',    label: 'SIDEARM' },
+  { key: 'optic',      label: 'OPTIC' },
+  { key: 'attachment', label: 'ATTACHMENT' },
+  { key: 'armor',      label: 'ARMOR' },
+  { key: 'utility',    label: 'UTILITY' }
+];
+
+function _dossierEquipment(s, cs) {
+  const slots = EQUIP_SLOTS.map(slotDef => _equipSlotCard(s, slotDef.key, slotDef.label)).join('');
+  const mos = s.mos || s.role;
+  const dirty = kitIsDirty(s, mos);
+  const kitExists = hasKit(s, mos);
+  const mosLabel = getRoleLabel(mos);
+  const saveLabel = kitExists
+    ? (dirty ? `Save changes to ${mosLabel} kit` : `${mosLabel} kit saved`)
+    : `Save as ${mosLabel} kit`;
+  const saveDisabled = kitExists && !dirty;
+  return `
+    <div class="equip-summary">
+      <div class="equip-stat"><div class="equip-stat-val">${cs.hp || '—'}</div><div class="equip-stat-label">HEALTH</div></div>
+      <div class="equip-stat"><div class="equip-stat-val">${cs.damage || '—'}</div><div class="equip-stat-label">DAMAGE</div></div>
+      <div class="equip-stat"><div class="equip-stat-val">${cs.rangeM || cs.range || '—'}m</div><div class="equip-stat-label">RANGE</div></div>
+      <div class="equip-stat"><div class="equip-stat-val">${cs.speedKmh || Math.round((cs.speed || 0) * DISPLAY_SPEED_KMH)}<span style="font-size:0.55rem">km/h</span></div><div class="equip-stat-label">SPEED</div></div>
+      <div class="equip-stat"><div class="equip-stat-val">${(cs.weight || 0).toFixed(1)}</div><div class="equip-stat-label">WEIGHT</div></div>
+    </div>
+    <div class="equip-grid">
+      ${slots}
+    </div>
+    <div class="equip-kit-row">
+      <button class="equip-kit-btn ${dirty ? 'dirty' : ''}" data-action="equip-save-kit" data-soldier="${s.id}" data-mos="${mos}" ${saveDisabled ? 'disabled' : ''}>
+        ${saveDisabled ? '✓ ' : ''}${saveLabel}
+      </button>
+    </div>`;
+}
+
+function _equipSlotCard(s, slot, label) {
+  const item = getEquipped(s.id, slot);
+  if (!item) {
+    return `
+      <div class="equip-slot empty" data-action="equip-open-picker" data-soldier="${s.id}" data-slot="${slot}">
+        <span class="equip-slot-chevron">▾</span>
+        <div class="equip-slot-label">${label}</div>
+        <div class="equip-slot-empty-text">+ Add ${label.toLowerCase()}</div>
+      </div>`;
+  }
+  const template = getGearTemplate(item.templateId);
+  const qInfo = QUALITY_TIERS[item.quality] || QUALITY_TIERS.common;
+  const qClass = item.quality === 'standard_issue' ? 'standard' : item.quality;
+  const condPct = Math.round((item.condition ?? 1) * 100);
+  const compat = canEquip(s, item);
+  const incompatible = !compat.valid;
+  let statsLine = '';
+  if (slot === 'primary' || slot === 'sidearm') {
+    const dmg = Math.round(template.stats.damage * qInfo.mult);
+    const rngM = Math.round(template.stats.range * DISPLAY_RANGE_M);
+    statsLine = `DMG ${dmg} · ${rngM}m · ${condPct}%`;
+  } else if (slot === 'armor' && template.statMods?.hp) {
+    statsLine = `+${template.statMods.hp} HP · ${condPct}%`;
+  } else if (slot === 'utility' && template.ability) {
+    statsLine = `${template.ability.toUpperCase()} · ${template.charges} uses`;
+  } else {
+    statsLine = `${condPct}%`;
+  }
+  return `
+    <div class="equip-slot ${incompatible ? 'incompatible' : ''}" data-action="equip-open-picker" data-soldier="${s.id}" data-slot="${slot}">
+      <span class="equip-slot-chevron">▾</span>
+      <div class="equip-slot-label">${label}${incompatible ? ' <span class="equip-incompat-tag">INCOMPATIBLE</span>' : ''}</div>
+      <div class="equip-slot-name">${template.name} <span class="quality-badge ${qClass}">${qInfo.label.toUpperCase()}</span></div>
+      <div class="equip-slot-stats">${incompatible ? compat.reason : statsLine}</div>
+    </div>`;
+}
+
+function _renderMosSwitchPrompt() {
+  const p = Game.mosSwitchPrompt;
+  if (!p) return '';
+  const oldMosLabel = getRoleLabel(p.oldMos);
+  const newMosLabel = getRoleLabel(p.newMos);
+  const kitExists = p.kitExists;
+  return `
+    <div class="sq-popover-backdrop"></div>
+    <div class="picker mos-prompt">
+      <div class="picker-title">SWITCH TO ${newMosLabel}?</div>
+      <div class="mos-prompt-msg">
+        ${kitExists
+          ? `Your current loadout differs from the saved ${oldMosLabel} kit.`
+          : `You haven't saved a ${oldMosLabel} kit yet.`}
+        Save before switching?
+      </div>
+      <button class="mos-prompt-btn save" data-action="mos-save-and-switch">Save ${oldMosLabel} kit & switch</button>
+      <button class="mos-prompt-btn discard" data-action="mos-discard-and-switch">Discard changes & switch</button>
+      <button class="mos-prompt-btn cancel" data-action="mos-cancel-switch">Cancel</button>
+    </div>`;
+}
+
+function _renderEquipPicker() {
+  const p = Game.equipPicker;
+  if (!p) return '';
+  const roster = Game.roster || [];
+  const soldier = roster.find(s => s.id === p.soldierId);
+  if (!soldier) return '';
+  const slot = p.slot;
+  const slotLabel = (EQUIP_SLOTS.find(s => s.key === slot) || { label: slot.toUpperCase() }).label;
+  const currentItem = getEquipped(soldier.id, slot);
+
+  // Candidates: items matching slot that this soldier could wear:
+  //   1. Items already owned by this soldier (in any of their kits or currently equipped)
+  //   2. Truly unassigned items in armory
+  const armory = Game.armory?.items || [];
+  const candidates = armory.filter(i => i.slot === slot && (!i.assignedTo || i.assignedTo === soldier.id));
+
+  const optionRows = candidates.map(item => {
+    const template = getGearTemplate(item.templateId);
+    if (!template) return '';
+    const qInfo = QUALITY_TIERS[item.quality] || QUALITY_TIERS.common;
+    const qClass = item.quality === 'standard_issue' ? 'standard' : item.quality;
+    const isCurrent = currentItem && currentItem.id === item.id;
+    const compat = canEquip(soldier, item);
+    const isCompat = compat.valid || isCurrent;
+    // Kit context — if owned by this soldier but in a different MOS's kit
+    let kitSuffix = '';
+    if (item.assignedTo === soldier.id && !isCurrent) {
+      const kitMos = findKitForItem(soldier, item.id);
+      if (kitMos) kitSuffix = ` <span class="picker-kit-tag">in ${getRoleLabel(kitMos)} kit</span>`;
+      else kitSuffix = ` <span class="picker-kit-tag">owned</span>`;
+    }
+    let statSummary = '';
+    if (slot === 'primary' || slot === 'sidearm') {
+      const dmg = Math.round(template.stats.damage * qInfo.mult);
+      statSummary = `DMG ${dmg} · ${Math.round((item.condition ?? 1) * 100)}%`;
+    } else if (slot === 'armor' && template.statMods?.hp) {
+      statSummary = `+${template.statMods.hp} HP · ${Math.round((item.condition ?? 1) * 100)}%`;
+    } else {
+      statSummary = `${Math.round((item.condition ?? 1) * 100)}%`;
+    }
+    const meta = isCompat ? statSummary : compat.reason;
+    return `
+      <button class="picker-option ${isCurrent ? 'current' : ''} ${!isCompat ? 'disabled' : ''}" ${isCompat ? `data-action="equip-assign" data-item="${item.id}"` : 'disabled'}>
+        <span class="radio"></span>
+        <span class="name">${template.name} <span class="quality-badge ${qClass}">${qInfo.label.split(' ')[0].toUpperCase().slice(0,3)}</span>${kitSuffix}</span>
+        <span class="meta">${meta}</span>
+      </button>`;
+  }).join('');
+
+  return `
+    <div class="sq-popover-backdrop" data-action="equip-close-picker"></div>
+    <div class="picker">
+      <div class="picker-title">SELECT ${slotLabel} · ${getRoleLabel(soldier.role)} compatible</div>
+      ${optionRows || '<div class="picker-empty">No items available for this slot.</div>'}
+      ${currentItem ? `<div class="picker-divider"></div><button class="picker-option" data-action="equip-unequip" data-soldier="${soldier.id}" data-slot="${slot}" style="color:var(--accent-red)"><span style="width:12px"></span><span class="name">Unequip ${slotLabel.toLowerCase()}</span></button>` : ''}
     </div>`;
 }
 
@@ -2415,258 +2816,849 @@ function _opsFormationView(ctx) {
 }
 
 /** SQUADS sub-view — squad tree + available roster. */
+// ─── Operations — Battle Roster (single column + persistent action panel) ───
+
+const MOS_ABBREV = {
+  rifleman: 'RFL', medic: 'MED', engineer: 'ENG', heavy_gunner: 'HVY',
+  tc: 'TC', gunner: 'GNR', driver: 'DRV'
+};
+const mosAbbrev = (role) => MOS_ABBREV[role] || (role || '').slice(0, 3).toUpperCase();
+
 function _opsSquadsView(ctx) {
-  const { ops, roster, officers, vehicles, available, highestWave } = ctx;
+  return `
+    <div class="ops-roster-split">
+      <div class="ops-roster-col">${_opsBattleRoster(ctx)}</div>
+      <div class="ops-action-panel">${_opsActionPanel(ctx)}</div>
+    </div>`;
+}
+
+/** Left column — CMD card, squad cards, reserve. */
+function _opsBattleRoster(ctx) {
+  const { ops, roster, highestWave, available } = ctx;
   const cmdUnlocked = highestWave >= 3;
   const cmdOfficer = ops.cmdOfficerId ? roster.find(s => s.id === ops.cmdOfficerId) : null;
   const cmdEffects = computeCmdEffects(cmdOfficer);
   const mapCfg = ENDLESS_MAP_SIZES[ops.mapSize] || ENDLESS_MAP_SIZES.small;
   const maxSquads = Math.min(mapCfg.maxSquads, cmdEffects.maxSquads);
-  const selectedSlot = Game.opsSelectedSlot || null;
-  const roleFilter = Game.opsRoleFilter || 'all';
-  const filteredAvailable = roleFilter === 'all' ? available
-    : available.filter(s => s.role === roleFilter || (roleFilter === 'infantry' && s.pool === 'infantry') || (roleFilter === 'vehicle' && s.pool === 'vehicle'));
-
-  // Squad tree
-  const squadTree = _opsSquadTree(ctx, cmdUnlocked, cmdOfficer, cmdEffects, maxSquads);
-
-  // Right panel
-  const rightContent = _opsRightPanel(ctx, selectedSlot, roleFilter, filteredAvailable);
-
-  // Bottom detail panel
-  const bottomPanel = _buildOpsBottomPanel(ops, roster, vehicles);
-
-  return `
-    <div class="ops-split">
-      <div class="ops-left">${squadTree}</div>
-      <div class="ops-right">${rightContent}</div>
-    </div>
-    ${bottomPanel}
-  `;
-}
-
-/** Squad tree — CMD banner + hero indicator + squad sections. */
-function _opsSquadTree(ctx, cmdUnlocked, cmdOfficer, cmdEffects, maxSquads) {
-  const { ops, roster, officers, vehicles } = ctx;
-
-  // CMD Banner
-  const cmdBanner = _opsCmdBanner(cmdUnlocked, cmdOfficer, cmdEffects, officers);
-
-  // Hero indicator
-  const heroSoldier = ops.heroUnit ? roster.find(s => s.id === ops.heroUnit) : null;
-  const heroVehicle = ops.heroUnit ? vehicles.find(v => v.id === ops.heroUnit) : null;
-  const heroLabel = heroSoldier ? `★ ${getRankInfo(heroSoldier).abbr} ${heroSoldier.name?.last}` : heroVehicle ? `★ ${heroVehicle.unitId.toUpperCase()}` : '★ No hero selected';
 
   while (ops.squads.length < 1) ops.squads.push({ units: [], vehicleId: null, leaderId: null, formation: { preset: 'wedge', positions: [], spacing: 80, facing: 0 } });
 
+  const cmdCard = _opsCmdCard(cmdUnlocked, cmdOfficer, cmdEffects);
+  const squadCards = ops.squads.map((sq, i) => _opsSquadCard(sq, i, ctx)).join('');
   const addSquadBtn = ops.squads.length < maxSquads
-    ? `<button class="ops-add-squad-btn" data-action="ops-add-squad">+ ADD SQUAD (${ops.squads.length}/${maxSquads})</button>`
+    ? `<button class="ops-add-squad-btn" data-action="ops-add-squad">+ ADD SQUAD (${ops.squads.length} of ${maxSquads})</button>`
     : '';
+  const reserve = _opsReserveSection(available);
 
+  return `${cmdCard}${squadCards}${addSquadBtn}${reserve}`;
+}
+
+/** Commanding officer card — tap to open officer picker in action panel. */
+function _opsCmdCard(cmdUnlocked, cmdOfficer, cmdEffects) {
+  const selected = Game.opsSelectedEntity?.type === 'cmd';
+  if (!cmdUnlocked) {
+    return `<div class="ops-cmd-card" style="opacity:0.4"><span class="ops-cmd-card-label">COMMANDING OFFICER</span><span class="ops-cmd-card-msg">Unlocks at Wave 3</span></div>`;
+  }
+  if (!cmdOfficer) {
+    return `<div class="ops-cmd-card ${selected ? 'filled' : ''}" data-action="ops-select-entity" data-entity-type="cmd"><span class="ops-cmd-card-label">COMMANDING OFFICER</span><span class="ops-cmd-card-msg">Tap to assign an officer</span></div>`;
+  }
+  const cmdRank = (OFFICER_RANKS[cmdOfficer.rankIndex] || OFFICER_RANKS[0]);
+  const intelLabel = cmdEffects.intelQuality > 0.6 ? 'High' : cmdEffects.intelQuality > 0.3 ? 'Medium' : 'Low';
   return `
-    <div class="ops-squad-tree">
-      ${cmdBanner}
-      <div class="ops-hero-indicator">${heroLabel}</div>
-      ${ops.squads.map((sq, i) => _opsSquadSection(sq, i, ctx)).join('')}
-      ${addSquadBtn}
+    <div class="ops-cmd-card filled" data-action="ops-select-entity" data-entity-type="cmd">
+      <span class="ops-cmd-card-label">CMD</span>
+      <span class="ops-cmd-card-name">${cmdRank.abbr} ${cmdOfficer.name?.last || 'Unknown'}</span>
+      <div class="ops-cmd-card-effects">
+        <span class="ops-cmd-card-effect">Squads ${cmdEffects.maxSquads}</span>
+        <span class="ops-cmd-card-effect">Intel ${intelLabel}</span>
+      </div>
     </div>`;
 }
 
-/** Single squad section with leader slot + vehicle + crew + infantry. */
-function _opsSquadSection(sq, sqIdx, ctx) {
+/** One squad card — section header + soldier/vehicle rows. */
+function _opsSquadCard(sq, sqIdx, ctx) {
   const { ops, roster, vehicles } = ctx;
-  const selectedSlot = Game.opsSelectedSlot || null;
-  const veh = sq.vehicleId ? vehicles.find(v => v.id === sq.vehicleId) : null;
-  const crew = veh ? getCrewForVehicle(veh.id) : {};
-  const schema = veh ? (CREW_SCHEMAS[veh.unitId] || []) : [];
-  const isPreviewingSlot = (type, idx) => Game.opsPreviewUnit?.type === type && Game.opsPreviewUnit?.squad === sqIdx && Game.opsPreviewUnit?.idx === idx;
-
-  // Leader slot
-  const leader = sq.leaderId ? roster.find(r => r.id === sq.leaderId) : null;
-  const isHeroLeader = leader && ops.heroUnit === leader.id;
-  const leaderSlot = `
-    <div class="ops-leader-slot" data-action="ops-select-leader" data-squad="${sqIdx}">
-      <span class="ops-leader-star">★</span>
-      <span class="ops-leader-label">LEADER:</span>
-      <span class="ops-leader-name">${leader ? `${getRankInfo(leader).abbr} ${leader.name?.last || ''}` : 'None'}</span>
-      ${isHeroLeader ? '<button class="ops-step-down-btn" data-action="ops-step-down" data-squad="' + sqIdx + '">Step Down</button>' : ''}
+  const totalUnits = sq.units.length + (sq.vehicleId ? 1 : 0);
+  const isHeroSquad = sq.units.includes(ops.heroUnit) || sq.vehicleId === ops.heroUnit;
+  const header = `
+    <div class="ops-section-header ${isHeroSquad ? 'hero' : ''}">
+      <span class="ops-section-title">${isHeroSquad ? '★ HERO SQUAD' : `SQUAD ${sqIdx + 1}`}</span>
+      <span class="ops-section-fill"></span>
+      <span class="ops-section-count">${totalUnits} units</span>
+      ${sqIdx > 0 ? `<button class="ops-section-menu" data-action="ops-remove-squad" data-squad="${sqIdx}" title="Remove squad">✕</button>` : ''}
     </div>`;
 
-  // Vehicle row
-  const vehicleRow = veh ? `
-    <div class="ops-slot filled ${isPreviewingSlot('vehicle', 0) ? 'previewing' : ''}" data-action="ops-preview-unit" data-unit-type="vehicle" data-squad="${sqIdx}" data-unit-idx="0">
-      ${ops.heroUnit === sq.vehicleId ? '<span class="ops-hero-star">★</span>' : ''}
-      <span class="ops-slot-icon">🚗</span>
-      <span class="ops-slot-name">${veh.unitId.toUpperCase()}</span>
-      <span class="ops-veh-hp">${Math.round(veh.hpPercent * 100)}%</span>
-      <button class="ops-slot-remove" data-action="ops-unassign" data-slot-type="vehicle" data-squad="${sqIdx}" title="Remove">✕</button>
-    </div>` : '';
+  // Vehicle + crew (if present)
+  const vehiclePart = sq.vehicleId
+    ? _opsVehicleCard(sq, sqIdx, ctx)
+    : `<div class="ops-row reserve" data-action="ops-select-entity" data-entity-type="add-vehicle" data-squad="${sqIdx}" style="justify-content:center;color:var(--text-secondary);font-style:italic;"><span>+ ADD VEHICLE</span></div>`;
 
-  // Crew slots
-  const crewSlots = veh && schema.length > 0 ? schema.map((slot, i) => {
-    const crewMember = crew[slot];
-    const isHero = crewMember && ops.heroUnit === crewMember.id;
-    return `
-      <div class="ops-slot crew-slot ${crewMember ? 'filled' : 'empty'} ${selectedSlot?.type === 'crew' && selectedSlot?.squad === sqIdx && selectedSlot?.idx === i ? 'selecting' : ''}" data-action="${crewMember ? 'ops-preview-unit' : 'ops-select-slot'}" data-unit-type="crew" data-slot-type="crew" data-squad="${sqIdx}" data-slot-idx="${i}" data-unit-idx="${i}" data-crew-role="${slot}" ${crewMember ? `data-soldier="${crewMember.id}"` : ''}>
-        ${isHero ? '<span class="ops-hero-star">★</span>' : ''}
-        <span class="ops-crew-role">${getRoleLabel(slot)}</span>
-        ${crewMember
-          ? `<span class="ops-slot-name">${getRankInfo(crewMember).abbr} ${crewMember.name?.last || ''}</span><button class="ops-slot-remove" data-action="ops-unassign" data-slot-type="crew" data-squad="${sqIdx}" data-slot-idx="${i}" title="Remove">✕</button>`
-          : '<span class="ops-slot-empty">empty</span>'}
-      </div>`;
-  }).join('') : '';
-
-  // Infantry slots (exclude leader from regular list — they show in leader slot)
-  const infantrySlots = sq.units.filter(uid => uid !== sq.leaderId).map((soldierId, i) => {
-    const s = roster.find(r => r.id === soldierId);
+  // Infantry soldiers
+  const infantry = sq.units.map(uid => {
+    const s = roster.find(r => r.id === uid);
     if (!s) return '';
-    const isHero = ops.heroUnit === soldierId;
-    const realIdx = sq.units.indexOf(soldierId);
-    const isPreviewing = isPreviewingSlot('infantry', realIdx);
+    return _opsSoldierRow(s, sqIdx, uid === sq.leaderId);
+  }).join('');
+  const infantryBlock = sq.units.length === 0 && !sq.vehicleId
+    ? `<div class="ops-squad-empty">Empty squad — assign soldiers from Reserve.</div>`
+    : infantry;
+
+  return `<div class="ops-squad-card">${header}${vehiclePart}${infantryBlock}</div>`;
+}
+
+/** Soldier row with LDR badge / rank / name+star / MOS / HP / chip. */
+function _opsSoldierRow(s, squadIdx, isLeader) {
+  const rank = getRankInfo(s).abbr;
+  const isHero = Game.opsConfig?.heroUnit === s.id;
+  const isSelected = Game.opsSelectedEntity?.type === 'soldier' && Game.opsSelectedEntity?.id === s.id;
+  const ldrBadge = isLeader
+    ? `<span class="ops-ldr-badge">LDR</span>`
+    : `<span class="ops-ldr-badge spacer">LDR</span>`;
+  const star = isHero ? `<span class="ops-row-star">★</span>` : '';
+  const chipLabel = `Squad ${squadIdx + 1}`;
+  return `
+    <div class="ops-row ${isSelected ? 'selected' : ''}" data-action="ops-select-entity" data-entity-type="soldier" data-id="${s.id}" data-squad="${squadIdx}">
+      ${ldrBadge}
+      <span class="ops-row-rank">${rank}</span>
+      <span class="ops-row-name-block"><span class="ops-row-name">${s.name?.last || 'Unknown'}</span>${star}</span>
+      <span class="ops-mos-tag">${mosAbbrev(s.role)}</span>
+      ${hpSegments(s.hpPercent)}
+      <span class="ops-chip ${isSelected ? 'active' : ''}">${chipLabel} <span class="ops-chip-arrow">▾</span></span>
+    </div>`;
+}
+
+/** Vehicle + crew card — one bordered container. */
+function _opsVehicleCard(sq, sqIdx, ctx) {
+  const { vehicles } = ctx;
+  const veh = vehicles.find(v => v.id === sq.vehicleId);
+  if (!veh) return '';
+  const crew = getCrewForVehicle(veh.id) || {};
+  const schema = CREW_SCHEMAS[veh.unitId] || [];
+
+  const vehicleRow = _opsVehicleRow(veh, sqIdx);
+  const crewRows = schema.map(slot => {
+    const crewMember = crew[slot];
+    return crewMember
+      ? _opsCrewRow(crewMember, slot, veh, sqIdx)
+      : _opsEmptyCrewRow(slot, veh, sqIdx);
+  }).join('');
+
+  return `<div class="ops-vehicle-card">${vehicleRow}${crewRows}</div>`;
+}
+
+function _opsVehicleRow(veh, sqIdx) {
+  const isHero = Game.opsConfig?.heroUnit === veh.id;
+  const isSelected = Game.opsSelectedEntity?.type === 'vehicle' && Game.opsSelectedEntity?.id === veh.id;
+  const star = isHero ? `<span class="ops-row-star">★</span>` : '';
+  return `
+    <div class="ops-row ${isSelected ? 'selected' : ''}" data-action="ops-select-entity" data-entity-type="vehicle" data-id="${veh.id}" data-squad="${sqIdx}">
+      <span class="ops-ldr-badge spacer">LDR</span>
+      <span class="ops-row-rank rank-spacer">VEH</span>
+      <span class="ops-row-name-block"><span class="ops-row-name">${veh.unitId.toUpperCase()}</span>${star}</span>
+      ${hpSegments(veh.hpPercent)}
+      <span class="ops-chip vehicle ${isSelected ? 'active' : ''}">Squad ${sqIdx + 1} <span class="ops-chip-arrow">▾</span></span>
+    </div>`;
+}
+
+function _opsCrewRow(s, slot, veh, sqIdx) {
+  const rank = getRankInfo(s).abbr;
+  const isHero = Game.opsConfig?.heroUnit === s.id;
+  const isSelected = Game.opsSelectedEntity?.type === 'crew' && Game.opsSelectedEntity?.id === s.id;
+  const star = isHero ? `<span class="ops-row-star">★</span>` : '';
+  return `
+    <div class="ops-row crew ${isSelected ? 'selected' : ''}" data-action="ops-select-entity" data-entity-type="crew" data-id="${s.id}" data-vehicle="${veh.id}" data-slot="${slot}" data-squad="${sqIdx}">
+      <span class="ops-crew-slot-label">${mosAbbrev(slot)}</span>
+      <span class="ops-row-rank">${rank}</span>
+      <span class="ops-row-name-block"><span class="ops-row-name">${s.name?.last || 'Unknown'}</span>${star}</span>
+      <span class="ops-mos-tag">${mosAbbrev(s.role)}</span>
+      ${hpSegments(s.hpPercent)}
+      <span class="ops-chip vehicle ${isSelected ? 'active' : ''}">${mosAbbrev(slot)} <span class="ops-chip-arrow">▾</span></span>
+    </div>`;
+}
+
+function _opsEmptyCrewRow(slot, veh, sqIdx) {
+  return `
+    <div class="ops-row crew" data-action="ops-select-entity" data-entity-type="empty-crew" data-vehicle="${veh.id}" data-slot="${slot}" data-squad="${sqIdx}">
+      <span class="ops-crew-slot-label">${mosAbbrev(slot)}</span>
+      <span class="ops-crew-empty">empty</span>
+      <span class="ops-chip empty-slot">+ ${mosAbbrev(slot)} <span class="ops-chip-arrow">▾</span></span>
+    </div>`;
+}
+
+/** Reserve section — unassigned soldiers. */
+function _opsReserveSection(available) {
+  if (!available || available.length === 0) {
     return `
-      <div class="ops-slot filled ${isPreviewing ? 'previewing' : ''}" data-action="ops-preview-unit" data-unit-type="infantry" data-squad="${sqIdx}" data-unit-idx="${realIdx}" data-soldier="${soldierId}">
-        ${isHero ? '<span class="ops-hero-star">★</span>' : ''}
-        <span class="ops-slot-name">${getRankInfo(s).abbr} ${s.name?.last || ''}</span>
-        <span class="ops-slot-role">${getRoleLabel(s.role)}</span>
-        <button class="ops-slot-remove" data-action="ops-unassign" data-slot-type="infantry" data-squad="${sqIdx}" data-slot-idx="${realIdx}" title="Remove">✕</button>
+      <div class="ops-section-header"><span class="ops-section-title">RESERVE</span><span class="ops-section-fill"></span><span class="ops-section-count">0 available</span></div>
+      <div class="ops-squad-card"><div class="ops-squad-empty">All soldiers assigned.</div></div>`;
+  }
+  const rows = available.map(s => {
+    const rank = getRankInfo(s).abbr;
+    const isHero = Game.opsConfig?.heroUnit === s.id;
+    const isSelected = Game.opsSelectedEntity?.type === 'soldier' && Game.opsSelectedEntity?.id === s.id;
+    const star = isHero ? `<span class="ops-row-star">★</span>` : '';
+    return `
+      <div class="ops-row reserve ${isSelected ? 'selected' : ''}" data-action="ops-select-entity" data-entity-type="soldier" data-id="${s.id}" data-squad="-1">
+        <span class="ops-ldr-badge spacer">LDR</span>
+        <span class="ops-row-rank">${rank}</span>
+        <span class="ops-row-name-block"><span class="ops-row-name">${s.name?.last || 'Unknown'}</span>${star}</span>
+        <span class="ops-mos-tag">${mosAbbrev(s.role)}</span>
+        ${hpSegments(s.hpPercent)}
+        <span class="ops-chip reserve ${isSelected ? 'active' : ''}">Reserve <span class="ops-chip-arrow">▾</span></span>
       </div>`;
+  }).join('');
+  return `
+    <div class="ops-section-header"><span class="ops-section-title">RESERVE</span><span class="ops-section-fill"></span><span class="ops-section-count">${available.length} available</span></div>
+    <div class="ops-squad-card">${rows}</div>`;
+}
+
+/** Right column — action panel. Dispatches based on selected entity. */
+function _opsActionPanel(ctx) {
+  const sel = Game.opsSelectedEntity;
+  if (!sel) {
+    return `<div class="ops-action-panel-idle">Tap a soldier, vehicle,<br>or crew slot to assign,<br>move, or change role.</div>`;
+  }
+  switch (sel.type) {
+    case 'soldier':     return _opsApSoldier(sel, ctx);
+    case 'vehicle':     return _opsApVehicle(sel, ctx);
+    case 'crew':        return _opsApCrew(sel, ctx);
+    case 'empty-crew':  return _opsApEmptyCrew(sel, ctx);
+    case 'add-vehicle': return _opsApAddVehicle(sel, ctx);
+    case 'cmd':         return _opsApCmd(sel, ctx);
+    default:            return `<div class="ops-action-panel-idle">Unknown selection.</div>`;
+  }
+}
+
+function _opsApHeader(title, subtitle) {
+  return `
+    <button class="ap-close" data-action="ops-clear-selection" title="Close">✕</button>
+    <h3 class="ap-title">${title}</h3>
+    <p class="ap-sub">${subtitle}</p>`;
+}
+
+function _opsApStats(cs) {
+  return `
+    <div class="ap-stats">
+      <div class="ap-stat"><div class="ap-stat-val">${cs.hp || '—'}</div><div class="ap-stat-label">HEALTH</div></div>
+      <div class="ap-stat"><div class="ap-stat-val">${cs.damage || '—'}</div><div class="ap-stat-label">DAMAGE</div></div>
+      <div class="ap-stat"><div class="ap-stat-val">${cs.rangeM || cs.range || '—'}m</div><div class="ap-stat-label">RANGE</div></div>
+      <div class="ap-stat"><div class="ap-stat-val">${cs.speedKmh ?? Math.round((cs.speed || 0) * DISPLAY_SPEED_KMH)}</div><div class="ap-stat-label">SPEED</div></div>
+    </div>`;
+}
+
+/** Build the "Assign to squad" radio list. currentSqIdx = -1 if in Reserve. */
+function _opsApSquadList(ctx, currentSqIdx, soldierIdMovingIn) {
+  const { ops } = ctx;
+  const items = ops.squads.map((sq, i) => {
+    const total = sq.units.length + (sq.vehicleId ? 1 : 0);
+    const isCurrent = i === currentSqIdx;
+    const label = i === 0 && (sq.units.includes(ops.heroUnit) || sq.vehicleId === ops.heroUnit) ? 'Hero Squad' : `Squad ${i + 1}`;
+    return `
+      <button class="ap-option ${isCurrent ? 'current' : ''}" data-action="ops-move-to-squad" data-soldier="${soldierIdMovingIn}" data-target-squad="${i}" ${isCurrent ? 'disabled' : ''}>
+        <span class="radio"></span><span class="label">${label}</span><span class="meta">${total} units</span>
+      </button>`;
+  }).join('');
+  const reserveOpt = `
+    <button class="ap-option ${currentSqIdx === -1 ? 'current' : ''}" data-action="ops-move-to-squad" data-soldier="${soldierIdMovingIn}" data-target-squad="-1" ${currentSqIdx === -1 ? 'disabled' : ''}>
+      <span class="radio"></span><span class="label">Reserve</span>
+    </button>`;
+  return `${items}${reserveOpt}`;
+}
+
+function _opsApSoldier(sel, ctx) {
+  const { ops, roster } = ctx;
+  const s = roster.find(r => r.id === sel.id);
+  if (!s) return _opsApHeader('Not found', '') + `<div class="ap-section-label">Soldier removed</div>`;
+  const cs = getEffectiveCombatStats(s);
+  const sqIdx = ops.squads.findIndex(sq => sq.units.includes(s.id));
+  const currentSq = sqIdx >= 0 ? ops.squads[sqIdx] : null;
+  const isLeader = currentSq && currentSq.leaderId === s.id;
+  const isHero = ops.heroUnit === s.id;
+  const role = isLeader ? 'Leader' : sqIdx >= 0 ? 'Member' : 'Reserve';
+  const sqLabel = sqIdx >= 0 ? (sqIdx === 0 ? 'Hero Squad' : `Squad ${sqIdx + 1}`) : 'Reserve';
+
+  return `
+    ${_opsApHeader(`${getRankInfo(s).abbr} ${s.name?.last || ''}`, `${getRoleLabel(s.role)} · ${sqLabel} · ${role}`)}
+    ${_opsApStats(cs)}
+    <div class="ap-section-label">Assign to</div>
+    ${_opsApSquadList(ctx, sqIdx, s.id)}
+    <div class="ap-section-label">Role</div>
+    ${currentSq && !isLeader ? `<button class="ap-option" data-action="ops-make-leader" data-soldier="${s.id}" data-squad="${sqIdx}"><span class="icon">⚐</span><span class="label">Make squad leader</span></button>` : ''}
+    ${currentSq && isLeader && currentSq.units.length > 1 ? `<button class="ap-option" data-action="ops-step-down" data-squad="${sqIdx}"><span class="icon">⚐</span><span class="label">Step down as leader</span></button>` : ''}
+    ${!isHero ? `<button class="ap-option" data-action="ops-set-hero" data-soldier="${s.id}"><span class="icon">★</span><span class="label">Set as hero</span></button>` : `<button class="ap-option" disabled><span class="icon">★</span><span class="label">Already hero</span></button>`}`;
+}
+
+function _opsApVehicle(sel, ctx) {
+  const { ops, vehicles } = ctx;
+  const v = vehicles.find(x => x.id === sel.id);
+  if (!v) return _opsApHeader('Not found', '') + `<div class="ap-section-label">Vehicle removed</div>`;
+  const cs = getEffectiveCombatStats({ pool: 'vehicle' }, v);
+  const sqIdx = ops.squads.findIndex(sq => sq.vehicleId === v.id);
+  const isHero = ops.heroUnit === v.id;
+  const sqLabel = sqIdx >= 0 ? (sqIdx === 0 ? 'Hero Squad' : `Squad ${sqIdx + 1}`) : 'Motor Pool';
+
+  // Squad list — show squads that don't already have a vehicle, plus current
+  const squadItems = ops.squads.map((sq, i) => {
+    const isCurrent = i === sqIdx;
+    const occupied = sq.vehicleId && !isCurrent;
+    const total = sq.units.length + (sq.vehicleId ? 1 : 0);
+    const label = i === 0 ? 'Hero Squad' : `Squad ${i + 1}`;
+    return `
+      <button class="ap-option ${isCurrent ? 'current' : ''}" data-action="ops-move-vehicle" data-vehicle="${v.id}" data-target-squad="${i}" ${isCurrent || occupied ? 'disabled' : ''}>
+        <span class="radio"></span><span class="label">${label}</span><span class="meta">${occupied ? 'has vehicle' : total + ' units'}</span>
+      </button>`;
+  }).join('');
+  const motorOpt = `
+    <button class="ap-option ${sqIdx === -1 ? 'current' : ''}" data-action="ops-move-vehicle" data-vehicle="${v.id}" data-target-squad="-1" ${sqIdx === -1 ? 'disabled' : ''}>
+      <span class="radio"></span><span class="label">Motor Pool</span>
+    </button>`;
+
+  return `
+    ${_opsApHeader(v.unitId.toUpperCase(), `Vehicle · ${sqLabel} · ${Math.round((v.hpPercent || 1) * 100)}% HP`)}
+    ${_opsApStats(cs)}
+    <div class="ap-section-label">Assign to squad</div>
+    ${squadItems}${motorOpt}
+    <div class="ap-section-label">Role</div>
+    ${!isHero ? `<button class="ap-option" data-action="ops-set-hero" data-vehicle="${v.id}"><span class="icon">★</span><span class="label">Set as hero unit</span></button>` : `<button class="ap-option" disabled><span class="icon">★</span><span class="label">Already hero</span></button>`}`;
+}
+
+function _opsApCrew(sel, ctx) {
+  const { ops, vehicles, roster } = ctx;
+  const s = roster.find(r => r.id === sel.id);
+  const v = vehicles.find(x => x.id === sel.vehicleId);
+  if (!s || !v) return _opsApHeader('Not found', '') + `<div class="ap-section-label">Crew not found</div>`;
+  const cs = getEffectiveCombatStats(s);
+  const sqIdx = ops.squads.findIndex(sq => sq.vehicleId === v.id);
+  const crew = getCrewForVehicle(v.id) || {};
+  const schema = CREW_SCHEMAS[v.unitId] || [];
+
+  const roleItems = schema.map(slot => {
+    const isCurrent = slot === sel.slot;
+    const occupant = crew[slot];
+    const occupantName = occupant && !isCurrent ? `${occupant.name?.last || ''}` : isCurrent ? 'current' : 'empty';
+    return `
+      <button class="ap-option ${isCurrent ? 'current' : ''}" data-action="ops-swap-crew-role" data-soldier="${s.id}" data-vehicle="${v.id}" data-slot="${slot}" ${isCurrent ? 'disabled' : ''}>
+        <span class="radio"></span><span class="label">${getRoleLabel(slot)}</span><span class="meta">${occupantName}</span>
+      </button>`;
   }).join('');
 
   return `
-    <div class="ops-squad">
-      <div class="ops-squad-header">
-        <span class="ops-squad-label">${sqIdx === 0 ? 'HERO SQUAD' : `SQUAD ${sqIdx + 1}`}</span>
-        <span class="ops-squad-count">${sq.units.length + (veh ? 1 : 0)} units</span>
-        <div class="ops-squad-actions">
-          ${!veh ? `<button class="ops-header-action" data-action="ops-select-slot" data-slot-type="vehicle" data-squad="${sqIdx}">+ Vehicle</button>` : ''}
-          <button class="ops-header-action" data-action="ops-select-slot" data-slot-type="infantry-add" data-squad="${sqIdx}">+ Infantry</button>
-          ${sqIdx > 0 ? `<button class="ops-squad-remove" data-action="ops-remove-squad" data-squad="${sqIdx}" title="Remove squad">✕</button>` : ''}
-        </div>
+    ${_opsApHeader(`${getRankInfo(s).abbr} ${s.name?.last || ''}`, `Crew · ${v.unitId.toUpperCase()} · ${getRoleLabel(sel.slot)}`)}
+    ${_opsApStats(cs)}
+    <div class="ap-section-label">Crew role</div>
+    ${roleItems}
+    <div class="ap-section-label">Move out of vehicle</div>
+    ${ops.squads.map((sq, i) => {
+      if (i === sqIdx) return `<button class="ap-option" data-action="ops-move-out-of-vehicle" data-soldier="${s.id}" data-target-squad="${i}"><span class="icon">→</span><span class="label">${i === 0 ? 'Hero Squad' : 'Squad ' + (i + 1)} infantry</span></button>`;
+      return `<button class="ap-option" data-action="ops-move-out-of-vehicle" data-soldier="${s.id}" data-target-squad="${i}"><span class="icon">→</span><span class="label">${i === 0 ? 'Hero Squad' : 'Squad ' + (i + 1)}</span></button>`;
+    }).join('')}
+    <button class="ap-option" data-action="ops-move-out-of-vehicle" data-soldier="${s.id}" data-target-squad="-1"><span class="icon">→</span><span class="label">Reserve</span></button>`;
+}
+
+function _opsApEmptyCrew(sel, ctx) {
+  const { vehicles, available } = ctx;
+  const v = vehicles.find(x => x.id === sel.vehicleId);
+  if (!v) return _opsApHeader('Not found', '') + `<div class="ap-section-label">Vehicle removed</div>`;
+
+  const candidates = (available || []).filter(s => s.pool !== 'officer');
+  const rows = candidates.map(s => `
+    <button class="ap-option" data-action="ops-assign-to-crew" data-soldier="${s.id}" data-vehicle="${v.id}" data-slot="${sel.slot}">
+      <span class="icon">${mosAbbrev(s.role)}</span><span class="label">${getRankInfo(s).abbr} ${s.name?.last || ''}</span><span class="meta">${getRoleLabel(s.role)}</span>
+    </button>`).join('');
+
+  return `
+    ${_opsApHeader(`+ ${getRoleLabel(sel.slot)}`, `${v.unitId.toUpperCase()} · empty slot`)}
+    <div class="ap-section-label">Select soldier from reserve</div>
+    ${rows || `<div class="ap-section-label" style="text-align:center;font-style:italic">No soldiers available — assign someone to reserve first.</div>`}`;
+}
+
+function _opsApAddVehicle(sel, ctx) {
+  const { ops, vehicles } = ctx;
+  const taken = new Set(ops.squads.map(sq => sq.vehicleId).filter(Boolean));
+  const candidates = vehicles.filter(v => !taken.has(v.id));
+  const rows = candidates.map(v => `
+    <button class="ap-option" data-action="ops-assign-vehicle-to-squad" data-vehicle="${v.id}" data-target-squad="${sel.squadIdx}">
+      <span class="icon">🚗</span><span class="label">${v.unitId.toUpperCase()}</span><span class="meta">${Math.round((v.hpPercent || 1) * 100)}%</span>
+    </button>`).join('');
+  return `
+    ${_opsApHeader(`+ VEHICLE`, `Squad ${sel.squadIdx + 1} · empty slot`)}
+    <div class="ap-section-label">Select vehicle from Motor Pool</div>
+    ${rows || `<div class="ap-section-label" style="text-align:center;font-style:italic">No vehicles available in Motor Pool.</div>`}`;
+}
+
+function _opsApCmd(sel, ctx) {
+  const { ops, officers } = ctx;
+  const currentId = ops.cmdOfficerId;
+  const rows = officers.map(o => {
+    const oRank = (OFFICER_RANKS[o.rankIndex] || OFFICER_RANKS[0]);
+    const isCurrent = currentId === o.id;
+    const m = o.cmdMetrics || {};
+    return `
+      <button class="ap-option ${isCurrent ? 'current' : ''}" data-action="ops-assign-cmd" data-soldier="${o.id}">
+        <span class="radio"></span><span class="label">${oRank.abbr} ${o.name?.last || 'Unknown'}</span><span class="meta">${m.runsCommanded || 0} runs</span>
+      </button>`;
+  }).join('');
+  return `
+    ${_opsApHeader('COMMANDING OFFICER', 'Squad capacity · Intel · Morale support')}
+    <div class="ap-section-label">Select officer</div>
+    ${rows || `<div class="ap-section-label" style="text-align:center;font-style:italic">No officers available — promote an NCO in Barracks.</div>`}
+    ${currentId ? `<div class="ap-section-label">Actions</div><button class="ap-option destructive" data-action="ops-unassign-cmd"><span class="icon">✕</span><span class="label">Remove commanding officer</span></button>` : ''}`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BARRACKS — SQUADS sub-view (replaces top-level Operations tab)
+// ═══════════════════════════════════════════════════════════════
+
+function _formationView() {
+  const ctx = _initOpsState();
+  return _opsFormationView(ctx);
+}
+
+function _squadsView() {
+  const ctx = _initOpsState();
+  return `
+    <div class="sq-split">
+      <div class="sq-roster-pane">
+        ${_sqFilterBar()}
+        ${_sqRosterTable(ctx)}
       </div>
-      ${leaderSlot}
-      ${vehicleRow}
-      ${crewSlots ? `<div class="ops-crew-slots">${crewSlots}</div>` : ''}
-      ${infantrySlots}
+      <div class="sq-squad-pane">
+        ${_sqSquadPaneContent(ctx)}
+      </div>
+    </div>
+    ${_renderSqPopover()}
+    ${Game.hqDetailSoldier ? _soldierDetailModal(Game.hqDetailSoldier) : ''}
+    ${Game.hqDetailVehicle ? _vehicleDetailDrawer(Game.hqDetailVehicle) : ''}`;
+}
+
+/** Centralized popover render — positioned fixed at view root, escapes overflow clipping. */
+function _renderSqPopover() {
+  const p = Game.sqPopover;
+  if (!p) return '';
+  if (p.type === 'soldier') return _renderSqPopoverSoldier(p.soldierId);
+  if (p.type === 'vehicle') return _renderSqPopoverVehicle(p.vehicleId);
+  if (p.type === 'add-vehicle') return _renderSqPopoverAddVehicle(p.squadIdx);
+  if (p.type === 'cmd') return _renderSqPopoverCmd();
+  return '';
+}
+
+const SQ_ROSTER_FILTERS = ['all', 'rifleman', 'medic', 'engineer', 'heavy_gunner', 'tc', 'gunner', 'driver'];
+
+function _sqFilterBar() {
+  const active = Game.sqRosterFilter || 'all';
+  return `
+    <div class="sq-filter-bar">
+      ${SQ_ROSTER_FILTERS.map(f => `<button class="sq-filter-chip ${active === f ? 'active' : ''}" data-action="sq-filter" data-role="${f}">${f === 'all' ? 'All' : getRoleLabel(f)}</button>`).join('')}
     </div>`;
 }
 
-/** CMD officer banner. */
-function _opsCmdBanner(cmdUnlocked, cmdOfficer, cmdEffects, officers) {
+function _sqRosterTable(ctx) {
+  const { roster, ops } = ctx;
+  const filter = Game.sqRosterFilter || 'all';
+  const sortKey = Game.sqSortKey || 'name';
+  const sortDir = Game.sqSortDir || 'asc';
+
+  let soldiers = roster.filter(s => s.status === 'active' && s.pool !== 'officer');
+  if (filter !== 'all') soldiers = soldiers.filter(s => s.role === filter);
+
+  // Sort
+  soldiers.sort((a, b) => {
+    let va, vb;
+    switch (sortKey) {
+      case 'mos': va = a.role || ''; vb = b.role || ''; break;
+      case 'rank': va = a.rankIndex || 0; vb = b.rankIndex || 0; break;
+      case 'hp': va = a.hpPercent || 0; vb = b.hpPercent || 0; break;
+      case 'dmg': va = getEffectiveCombatStats(a).damage || 0; vb = getEffectiveCombatStats(b).damage || 0; break;
+      case 'rng': va = getEffectiveCombatStats(a).range || 0; vb = getEffectiveCombatStats(b).range || 0; break;
+      case 'spd': va = getEffectiveCombatStats(a).speed || 0; vb = getEffectiveCombatStats(b).speed || 0; break;
+      default: va = a.name?.last || ''; vb = b.name?.last || '';
+    }
+    const cmp = typeof va === 'string' ? va.localeCompare(vb) : va - vb;
+    return sortDir === 'desc' ? -cmp : cmp;
+  });
+
+  const sortArrow = (key) => sortKey === key ? (sortDir === 'desc' ? ' ▼' : ' ▲') : '';
+  const sortHead = (label, key, colClass) => `<button class="sq-th ${colClass} ${sortKey === key ? 'active' : ''}" data-action="sq-sort" data-key="${key}">${label}${sortArrow(key)}</button>`;
+
+  return `
+    <div class="sq-roster-table">
+      <div class="sq-th-row">
+        ${sortHead('MOS', 'mos', 'sq-col-mos')}
+        ${sortHead('RNK', 'rank', 'sq-col-rank')}
+        ${sortHead('NAME', 'name', 'sq-col-name')}
+        ${sortHead('HEALTH', 'hp', 'sq-col-hp')}
+        ${sortHead('DMG', 'dmg', 'sq-col-dmg')}
+        ${sortHead('RNG', 'rng', 'sq-col-rng')}
+        ${sortHead('SPD', 'spd', 'sq-col-spd')}
+        <span class="sq-th sq-col-chip">ASSIGN</span>
+      </div>
+      <div class="sq-tbody">
+        ${soldiers.map(s => _sqRosterRow(s, ops)).join('') || '<div class="sq-empty">No soldiers match this filter.</div>'}
+      </div>
+    </div>`;
+}
+
+function _sqRosterRow(s, ops) {
+  const cs = getEffectiveCombatStats(s);
+  const rank = getRankInfo(s).abbr;
+  const isHero = ops.heroUnit === s.id;
+  const sqIdx = ops.squads.findIndex(sq => sq.units.includes(s.id));
+
+  // Crew check — is this soldier crewing a vehicle?
+  let crewSlot = null, crewVehicleId = null;
+  for (const sq of ops.squads) {
+    if (!sq.vehicleId) continue;
+    const crew = getCrewForVehicle(sq.vehicleId) || {};
+    for (const slot in crew) {
+      if (crew[slot]?.id === s.id) { crewSlot = slot; crewVehicleId = sq.vehicleId; break; }
+    }
+    if (crewSlot) break;
+  }
+
+  let chipLabel, chipClass;
+  if (crewSlot) { chipLabel = `Crew · ${mosAbbrev(crewSlot)}`; chipClass = 'crew'; }
+  else if (sqIdx >= 0) { chipLabel = `Squad ${sqIdx + 1}`; chipClass = ''; }
+  else { chipLabel = 'Reserve'; chipClass = 'reserve'; }
+
+  const popoverActive = Game.sqPopover?.type === 'soldier' && Game.sqPopover?.soldierId === s.id;
+  const pctColor = s.hpPercent > 0.6 ? 'var(--accent-green)' : s.hpPercent > 0.3 ? 'var(--accent-yellow)' : 'var(--accent-red)';
+
+  return `
+    <div class="sq-row" data-action="hq-soldier-detail" data-soldier="${s.id}">
+      <span class="sq-col-mos"><span class="sq-mos-tag">${mosAbbrev(s.role)}</span></span>
+      <span class="sq-col-rank">${rank}</span>
+      <span class="sq-col-name"><span class="sq-name">${s.name?.last || 'Unknown'}</span>${isHero ? '<span class="sq-star">★</span>' : ''}</span>
+      <span class="sq-col-hp">${hpSegments(s.hpPercent)}<span class="sq-hp-num" style="color:${pctColor}">${cs.hp}/${cs.maxHp}</span></span>
+      <span class="sq-col-dmg">${cs.damage || '—'}</span>
+      <span class="sq-col-rng">${cs.rangeM || cs.range || '—'}m</span>
+      <span class="sq-col-spd">${cs.speedKmh ?? Math.round((cs.speed || 0) * DISPLAY_SPEED_KMH)}</span>
+      <span class="sq-col-chip">
+        <button class="sq-chip ${chipClass} ${popoverActive ? 'active' : ''}" data-action="sq-toggle-popover" data-popover-type="soldier" data-soldier="${s.id}">${chipLabel} <span class="sq-chip-arrow">▾</span></button>
+      </span>
+    </div>`;
+}
+
+function _sqSquadPaneContent(ctx) {
+  const { ops, roster, vehicles, highestWave } = ctx;
+  const cmdUnlocked = highestWave >= 3;
+  const cmdOfficer = ops.cmdOfficerId ? roster.find(s => s.id === ops.cmdOfficerId) : null;
+  const cmdEffects = computeCmdEffects(cmdOfficer);
+  const mapCfg = ENDLESS_MAP_SIZES[ops.mapSize] || ENDLESS_MAP_SIZES.small;
+  const maxSquads = Math.min(mapCfg.maxSquads, cmdEffects.maxSquads);
+
+  while (ops.squads.length < 1) ops.squads.push({ units: [], vehicleId: null, leaderId: null, formation: { preset: 'wedge', positions: [], spacing: 80, facing: 0 } });
+
+  const cmdCard = _sqCmdCard(cmdUnlocked, cmdOfficer, cmdEffects);
+  const cards = ops.squads.map((sq, i) => _sqSquadCard(sq, i, ctx)).join('');
+  const addBtn = ops.squads.length < maxSquads
+    ? `<button class="sq-add-squad" data-action="ops-add-squad">+ ADD SQUAD (${ops.squads.length} of ${maxSquads})</button>`
+    : '';
+  return `${cmdCard}${cards}${addBtn}`;
+}
+
+function _sqCmdCard(cmdUnlocked, cmdOfficer, cmdEffects) {
   if (!cmdUnlocked) {
-    return `
-      <div class="ops-cmd-banner ops-cmd-locked">
-        <span class="ops-cmd-label">COMMANDING OFFICER</span>
-        <span class="ops-cmd-locked-msg">Unlocks at Wave 3</span>
-      </div>`;
+    return `<div class="sq-cmd-card locked"><span class="sq-cmd-label">COMMANDING OFFICER</span><span class="sq-cmd-msg">Unlocks at Wave 3</span></div>`;
   }
   if (!cmdOfficer) {
     return `
-      <div class="ops-cmd-banner ops-cmd-empty ${Game.opsSelectedSlot?.type === 'cmd' ? 'selecting' : ''}" data-action="ops-select-slot" data-slot-type="cmd">
-        <span class="ops-cmd-label">COMMANDING OFFICER</span>
-        <span class="ops-cmd-empty-msg">${officers.length > 0 ? 'Click to assign an officer' : 'No officers available — promote an NCO in Barracks'}</span>
+      <div class="sq-cmd-card" data-action="sq-toggle-popover" data-popover-type="cmd">
+        <span class="sq-cmd-label">COMMANDING OFFICER</span>
+        <span class="sq-cmd-msg">Tap to assign</span>
       </div>`;
   }
   const cmdRank = (OFFICER_RANKS[cmdOfficer.rankIndex] || OFFICER_RANKS[0]);
-  const cmdName = `${cmdRank.abbr} ${cmdOfficer.name?.last || 'Unknown'}`;
-  const intelLabel = cmdEffects.intelQuality > 0.6 ? 'High' : cmdEffects.intelQuality > 0.3 ? 'Medium' : 'Low';
+  const intelLabel = cmdEffects.intelQuality > 0.6 ? 'High' : cmdEffects.intelQuality > 0.3 ? 'Med' : 'Low';
   return `
-    <div class="ops-cmd-banner ops-cmd-filled">
-      <div class="ops-cmd-info">
-        <span class="ops-cmd-label">COMMANDING OFFICER</span>
-        <span class="ops-cmd-name">${cmdName}</span>
+    <div class="sq-cmd-card filled" data-action="sq-toggle-popover" data-popover-type="cmd">
+      <span class="sq-cmd-label">CMD</span>
+      <span class="sq-cmd-name">${cmdRank.abbr} ${cmdOfficer.name?.last || ''}</span>
+      <div class="sq-cmd-effects">
+        <span class="sq-cmd-effect">Sq ${cmdEffects.maxSquads}</span>
+        <span class="sq-cmd-effect">Intel ${intelLabel}</span>
       </div>
-      <div class="ops-cmd-effects">
-        <span class="ops-cmd-effect">Squads: ${cmdEffects.maxSquads}</span>
-        <span class="ops-cmd-effect">Intel: ${intelLabel}</span>
-        <span class="ops-cmd-effect">Morale: ${Math.round(cmdEffects.moraleDegradationResist * 100)}%</span>
-      </div>
-      <button class="ops-cmd-change" data-action="ops-select-slot" data-slot-type="cmd">CHANGE</button>
+      ${pop}
     </div>`;
 }
 
-/** Right panel — roster list, vehicle picker, or officer picker depending on selected slot. */
-function _opsRightPanel(ctx, selectedSlot, roleFilter, filteredAvailable) {
-  const { ops, roster, officers, vehicles } = ctx;
-  const previewId = Game.opsPreviewSoldier || null;
-  const roleFilters = ['all', 'rifleman', 'medic', 'engineer', 'heavy_gunner', 'tc', 'gunner', 'driver'];
-
-  const filterBar = `
-    <div class="ops-filter-bar">
-      ${roleFilters.map(r => `<button class="ops-filter-btn ${roleFilter === r ? 'active' : ''}" data-action="ops-filter-role" data-role="${r}">${r === 'all' ? 'ALL' : getRoleLabel(r)}</button>`).join('')}
+function _sqSquadCard(sq, sqIdx, ctx) {
+  const { ops, roster } = ctx;
+  const totalUnits = sq.units.length + (sq.vehicleId ? 1 : 0);
+  const isHeroSquad = sq.units.includes(ops.heroUnit) || sq.vehicleId === ops.heroUnit;
+  const header = `
+    <div class="sq-card-header ${isHeroSquad ? 'hero' : ''}">
+      <span class="sq-card-title">${isHeroSquad ? '★ HERO SQUAD' : `SQUAD ${sqIdx + 1}`}</span>
+      <span class="sq-card-count">${totalUnits} units</span>
+      ${sqIdx > 0 ? `<button class="sq-card-remove" data-action="ops-remove-squad" data-squad="${sqIdx}" title="Remove squad">✕</button>` : ''}
     </div>`;
 
-  if (selectedSlot?.type === 'cmd') {
-    const officerRows = officers.map(o => {
-      const oRank = (OFFICER_RANKS[o.rankIndex] || OFFICER_RANKS[0]);
-      const isCurrent = ops.cmdOfficerId === o.id;
-      const m = o.cmdMetrics || {};
-      const extRate = m.runsCommanded > 0 ? Math.round((m.totalExtractions / m.runsCommanded) * 100) : 0;
+  // Soldier rows (infantry only — crew lives in the vehicle card)
+  const infantry = sq.units.map(uid => {
+    const s = roster.find(r => r.id === uid);
+    if (!s) return '';
+    const isLeader = sq.leaderId === uid;
+    const isHero = ops.heroUnit === uid;
+    return `
+      <div class="sq-pane-soldier">
+        ${isLeader ? '<span class="sq-ldr-badge">LDR</span>' : '<span class="sq-ldr-badge spacer">LDR</span>'}
+        <span class="sq-pane-rank">${getRankInfo(s).abbr}</span>
+        <span class="sq-pane-name">${s.name?.last || ''}</span>
+        ${isHero ? '<span class="sq-star">★</span>' : ''}
+      </div>`;
+  }).join('');
+
+  const vehicleSlot = sq.vehicleId
+    ? _sqVehicleCard(sq, sqIdx, ctx)
+    : `<div class="sq-vehicle-slot-wrap">
+        <button class="sq-vehicle-empty" data-action="sq-toggle-popover" data-popover-type="add-vehicle" data-squad="${sqIdx}">+ VEHICLE</button>
+      </div>`;
+
+  const emptyMsg = sq.units.length === 0 && !sq.vehicleId
+    ? '<div class="sq-card-empty">Empty squad — assign from roster.</div>'
+    : '';
+
+  return `
+    <div class="sq-card">
+      ${header}
+      ${infantry}
+      ${emptyMsg}
+      ${vehicleSlot}
+    </div>`;
+}
+
+function _sqVehicleCard(sq, sqIdx, ctx) {
+  const { vehicles, ops } = ctx;
+  const veh = vehicles.find(v => v.id === sq.vehicleId);
+  if (!veh) return '';
+  const crew = getCrewForVehicle(veh.id) || {};
+  const schema = CREW_SCHEMAS[veh.unitId] || [];
+  const isHero = ops.heroUnit === veh.id;
+  const cs = getEffectiveCombatStats({ pool: 'vehicle' }, veh);
+
+  const crewRows = schema.map(slot => {
+    const c = crew[slot];
+    if (c) {
       return `
-        <div class="ops-available-row ops-officer-row ${isCurrent ? 'current-cmd' : ''}" data-action="ops-assign-cmd" data-soldier="${o.id}">
-          <canvas class="soldier-insignia" data-rank="${o.rankIndex}" width="64" height="64"></canvas>
-          <div class="ops-officer-info">
-            <span class="soldier-name">${oRank.abbr} ${o.name?.last || 'Unknown'}</span>
-            <span class="ops-officer-stats">${m.runsCommanded || 0} runs | ${extRate}% ext | ${m.soldiersLost || 0} KIA</span>
-          </div>
-          ${isCurrent ? '<span class="ops-current-badge">ACTIVE</span>' : ''}
+        <div class="sq-pane-crew">
+          <span class="sq-pane-crew-slot">${mosAbbrev(slot)}</span>
+          <span class="sq-pane-rank">${getRankInfo(c).abbr}</span>
+          <span class="sq-pane-name">${c.name?.last || ''}</span>
         </div>`;
-    }).join('');
-    return `<h4 class="ops-panel-title">SELECT COMMANDING OFFICER</h4><div class="ops-available-list">${officerRows || '<div class="panel-placeholder">No officers available</div>'}</div>`;
-  }
+    }
+    return `<div class="sq-pane-crew empty"><span class="sq-pane-crew-slot">${mosAbbrev(slot)}</span><span class="sq-pane-crew-empty">empty</span></div>`;
+  }).join('');
 
-  if (selectedSlot?.type === 'vehicle') {
-    const vehicleRows = vehicles.filter(v =>
-      !ops.squads.some((sq, i) => sq.vehicleId === v.id && i !== selectedSlot.squad)
-    ).map(v => `
-      <div class="ops-available-row" data-action="ops-assign-vehicle" data-vehicle="${v.id}">
-        <span class="ops-veh-icon">🚗</span>
-        <span class="soldier-name">${v.unitId.toUpperCase()}</span>
-        <span class="ops-veh-hp">${Math.round(v.hpPercent * 100)}% HP</span>
+  return `
+    <div class="sq-vehicle-card" data-action="sq-toggle-popover" data-popover-type="vehicle" data-vehicle="${veh.id}" data-squad="${sqIdx}">
+      <div class="sq-vehicle-header">
+        ${isHero ? '<span class="sq-star">★</span>' : ''}
+        <span class="sq-vehicle-name">${veh.unitId.toUpperCase()}</span>
+        <span class="sq-vehicle-hp">${cs.hp}/${cs.maxHp}</span>
+        <span class="sq-vehicle-chevron">▾</span>
       </div>
-    `).join('');
-    return `<h4 class="ops-panel-title">SELECT VEHICLE</h4>${vehicleRows || '<div class="panel-placeholder">No vehicles available</div>'}`;
-  }
-
-  // Default: available roster
-  const opsGroups = [
-    { key: 'infantry', label: 'INFANTRY', soldiers: filteredAvailable.filter(s => s.pool === 'infantry' || !s.pool) },
-    { key: 'crew', label: 'VEHICLE CREW', soldiers: filteredAvailable.filter(s => s.pool === 'vehicle') }
-  ].filter(g => g.soldiers.length > 0);
-
-  for (const g of opsGroups) {
-    g.soldiers.sort((a, b) => {
-      if (a.role !== b.role) return (a.role || 'rifleman').localeCompare(b.role || 'rifleman');
-      return (a.name?.last || '').localeCompare(b.name?.last || '');
-    });
-  }
-
-  const opsCollapsed = Game.hqCollapsedGroups || {};
-  const availableRows = opsGroups.map(g => `
-    <div class="roster-group">
-      <div class="roster-group-header" data-action="hq-toggle-group" data-group="ops_${g.key}">
-        <span class="group-chevron">${opsCollapsed['ops_' + g.key] ? '▶' : '▼'}</span>
-        <span class="group-label">${g.label}</span>
-        <span class="group-count">(${g.soldiers.length})</span>
-      </div>
-      ${opsCollapsed['ops_' + g.key] ? '' : `<div class="roster-group-list">${g.soldiers.map(s => {
-        const rankName = getRankInfo(s).abbr;
-        const isPreviewing = previewId === s.id;
-        const cs = getEffectiveCombatStats(s);
-        return `
-          <div class="ops-available-row ${isPreviewing ? 'previewing' : ''}" data-action="ops-preview-soldier" data-soldier="${s.id}">
-            <canvas class="soldier-insignia" data-rank="${s.rankIndex}" width="64" height="64"></canvas>
-            <span class="soldier-name">${rankName} ${s.name?.last || 'Unknown'}</span>
-            <span class="soldier-role-tag">${getRoleLabel(s.role)}</span>
-            ${statRowSummary(cs, s)}
-          </div>`;
-      }).join('')}</div>`}
-    </div>
-  `).join('');
-
-  return `${filterBar}<div class="ops-available-list">${availableRows || '<div class="panel-placeholder">No soldiers available</div>'}</div>`;
+      ${crewRows}
+    </div>`;
 }
 
-// ── End of Operations tab modular functions ──
+// ── Popover rendering helpers ────────────────────────────────
+
+function _sqPopoverForRow(soldierId) {
+  const p = Game.sqPopover;
+  if (!p || p.type !== 'soldier' || p.soldierId !== soldierId) return '';
+  return _renderSqPopoverSoldier(soldierId);
+}
+function _sqPopoverForVehicle(vehicleId) {
+  const p = Game.sqPopover;
+  if (!p || p.type !== 'vehicle' || p.vehicleId !== vehicleId) return '';
+  return _renderSqPopoverVehicle(vehicleId);
+}
+function _sqPopoverForAddVehicle(squadIdx) {
+  const p = Game.sqPopover;
+  if (!p || p.type !== 'add-vehicle' || p.squadIdx !== squadIdx) return '';
+  return _renderSqPopoverAddVehicle(squadIdx);
+}
+function _sqPopoverForCmd() {
+  const p = Game.sqPopover;
+  if (!p || p.type !== 'cmd') return '';
+  return _renderSqPopoverCmd();
+}
+
+function _renderSqPopoverSoldier(soldierId) {
+  const ctx = _initOpsState();
+  const { ops, roster } = ctx;
+  const s = roster.find(r => r.id === soldierId);
+  if (!s) return '';
+  const sqIdx = ops.squads.findIndex(sq => sq.units.includes(soldierId));
+
+  // Is this soldier crewing a vehicle?
+  let crewVehicleId = null, crewSlotName = null;
+  for (const sq of ops.squads) {
+    if (!sq.vehicleId) continue;
+    const crew = getCrewForVehicle(sq.vehicleId) || {};
+    for (const slot in crew) {
+      if (crew[slot]?.id === soldierId) { crewVehicleId = sq.vehicleId; crewSlotName = slot; break; }
+    }
+    if (crewVehicleId) break;
+  }
+
+  const isLeader = sqIdx >= 0 && ops.squads[sqIdx].leaderId === soldierId;
+  const isHero = ops.heroUnit === soldierId;
+  const inReserve = sqIdx === -1 && !crewVehicleId;
+
+  const squadOpts = ops.squads.map((sq, i) => {
+    const isCurrent = i === sqIdx;
+    const total = sq.units.length + (sq.vehicleId ? 1 : 0);
+    return `
+      <button class="sq-pop-option ${isCurrent ? 'current' : ''}" data-action="ops-move-to-squad" data-soldier="${soldierId}" data-target-squad="${i}" ${isCurrent ? 'disabled' : ''}>
+        <span class="radio"></span><span class="label">${i === 0 && (sq.units.includes(ops.heroUnit) || sq.vehicleId === ops.heroUnit) ? 'Hero Squad' : `Squad ${i + 1}`}</span><span class="meta">${total} units</span>
+      </button>`;
+  }).join('');
+  const reserveOpt = `
+    <button class="sq-pop-option ${inReserve ? 'current' : ''}" data-action="ops-move-to-squad" data-soldier="${soldierId}" data-target-squad="-1" ${inReserve ? 'disabled' : ''}>
+      <span class="radio"></span><span class="label">Reserve</span>
+    </button>`;
+
+  return `
+    <div class="sq-popover-backdrop" data-action="sq-close-popover"></div>
+    <div class="sq-popover">
+      <div class="sq-pop-title">${getRankInfo(s).abbr} ${s.name?.last || ''}</div>
+      ${squadOpts}
+      ${reserveOpt}
+      <div class="sq-pop-divider"></div>
+      ${crewVehicleId ? `<button class="sq-pop-option" data-action="ops-move-out-of-vehicle" data-soldier="${soldierId}" data-target-squad="${sqIdx >= 0 ? sqIdx : 0}"><span class="icon">→</span><span class="label">Move out of vehicle</span></button>` : ''}
+      ${sqIdx >= 0 && !isLeader ? `<button class="sq-pop-option" data-action="ops-make-leader" data-soldier="${soldierId}" data-squad="${sqIdx}"><span class="icon">⚐</span><span class="label">Make leader</span></button>` : ''}
+      ${sqIdx >= 0 && isLeader && ops.squads[sqIdx].units.length > 1 ? `<button class="sq-pop-option" data-action="ops-step-down" data-squad="${sqIdx}"><span class="icon">⚐</span><span class="label">Step down as leader</span></button>` : ''}
+      ${!isHero ? `<button class="sq-pop-option" data-action="ops-set-hero" data-soldier="${soldierId}"><span class="icon" style="color:var(--accent-yellow)">★</span><span class="label">Set as hero</span></button>` : ''}
+      <button class="sq-pop-option" data-action="hq-soldier-detail" data-soldier="${soldierId}"><span class="icon">👁</span><span class="label">View details ▸</span></button>
+    </div>`;
+}
+
+function _renderSqPopoverVehicle(vehicleId) {
+  const ctx = _initOpsState();
+  const { ops, vehicles } = ctx;
+  const v = vehicles.find(x => x.id === vehicleId);
+  if (!v) return '';
+  const sqIdx = ops.squads.findIndex(sq => sq.vehicleId === vehicleId);
+  const isHero = ops.heroUnit === vehicleId;
+
+  const squadOpts = ops.squads.map((sq, i) => {
+    const isCurrent = i === sqIdx;
+    const occupied = sq.vehicleId && !isCurrent;
+    return `
+      <button class="sq-pop-option ${isCurrent ? 'current' : ''}" data-action="ops-move-vehicle" data-vehicle="${vehicleId}" data-target-squad="${i}" ${isCurrent || occupied ? 'disabled' : ''}>
+        <span class="radio"></span><span class="label">${i === 0 ? 'Hero Squad' : `Squad ${i + 1}`}</span><span class="meta">${occupied ? 'has vehicle' : ''}</span>
+      </button>`;
+  }).join('');
+
+  return `
+    <div class="sq-popover-backdrop" data-action="sq-close-popover"></div>
+    <div class="sq-popover">
+      <div class="sq-pop-title">${v.unitId.toUpperCase()}</div>
+      ${squadOpts}
+      <button class="sq-pop-option" data-action="ops-move-vehicle" data-vehicle="${vehicleId}" data-target-squad="-1"><span class="icon">↩</span><span class="label">Send to Motor Pool</span></button>
+      <div class="sq-pop-divider"></div>
+      ${!isHero ? `<button class="sq-pop-option" data-action="ops-set-hero" data-vehicle="${vehicleId}"><span class="icon" style="color:var(--accent-yellow)">★</span><span class="label">Set as hero unit</span></button>` : ''}
+      <button class="sq-pop-option" data-action="hq-detail-vehicle" data-vehicle="${vehicleId}"><span class="icon">👁</span><span class="label">View details ▸</span></button>
+    </div>`;
+}
+
+function _renderSqPopoverAddVehicle(squadIdx) {
+  const ctx = _initOpsState();
+  const { ops, vehicles } = ctx;
+  const taken = new Set(ops.squads.map(sq => sq.vehicleId).filter(Boolean));
+  const candidates = vehicles.filter(v => !taken.has(v.id));
+  const rows = candidates.map(v => {
+    const pct = Math.round((v.hpPercent || 1) * 100);
+    return `
+      <button class="sq-pop-option" data-action="ops-assign-vehicle-to-squad" data-vehicle="${v.id}" data-target-squad="${squadIdx}">
+        <span class="icon">🚗</span><span class="label">${v.unitId.toUpperCase()}</span><span class="meta">${pct}%</span>
+      </button>`;
+  }).join('');
+  return `
+    <div class="sq-popover-backdrop" data-action="sq-close-popover"></div>
+    <div class="sq-popover">
+      <div class="sq-pop-title">SELECT VEHICLE</div>
+      ${rows || '<div class="sq-pop-empty">No vehicles in Motor Pool.</div>'}
+    </div>`;
+}
+
+function _renderSqPopoverCmd() {
+  const ctx = _initOpsState();
+  const { ops, officers } = ctx;
+  const currentId = ops.cmdOfficerId;
+  const rows = officers.map(o => {
+    const oRank = (OFFICER_RANKS[o.rankIndex] || OFFICER_RANKS[0]);
+    const isCurrent = currentId === o.id;
+    const m = o.cmdMetrics || {};
+    return `
+      <button class="sq-pop-option ${isCurrent ? 'current' : ''}" data-action="ops-assign-cmd" data-soldier="${o.id}">
+        <span class="radio"></span><span class="label">${oRank.abbr} ${o.name?.last || ''}</span><span class="meta">${m.runsCommanded || 0} runs</span>
+      </button>`;
+  }).join('');
+  return `
+    <div class="sq-popover-backdrop" data-action="sq-close-popover"></div>
+    <div class="sq-popover">
+      <div class="sq-pop-title">COMMANDING OFFICER</div>
+      ${rows || '<div class="sq-pop-empty">No officers — promote an NCO in Barracks.</div>'}
+      ${currentId ? `<div class="sq-pop-divider"></div><button class="sq-pop-option destructive" data-action="ops-unassign-cmd"><span class="icon">✕</span><span class="label">Remove officer</span></button>` : ''}
+    </div>`;
+}
+
+// ── Vehicle detail drawer ────────────────────────────────────
+
+function _vehicleDetailDrawer(vehicleId) {
+  const vehicles = getAvailableVehicles();
+  const v = vehicles.find(x => x.id === vehicleId);
+  if (!v) return '';
+  const cs = getEffectiveCombatStats({ pool: 'vehicle' }, v);
+  const crew = getCrewForVehicle(v.id) || {};
+  const schema = CREW_SCHEMAS[v.unitId] || [];
+  const ops = Game.opsConfig;
+  const sqIdx = ops?.squads?.findIndex(sq => sq.vehicleId === v.id) ?? -1;
+  const sqLabel = sqIdx >= 0 ? `Squad ${sqIdx + 1}` : 'Motor Pool';
+
+  const crewList = schema.map(slot => {
+    const c = crew[slot];
+    if (c) {
+      return `<div class="vd-crew-row"><span class="vd-crew-slot">${mosAbbrev(slot)}</span><span class="vd-rank">${getRankInfo(c).abbr}</span><span class="vd-name">${c.name?.last || ''}</span></div>`;
+    }
+    return `<div class="vd-crew-row empty"><span class="vd-crew-slot">${mosAbbrev(slot)}</span><span class="vd-crew-empty">empty</span></div>`;
+  }).join('');
+
+  const condition = Math.round((v.hpPercent || 1) * 100);
+
+  return `
+    <div class="vd-backdrop" data-action="hq-close-vehicle"></div>
+    <div class="vd-drawer">
+      <button class="vd-close" data-action="hq-close-vehicle" title="Close">✕</button>
+      <h3 class="vd-title">${v.unitId.toUpperCase()}</h3>
+      <p class="vd-sub">Vehicle · ${sqLabel} · ${condition}% condition</p>
+
+      <div class="vd-stats">
+        <div class="vd-stat"><div class="vd-stat-val">${cs.hp}/${cs.maxHp}</div><div class="vd-stat-label">HEALTH</div></div>
+        <div class="vd-stat"><div class="vd-stat-val">${cs.damage || '—'}</div><div class="vd-stat-label">DAMAGE</div></div>
+        <div class="vd-stat"><div class="vd-stat-val">${cs.rangeM || cs.range || '—'}m</div><div class="vd-stat-label">RANGE</div></div>
+        <div class="vd-stat"><div class="vd-stat-val">${cs.speedKmh ?? Math.round((cs.speed || 0) * DISPLAY_SPEED_KMH)}</div><div class="vd-stat-label">SPEED</div></div>
+      </div>
+
+      <div class="vd-section">Equipment (placeholder — gear system pending)</div>
+      <div class="vd-gear-row"><span class="vd-gear-slot">MAIN GUN</span><span class="vd-gear-name">Standard</span></div>
+      <div class="vd-gear-row"><span class="vd-gear-slot">ARMOR</span><span class="vd-gear-name">Standard plating</span></div>
+      <div class="vd-gear-row"><span class="vd-gear-slot">ENGINE</span><span class="vd-gear-name">Standard</span></div>
+
+      <div class="vd-section">Crew</div>
+      ${crewList}
+
+      <div class="vd-section">Actions</div>
+      <div class="vd-actions">
+        ${condition < 100 ? `<button class="vd-action repair" data-action="hq-vehicle-repair" data-vehicle="${v.id}">REPAIR</button>` : ''}
+        ${ops?.heroUnit !== v.id ? `<button class="vd-action hero" data-action="ops-set-hero" data-vehicle="${v.id}">SET AS HERO ★</button>` : ''}
+        <button class="vd-action" data-action="hq-view-in-motor-pool" data-vehicle="${v.id}">VIEW IN MOTOR POOL ▸</button>
+        ${sqIdx >= 0 ? `<button class="vd-action" data-action="ops-move-vehicle" data-vehicle="${v.id}" data-target-squad="-1">SEND TO MOTOR POOL</button>` : ''}
+      </div>
+    </div>`;
+}
+
 
 function getTypeBadges(types) {
   const typeColors = {
@@ -6944,6 +7936,289 @@ function endlessLoadoutHTML() {
   `;
 }
 
+// ─── Deploy panel (HTML) ────────────────────────────────────
+// Replaces the canvas-drawn deploy panel. Rendered as an overlay inside
+// endlessBattleHTML when b.phase === 'deploying'. The map + in-world zone
+// highlights still draw on the main battle canvas behind this panel.
+
+const FMT_LIST = [
+  { id: 'line',       label: 'Line' },
+  { id: 'wedge',      label: 'Wedge' },
+  { id: 'column',     label: 'Column' },
+  { id: 'spread',     label: 'Spread' },
+  { id: 'staggered',  label: 'Staggered' },
+  { id: 'echelon_l',  label: 'Echelon L' },
+  { id: 'echelon_r',  label: 'Echelon R' }
+];
+
+/**
+ * Update just the deploy panel without re-rendering the whole endless-battle-screen.
+ * Critical: re-rendering the screen destroys the battle canvas (BattleRenderer holds
+ * a ref to a canvas element that gets replaced by app.innerHTML). All dp-* actions
+ * should call this, not render().
+ */
+export function renderDeployPanel() {
+  const b = Game.endless?.battle;
+  if (!b) return;
+  const existing = document.querySelector('.deploy-panel');
+  const html = deployPanelHTML(b);
+  if (!html) {
+    if (existing) existing.remove();
+    return;
+  }
+  if (!existing) {
+    const screen = document.querySelector('.endless-battle-screen');
+    if (screen) screen.insertAdjacentHTML('beforeend', html);
+    return;
+  }
+  const wrap = document.createElement('div');
+  wrap.innerHTML = html;
+  const next = wrap.firstElementChild;
+  if (next) existing.replaceWith(next);
+}
+
+export function deployPanelHTML(b) {
+  if (!b || !b.deployZones?.blue) return '';
+  const zones = b.deployZones.blue;
+  const selZone = zones.find(z => z.selected) || zones[0];
+  const expanded = !!selZone?._expanded;
+
+  // Bottom strip: always present
+  const stripHTML = `
+    <div class="dp-bottom-strip">
+      ${zones.map((z, i) => _zoneChipHTML(b, z, i)).join('')}
+    </div>`;
+
+  if (!expanded) {
+    return `
+      <div class="deploy-panel collapsed">
+        ${stripHTML}
+      </div>`;
+  }
+
+  // Expanded panel
+  const drawerOpen = !!b._selectedUnit;
+  return `
+    <div class="deploy-panel">
+      ${_deployHeaderHTML(b, selZone)}
+      <div class="dp-body ${drawerOpen ? 'with-drawer' : ''}">
+        ${_loadoutsColHTML(b)}
+        ${_squadColHTML(b)}
+        ${_poolColHTML(b)}
+        ${drawerOpen ? _drawerHTML(b) : ''}
+      </div>
+      ${stripHTML}
+    </div>`;
+}
+
+function _deployHeaderHTML(b, zone) {
+  const mode = b.playMode || 'unit';
+  return `
+    <div class="dp-header">
+      <span class="dp-zone-name">${zone.name}</span>
+      <div class="dp-mode-toggle">
+        <button class="${mode === 'unit' ? 'active' : ''}" data-action="dp-mode" data-mode="unit">UNIT</button>
+        <button class="${mode === 'cmd'  ? 'active' : ''}" data-action="dp-mode" data-mode="cmd">CMD</button>
+      </div>
+      <button class="dp-collapse-btn" data-action="dp-collapse" data-zone="${zone.name}">▼ Collapse</button>
+      <button class="dp-deploy-btn" data-action="dp-deploy">DEPLOY ▶</button>
+    </div>`;
+}
+
+function _loadoutsColHTML(b) {
+  const heroUnitId = b.hero?.unitId || 'abrams';
+  const selectedPresetId = b._selectedPreset;
+  return `
+    <div class="dp-col">
+      <div class="dp-col-head">
+        <span class="dp-col-title">LOADOUTS</span>
+        <span class="dp-col-count">${SQUAD_PRESETS.length} presets</span>
+      </div>
+      <div class="dp-col-scroll">
+        ${SQUAD_PRESETS.map(p => _presetCardHTML(p, heroUnitId, selectedPresetId === p.id)).join('')}
+      </div>
+    </div>`;
+}
+
+function _presetCardHTML(preset, heroUnitId, isActive) {
+  const stats = getPresetStats(preset, heroUnitId);
+  const allIds = [heroUnitId, ...preset.units];
+  const iconStrip = allIds.slice(0, 8).map((uid, i) => {
+    const cls = i === 0 ? 'unit-ico hero' : (_isVehicleId(uid) ? 'unit-ico vehicle' : 'unit-ico');
+    return `<div class="${cls}">${_unitIconGlyph(uid, i === 0)}</div>`;
+  }).join('');
+  return `
+    <div class="preset-card ${isActive ? 'active' : ''}" data-action="dp-preset" data-preset="${preset.id}">
+      <div class="preset-name">${preset.name}</div>
+      <div class="preset-tagline">${preset.tagline}</div>
+      <div class="preset-row">
+        <div class="preset-icons">${iconStrip}</div>
+        <canvas class="fmt-mini" width="44" height="44" data-fmt="${preset.formation}" data-unit-count="${allIds.length}"></canvas>
+        <div class="preset-stats">
+          <div>${stats.count} units</div>
+          <div class="gold">${stats.dps} DPS</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function _squadColHTML(b) {
+  const fmt = b._deployFormation || 'line';
+  const lineupUnits = b.units || [];
+  const heroIcon = b.hero ? _renderLineupRow({ unit: b.hero, isHero: true, selected: false }) : '';
+  const rows = lineupUnits.map((u, i) => _renderLineupRow({
+    unit: u,
+    isHero: false,
+    selected: b._selectedUnit === u,
+    idx: i
+  })).join('');
+  const totalSlots = 8;  // matches existing _zoneCapacity logic; can adjust
+  const filled = 1 + lineupUnits.length;
+  const ghostCount = Math.max(0, totalSlots - filled);
+  const ghosts = Array.from({ length: ghostCount }, (_, i) => `<div class="ghost-slot">+ slot ${filled + i + 1} (empty)</div>`).join('');
+
+  return `
+    <div class="dp-col">
+      <div class="dp-col-head">
+        <span class="dp-col-title">SQUAD</span>
+        <span class="dp-col-count">${filled} / ${totalSlots}</span>
+      </div>
+      <div class="squad-fmt-row">
+        <span class="squad-fmt-label">FORMATION</span>
+        <select class="squad-fmt-select" data-action="dp-formation">
+          ${FMT_LIST.map(f => `<option value="${f.id}" ${f.id === fmt ? 'selected' : ''}>${f.label}</option>`).join('')}
+        </select>
+        <canvas class="squad-fmt-preview" width="56" height="56" data-fmt="${fmt}" data-unit-count="${filled}"></canvas>
+      </div>
+      <div class="dp-col-scroll">
+        <div class="lineup-list">
+          ${heroIcon}
+          ${rows}
+          ${ghosts}
+        </div>
+      </div>
+    </div>`;
+}
+
+function _renderLineupRow({ unit, isHero, selected, idx }) {
+  if (!unit) return '';
+  const isVeh = _isVehicleId(unit.unitId);
+  const roleTag = isVeh ? 'VEH' : 'RFL';
+  const roleColor = isVeh ? 'color:var(--accent-orange); background:rgba(251,146,60,0.12)' : '';
+  const rank = unit.rank?.abbr || (isHero ? 'YOU' : 'PV2');
+  const name = unit.unitName?.display || unit.unitId?.toUpperCase() || 'UNIT';
+  return `
+    <div class="lineup-row ${isHero ? 'hero' : ''} ${selected ? 'selected' : ''}"
+         data-action="dp-lineup-select"
+         ${!isHero && idx != null ? `data-idx="${idx}"` : ''}>
+      <span class="lineup-rank">${rank}</span>
+      <span class="lineup-name">${name}</span>
+      <span class="lineup-role" style="${roleColor}">${roleTag}</span>
+      ${isHero
+        ? `<button class="lineup-remove" disabled style="opacity:0.2">★</button>`
+        : `<button class="lineup-remove" data-action="dp-lineup-remove" data-idx="${idx}">✕</button>`}
+    </div>`;
+}
+
+function _poolColHTML(b) {
+  const tab = b._poolTab || 'barracks';
+  return `
+    <div class="dp-col">
+      <div class="dp-col-head">
+        <span class="dp-col-title">POOL</span>
+        <span class="dp-col-count">${(b.reservePool || []).length} available</span>
+      </div>
+      <div class="pool-tabs">
+        <button class="pool-tab ${tab === 'barracks' ? 'active' : ''}" data-action="dp-pool-tab" data-tab="barracks">BARRACKS</button>
+        <button class="pool-tab ${tab === 'motorpool' ? 'active' : ''}" data-action="dp-pool-tab" data-tab="motorpool">MOTOR POOL</button>
+      </div>
+      <div class="dp-col-scroll">
+        ${tab === 'barracks' ? _poolBarracksHTML(b) : _poolMotorPoolHTML(b)}
+      </div>
+    </div>`;
+}
+
+function _poolBarracksHTML(b) {
+  // Group reserves by unit type, infantry only.
+  const reserves = (b.reservePool || []).filter(r => !_isVehicleId(r.unitId));
+  return _poolGroupsHTML(reserves, b);
+}
+
+function _poolMotorPoolHTML(b) {
+  const reserves = (b.reservePool || []).filter(r => _isVehicleId(r.unitId));
+  return _poolGroupsHTML(reserves, b);
+}
+
+function _poolGroupsHTML(reserves, b) {
+  if (reserves.length === 0) return '<div class="pool-empty">No reserves in this pool.</div>';
+  const groups = {};
+  for (const r of reserves) {
+    const tid = r.unitId;
+    if (!groups[tid]) groups[tid] = [];
+    groups[tid].push(r);
+  }
+  return Object.entries(groups).map(([tid, group]) => {
+    const typeName = (UNITS.find(u => u.id === tid)?.name || tid).toUpperCase();
+    const rows = group.map((r, i) => `
+      <div class="pool-row ${b._selectedUnit === r ? 'selected' : ''}"
+           data-action="dp-pool-select" data-unit-id="${r.id || ''}" data-unit-type="${tid}" data-unit-idx="${i}">
+        <span class="name">${r.unitName?.display || r.id || tid.toUpperCase()}</span>
+        <button class="pool-add" data-action="dp-pool-add" data-unit-id="${r.id || ''}" data-unit-type="${tid}">+</button>
+      </div>`).join('');
+    return `
+      <div class="pool-group">
+        <div class="pool-group-head">
+          <div class="pool-group-icon"></div>
+          <span class="pool-group-name">${typeName}</span>
+          <span class="pool-group-count">${group.length}</span>
+        </div>
+        ${rows}
+      </div>`;
+  }).join('');
+}
+
+function _drawerHTML(b) {
+  const u = b._selectedUnit;
+  if (!u) return '';
+  const name = u.unitName?.display || u.id || u.unitId?.toUpperCase() || 'UNIT';
+  const typeName = (UNITS.find(d => d.id === u.unitId)?.name || u.unitId || 'UNIT').toUpperCase();
+  return `
+    <div class="dp-drawer">
+      <div class="drawer-head">
+        <span class="drawer-title">${name}</span>
+        <button class="drawer-close" data-action="dp-drawer-close">✕</button>
+      </div>
+      <div class="drawer-unit">${typeName}</div>
+      <div class="drawer-unit-sub">${u._sub || ''}</div>
+      <canvas class="drawer-radar" width="200" height="130" data-unit-id="${u.id || u.unitId}"></canvas>
+    </div>`;
+}
+
+function _zoneChipHTML(b, zone, i) {
+  const isSelected = !!zone.selected;
+  const isExpanded = !!zone._expanded;
+  const side = i === 0 ? 'Left flank' : i === 1 ? 'Center' : 'Right flank';
+  const comp = (zone.units?.length || 0) === 0 ? 'Empty' : `${zone.units.length} unit${zone.units.length > 1 ? 's' : ''}`;
+  return `
+    <div class="zone-chip ${isSelected ? 'selected' : ''} ${isExpanded ? 'expanded' : ''}"
+         data-action="dp-zone" data-zone="${zone.name}">
+      <span class="zone-chip-name">${zone.name}</span>
+      <span class="zone-chip-comp">${comp}</span>
+      <span class="zone-chip-side">${side}${isExpanded ? ' · ▲ open' : ''}</span>
+    </div>`;
+}
+
+// ── Helpers ───────────────────────────────────────────────────
+const _VEHICLE_IDS = new Set(['jeep', 'humvee', 'sherman', 'tiger', 'abrams', 'howitzer', 'drone', 'apache']);
+function _isVehicleId(uid) { return _VEHICLE_IDS.has(uid); }
+function _unitIconGlyph(uid, isHero) {
+  if (isHero) return '★';
+  if (_isVehicleId(uid)) return '⚒';
+  if (uid === 'medic') return '⚕';
+  if (uid === 'specops') return '⚜';
+  return '⚀';
+}
+
 function endlessBattleHTML() {
   const e = Game.endless;
   if (!e) return '<div class="screen">Loading...</div>';
@@ -6992,15 +8267,17 @@ function endlessBattleHTML() {
         <button class="control-btn" data-action="zoom-out">−</button>
         <button class="control-btn controls-legend-btn" data-action="toggle-controls-legend">?</button>
         <div class="controls-legend" style="display:none">
-        <div class="controls-legend-title">CONTROLS</div>
-        <div class="controls-legend-row"><span class="key">WASD</span> Move</div>
-        <div class="controls-legend-row"><span class="key">MOUSE</span> Aim</div>
-        <div class="controls-legend-row"><span class="key">CLICK</span> Fire</div>
-        <div class="controls-legend-row"><span class="key">R</span> Reload</div>
-        <div class="controls-legend-row"><span class="key">SCROLL</span> Zoom</div>
-        <div class="controls-legend-row"><span class="key">SPACE</span> Continue</div>
-        <div class="controls-legend-row"><span class="key">\`</span> Debug</div>
+          <div class="controls-legend-title">CONTROLS</div>
+          <div class="controls-legend-row"><span class="key">WASD</span> Move</div>
+          <div class="controls-legend-row"><span class="key">MOUSE</span> Aim</div>
+          <div class="controls-legend-row"><span class="key">CLICK</span> Fire</div>
+          <div class="controls-legend-row"><span class="key">R</span> Reload</div>
+          <div class="controls-legend-row"><span class="key">SCROLL</span> Zoom</div>
+          <div class="controls-legend-row"><span class="key">SPACE</span> Continue</div>
+          <div class="controls-legend-row"><span class="key">\`</span> Debug</div>
+        </div>
       </div>
+      ${b?.phase === 'deploying' ? deployPanelHTML(b) : ''}
     </div>
   `;
 }
@@ -7494,7 +8771,7 @@ export function replayTheaterHTML(replays, activeFilter = 'all') {
   // Filter tabs
   const tabs = [
     { key: 'all', label: 'All' },
-    { key: 'fire_range', label: 'Fire Range' },
+    { key: 'fire_range', label: 'Proving Ground' },
     { key: 'endless', label: 'Endless' },
     { key: 'campaign', label: 'Campaign' }
   ];
@@ -7514,7 +8791,7 @@ export function replayTheaterHTML(replays, activeFilter = 'all') {
       const resultColor = r.result === 'in_progress' ? '#fb923c' : r.result === 'blue_wins' ? '#4a9eff' : r.result === 'red_wins' ? '#ff4444' : r.result === 'victory' ? '#4a9eff' : r.result === 'defeat' ? '#ff4444' : r.result === 'draw' ? '#fbbf24' : r.result === 'exit' ? '#94a3b8' : waveMatch ? '#4ade80' : '#888';
       const resultText = r.result === 'in_progress' ? 'In Progress' : r.result === 'blue_wins' ? 'Blue Wins' : r.result === 'red_wins' ? 'Red Wins' : r.result === 'victory' ? 'Victory' : r.result === 'defeat' ? 'Defeat' : r.result === 'draw' ? 'Draw' : r.result === 'exit' ? 'Exited' : waveMatch ? `Wave ${waveMatch[1]}` : r.result || 'Unknown';
       const missionLabel = r.missionId === 'intro' ? 'Intro Mission' : r.missionId ? `Mission: ${r.missionId}` : null;
-      const modeLabel = missionLabel || (r.mode === 'fire_range' ? 'Fire Range' : r.mode === 'campaign' ? 'Campaign' : r.mode === 'endless' ? 'Endless' : r.mode || 'Fire Range');
+      const modeLabel = missionLabel || (r.mode === 'fire_range' ? 'Proving Ground' : r.mode === 'campaign' ? 'Campaign' : r.mode === 'endless' ? 'Endless' : r.mode || 'Proving Ground');
       const debugTag = r.debugSave ? '<span class="replay-debug-tag">DEBUG</span>' : '';
       const duration = r.duration ? `${Math.floor(r.duration / 60)}m ${Math.floor(r.duration % 60)}s` : '?';
       const date = r.recordedAt ? new Date(r.recordedAt).toLocaleString() : '?';
@@ -7651,7 +8928,7 @@ function fireRangeConfigHTML() {
   return `
     <div class="screen fr-config-screen">
       <div class="fr-header">
-        <h1>FIRE RANGE</h1>
+        <h1>PROVING GROUND</h1>
         <p class="fr-subtitle">AI Battle Test Bed</p>
       </div>
 

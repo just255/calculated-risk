@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Option B — Barracks absorbs Operations</title>
+<link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Oxanium:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-dark: #1a1f2e; --bg-medium: #252b3d; --bg-light: #2f3749; --bg-lighter: #3d4559;
+    --accent-green: #4ade80; --accent-red: #f87171; --accent-yellow: #fbbf24;
+    --accent-blue: #60a5fa; --accent-orange: #fb923c;
+    --text-primary: #e2e8f0; --text-secondary: #94a3b8;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: 'Oxanium', sans-serif; background: #0f1320; color: var(--text-primary); margin: 0; padding: 24px; }
+  h1 { font-family: 'Black Ops One', cursive; color: var(--accent-green); margin: 0 0 4px; font-size: 1.3rem; }
+  .subhead { color: var(--text-secondary); margin: 0 0 24px; font-size: 0.85rem; max-width: 900px; }
+  .frame-cap { font-size: 0.7rem; color: var(--text-secondary); margin: 6px 0 16px; }
+  .frames { display: flex; gap: 16px; flex-wrap: wrap; }
+
+  .phone {
+    width: 880px; height: 460px;
+    background: var(--bg-dark);
+    border: 1px solid var(--bg-lighter);
+    border-radius: 14px;
+    overflow: hidden;
+    position: relative;
+    display: flex; flex-direction: column;
+  }
+
+  /* HQ chrome */
+  .hq-header { display: flex; align-items: center; padding: 5px 8px; background: var(--bg-medium); border-bottom: 2px solid var(--accent-green); gap: 6px; flex-shrink: 0; }
+  .hq-title { font-family: 'Black Ops One', cursive; font-size: 0.75rem; margin: 0; }
+  .hq-resources { display: flex; gap: 6px; font-family: 'Share Tech Mono', monospace; font-size: 0.65rem; margin-right: auto; }
+  .hq-deploy-bar { display: flex; align-items: center; gap: 4px; padding: 2px 5px; background: var(--bg-light); border: 1px solid var(--bg-lighter); border-radius: 4px; }
+  .hq-deploy-label { font-size: 0.55rem; color: var(--text-secondary); font-family: 'Oxanium', sans-serif; font-weight: 600; letter-spacing: 0.5px; }
+  .hq-map-btn { width: 18px; height: 18px; background: var(--bg-medium); border: 1px solid var(--bg-lighter); color: var(--text-secondary); font-size: 0.55rem; border-radius: 3px; display: flex; align-items: center; justify-content: center; }
+  .hq-map-btn.active { background: var(--accent-green); color: var(--bg-dark); border-color: var(--accent-green); }
+  .hq-deploy-val { font-family: 'Share Tech Mono', monospace; font-size: 0.7rem; color: var(--text-primary); font-weight: 700; }
+  .hq-deploy-btn { background: var(--accent-green); color: var(--bg-dark); padding: 3px 8px; font-family: 'Black Ops One', cursive; font-size: 0.62rem; border-radius: 3px; border: none; }
+  .hq-tab-bar { display: flex; background: var(--bg-dark); border-bottom: 1px solid var(--bg-light); flex-shrink: 0; }
+  .hq-tab { padding: 6px 0; background: none; border: none; color: var(--text-secondary); font-family: 'Black Ops One', cursive; font-size: 0.62rem; letter-spacing: 0.5px; flex: 1; border-bottom: 3px solid transparent; }
+  .hq-tab.active { color: var(--accent-green); border-bottom-color: var(--accent-green); }
+
+  /* Sub-tabs */
+  .sub-tabs { display: flex; gap: 4px; padding: 6px 8px 0; flex-shrink: 0; flex-wrap: wrap; }
+  .sub-tab { padding: 4px 11px; font-family: 'Black Ops One', cursive; font-size: 0.6rem; letter-spacing: 1px; background: var(--bg-medium); border: 1px solid var(--bg-light); color: var(--text-secondary); border-radius: 4px; cursor: pointer; }
+  .sub-tab.active { color: var(--accent-green); border-color: var(--accent-green); background: var(--bg-light); }
+
+  /* Body */
+  .body { flex: 1; display: flex; overflow: hidden; padding: 6px; gap: 6px; }
+  .roster-pane { display: flex; flex-direction: column; min-width: 0; }
+  .squad-pane { flex: 1; background: var(--bg-medium); border-radius: 6px; padding: 8px 10px; overflow-y: auto; }
+
+  /* Filter chips */
+  .filter-bar { display: flex; gap: 4px; padding: 4px 0; flex-wrap: wrap; flex-shrink: 0; }
+  .filter-chip {
+    padding: 3px 8px;
+    font-family: 'Oxanium', sans-serif; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.5px;
+    background: var(--bg-medium); border: 1px solid var(--bg-light); color: var(--text-secondary);
+    border-radius: 3px; cursor: pointer;
+  }
+  .filter-chip.active { background: var(--bg-light); color: var(--accent-green); border-color: var(--accent-green); }
+
+  /* Roster table — shared between sub-tabs */
+  .roster-table { flex: 1; overflow-y: auto; background: var(--bg-medium); border-radius: 5px; }
+  .roster-th-row {
+    display: flex; align-items: center; gap: 4px;
+    padding: 4px 6px;
+    border-bottom: 1px solid var(--bg-light);
+    position: sticky; top: 0; background: var(--bg-medium); z-index: 1;
+    font-family: 'Oxanium', sans-serif;
+    font-size: 0.55rem; color: var(--text-secondary);
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .roster-th { cursor: pointer; flex-shrink: 0; }
+  .roster-th.active { color: var(--accent-green); }
+  .col-mos  { width: 36px; flex-shrink: 0; text-align: center; }
+  .col-rank { width: 28px; flex-shrink: 0; font-family: 'Share Tech Mono', monospace; font-size: 0.62rem; color: var(--text-secondary); }
+  .col-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .col-name .name { font-weight: 600; color: var(--text-primary); }
+  .col-name .star { color: var(--accent-yellow); font-size: 0.7rem; }
+  .col-hp   { width: 104px; flex-shrink: 0; display: flex; align-items: center; gap: 4px; justify-content: flex-start; }
+  .col-hp .hp-num { font-family: 'Share Tech Mono', monospace; font-size: 0.62rem; margin-left: auto; }
+  .col-dmg, .col-rng, .col-spd { flex-shrink: 0; font-family: 'Share Tech Mono', monospace; font-size: 0.65rem; color: var(--text-primary); text-align: right; }
+  .col-dmg { width: 32px; }
+  .col-rng { width: 38px; color: var(--text-secondary); }
+  .col-spd { width: 32px; }
+  .col-btl { width: 28px; flex-shrink: 0; font-family: 'Share Tech Mono', monospace; font-size: 0.62rem; color: var(--text-secondary); text-align: right; }
+  .col-kills { width: 32px; flex-shrink: 0; font-family: 'Share Tech Mono', monospace; font-size: 0.62rem; color: var(--text-secondary); text-align: right; }
+  .col-status { width: 50px; flex-shrink: 0; text-align: center; font-family: 'Black Ops One', cursive; font-size: 0.55rem; color: var(--accent-green); }
+  .col-action { width: 92px; flex-shrink: 0; display: flex; justify-content: center; }
+  .col-chip { width: 84px; flex-shrink: 0; display: flex; justify-content: center; }
+
+  .roster-row { display: flex; align-items: center; gap: 4px; padding: 5px 6px; border-bottom: 1px solid rgba(255,255,255,0.04); min-height: 32px; font-size: 0.7rem; }
+  .roster-row:last-child { border-bottom: none; }
+  .roster-row:hover { background: rgba(255,255,255,0.02); }
+  .roster-row.vehicle-row { background: rgba(96,165,250,0.05); }
+
+  .mos-tag { font-family: 'Black Ops One', cursive; font-size: 0.5rem; color: var(--text-secondary); padding: 1px 3px; border: 1px solid var(--bg-lighter); border-radius: 2px; letter-spacing: 0.3px; }
+  .mos-tag.vehicle-type { color: var(--accent-blue); border-color: rgba(96,165,250,0.4); }
+
+  .hp-segments { display: flex; gap: 1px; }
+  .hp-seg { width: 6px; height: 9px; background: var(--bg-dark); border-radius: 1px; border: 1px solid #333; }
+  .hp-seg.filled { border-color: transparent; }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: 3px;
+    padding: 3px 8px; min-height: 22px;
+    background: rgba(74,222,128,0.12); border: 1px solid rgba(74,222,128,0.4); color: var(--accent-green);
+    font-family: 'Oxanium', sans-serif; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.3px;
+    border-radius: 3px; cursor: pointer; white-space: nowrap;
+  }
+  .chip.reserve { background: var(--bg-light); border-color: var(--bg-lighter); color: var(--text-secondary); }
+  .chip.crew    { background: rgba(96,165,250,0.12); border-color: rgba(96,165,250,0.4); color: var(--accent-blue); }
+  .chip-arrow { opacity: 0.6; font-size: 0.55rem; }
+
+  /* Action buttons (Barracks roster context) */
+  .row-action { background: none; border: 1px solid var(--bg-lighter); color: var(--text-secondary); font-family: 'Oxanium', sans-serif; font-size: 0.58rem; font-weight: 700; letter-spacing: 0.3px; padding: 3px 7px; border-radius: 3px; cursor: pointer; }
+  .row-action:hover { color: var(--accent-green); border-color: var(--accent-green); }
+
+  /* Squad pane content */
+  .sp-section-header { font-family: 'Black Ops One', cursive; font-size: 0.62rem; letter-spacing: 1px; color: var(--text-primary); padding: 4px 0; margin-top: 4px; border-bottom: 1px solid var(--bg-light); }
+  .sp-section-header.hero { color: var(--accent-yellow); }
+  .sp-section-header .count { float: right; font-family: 'Share Tech Mono', monospace; font-size: 0.62rem; color: var(--text-secondary); }
+  .sp-unit-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; font-size: 0.68rem; }
+  .sp-unit-row .rank { font-family: 'Share Tech Mono', monospace; font-size: 0.6rem; color: var(--text-secondary); min-width: 24px; }
+  .sp-unit-row .name { flex: 1; min-width: 0; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sp-unit-row .star { color: var(--accent-yellow); font-size: 0.7rem; }
+  .ldr-badge { font-family: 'Black Ops One', cursive; font-size: 0.45rem; color: var(--accent-yellow); padding: 0 3px; border: 1px solid var(--accent-yellow); border-radius: 2px; background: rgba(251,191,36,0.08); }
+  .sp-vehicle-block { background: rgba(96,165,250,0.06); border: 1px solid rgba(96,165,250,0.25); border-radius: 4px; padding: 4px 6px; margin: 3px 0; }
+  .sp-vehicle-name { font-size: 0.7rem; font-weight: 700; color: var(--text-primary); margin-bottom: 2px; }
+  .sp-crew-row { display: flex; align-items: center; gap: 4px; padding: 2px 0 2px 10px; font-size: 0.62rem; }
+  .sp-crew-slot { font-family: 'Black Ops One', cursive; font-size: 0.5rem; color: var(--accent-blue); width: 28px; }
+  .sp-cmd { background: rgba(251,146,60,0.05); border: 1px dashed rgba(251,146,60,0.3); border-radius: 4px; padding: 5px 8px; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+  .sp-cmd-label { font-family: 'Black Ops One', cursive; font-size: 0.55rem; color: var(--accent-orange); letter-spacing: 1px; }
+  .sp-cmd-msg { font-size: 0.62rem; color: var(--text-secondary); font-style: italic; margin-left: auto; }
+  .sp-add-squad { width: 100%; padding: 5px; background: transparent; border: 1px dashed var(--bg-lighter); color: var(--text-secondary); font-family: 'Black Ops One', cursive; font-size: 0.58rem; letter-spacing: 1px; border-radius: 4px; margin-top: 6px; cursor: pointer; }
+
+  /* Layout per sub-tab */
+  .layout-roster .roster-pane { flex: 1; }
+  .layout-squads .roster-pane { flex: 0 0 65%; }
+
+  .anno { background: var(--bg-medium); border-left: 3px solid var(--accent-yellow); padding: 10px 14px; margin: 8px 0 0; font-size: 0.78rem; color: var(--text-secondary); max-width: 880px; }
+  .anno strong { color: var(--text-primary); }
+  .anno ul { margin: 4px 0 0; padding-left: 20px; }
+
+  .section-divider { font-family: 'Black Ops One', cursive; color: var(--accent-yellow); font-size: 1rem; margin: 36px 0 6px; letter-spacing: 1px; }
+</style>
+</head>
+<body>
+
+<h1>OPTION B — BARRACKS ABSORBS OPERATIONS</h1>
+<p class="subhead">
+  Operations tab is gone. Squad-building lives under <strong>Barracks → SQUADS</strong> sub-tab.
+  Both sub-tabs share the same sortable/filterable roster table — only the per-row affordance differs.
+</p>
+
+<div class="section-divider">★ FRAME 1 — Barracks ▸ ROSTER (personnel work)</div>
+<p class="sublabel" style="color:var(--text-secondary);font-size:0.8rem;margin:0 0 12px">Roster takes full width. Row action = <strong>DOSSIER</strong> (opens detail view) + retire/promote menu. No squad pane.</p>
+
+<div class="frames">
+<div>
+<div class="phone">
+  <div class="hq-header">
+    <h2 class="hq-title">HEADQUARTERS</h2>
+    <div class="hq-resources">⬡ 1240 ◈ 18</div>
+    <div class="hq-deploy-bar">
+      <span class="hq-deploy-label">MAP</span>
+      <button class="hq-map-btn">S</button>
+      <button class="hq-map-btn active">M</button>
+      <button class="hq-map-btn">L</button>
+      <span class="hq-deploy-label">WAVE</span>
+      <span class="hq-deploy-val">1</span>
+      <span class="hq-deploy-label">POWER</span>
+      <span class="hq-deploy-val">94</span>
+      <button class="hq-deploy-btn">DEPLOY ▶</button>
+    </div>
+  </div>
+  <div class="hq-tab-bar">
+    <button class="hq-tab active">BARRACKS</button>
+    <button class="hq-tab">ARMORY</button>
+    <button class="hq-tab">MOTOR POOL</button>
+    <button class="hq-tab">PROVING GROUND</button>
+    <button class="hq-tab">REPLAYS</button>
+  </div>
+  <div class="sub-tabs">
+    <button class="sub-tab active">ROSTER (8 of 15)</button>
+    <button class="sub-tab">SQUADS</button>
+    <button class="sub-tab">FORMATION</button>
+    <button class="sub-tab">INFIRMARY (1)</button>
+    <button class="sub-tab">LEGACY (5 ▾)</button>
+    <button class="sub-tab">INSIGNIA</button>
+  </div>
+  <div class="body layout-roster">
+    <div class="roster-pane">
+      <div class="filter-bar">
+        <button class="filter-chip active">All</button>
+        <button class="filter-chip">Rifleman</button>
+        <button class="filter-chip">Medic</button>
+        <button class="filter-chip">Engineer</button>
+        <button class="filter-chip">Crew</button>
+      </div>
+      <div class="roster-table">
+        <div class="roster-th-row">
+          <div class="roster-th col-mos">MOS</div>
+          <div class="roster-th col-rank">RNK</div>
+          <div class="roster-th col-name active">NAME ▼</div>
+          <div class="roster-th col-hp">HEALTH</div>
+          <div class="roster-th col-dmg">DMG</div>
+          <div class="roster-th col-rng">RNG</div>
+          <div class="roster-th col-spd">SPD</div>
+          <div class="roster-th col-btl">BTL</div>
+          <div class="roster-th col-kills">KILLS</div>
+          <div class="roster-th col-status">STATUS</div>
+          <div class="roster-th col-action"></div>
+        </div>
+        <div class="roster-row" data-hp="100">
+          <div class="col-mos"><span class="mos-tag">RFL</span></div>
+          <div class="col-rank">PV2</div>
+          <div class="col-name"><span class="name">Anderson</span><span class="star">★</span></div>
+          <div class="col-hp"></div>
+          <div class="col-dmg">14</div><div class="col-rng">350m</div><div class="col-spd">49</div>
+          <div class="col-btl">4</div><div class="col-kills">23</div>
+          <div class="col-status">RDY</div>
+          <div class="col-action"><button class="row-action">DOSSIER ▸</button></div>
+        </div>
+        <div class="roster-row" data-hp="55">
+          <div class="col-mos"><span class="mos-tag">RFL</span></div>
+          <div class="col-rank">PFC</div>
+          <div class="col-name"><span class="name">Carter</span></div>
+          <div class="col-hp"></div>
+          <div class="col-dmg">14</div><div class="col-rng">350m</div><div class="col-spd">52</div>
+          <div class="col-btl">7</div><div class="col-kills">41</div>
+          <div class="col-status" style="color:var(--accent-yellow)">WND</div>
+          <div class="col-action"><button class="row-action">DOSSIER ▸</button></div>
+        </div>
+        <div class="roster-row" data-hp="90">
+          <div class="col-mos"><span class="mos-tag">RFL</span></div>
+          <div class="col-rank">PV2</div>
+          <div class="col-name"><span class="name">Davis</span></div>
+          <div class="col-hp"></div>
+          <div class="col-dmg">14</div><div class="col-rng">350m</div><div class="col-spd">48</div>
+          <div class="col-btl">2</div><div class="col-kills">11</div>
+          <div class="col-status">RDY</div>
+          <div class="col-action"><button class="row-action">DOSSIER ▸</button></div>
+        </div>
+        <div class="roster-row" data-hp="80">
+          <div class="col-mos"><span class="mos-tag">RFL</span></div>
+          <div class="col-rank">PV2</div>
+          <div class="col-name"><span class="name">Jackson</span></div>
+          <div class="col-hp"></div>
+          <div class="col-dmg">14</div><div class="col-rng">350m</div><div class="col-spd">45</div>
+          <div class="col-btl">3</div><div class="col-kills">17</div>
+          <div class="col-status">RDY</div>
+          <div class="col-action"><button class="row-action">DOSSIER ▸</button></div>
+        </div>
+        <div class="roster-row" data-hp="100">
+          <div class="col-mos"><span class="mos-tag">MED</span></div>
+          <div class="col-rank">PV2</div>
+          <div class="col-name"><span class="name">Morgan</span></div>
+          <div class="col-hp"></div>
+          <div class="col-dmg">3</div><div class="col-rng">200m</div><div class="col-spd">44</div>
+          <div class="col-btl">3</div><div class="col-kills">2</div>
+          <div class="col-status">RDY</div>
+          <div class="col-action"><button class="row-action">DOSSIER ▸</button></div>
+        </div>
+        <div class="roster-row" data-hp="100">
+          <div class="col-mos"><span class="mos-tag">ENG</span></div>
+          <div class="col-rank">PV2</div>
+          <div class="col-name"><span class="name">Reyes</span></div>
+          <div class="col-hp"></div>
+          <div class="col-dmg">8</div><div class="col-rng">180m</div><div class="col-spd">42</div>
+          <div class="col-btl">2</div><div class="col-kills">5</div>
+          <div class="col-status">RDY</div>
+          <div class="col-action"><button class="row-action">DOSSIER ▸</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<p class="frame-cap">ROSTER sub-tab — full-width table, DOSSIER button per row, includes BTL/KILLS/STATUS columns relevant to personnel management.</p>
+</div>
+</div>
+
+<div class="section-divider">★ FRAME 2 — Barracks ▸ SQUADS (deployment work)</div>
+<p class="sublabel" style="color:var(--text-secondary);font-size:0.8rem;margin:0 0 12px">Same table component, narrower (65%). Row action = <strong>assign chip</strong>. Squad orgchart on the right.</p>
+
+<div class="frames">
+<div>
+<div class="phone">
+  <div class="hq-header">
+    <h2 class="hq-title">HEADQUARTERS</h2>
+    <div class="hq-resources">⬡ 1240 ◈ 18</div>
+    <div class="hq-deploy-bar">
+      <span class="hq-deploy-label">MAP</span>
+      <button class="hq-map-btn">S</button>
+      <button class="hq-map-btn active">M</button>
+      <button class="hq-map-btn">L</button>
+      <span class="hq-deploy-label">WAVE</span>
+      <span class="hq-deploy-val">1</span>
+      <span class="hq-deploy-label">POWER</span>
+      <span class="hq-deploy-val">94</span>
+      <button class="hq-deploy-btn">DEPLOY ▶</button>
+    </div>
+  </div>
+  <div class="hq-tab-bar">
+    <button class="hq-tab active">BARRACKS</button>
+    <button class="hq-tab">ARMORY</button>
+    <button class="hq-tab">MOTOR POOL</button>
+    <button class="hq-tab">PROVING GROUND</button>
+    <button class="hq-tab">REPLAYS</button>
+  </div>
+  <div class="sub-tabs">
+    <button class="sub-tab">ROSTER (8 of 15)</button>
+    <button class="sub-tab active">SQUADS</button>
+    <button class="sub-tab">FORMATION</button>
+    <button class="sub-tab">INFIRMARY (1)</button>
+    <button class="sub-tab">LEGACY (5 ▾)</button>
+    <button class="sub-tab">INSIGNIA</button>
+  </div>
+  <div class="body layout-squads">
+    <div class="roster-pane">
+      <div class="filter-bar">
+        <button class="filter-chip active">All</button>
+        <button class="filter-chip">Rifleman</button>
+        <button class="filter-chip">Medic</button>
+        <button class="filter-chip">Engineer</button>
+        <button class="filter-chip">Crew</button>
+        <button class="filter-chip">Vehicles</button>
+      </div>
+      <div class="roster-table">
+        <div class="roster-th-row">
+          <div class="roster-th col-mos">MOS</div>
+          <div class="roster-th col-rank">RNK</div>
+          <div class="roster-th col-name active">NAME ▼</div>
+          <div class="roster-th col-hp">HEALTH</div>
+          <div class="roster-th col-dmg">DMG</div>
+          <div class="roster-th col-rng">RNG</div>
+          <div class="roster-th col-spd">SPD</div>
+          <div class="roster-th col-chip">ASSIGN</div>
+        </div>
+        <div class="roster-row" data-hp="100">
+          <div class="col-mos"><span class="mos-tag">RFL</span></div>
+          <div class="col-rank">PV2</div>
+          <div class="col-name"><span class="name">Anderson</span><span class="star">★</span></div>
+          <div class="col-hp"></div>
+          <div class="col-dmg">14</div><div class="col-rng">350m</div><div class="col-spd">49</div>
+          <div class="col-chip"><span class="chip">Squad 1 <span class="chip-arrow">▾</span></span></div>
+        </div>
+        <div class="roster-row" data-hp="55">
+          <div class="col-mos"><span class="mos-tag">RFL</span></div>
+          <div class="col-rank">PFC</div>
+          <div class="col-name"><span class="name">Carter</span></div>
+          <div class="col-hp"></div>
+          <div class="col-dmg">14</div><div class="col-rng">350m</div><div class="col-spd">52</div>
+          <div class="col-chip"><span class="chip reserve">Reserve <span class="chip-arrow">▾</span></span></div>
+        </div>
+        <div class="roster-row" data-hp="90">
+          <div class="col-mos"><span class="mos-tag">RFL</span></div>
+          <div class="col-rank">PV2</div>
+          <div class="col-name"><span class="name">Davis</span></div>
+          <div class="col-hp"></div>
+          <div class="col-dmg">14</div><div class="col-rng">350m</div><div class="col-spd">48</div>
+          <div class="col-chip"><span class="chip crew">Crew · GNR <span class="chip-arrow">▾</span></span></div>
+        </div>
+        <div class="roster-row" data-hp="80">
+          <div class="col-mos"><span class="mos-tag">RFL</span></div>
+          <div class="col-rank">PV2</div>
+          <div class="col-name"><span class="name">Jackson</span></div>
+          <div class="col-hp"></div>
+          <div class="col-dmg">14</div><div class="col-rng">350m</div><div class="col-spd">45</div>
+          <div class="col-chip"><span class="chip">Squad 1 <span class="chip-arrow">▾</span></span></div>
+        </div>
+        <div class="roster-row" data-hp="100">
+          <div class="col-mos"><span class="mos-tag">MED</span></div>
+          <div class="col-rank">PV2</div>
+          <div class="col-name"><span class="name">Morgan</span></div>
+          <div class="col-hp"></div>
+          <div class="col-dmg">3</div><div class="col-rng">200m</div><div class="col-spd">44</div>
+          <div class="col-chip"><span class="chip">Squad 1 <span class="chip-arrow">▾</span></span></div>
+        </div>
+        <div class="roster-row" data-hp="100">
+          <div class="col-mos"><span class="mos-tag">ENG</span></div>
+          <div class="col-rank">PV2</div>
+          <div class="col-name"><span class="name">Reyes</span></div>
+          <div class="col-hp"></div>
+          <div class="col-dmg">8</div><div class="col-rng">180m</div><div class="col-spd">42</div>
+          <div class="col-chip"><span class="chip">Squad 2 <span class="chip-arrow">▾</span></span></div>
+        </div>
+        <div class="roster-row" data-hp="100">
+          <div class="col-mos"><span class="mos-tag">RFL</span></div>
+          <div class="col-rank">PV2</div>
+          <div class="col-name"><span class="name">Smith</span></div>
+          <div class="col-hp"></div>
+          <div class="col-dmg">14</div><div class="col-rng">350m</div><div class="col-spd">42</div>
+          <div class="col-chip"><span class="chip crew">Crew · TC <span class="chip-arrow">▾</span></span></div>
+        </div>
+        <div class="roster-row" data-hp="100">
+          <div class="col-mos"><span class="mos-tag">RFL</span></div>
+          <div class="col-rank">PV2</div>
+          <div class="col-name"><span class="name">Wallace</span></div>
+          <div class="col-hp"></div>
+          <div class="col-dmg">14</div><div class="col-rng">350m</div><div class="col-spd">45</div>
+          <div class="col-chip"><span class="chip reserve">Reserve <span class="chip-arrow">▾</span></span></div>
+        </div>
+        <div class="roster-row vehicle-row" data-hp="100">
+          <div class="col-mos"><span class="mos-tag vehicle-type">TANK</span></div>
+          <div class="col-rank">VEH</div>
+          <div class="col-name"><span class="name">M4 SHERMAN</span></div>
+          <div class="col-hp"></div>
+          <div class="col-dmg">75</div><div class="col-rng">420m</div><div class="col-spd">22</div>
+          <div class="col-chip"><span class="chip crew">Squad 2 <span class="chip-arrow">▾</span></span></div>
+        </div>
+      </div>
+    </div>
+    <div class="squad-pane">
+      <div class="sp-cmd"><span class="sp-cmd-label">COMMANDING OFFICER</span><span class="sp-cmd-msg">Unlocks at Wave 3</span></div>
+
+      <div class="sp-section-header hero">★ HERO SQUAD <span class="count">3/8</span></div>
+      <div class="sp-unit-row"><span class="ldr-badge">LDR</span><span class="rank">PV2</span><span class="name">Anderson</span><span class="star">★</span></div>
+      <div class="sp-unit-row"><span style="width:22px"></span><span class="rank">PV2</span><span class="name">Jackson</span></div>
+      <div class="sp-unit-row"><span style="width:22px"></span><span class="rank">PV2</span><span class="name">Morgan</span></div>
+
+      <div class="sp-section-header">SQUAD 2 <span class="count">4/8</span></div>
+      <div class="sp-vehicle-block">
+        <div class="sp-vehicle-name">M4 SHERMAN</div>
+        <div class="sp-crew-row"><span class="sp-crew-slot">TC</span><span class="rank">PV2</span><span class="name">Smith</span></div>
+        <div class="sp-crew-row"><span class="sp-crew-slot">GNR</span><span class="rank">PV2</span><span class="name">Davis</span></div>
+        <div class="sp-crew-row"><span class="sp-crew-slot">DRV</span><span style="font-style:italic;color:var(--text-secondary)">empty</span></div>
+      </div>
+      <div class="sp-unit-row"><span style="width:22px"></span><span class="rank">PV2</span><span class="name">Reyes</span></div>
+
+      <button class="sp-add-squad">+ ADD SQUAD (2/3)</button>
+    </div>
+  </div>
+</div>
+<p class="frame-cap">SQUADS sub-tab — same component, narrower, chip column instead of DOSSIER, squad orgchart on the right.</p>
+</div>
+</div>
+
+<div class="anno">
+  <strong>What changes from today:</strong>
+  <ul>
+    <li>Top-level tabs drop from 6 → 5: BARRACKS · ARMORY · MOTOR POOL · PROVING GROUND · REPLAYS</li>
+    <li>Operations tab is gone — its content moves into Barracks as SQUADS + FORMATION sub-tabs</li>
+    <li>Barracks gets 6 sub-tabs: ROSTER · SQUADS · FORMATION · INFIRMARY · LEGACY · INSIGNIA</li>
+    <li>Roster table is one shared component; per-row affordance switches by sub-tab</li>
+    <li>Deploy bar stays in the header (works from any tab as before)</li>
+  </ul>
+</div>
+<div class="anno">
+  <strong>What it solves:</strong> The "two places to see my soldiers" confusion goes away. Now there's just "Barracks" with different views of the same data — ROSTER is for personnel admin, SQUADS is for building forces, FORMATION is for positioning. One mental model.
+</div>
+
+<script>
+  function makeHpBars(pct) {
+    const segs = 10;
+    const filled = Math.round(segs * pct / 100);
+    const color = pct > 60 ? '#4ade80' : pct > 30 ? '#fbbf24' : '#f87171';
+    let bars = '';
+    for (let i = 0; i < segs; i++) {
+      bars += `<span class="hp-seg ${i < filled ? 'filled' : ''}" style="${i < filled ? 'background:' + color : ''}"></span>`;
+    }
+    return `<div class="hp-segments">${bars}</div>`;
+  }
+  document.querySelectorAll('.roster-row[data-hp]').forEach(row => {
+    const pct = parseInt(row.dataset.hp);
+    const isVehicle = row.classList.contains('vehicle-row');
+    const max = isVehicle ? 450 : 192;
+    const current = Math.round(max * pct / 100);
+    const numColor = pct > 60 ? 'var(--accent-green)' : pct > 30 ? 'var(--accent-yellow)' : 'var(--accent-red)';
+    const hpCell = row.querySelector('.col-hp');
+    if (hpCell) hpCell.innerHTML = makeHpBars(pct) + `<span class="hp-num" style="color:${numColor}">${current}/${max}</span>`;
+  });
+</script>
+</body>
+</html>

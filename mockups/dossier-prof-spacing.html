@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Proficiency — Pill + MOS Dropdown Division of Labor</title>
+<link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Oxanium:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-dark: #1a1f2e; --bg-medium: #252b3d; --bg-light: #2f3749; --bg-lighter: #3d4559;
+    --accent-green: #4ade80; --accent-yellow: #fbbf24; --text-primary: #e2e8f0; --text-secondary: #94a3b8;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: 'Oxanium', sans-serif; background: #0f1320; color: var(--text-primary); margin: 0; padding: 24px; }
+  h1 { font-family: 'Black Ops One', cursive; color: var(--accent-green); margin: 0 0 4px; font-size: 1.3rem; }
+  .subhead { color: var(--text-secondary); margin: 0 0 24px; font-size: 0.85rem; max-width: 920px; }
+  .frame-cap { font-size: 0.7rem; color: var(--text-secondary); margin: 6px 0 24px; max-width: 460px; }
+  .frames { display: flex; gap: 24px; flex-wrap: wrap; }
+  .v-tag {
+    display: inline-block; background: var(--accent-yellow); color: var(--bg-dark);
+    font-family: 'Black Ops One', cursive; font-size: 0.65rem;
+    padding: 2px 6px; border-radius: 2px; margin-right: 6px;
+  }
+
+  .dossier-frame {
+    width: 460px; background: var(--bg-dark);
+    border: 1px solid var(--bg-light); border-radius: 6px;
+    padding: 14px 16px;
+  }
+
+  .d-header { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
+  .d-portrait { width: 36px; height: 36px; background: var(--bg-medium); border-radius: 4px; flex-shrink: 0; }
+  .d-name-block { flex: 1; min-width: 0; }
+  .d-title { font-family: 'Black Ops One', cursive; font-size: 1rem; letter-spacing: 1px; }
+  .d-status {
+    display: inline-block;
+    font-family: 'Black Ops One', cursive; font-size: 0.55rem; letter-spacing: 1px;
+    color: var(--accent-green);
+    background: rgba(74,222,128,0.15);
+    border: 1px solid var(--accent-green);
+    padding: 2px 6px; border-radius: 3px;
+  }
+  .d-close { background: none; border: 1px solid var(--bg-lighter); color: var(--text-secondary); width: 26px; height: 26px; border-radius: 3px; cursor: pointer; flex-shrink: 0; }
+  .d-mos-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; position: relative; }
+  .d-mos-label { font-family: 'Oxanium', sans-serif; font-size: 0.6rem; color: var(--text-secondary); letter-spacing: 1px; }
+
+  /* Native-style selector (closed state, faking the look) */
+  .mos-select-fake {
+    background: var(--bg-medium); border: 1px solid var(--bg-lighter);
+    color: var(--text-primary); padding: 4px 22px 4px 8px;
+    font-family: 'Oxanium', sans-serif; font-size: 0.7rem; font-weight: 700;
+    border-radius: 3px;
+    display: inline-flex; align-items: center;
+    cursor: pointer;
+    position: relative;
+  }
+  .mos-select-fake::after {
+    content: '▼';
+    position: absolute; right: 6px; top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.55rem;
+    color: var(--text-secondary);
+  }
+  .mos-select-fake .mos-name { letter-spacing: 0.5px; }
+  .mos-select-fake .mos-prof-inline {
+    font-family: 'Share Tech Mono', monospace;
+    color: var(--accent-yellow);
+    margin-left: 6px;
+    font-weight: 700;
+    font-size: 0.68rem;
+  }
+  .mos-select-fake .mos-prof-tier {
+    font-family: 'Black Ops One', cursive;
+    color: var(--accent-yellow);
+    margin-left: 6px;
+    font-size: 0.55rem;
+    letter-spacing: 1px;
+    opacity: 0.85;
+  }
+  .mos-select-fake.active {
+    border-color: var(--accent-yellow);
+    background: rgba(251,191,36,0.05);
+  }
+
+  /* Open dropdown panel (custom render) */
+  .mos-dropdown-panel {
+    position: absolute; top: 100%; left: 28px;
+    margin-top: 4px;
+    background: var(--bg-medium);
+    border: 1px solid var(--accent-yellow);
+    border-radius: 3px;
+    padding: 4px;
+    min-width: 280px;
+    z-index: 10;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+  .mos-option {
+    display: grid;
+    grid-template-columns: 90px 80px 60px 50px;
+    gap: 8px;
+    align-items: center;
+    padding: 6px 8px;
+    border-radius: 2px;
+    font-size: 0.7rem;
+    cursor: pointer;
+  }
+  .mos-option:hover { background: var(--bg-lighter); }
+  .mos-option.current {
+    background: rgba(251,191,36,0.1);
+    border-left: 2px solid var(--accent-yellow);
+    padding-left: 6px;
+  }
+  .mos-option .opt-name {
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.62rem;
+    letter-spacing: 0.5px;
+  }
+  .mos-option .opt-stars {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--accent-yellow);
+    letter-spacing: 1px;
+  }
+  .mos-option .opt-stars .empty { color: var(--bg-lighter); }
+  .mos-option .opt-tier {
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.55rem;
+    letter-spacing: 0.5px;
+    color: var(--accent-yellow);
+    opacity: 0.85;
+  }
+  .mos-option .opt-pct {
+    font-family: 'Share Tech Mono', monospace;
+    font-weight: 700;
+    color: var(--accent-yellow);
+    font-size: 0.68rem;
+    text-align: right;
+  }
+  .mos-option.locked { opacity: 0.4; cursor: not-allowed; }
+  .mos-option.locked .opt-tier { color: var(--text-secondary); }
+  .mos-option.locked .opt-pct { color: var(--text-secondary); }
+  .mos-option.locked .opt-stars { color: var(--bg-lighter); }
+
+  .d-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--bg-light); margin: 8px 0 10px; padding-bottom: 6px; }
+  .d-tab { padding: 5px 12px; font-family: 'Black Ops One', cursive; font-size: 0.62rem; letter-spacing: 1px; background: none; border: none; color: var(--text-secondary); border-bottom: 2px solid transparent; cursor: pointer; }
+  .d-tab.active { color: var(--accent-green); border-bottom-color: var(--accent-green); }
+
+  .section-card { background: var(--bg-medium); border-radius: 5px; padding: 8px 10px; margin-bottom: 8px; }
+  .section-head { display: flex; align-items: center; gap: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--bg-light); margin-bottom: 6px; }
+  .section-title { font-family: 'Black Ops One', cursive; font-size: 0.7rem; letter-spacing: 1px; color: var(--text-primary); }
+  .section-sub { font-family: 'Share Tech Mono', monospace; font-size: 0.62rem; color: var(--text-secondary); margin-left: auto; }
+  .phys-row {
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr) 28px 14px minmax(0, 1.3fr) 12px;
+    align-items: center; gap: 6px; padding: 6px 4px; font-size: 0.72rem;
+  }
+  .stat-label { font-family: 'Oxanium', sans-serif; font-size: 0.62rem; color: var(--text-secondary); letter-spacing: 0.5px; }
+  .stat-bar { height: 8px; background: var(--bg-dark); border-radius: 2px; position: relative; overflow: hidden; min-width: 0; }
+  .stat-bar-fill { height: 100%; border-radius: 2px; background: var(--accent-green); }
+  .phys-num { font-family: 'Share Tech Mono', monospace; font-size: 0.7rem; color: var(--text-secondary); text-align: right; }
+  .phys-arrow { color: var(--text-secondary); opacity: 0.5; font-size: 0.7rem; text-align: center; }
+  .phys-out { font-family: 'Oxanium', sans-serif; font-size: 0.72rem; color: var(--text-primary); display: flex; align-items: baseline; gap: 4px; min-width: 0; }
+  .phys-out .out-key { font-family: 'Black Ops One', cursive; font-size: 0.58rem; letter-spacing: 0.5px; color: var(--text-secondary); }
+  .phys-out .out-val { font-family: 'Share Tech Mono', monospace; font-weight: 700; }
+  .phys-chevron { color: var(--text-secondary); opacity: 0.35; font-size: 0.55rem; text-align: center; }
+
+  /* Header proficiency pill */
+  .header-prof {
+    background: rgba(251,191,36,0.08);
+    border: 1px solid rgba(251,191,36,0.35);
+    border-left: 3px solid var(--accent-yellow);
+    border-radius: 3px;
+    padding: 3px 8px;
+    display: inline-flex; align-items: center; gap: 7px;
+    cursor: pointer; margin-left: auto;
+  }
+  .h-pips {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.75rem;
+    letter-spacing: 1px;
+    color: var(--accent-yellow);
+    line-height: 1;
+  }
+  .h-pips .empty { color: var(--bg-lighter); }
+  .h-tier {
+    font-family: 'Black Ops One', cursive;
+    font-size: 0.6rem; letter-spacing: 1px;
+    color: var(--accent-yellow);
+  }
+  .h-chev { color: var(--accent-yellow); opacity: 0.4; font-size: 0.55rem; }
+
+  .anno { background: var(--bg-medium); border-left: 3px solid var(--accent-yellow); padding: 10px 14px; margin: 8px 0 0; font-size: 0.78rem; color: var(--text-secondary); max-width: 920px; }
+  .anno strong { color: var(--text-primary); }
+  .anno ul { margin: 4px 0 0; padding-left: 20px; }
+</style>
+</head>
+<body>
+
+<h1>PROFICIENCY — PILL + MOS DROPDOWN, DIVISION OF LABOR</h1>
+<p class="subhead">
+  Pill = at-a-glance rank insignia (stars + tier). Dropdown = precise %, per MOS. The two say complementary things — no fighting.
+  Frame 1 closed state. Frame 2 dropdown open — showing proficiency for each MOS option so you can compare before switching.
+  Frame 3 the compact format option. Frame 4 the verbose format option.
+</p>
+
+<div class="frames">
+
+<!-- F1: Closed state with % in dropdown -->
+<div>
+  <div class="dossier-frame">
+    <div class="d-header">
+      <div class="d-portrait"></div>
+      <div class="d-name-block">
+        <div class="d-title">SGT Reyes <span class="d-status">READY</span></div>
+        <div class="d-mos-row">
+          <span class="d-mos-label">MOS</span>
+          <span class="mos-select-fake">
+            <span class="mos-name">HEAVY GUNNER</span>
+            <span class="mos-prof-inline">78%</span>
+          </span>
+          <span class="header-prof">
+            <span class="h-pips">★★★<span class="empty">★★</span></span>
+            <span class="h-tier">VETERAN</span>
+            <span class="h-chev">▸</span>
+          </span>
+        </div>
+      </div>
+      <button class="d-close">✕</button>
+    </div>
+
+    <div class="d-tabs">
+      <button class="d-tab active">COMBAT</button>
+      <button class="d-tab">EQUIPMENT</button>
+      <button class="d-tab">PERSONALITY</button>
+      <button class="d-tab">SERVICE</button>
+    </div>
+
+    <div class="section-card">
+      <div class="section-head"><span class="section-title">SOLDIER</span><span class="section-sub">physical → produces</span></div>
+      <div class="phys-row"><span class="stat-label">VIS</span><div class="stat-bar"><div class="stat-bar-fill" style="width:62%"></div></div><span class="phys-num">62</span><span class="phys-arrow">→</span><span class="phys-out"><span class="out-key">SIGHT</span><span class="out-val">580m</span></span><span class="phys-chevron">▸</span></div>
+      <div class="phys-row"><span class="stat-label">STR</span><div class="stat-bar"><div class="stat-bar-fill" style="width:78%"></div></div><span class="phys-num">78</span><span class="phys-arrow">→</span><span class="phys-out"><span class="out-key">HP</span><span class="out-val">208</span></span><span class="phys-chevron">▸</span></div>
+    </div>
+  </div>
+  <p class="frame-cap"><span class="v-tag">F1</span>Closed state. Dropdown shows current MOS + its %. Pill shows stars + tier. Two non-overlapping pieces of info: precise number lives on the role selector, rank visualization lives on the pill.</p>
+</div>
+
+<!-- F2: Open dropdown showing per-MOS proficiency -->
+<div>
+  <div class="dossier-frame">
+    <div class="d-header">
+      <div class="d-portrait"></div>
+      <div class="d-name-block">
+        <div class="d-title">SGT Reyes <span class="d-status">READY</span></div>
+        <div class="d-mos-row">
+          <span class="d-mos-label">MOS</span>
+          <span class="mos-select-fake active">
+            <span class="mos-name">HEAVY GUNNER</span>
+            <span class="mos-prof-inline">78%</span>
+          </span>
+          <span class="header-prof">
+            <span class="h-pips">★★★<span class="empty">★★</span></span>
+            <span class="h-tier">VETERAN</span>
+            <span class="h-chev">▸</span>
+          </span>
+
+          <!-- Custom dropdown panel -->
+          <div class="mos-dropdown-panel">
+            <div class="mos-option current">
+              <span class="opt-name">HEAVY GUNNER</span>
+              <span class="opt-stars">★★★<span class="empty">★★</span></span>
+              <span class="opt-tier">VETERAN</span>
+              <span class="opt-pct">78%</span>
+            </div>
+            <div class="mos-option">
+              <span class="opt-name">RIFLEMAN</span>
+              <span class="opt-stars">★★<span class="empty">★★★</span></span>
+              <span class="opt-tier">REGULAR</span>
+              <span class="opt-pct">45%</span>
+            </div>
+            <div class="mos-option">
+              <span class="opt-name">MEDIC</span>
+              <span class="opt-stars">★<span class="empty">★★★★</span></span>
+              <span class="opt-tier">RECRUIT</span>
+              <span class="opt-pct">22%</span>
+            </div>
+            <div class="mos-option locked">
+              <span class="opt-name">GRENADIER</span>
+              <span class="opt-stars"><span class="empty">★★★★★</span></span>
+              <span class="opt-tier">TRAINEE</span>
+              <span class="opt-pct">0%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <button class="d-close">✕</button>
+    </div>
+
+    <!-- Spacer so panel doesn't overlap content -->
+    <div style="height: 160px"></div>
+  </div>
+  <p class="frame-cap"><span class="v-tag">F2</span>Open state — custom dropdown shows every MOS this soldier knows with stars, tier, and %. Lets you compare before switching ("if I go medic I'm dropping to 22%"). Current MOS highlighted yellow; unstarted MOS dimmed.</p>
+</div>
+
+<!-- F3: Compact format -->
+<div>
+  <div class="dossier-frame">
+    <div class="d-header">
+      <div class="d-portrait"></div>
+      <div class="d-name-block">
+        <div class="d-title">SGT Reyes <span class="d-status">READY</span></div>
+        <div class="d-mos-row">
+          <span class="d-mos-label">MOS</span>
+          <span class="mos-select-fake">
+            <span class="mos-name">HEAVY GUNNER</span>
+            <span class="mos-prof-inline">78%</span>
+          </span>
+          <span class="header-prof">
+            <span class="h-pips">★★★<span class="empty">★★</span></span>
+            <span class="h-tier">VETERAN</span>
+            <span class="h-chev">▸</span>
+          </span>
+        </div>
+      </div>
+      <button class="d-close">✕</button>
+    </div>
+    <div class="d-tabs">
+      <button class="d-tab active">COMBAT</button>
+      <button class="d-tab">EQUIPMENT</button>
+      <button class="d-tab">PERSONALITY</button>
+      <button class="d-tab">SERVICE</button>
+    </div>
+    <div style="height: 40px"></div>
+  </div>
+  <p class="frame-cap"><span class="v-tag">F3</span>Compact format: <code>HEAVY GUNNER · 78%</code>. Tier name omitted in the dropdown text since the pill already shows it. Cleanest, less repetition.</p>
+</div>
+
+<!-- F4: Verbose format -->
+<div>
+  <div class="dossier-frame">
+    <div class="d-header">
+      <div class="d-portrait"></div>
+      <div class="d-name-block">
+        <div class="d-title">SGT Reyes <span class="d-status">READY</span></div>
+        <div class="d-mos-row">
+          <span class="d-mos-label">MOS</span>
+          <span class="mos-select-fake">
+            <span class="mos-name">HEAVY GUNNER</span>
+            <span class="mos-prof-tier">VETERAN</span>
+            <span class="mos-prof-inline">78%</span>
+          </span>
+          <span class="header-prof">
+            <span class="h-pips">★★★<span class="empty">★★</span></span>
+            <span class="h-tier">VETERAN</span>
+            <span class="h-chev">▸</span>
+          </span>
+        </div>
+      </div>
+      <button class="d-close">✕</button>
+    </div>
+    <div class="d-tabs">
+      <button class="d-tab active">COMBAT</button>
+      <button class="d-tab">EQUIPMENT</button>
+      <button class="d-tab">PERSONALITY</button>
+      <button class="d-tab">SERVICE</button>
+    </div>
+    <div style="height: 40px"></div>
+  </div>
+  <p class="frame-cap"><span class="v-tag">F4</span>Verbose format: <code>HEAVY GUNNER · VETERAN · 78%</code>. Dropdown self-contained — you don't need the pill to know the tier. But VETERAN now appears twice on the same row.</p>
+</div>
+
+</div>
+
+<div class="anno" style="margin-top:32px">
+  <strong>Division of labor:</strong>
+  <ul>
+    <li><strong>MOS dropdown</strong> — precise value, per role. The selector knows about <em>every</em> MOS this soldier has trained, with their respective proficiencies. Lets you compare before switching.</li>
+    <li><strong>Header pill</strong> — at-a-glance rank for the currently-selected MOS. Stars say where on the ladder, tier name names the rank.</li>
+    <li><strong>Expand panel</strong> — what proficiency unlocks (×0.78 to gear, +31% effective range, etc.) + tier ladder visual + delta to next tier.</li>
+  </ul>
+</div>
+<div class="anno">
+  <strong>F3 — Compact dropdown format (<code>HEAVY GUNNER · 78%</code>):</strong>
+  <ul>
+    <li>Pro: cleanest. No repetition with the pill — the dropdown supplies the precise number, pill supplies the rank.</li>
+    <li>Pro: tighter row, easier to fit on mobile.</li>
+    <li>Con: dropdown options (in open state) still need tier name for richer comparison.</li>
+  </ul>
+</div>
+<div class="anno">
+  <strong>F4 — Verbose dropdown format (<code>HEAVY GUNNER · VETERAN · 78%</code>):</strong>
+  <ul>
+    <li>Pro: dropdown self-contained — if you only ever read the dropdown, you have full info.</li>
+    <li>Con: VETERAN appears twice on the same row (in dropdown and pill). Lower-grade fighting.</li>
+    <li>Con: longer dropdown chip, less room for the pill.</li>
+  </ul>
+</div>
+<div class="anno">
+  <strong>My take:</strong>
+  <ul>
+    <li><strong>F3 (compact)</strong> for the closed selector — number in dropdown, rank on pill, no double-up.</li>
+    <li>Open dropdown shows full per-MOS rank (F2 layout) — stars, tier, %, current marker. This is the high-information state where comparison matters.</li>
+    <li>Pill stays clean: <code>★★★☆☆ VETERAN ▸</code>. Tap to expand for what proficiency drives.</li>
+  </ul>
+</div>
+
+</body>
+</html>

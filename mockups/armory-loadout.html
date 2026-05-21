@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Armory + Loadout Picker</title>
+<link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Oxanium:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-dark: #1a1f2e; --bg-medium: #252b3d; --bg-light: #2f3749; --bg-lighter: #3d4559;
+    --accent-green: #4ade80; --accent-red: #f87171; --accent-yellow: #fbbf24;
+    --accent-blue: #60a5fa; --accent-orange: #fb923c; --accent-purple: #a78bfa;
+    --text-primary: #e2e8f0; --text-secondary: #94a3b8;
+    --quality-standard: #94a3b8; --quality-common: #e2e8f0;
+    --quality-improved: #60a5fa; --quality-rare: #fbbf24;
+  }
+  * {
+    box-sizing: border-box;
+    scrollbar-width: thin;
+    scrollbar-color: var(--bg-lighter) var(--bg-dark);
+  }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: var(--bg-dark); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb { background: var(--bg-lighter); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--accent-blue); }
+  body { font-family: 'Oxanium', sans-serif; background: #0f1320; color: var(--text-primary); margin: 0; padding: 24px; }
+  h1 { font-family: 'Black Ops One', cursive; color: var(--accent-green); margin: 0 0 4px; font-size: 1.3rem; }
+  .subhead { color: var(--text-secondary); margin: 0 0 24px; font-size: 0.85rem; max-width: 900px; }
+  .section-divider { font-family: 'Black Ops One', cursive; color: var(--accent-yellow); font-size: 1rem; margin: 36px 0 6px; letter-spacing: 1px; }
+  .frame-cap { font-size: 0.7rem; color: var(--text-secondary); margin: 6px 0 16px; }
+
+  .phone {
+    width: 880px; height: 460px;
+    background: var(--bg-dark);
+    border: 1px solid var(--bg-lighter);
+    border-radius: 14px;
+    overflow: hidden;
+    position: relative;
+    display: flex; flex-direction: column;
+  }
+
+  /* HQ chrome (compact) */
+  .hq-header { display: flex; align-items: center; padding: 5px 8px; background: var(--bg-medium); border-bottom: 2px solid var(--accent-green); gap: 6px; }
+  .hq-title { font-family: 'Black Ops One', cursive; font-size: 0.75rem; margin: 0; }
+  .hq-resources { display: flex; gap: 6px; font-family: 'Share Tech Mono', monospace; font-size: 0.65rem; margin-right: auto; }
+  .hq-deploy-bar { display: flex; align-items: center; gap: 4px; padding: 2px 5px; background: var(--bg-light); border: 1px solid var(--bg-lighter); border-radius: 4px; }
+  .hq-deploy-label { font-size: 0.55rem; color: var(--text-secondary); letter-spacing: 0.5px; }
+  .hq-map-btn { width: 18px; height: 18px; background: var(--bg-medium); border: 1px solid var(--bg-lighter); color: var(--text-secondary); font-size: 0.55rem; border-radius: 3px; display: flex; align-items: center; justify-content: center; }
+  .hq-map-btn.active { background: var(--accent-green); color: var(--bg-dark); border-color: var(--accent-green); }
+  .hq-deploy-val { font-family: 'Share Tech Mono', monospace; font-size: 0.7rem; color: var(--text-primary); font-weight: 700; }
+  .hq-deploy-btn { background: var(--accent-green); color: var(--bg-dark); padding: 3px 8px; font-family: 'Black Ops One', cursive; font-size: 0.62rem; border-radius: 3px; border: none; }
+
+  .hq-tab-bar { display: flex; background: var(--bg-dark); border-bottom: 1px solid var(--bg-light); }
+  .hq-tab { padding: 6px 0; background: none; border: none; color: var(--text-secondary); font-family: 'Black Ops One', cursive; font-size: 0.62rem; letter-spacing: 0.5px; flex: 1; border-bottom: 3px solid transparent; }
+  .hq-tab.active { color: var(--accent-green); border-bottom-color: var(--accent-green); }
+
+  .body { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 6px; gap: 6px; }
+
+  /* Filters */
+  .filter-bar { display: flex; gap: 3px; flex-wrap: wrap; }
+  .filter-chip { padding: 2px 6px; font-family: 'Oxanium', sans-serif; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.3px; background: var(--bg-medium); border: 1px solid var(--bg-light); color: var(--text-secondary); border-radius: 3px; cursor: pointer; }
+  .filter-chip.active { background: var(--bg-light); color: var(--accent-green); border-color: var(--accent-green); }
+
+  /* Armory roster table */
+  .armory-table { flex: 1; overflow-y: auto; background: var(--bg-medium); border-radius: 5px; }
+  .armory-th-row { display: flex; align-items: center; gap: 4px; padding: 5px 8px; border-bottom: 1px solid var(--bg-light); position: sticky; top: 0; background: var(--bg-medium); z-index: 1; }
+  .armory-th { font-family: 'Oxanium', sans-serif; font-size: 0.6rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; flex-shrink: 0; white-space: nowrap; }
+  .armory-th.active { color: var(--accent-green); }
+  .ar-row { display: flex; align-items: center; gap: 4px; padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.04); min-height: 36px; font-size: 0.74rem; cursor: pointer; }
+  .ar-row:hover { background: rgba(255,255,255,0.02); }
+
+  .ar-col-cat { width: 50px; flex-shrink: 0; }
+  .ar-col-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ar-col-quality { width: 80px; flex-shrink: 0; }
+  .ar-col-stats { width: 180px; flex-shrink: 0; font-family: 'Share Tech Mono', monospace; font-size: 0.65rem; color: var(--text-secondary); }
+  .ar-col-condition { width: 120px; flex-shrink: 0; display: flex; align-items: center; gap: 6px; }
+  .ar-col-assigned { width: 140px; flex-shrink: 0; }
+
+  .cat-badge { font-family: 'Black Ops One', cursive; font-size: 0.55rem; letter-spacing: 0.5px; padding: 2px 5px; border-radius: 3px; white-space: nowrap; }
+  /* Weapon categories (primary slot) */
+  .cat-badge.ar { color: var(--accent-orange); border: 1px solid var(--accent-orange); background: rgba(251,146,60,0.08); }
+  .cat-badge.smg { color: var(--accent-orange); border: 1px solid rgba(251,146,60,0.6); background: rgba(251,146,60,0.05); }
+  .cat-badge.lmg { color: var(--accent-red); border: 1px solid var(--accent-red); background: rgba(248,113,113,0.08); }
+  .cat-badge.sr { color: var(--accent-purple); border: 1px solid var(--accent-purple); background: rgba(167,139,250,0.08); }
+  .cat-badge.sg { color: var(--accent-yellow); border: 1px solid var(--accent-yellow); background: rgba(251,191,36,0.08); }
+  .cat-badge.ps { color: var(--quality-standard); border: 1px solid var(--quality-standard); }
+  /* Other slot types */
+  .cat-badge.optic { color: var(--accent-blue); border: 1px solid var(--accent-blue); background: rgba(96,165,250,0.08); }
+  .cat-badge.attach { color: var(--accent-purple); border: 1px solid var(--accent-purple); background: rgba(167,139,250,0.08); }
+  .cat-badge.armor { color: var(--accent-green); border: 1px solid var(--accent-green); background: rgba(74,222,128,0.08); }
+  .cat-badge.utility { color: var(--text-secondary); border: 1px solid var(--bg-lighter); }
+
+  .quality-badge { font-family: 'Black Ops One', cursive; font-size: 0.55rem; letter-spacing: 0.5px; padding: 2px 5px; border-radius: 3px; }
+  .quality-badge.standard { color: var(--quality-standard); border: 1px solid var(--quality-standard); }
+  .quality-badge.common { color: var(--quality-common); border: 1px solid var(--quality-common); }
+  .quality-badge.improved { color: var(--quality-improved); border: 1px solid var(--quality-improved); background: rgba(96,165,250,0.08); }
+  .quality-badge.rare { color: var(--quality-rare); border: 1px solid var(--quality-rare); background: rgba(251,191,36,0.08); }
+
+  .ar-name { font-weight: 600; color: var(--text-primary); }
+  .ar-id { font-family: 'Share Tech Mono', monospace; font-size: 0.55rem; color: var(--text-secondary); }
+  .cond-bar { flex: 1; height: 6px; background: var(--bg-dark); border-radius: 3px; overflow: hidden; }
+  .cond-fill { height: 100%; }
+  .cond-num { font-family: 'Share Tech Mono', monospace; font-size: 0.62rem; color: var(--text-secondary); min-width: 32px; text-align: right; }
+  .assigned-chip { display: inline-flex; align-items: center; padding: 2px 7px; min-height: 22px; background: rgba(74,222,128,0.12); border: 1px solid rgba(74,222,128,0.4); color: var(--accent-green); font-size: 0.62rem; font-weight: 700; border-radius: 3px; }
+  .assigned-chip.unassigned { background: var(--bg-light); border-color: var(--bg-lighter); color: var(--text-secondary); }
+
+  /* Dossier (drawer-style for mockup) */
+  .dossier-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.5); z-index: 100; }
+  .dossier {
+    position: absolute; top: 0; right: 0; bottom: 0;
+    width: 58%;
+    background: var(--bg-medium);
+    border-left: 2px solid var(--accent-green);
+    padding: 12px 16px;
+    overflow-y: auto;
+    box-shadow: -10px 0 24px rgba(0,0,0,0.4);
+    z-index: 101;
+  }
+  .d-close { float: right; background: none; border: 1px solid var(--bg-lighter); color: var(--text-secondary); width: 24px; height: 24px; border-radius: 3px; font-size: 0.75rem; cursor: pointer; }
+  .d-title { font-family: 'Black Ops One', cursive; font-size: 0.95rem; margin: 0 0 2px; letter-spacing: 1px; }
+  .d-sub { font-size: 0.7rem; color: var(--text-secondary); margin: 0 0 10px; }
+  .d-tabs { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid var(--bg-light); padding-bottom: 6px; }
+  .d-tab { padding: 5px 12px; font-family: 'Black Ops One', cursive; font-size: 0.62rem; letter-spacing: 1px; background: none; border: none; color: var(--text-secondary); border-bottom: 2px solid transparent; cursor: pointer; }
+  .d-tab.active { color: var(--accent-green); border-bottom-color: var(--accent-green); }
+
+  /* Loadout slot grid */
+  .loadout-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .lo-slot {
+    background: var(--bg-dark);
+    border: 1px solid var(--bg-lighter);
+    border-radius: 5px;
+    padding: 8px 10px;
+    cursor: pointer;
+    position: relative;
+  }
+  .lo-slot:hover { border-color: var(--accent-green); }
+  .lo-slot.empty { border-style: dashed; }
+  .lo-slot-label { font-family: 'Black Ops One', cursive; font-size: 0.55rem; color: var(--text-secondary); letter-spacing: 1px; margin-bottom: 3px; }
+  .lo-slot-name { font-size: 0.78rem; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 6px; }
+  .lo-slot-stats { font-family: 'Share Tech Mono', monospace; font-size: 0.6rem; color: var(--text-secondary); margin-top: 2px; }
+  .lo-slot-empty-text { color: var(--text-secondary); font-style: italic; font-size: 0.7rem; }
+  .lo-slot-chevron { float: right; color: var(--text-secondary); font-size: 0.7rem; }
+
+  /* Loadout summary */
+  .lo-summary { background: var(--bg-dark); border-radius: 4px; padding: 8px 10px; margin-bottom: 10px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+  .lo-stat { text-align: center; }
+  .lo-stat-val { font-family: 'Share Tech Mono', monospace; font-size: 0.85rem; color: var(--text-primary); font-weight: 700; }
+  .lo-stat-label { font-size: 0.55rem; color: var(--text-secondary); }
+
+  /* Equipment picker popover */
+  .picker-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; }
+  .picker {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 380px; max-height: 80%;
+    background: var(--bg-medium);
+    border: 1px solid var(--accent-green);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+    padding: 8px;
+    z-index: 201;
+    overflow-y: auto;
+  }
+  .picker-title { font-family: 'Black Ops One', cursive; font-size: 0.7rem; color: var(--text-primary); letter-spacing: 1px; padding: 4px 8px; border-bottom: 1px solid var(--bg-light); margin-bottom: 4px; }
+  .picker-option { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: 4px; cursor: pointer; font-size: 0.72rem; background: none; border: none; width: 100%; text-align: left; color: var(--text-primary); }
+  .picker-option:hover:not(.disabled) { background: var(--bg-light); }
+  .picker-option.current { background: rgba(74,222,128,0.08); border-left: 2px solid var(--accent-green); }
+  .picker-option.disabled { opacity: 0.4; cursor: not-allowed; }
+  .picker-option .radio { width: 12px; height: 12px; border: 2px solid var(--bg-lighter); border-radius: 50%; position: relative; flex-shrink: 0; }
+  .picker-option.current .radio { border-color: var(--accent-green); }
+  .picker-option.current .radio::after { content: ''; position: absolute; inset: 1px; background: var(--accent-green); border-radius: 50%; }
+  .picker-option .name { flex: 1; font-weight: 600; }
+  .picker-option .meta { font-family: 'Share Tech Mono', monospace; font-size: 0.6rem; color: var(--text-secondary); }
+  .picker-divider { height: 1px; background: var(--bg-light); margin: 4px; }
+  .picker-empty { padding: 10px; text-align: center; color: var(--text-secondary); font-style: italic; font-size: 0.7rem; }
+
+  .anno { background: var(--bg-medium); border-left: 3px solid var(--accent-yellow); padding: 10px 14px; margin: 8px 0 0; font-size: 0.78rem; color: var(--text-secondary); max-width: 900px; }
+  .anno strong { color: var(--text-primary); }
+</style>
+</head>
+<body>
+
+<h1>ARMORY + LOADOUT PICKER — Phase 1 + 2 mockup</h1>
+<p class="subhead">
+  Inventory in the new <strong>Armory</strong> tab (matches Squads aesthetic).
+  Loadout management lives inside the soldier dossier as a new <strong>EQUIPMENT</strong> tab — same chip-popover pattern as the vehicle picker.
+</p>
+
+<!-- ─────────── FRAME 1: Armory tab ─────────── -->
+<div class="section-divider">★ FRAME 1 — Armory tab (inventory home)</div>
+
+<div class="phone">
+  <div class="hq-header">
+    <h2 class="hq-title">HEADQUARTERS</h2>
+    <div class="hq-resources">⬡ 1240 ◈ 18</div>
+    <div class="hq-deploy-bar">
+      <span class="hq-deploy-label">MAP</span>
+      <button class="hq-map-btn">S</button>
+      <button class="hq-map-btn active">M</button>
+      <button class="hq-map-btn">L</button>
+      <span class="hq-deploy-label">WAVE</span>
+      <span class="hq-deploy-val">1</span>
+      <span class="hq-deploy-label">POWER</span>
+      <span class="hq-deploy-val">94</span>
+      <button class="hq-deploy-btn">DEPLOY ▶</button>
+    </div>
+  </div>
+  <div class="hq-tab-bar">
+    <button class="hq-tab">BARRACKS</button>
+    <button class="hq-tab active">ARMORY</button>
+    <button class="hq-tab">MOTOR POOL</button>
+    <button class="hq-tab">PROVING GROUND</button>
+    <button class="hq-tab">REPLAYS</button>
+  </div>
+  <div class="body">
+    <div class="filter-bar">
+      <button class="filter-chip active">All <span style="color:var(--text-secondary)">(24)</span></button>
+      <button class="filter-chip">AR (4)</button>
+      <button class="filter-chip">SMG (2)</button>
+      <button class="filter-chip">LMG (2)</button>
+      <button class="filter-chip">SR (1)</button>
+      <button class="filter-chip">SG (1)</button>
+      <button class="filter-chip">Pistol (5)</button>
+      <button class="filter-chip">Optic (4)</button>
+      <button class="filter-chip">Attach (3)</button>
+      <button class="filter-chip">Armor (4)</button>
+      <button class="filter-chip" style="margin-left:auto">Unassigned (12)</button>
+      <button class="filter-chip">Damaged (3)</button>
+    </div>
+
+    <div class="armory-table">
+      <div class="armory-th-row">
+        <span class="armory-th ar-col-cat">TYPE</span>
+        <span class="armory-th ar-col-name active">NAME ▲</span>
+        <span class="armory-th ar-col-quality">QUALITY</span>
+        <span class="armory-th ar-col-stats">STATS</span>
+        <span class="armory-th ar-col-condition">CONDITION</span>
+        <span class="armory-th ar-col-assigned">ASSIGNED</span>
+      </div>
+
+      <div class="ar-row">
+        <span class="ar-col-cat"><span class="cat-badge ar">AR</span></span>
+        <span class="ar-col-name"><span class="ar-name">M4A1</span><span class="ar-id">#a4f2</span></span>
+        <span class="ar-col-quality"><span class="quality-badge standard">STANDARD</span></span>
+        <span class="ar-col-stats">DMG 14 · RNG 350m · 600rpm</span>
+        <span class="ar-col-condition"><div class="cond-bar"><div class="cond-fill" style="width:100%;background:var(--accent-green)"></div></div><span class="cond-num">100%</span></span>
+        <span class="ar-col-assigned"><span class="assigned-chip">PV2 Anderson</span></span>
+      </div>
+      <div class="ar-row">
+        <span class="ar-col-cat"><span class="cat-badge ar">AR</span></span>
+        <span class="ar-col-name"><span class="ar-name">M4A1</span><span class="ar-id">#b8c1</span></span>
+        <span class="ar-col-quality"><span class="quality-badge improved">IMPROVED</span></span>
+        <span class="ar-col-stats">DMG 16 · RNG 350m · 600rpm</span>
+        <span class="ar-col-condition"><div class="cond-bar"><div class="cond-fill" style="width:62%;background:var(--accent-yellow)"></div></div><span class="cond-num">62%</span></span>
+        <span class="ar-col-assigned"><span class="assigned-chip">PV2 Jackson</span></span>
+      </div>
+      <div class="ar-row">
+        <span class="ar-col-cat"><span class="cat-badge ar">AR</span></span>
+        <span class="ar-col-name"><span class="ar-name">M16A4</span><span class="ar-id">#d3e9</span></span>
+        <span class="ar-col-quality"><span class="quality-badge rare">RARE</span></span>
+        <span class="ar-col-stats">DMG 24 · RNG 380m · 600rpm</span>
+        <span class="ar-col-condition"><div class="cond-bar"><div class="cond-fill" style="width:100%;background:var(--accent-green)"></div></div><span class="cond-num">100%</span></span>
+        <span class="ar-col-assigned"><span class="assigned-chip unassigned">Unassigned</span></span>
+      </div>
+      <div class="ar-row">
+        <span class="ar-col-cat"><span class="cat-badge smg">SMG</span></span>
+        <span class="ar-col-name"><span class="ar-name">MP5</span><span class="ar-id">#7e2f</span></span>
+        <span class="ar-col-quality"><span class="quality-badge common">COMMON</span></span>
+        <span class="ar-col-stats">DMG 12 · RNG 200m · 800rpm</span>
+        <span class="ar-col-condition"><div class="cond-bar"><div class="cond-fill" style="width:100%;background:var(--accent-green)"></div></div><span class="cond-num">100%</span></span>
+        <span class="ar-col-assigned"><span class="assigned-chip">PV2 Morgan</span></span>
+      </div>
+      <div class="ar-row">
+        <span class="ar-col-cat"><span class="cat-badge lmg">LMG</span></span>
+        <span class="ar-col-name"><span class="ar-name">M249 SAW</span><span class="ar-id">#1a5b</span></span>
+        <span class="ar-col-quality"><span class="quality-badge common">COMMON</span></span>
+        <span class="ar-col-stats">DMG 20 · RNG 400m · 109rpm</span>
+        <span class="ar-col-condition"><div class="cond-bar"><div class="cond-fill" style="width:88%;background:var(--accent-green)"></div></div><span class="cond-num">88%</span></span>
+        <span class="ar-col-assigned"><span class="assigned-chip">PV2 Reyes</span></span>
+      </div>
+      <div class="ar-row">
+        <span class="ar-col-cat"><span class="cat-badge lmg">LMG</span></span>
+        <span class="ar-col-name"><span class="ar-name">M240B</span><span class="ar-id">#f7a8</span></span>
+        <span class="ar-col-quality"><span class="quality-badge rare">RARE</span></span>
+        <span class="ar-col-stats">DMG 34 · RNG 450m · 92rpm</span>
+        <span class="ar-col-condition"><div class="cond-bar"><div class="cond-fill" style="width:100%;background:var(--accent-green)"></div></div><span class="cond-num">100%</span></span>
+        <span class="ar-col-assigned"><span class="assigned-chip unassigned">Unassigned</span></span>
+      </div>
+      <div class="ar-row">
+        <span class="ar-col-cat"><span class="cat-badge sr">SR</span></span>
+        <span class="ar-col-name"><span class="ar-name">M24 SWS</span><span class="ar-id">#9b3c</span></span>
+        <span class="ar-col-quality"><span class="quality-badge improved">IMPROVED</span></span>
+        <span class="ar-col-stats">DMG 78 · RNG 600m · 30rpm</span>
+        <span class="ar-col-condition"><div class="cond-bar"><div class="cond-fill" style="width:100%;background:var(--accent-green)"></div></div><span class="cond-num">100%</span></span>
+        <span class="ar-col-assigned"><span class="assigned-chip unassigned">Unassigned</span></span>
+      </div>
+      <div class="ar-row">
+        <span class="ar-col-cat"><span class="cat-badge sg">SG</span></span>
+        <span class="ar-col-name"><span class="ar-name">M870</span><span class="ar-id">#5a8f</span></span>
+        <span class="ar-col-quality"><span class="quality-badge standard">STANDARD</span></span>
+        <span class="ar-col-stats">DMG 45 · RNG 80m · 60rpm</span>
+        <span class="ar-col-condition"><div class="cond-bar"><div class="cond-fill" style="width:75%;background:var(--accent-yellow)"></div></div><span class="cond-num">75%</span></span>
+        <span class="ar-col-assigned"><span class="assigned-chip unassigned">Unassigned</span></span>
+      </div>
+      <div class="ar-row">
+        <span class="ar-col-cat"><span class="cat-badge ps">PS</span></span>
+        <span class="ar-col-name"><span class="ar-name">M9 Beretta</span><span class="ar-id">#c2d4</span></span>
+        <span class="ar-col-quality"><span class="quality-badge standard">STANDARD</span></span>
+        <span class="ar-col-stats">DMG 8 · RNG 60m · 280rpm</span>
+        <span class="ar-col-condition"><div class="cond-bar"><div class="cond-fill" style="width:100%;background:var(--accent-green)"></div></div><span class="cond-num">100%</span></span>
+        <span class="ar-col-assigned"><span class="assigned-chip">PV2 Anderson</span></span>
+      </div>
+      <div class="ar-row">
+        <span class="ar-col-cat"><span class="cat-badge optic">OPTIC</span></span>
+        <span class="ar-col-name"><span class="ar-name">ACOG 4×</span><span class="ar-id">#9e1f</span></span>
+        <span class="ar-col-quality"><span class="quality-badge improved">IMPROVED</span></span>
+        <span class="ar-col-stats">+RNG 15% · +ACC 12%</span>
+        <span class="ar-col-condition"><div class="cond-bar"><div class="cond-fill" style="width:95%;background:var(--accent-green)"></div></div><span class="cond-num">95%</span></span>
+        <span class="ar-col-assigned"><span class="assigned-chip unassigned">Unassigned</span></span>
+      </div>
+      <div class="ar-row">
+        <span class="ar-col-cat"><span class="cat-badge attach">ATTCH</span></span>
+        <span class="ar-col-name"><span class="ar-name">Bipod</span><span class="ar-id">#5b3a</span></span>
+        <span class="ar-col-quality"><span class="quality-badge common">COMMON</span></span>
+        <span class="ar-col-stats">−RECOIL 25% (prone only)</span>
+        <span class="ar-col-condition"><div class="cond-bar"><div class="cond-fill" style="width:100%;background:var(--accent-green)"></div></div><span class="cond-num">100%</span></span>
+        <span class="ar-col-assigned"><span class="assigned-chip unassigned">Unassigned</span></span>
+      </div>
+      <div class="ar-row">
+        <span class="ar-col-cat"><span class="cat-badge armor">ARMR</span></span>
+        <span class="ar-col-name"><span class="ar-name">Plate Carrier</span><span class="ar-id">#8d2c</span></span>
+        <span class="ar-col-quality"><span class="quality-badge common">COMMON</span></span>
+        <span class="ar-col-stats">+30 HP · −2 SPD</span>
+        <span class="ar-col-condition"><div class="cond-bar"><div class="cond-fill" style="width:42%;background:var(--accent-yellow)"></div></div><span class="cond-num">42%</span></span>
+        <span class="ar-col-assigned"><span class="assigned-chip">PV2 Jackson</span></span>
+      </div>
+      <div class="ar-row">
+        <span class="ar-col-cat"><span class="cat-badge armor">ARMR</span></span>
+        <span class="ar-col-name"><span class="ar-name">Light Vest</span><span class="ar-id">#3c7e</span></span>
+        <span class="ar-col-quality"><span class="quality-badge standard">STANDARD</span></span>
+        <span class="ar-col-stats">+15 HP · −1 SPD</span>
+        <span class="ar-col-condition"><div class="cond-bar"><div class="cond-fill" style="width:28%;background:var(--accent-red)"></div></div><span class="cond-num">28%</span></span>
+        <span class="ar-col-assigned"><span class="assigned-chip unassigned">Unassigned</span></span>
+      </div>
+    </div>
+  </div>
+</div>
+<p class="frame-cap">Filter chips at top (categories + state). Sortable headers. Quality color-coded badges. Condition bar + %. Tap a row → opens item detail drawer (similar to vehicle drawer).</p>
+
+<!-- ─────────── FRAME 2: Dossier EQUIPMENT tab ─────────── -->
+<div class="section-divider">★ FRAME 2 — Soldier dossier, EQUIPMENT tab (slot view)</div>
+
+<div class="phone">
+  <div class="hq-header">
+    <h2 class="hq-title">HEADQUARTERS</h2>
+    <div class="hq-resources">⬡ 1240 ◈ 18</div>
+    <div class="hq-deploy-bar">
+      <span class="hq-deploy-label">MAP</span>
+      <button class="hq-map-btn">S</button>
+      <button class="hq-map-btn active">M</button>
+      <button class="hq-map-btn">L</button>
+      <span class="hq-deploy-label">WAVE</span>
+      <span class="hq-deploy-val">1</span>
+      <span class="hq-deploy-label">POWER</span>
+      <span class="hq-deploy-val">94</span>
+      <button class="hq-deploy-btn">DEPLOY ▶</button>
+    </div>
+  </div>
+  <div class="hq-tab-bar">
+    <button class="hq-tab active">BARRACKS</button>
+    <button class="hq-tab">ARMORY</button>
+    <button class="hq-tab">MOTOR POOL</button>
+    <button class="hq-tab">PROVING GROUND</button>
+    <button class="hq-tab">REPLAYS</button>
+  </div>
+  <div class="body" style="position:relative; padding:0;">
+    <!-- Dimmed roster behind -->
+    <div style="flex:1; opacity:0.25; padding: 8px; font-size:0.7rem; color:var(--text-secondary);">
+      [roster table dimmed behind dossier]
+    </div>
+
+    <div class="dossier-backdrop"></div>
+    <div class="dossier">
+      <button class="d-close">✕</button>
+      <h3 class="d-title">PV2 Anderson ★</h3>
+      <p class="d-sub">Rifleman · Hero Squad · Leader</p>
+
+      <div class="d-tabs">
+        <button class="d-tab">COMBAT</button>
+        <button class="d-tab">PERSONALITY</button>
+        <button class="d-tab active">EQUIPMENT</button>
+        <button class="d-tab">SERVICE</button>
+      </div>
+
+      <div class="lo-summary">
+        <div class="lo-stat"><div class="lo-stat-val">192</div><div class="lo-stat-label">HEALTH</div></div>
+        <div class="lo-stat"><div class="lo-stat-val">14</div><div class="lo-stat-label">DAMAGE</div></div>
+        <div class="lo-stat"><div class="lo-stat-val">350m</div><div class="lo-stat-label">RANGE</div></div>
+        <div class="lo-stat"><div class="lo-stat-val">49</div><div class="lo-stat-label">SPEED</div></div>
+        <div class="lo-stat"><div class="lo-stat-val">8.2</div><div class="lo-stat-label">WEIGHT</div></div>
+      </div>
+
+      <div class="loadout-grid">
+        <div class="lo-slot">
+          <span class="lo-slot-chevron">▾</span>
+          <div class="lo-slot-label">PRIMARY</div>
+          <div class="lo-slot-name">M4A1 <span class="quality-badge standard">STD</span></div>
+          <div class="lo-slot-stats">DMG 14 · 350m · 100%</div>
+        </div>
+        <div class="lo-slot">
+          <span class="lo-slot-chevron">▾</span>
+          <div class="lo-slot-label">SIDEARM</div>
+          <div class="lo-slot-name">M9 Beretta <span class="quality-badge standard">STD</span></div>
+          <div class="lo-slot-stats">DMG 8 · 60m · 100%</div>
+        </div>
+        <div class="lo-slot empty">
+          <span class="lo-slot-chevron">▾</span>
+          <div class="lo-slot-label">OPTIC</div>
+          <div class="lo-slot-empty-text">+ Add optic</div>
+        </div>
+        <div class="lo-slot empty">
+          <span class="lo-slot-chevron">▾</span>
+          <div class="lo-slot-label">ATTACHMENT</div>
+          <div class="lo-slot-empty-text">+ Add attachment</div>
+        </div>
+        <div class="lo-slot">
+          <span class="lo-slot-chevron">▾</span>
+          <div class="lo-slot-label">ARMOR</div>
+          <div class="lo-slot-name">Light Vest <span class="quality-badge standard">STD</span></div>
+          <div class="lo-slot-stats">+15 HP · −1 SPD · 100%</div>
+        </div>
+        <div class="lo-slot empty">
+          <span class="lo-slot-chevron">▾</span>
+          <div class="lo-slot-label">UTILITY</div>
+          <div class="lo-slot-empty-text">+ Add utility</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<p class="frame-cap">EQUIPMENT tab inside the dossier. Six loadout slots in a 2-column grid. Each slot shows current item + quality badge + key stats + condition %. Empty slots are dashed with "+ Add ...". Stats summary at top updates live as items change.</p>
+
+<!-- ─────────── FRAME 3: Picker popover open ─────────── -->
+<div class="section-divider">★ FRAME 3 — Tap PRIMARY slot → equipment picker</div>
+
+<div class="phone">
+  <div class="hq-header">
+    <h2 class="hq-title">HEADQUARTERS</h2>
+    <div class="hq-resources">⬡ 1240 ◈ 18</div>
+    <div class="hq-deploy-bar">
+      <span class="hq-deploy-label">MAP</span>
+      <button class="hq-map-btn">S</button>
+      <button class="hq-map-btn active">M</button>
+      <button class="hq-map-btn">L</button>
+      <span class="hq-deploy-label">WAVE</span>
+      <span class="hq-deploy-val">1</span>
+      <span class="hq-deploy-label">POWER</span>
+      <span class="hq-deploy-val">94</span>
+      <button class="hq-deploy-btn">DEPLOY ▶</button>
+    </div>
+  </div>
+  <div class="hq-tab-bar">
+    <button class="hq-tab active">BARRACKS</button>
+    <button class="hq-tab">ARMORY</button>
+    <button class="hq-tab">MOTOR POOL</button>
+    <button class="hq-tab">PROVING GROUND</button>
+    <button class="hq-tab">REPLAYS</button>
+  </div>
+  <div class="body" style="position:relative; padding:0;">
+    <div style="flex:1; opacity:0.2"></div>
+    <div class="dossier-backdrop" style="opacity:0.6"></div>
+    <div class="dossier" style="opacity:0.45"></div>
+
+    <div class="picker-backdrop"></div>
+    <div class="picker">
+      <div class="picker-title">SELECT PRIMARY WEAPON · Rifleman compatible</div>
+      <button class="picker-option current">
+        <span class="radio"></span>
+        <span class="name">M4A1 <span class="quality-badge standard">STD</span></span>
+        <span class="meta">DMG 14 · 100%</span>
+      </button>
+      <button class="picker-option">
+        <span class="radio"></span>
+        <span class="name">M16A4 <span class="quality-badge improved">IMP</span></span>
+        <span class="meta">DMG 22 · 100%</span>
+      </button>
+      <button class="picker-option">
+        <span class="radio"></span>
+        <span class="name">M4A1 <span class="quality-badge standard">STD</span></span>
+        <span class="meta">DMG 14 · 62%</span>
+      </button>
+      <button class="picker-option disabled">
+        <span class="radio"></span>
+        <span class="name">M249 SAW <span class="quality-badge common">COM</span></span>
+        <span class="meta">Heavy Gunner only</span>
+      </button>
+      <button class="picker-option disabled">
+        <span class="radio"></span>
+        <span class="name">M240B <span class="quality-badge rare">RARE</span></span>
+        <span class="meta">Heavy Gunner only</span>
+      </button>
+      <div class="picker-divider"></div>
+      <button class="picker-option" style="color:var(--accent-red)">
+        <span style="width:12px"></span>
+        <span class="name">Unequip primary</span>
+      </button>
+    </div>
+  </div>
+</div>
+<p class="frame-cap">Picker lists items matching the slot type AND the soldier's MOS. Disabled items show why (e.g., "Heavy Gunner only"). Current selection has the green radio. Bottom action to unequip.</p>
+
+<div class="anno">
+  <strong>Behavior summary:</strong>
+  <ul style="margin:4px 0 0;padding-left:20px;">
+    <li>Armory tab = canonical inventory home. Filter chips include category + state (Unassigned/Damaged).</li>
+    <li>Tapping an Armory row could open an item detail drawer (like the vehicle drawer) — repair, destroy, "View on soldier ▸".</li>
+    <li>Soldier dossier gets a new EQUIPMENT tab between PERSONALITY and SERVICE. 2-column slot grid.</li>
+    <li>Tap a slot → picker popover filtered by slot type + soldier MOS. Quality badges and condition visible in the picker.</li>
+    <li>Stats summary at top of EQUIPMENT tab updates as items swap — instant feedback on tradeoffs.</li>
+  </ul>
+</div>
+<div class="anno">
+  <strong>Open question — disabled vs hidden:</strong> when an item is incompatible with the soldier's MOS, do we show it greyed-out (current mock) or hide it entirely? Greyed-out educates the player about the restriction; hidden keeps the list tighter. I lean greyed-out for the first few hours, then it's noise.
+</div>
+
+</body>
+</html>
