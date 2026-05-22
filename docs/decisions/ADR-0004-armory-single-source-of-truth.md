@@ -13,7 +13,7 @@ related:
   - systems/soldier-lifecycle.md
 log:
   - date: 2026-05-22
-    hash: TBD
+    hash: 17f3bfe
     note: Initial decision and implementation. Removed soldier.loadout / soldier.kits; armory is now the only source of equipment ownership. Bandaid code from 0e7f782 deleted in the same change.
 ---
 
@@ -80,7 +80,7 @@ Remove `soldier.loadout` and `soldier.kits` entirely. Make the armory the only s
 
 Append-only. Don't edit prior entries.
 
-- **2026-05-22 @ TBD:** Initial decision and implementation. `soldier.loadout` and `soldier.kits` removed from the soldier object. Kit storage moved to `armory.kits[soldierId]`. One-shot load-time migration (`_migrateToArmorySOT`, gated by `armory._sotMigratedV1`) strips legacy fields. Bandaid code from `0e7f782` (`dedupeArmoryByOwnerSlot`, `_migrationDirty`, loadout-backfill block in `_migrateRoster`) deleted in the same change.
+- **2026-05-22 @ 17f3bfe:** Initial decision and implementation. `soldier.loadout` and `soldier.kits` removed from the soldier object. Kit storage moved to `armory.kits[soldierId]`. One-shot load-time migration (`_migrateToArmorySOT`, gated by `armory._sotMigratedV1`) strips legacy fields. Bandaid code from `0e7f782` (`dedupeArmoryByOwnerSlot`, `_migrationDirty`, loadout-backfill block in `_migrateRoster`) deleted in the same change.
 
 ---
 
