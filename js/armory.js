@@ -18,8 +18,9 @@ let _idCounter = 0;
 
 function _ensureArmory() {
   if (!Game.armory) {
-    Game.armory = { items: [], capacity: DEFAULT_CAPACITY };
+    Game.armory = { items: [], capacity: DEFAULT_CAPACITY, kits: {} };
   }
+  if (!Game.armory.kits) Game.armory.kits = {};
   return Game.armory;
 }
 
@@ -54,6 +55,7 @@ export function createItem(templateId, quality = 'common', opts = {}) {
     quality: quality || 'common',
     condition: opts.condition ?? 1.0,
     assignedTo: opts.assignedTo || null,
+    equipped: opts.equipped === true,
     volume: template.volume || 1
   };
 
@@ -180,72 +182,12 @@ export function migrateItemsForKits() {
   }
 }
 
-/**
- * One-time cleanup: remove duplicate items left over from the pre-fix migration
- * bug (loadRoster's _migrateRoster created new standard-issue items every load
- * without persisting soldier.loadout, so each unsaved cycle accumulated a fresh
- * set). For each soldier, keep at most one item per slot — preferring whatever
- * the soldier currently has equipped, then the most recent. Items referenced
- * by any saved kit are preserved (they're meant to be alternates).
- *
- * Idempotent — safe to call on every load. Sets armory._dedupedV1 flag once
- * cleanup has happened so subsequent calls are no-ops.
- */
-export function dedupeArmoryByOwnerSlot(roster) {
-  const armory = _ensureArmory();
-  if (armory._dedupedV1) return 0;
-  let removed = 0;
-
-  // Gather kit-referenced item IDs across all soldiers so we don't touch them.
-  const kitReferenced = new Set();
-  for (const s of (roster || [])) {
-    if (!s.kits) continue;
-    for (const kit of Object.values(s.kits)) {
-      for (const itemId of Object.values(kit || {})) {
-        if (itemId) kitReferenced.add(itemId);
-      }
-    }
-  }
-
-  // Group items by (assignedTo, slot)
-  const groups = new Map();
-  for (const item of armory.items) {
-    if (!item.assignedTo) continue;
-    const key = `${item.assignedTo}::${item.slot}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(item);
-  }
-
-  for (const group of groups.values()) {
-    if (group.length <= 1) continue;
-    // Sort: equipped items first, then by id (most recent wins).
-    group.sort((a, b) => {
-      if (!!b.equipped - !!a.equipped !== 0) return !!b.equipped - !!a.equipped;
-      return (b.id || '').localeCompare(a.id || '');
-    });
-    // Keep the winner; remove the rest UNLESS they're referenced by a kit.
-    for (let i = 1; i < group.length; i++) {
-      const item = group[i];
-      if (kitReferenced.has(item.id)) continue;
-      const idx = armory.items.indexOf(item);
-      if (idx >= 0) {
-        armory.items.splice(idx, 1);
-        removed++;
-      }
-    }
-  }
-
-  armory._dedupedV1 = true;
-  if (removed > 0) console.log(`[armory] Deduped ${removed} duplicate items from prior migration bug`);
-  return removed;
-}
 
 // ─── Kit save/load ────────────────────────────────────────────
 
 /** Snapshot the soldier's currently equipped items into a kit for the given MOS. */
 export function saveKit(soldier, mos) {
   if (!soldier || !mos) return;
-  if (!soldier.kits) soldier.kits = {};
   const armory = _ensureArmory();
   const kit = {};
   for (const i of armory.items) {
@@ -253,7 +195,8 @@ export function saveKit(soldier, mos) {
       kit[i.slot] = i.id;
     }
   }
-  soldier.kits[mos] = kit;
+  if (!armory.kits[soldier.id]) armory.kits[soldier.id] = {};
+  armory.kits[soldier.id][mos] = kit;
 }
 
 /**
@@ -263,7 +206,7 @@ export function saveKit(soldier, mos) {
 export function loadKit(soldier, mos) {
   if (!soldier) return;
   const armory = _ensureArmory();
-  const kit = soldier.kits?.[mos] || null;
+  const kit = armory.kits[soldier.id]?.[mos] || null;
   // Step 1: unequip everything the soldier owns
   for (const i of armory.items) {
     if (i.assignedTo === soldier.id) i.equipped = false;
@@ -280,7 +223,9 @@ export function loadKit(soldier, mos) {
 
 /** Returns the saved kit for the soldier's given MOS, or null. */
 export function getKit(soldier, mos) {
-  return soldier?.kits?.[mos] || null;
+  if (!soldier) return null;
+  const armory = _ensureArmory();
+  return armory.kits[soldier.id]?.[mos] || null;
 }
 
 /** Does the soldier have a saved kit for the given MOS? */
@@ -317,11 +262,28 @@ export function kitIsDirty(soldier, mos) {
  * Lookup which of a soldier's saved kits contains an item. Returns the MOS key, or null.
  */
 export function findKitForItem(soldier, itemId) {
-  if (!soldier?.kits) return null;
-  for (const [mos, kit] of Object.entries(soldier.kits)) {
+  if (!soldier?.id) return null;
+  const armory = _ensureArmory();
+  const soldierKits = armory.kits[soldier.id];
+  if (!soldierKits) return null;
+  for (const [mos, kit] of Object.entries(soldierKits)) {
     if (Object.values(kit).includes(itemId)) return mos;
   }
   return null;
+}
+
+/**
+ * Is this item referenced by any soldier's saved kit (across the whole armory)?
+ * Useful as a destruction guard so we don't accidentally remove kit-referenced items.
+ */
+export function isItemInAnyKit(itemId) {
+  const armory = _ensureArmory();
+  for (const soldierKits of Object.values(armory.kits || {})) {
+    for (const kit of Object.values(soldierKits || {})) {
+      if (Object.values(kit || {}).includes(itemId)) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -468,7 +430,7 @@ export function createStandardIssue(mos, soldierId) {
 
   for (const [slot, templateId] of Object.entries(config)) {
     if (!templateId) continue;
-    const item = createItem(templateId, 'standard_issue', { assignedTo: soldierId });
+    const item = createItem(templateId, 'standard_issue', { assignedTo: soldierId, equipped: true });
     if (item) loadout[slot] = item;
   }
 

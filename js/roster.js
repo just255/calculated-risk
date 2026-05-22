@@ -4,7 +4,7 @@
 
 import { Game } from './state.js';
 import { RANK_TABLE, CREW_SCHEMAS, VEHICLE_ROLES, SCORE_WEIGHTS, STREAK_CONFIG, HEROIC_ACTIONS, COMMENDATIONS, OFFICER_RANKS, GREEN_TO_GOLD, CMD_SCORE_WEIGHTS, SGT_LEADERSHIP_WEIGHTS, INFANTRY_ARCHETYPES, UNIT_COMBAT_STATS, UNITS, PIXELS_TO_METERS, DISPLAY_RANGE_M, DISPLAY_SPEED_KMH, MOS_DEFINITIONS, PHYSICAL_RANGES, TRAINING_GROWTH_PER_BATTLE, MOS_GROWTH_MULTIPLIER, TRAINING_CAP, ALL_ROLES, CREW_MOD_FLOOR, CREW_MOD_CEILING } from './constants.js';
-import { createStandardIssue, getLoadout, getEquipped, unassignItem, destroyItem, saveArmory } from './armory.js';
+import { createStandardIssue, getLoadout, getEquipped, getOwnedItems, unassignItem, destroyItem, saveArmory } from './armory.js';
 import { getGearTemplate, getWeaponTemplate, QUALITY_TIERS, RANGE_ZONE_RATIOS } from './gear-templates.js';
 
 // ─── Name pools ───────────────────────────────────────────────
@@ -1193,7 +1193,11 @@ export function retireSoldier(soldierId) {
   // Add to recent fallen for memorial eligibility
   addRecentFallen(soldier);
 
+  // Soldier no longer exists — clear any kits stored against their id.
+  if (Game.armory?.kits) delete Game.armory.kits[soldier.id];
+
   saveRoster();
+  saveArmory();
   return soldier;
 }
 
@@ -1564,14 +1568,8 @@ export function importRoster(data) {
   _migrateRoster();
 }
 
-// Flag tracking whether any soldier's loadout was recovered/re-equipped during
-// migration. If true, saveRoster() is called at the end so the persisted state
-// reflects the recovery and migration doesn't run again on next load.
-let _migrationDirty = false;
-
 /** Migrate legacy soldiers: add physicals + MOS + training if missing. */
 function _migrateRoster() {
-  _migrationDirty = false;
   // Migration config: how personality traits seed physical attributes
   const MIGRATION_TRAIT_MAP = {
     vision:    'awareness',
@@ -1607,91 +1605,35 @@ function _migrateRoster() {
         s.training[s.mos] = Math.min(TRAINING_CAP, s.training[s.mos] + bonus);
       }
     }
-    // Loadout migration: give standard issue to soldiers without gear, or whose
-    // loadout references items that no longer exist (orphaned IDs from older saves).
-    if (!s.loadout) {
-      s.loadout = { primary: null, sidearm: null, optic: null, attachment: null, armor: null, utility: null };
-    }
-    if (s.pool !== 'vehicle' && s.pool !== 'officer') {
-      const items = Game.armory?.items || [];
-      const primaryItem = s.loadout.primary ? items.find(i => i.id === s.loadout.primary) : null;
-      const orphaned = s.loadout.primary && !primaryItem;
-      const noGear = !s.loadout.primary;
-      if (orphaned || noGear) {
-        // Step 1: clear stale refs
-        s.loadout = { primary: null, sidearm: null, optic: null, attachment: null, armor: null, utility: null };
-        // Step 2: recover from items already assigned to this soldier (left over from
-        // prior migrations that didn't persist soldier.loadout). Prevents duplication.
-        // For each slot, pick the most-recently-created owned item.
-        const owned = items.filter(i => i.assignedTo === s.id);
-        for (const slot of Object.keys(s.loadout)) {
-          const candidates = owned.filter(i => i.slot === slot);
-          if (candidates.length > 0) {
-            // Most recent (highest id timestamp suffix wins). If multiple owned items
-            // exist for the same slot, mark them all unequipped except the chosen one.
-            candidates.sort((a, b) => (b.id || '').localeCompare(a.id || ''));
-            s.loadout[slot] = candidates[0].id;
-            candidates[0].equipped = true;
-            for (let i = 1; i < candidates.length; i++) {
-              candidates[i].equipped = false;
-            }
-          }
-        }
-        // Step 3: only create standard issue for slots that are still empty.
-        const stillEmpty = Object.values(s.loadout).every(v => !v);
-        if (stillEmpty) {
-          equipSoldierStandardIssue(s);
-        }
-        _migrationDirty = true;
-      }
-    }
-    if (!s.kits) s.kits = {};
-  }
-  // Persist the recovered/re-equipped loadouts so this migration doesn't repeat
-  // on next page load with the same orphan condition.
-  if (_migrationDirty) {
-    saveRoster();
   }
 }
 
 /** Equip a soldier with standard issue gear for their MOS. */
 export function equipSoldierStandardIssue(soldier) {
   const mos = soldier.role || soldier.mos || 'rifleman';
-  const items = createStandardIssue(mos, soldier.id);
-  if (!soldier.loadout) soldier.loadout = {};
-  for (const [slot, item] of Object.entries(items)) {
-    if (item) {
-      // Mark fresh standard-issue items as currently equipped (worn).
-      item.equipped = true;
-      soldier.loadout[slot] = item.id;
-    }
-  }
-  // Persist the armory so newly-created items survive reload.
+  createStandardIssue(mos, soldier.id);
+  // createStandardIssue creates items already tagged with assignedTo + equipped:true.
+  // Armory items are the single source of truth for what a soldier has equipped —
+  // no soldier.loadout cache to maintain (see ADR-0004).
   saveArmory();
 }
 
-/** Strip all gear from a soldier and return items to armory. */
+/** Strip all gear from a soldier and return items to armory pool. */
 export function stripGear(soldier) {
-  if (!soldier?.loadout) return [];
+  if (!soldier?.id) return [];
   const recovered = [];
-  for (const [slot, itemId] of Object.entries(soldier.loadout)) {
-    if (itemId) {
-      unassignItem(itemId);
-      recovered.push(itemId);
-      soldier.loadout[slot] = null;
-    }
+  for (const item of getOwnedItems(soldier.id)) {
+    unassignItem(item.id);
+    recovered.push(item.id);
   }
   return recovered;
 }
 
 /** Destroy all gear on a soldier (KIA + battle lost, POW). */
 export function destroyGear(soldier) {
-  if (!soldier?.loadout) return;
-  for (const [slot, itemId] of Object.entries(soldier.loadout)) {
-    if (itemId) {
-      destroyItem(itemId);
-      soldier.loadout[slot] = null;
-    }
+  if (!soldier?.id) return;
+  for (const item of getOwnedItems(soldier.id)) {
+    destroyItem(item.id);
   }
 }
 

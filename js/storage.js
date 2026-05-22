@@ -4,7 +4,7 @@
 
 import { Game } from './state.js';
 import { loadRoster, saveRoster, seedStarterRoster, loadVehicles, saveVehicles, seedStarterVehicles, loadMemorial } from './roster.js';
-import { loadArmory, saveArmory, dedupeArmoryByOwnerSlot } from './armory.js';
+import { loadArmory, saveArmory } from './armory.js';
 
 // ── Save slot system ─────────────────────────────────────────
 
@@ -201,10 +201,10 @@ export function load() {
     loadRoster();
     loadVehicles();
     loadMemorial();
-    // One-time cleanup of duplicate items left over from the pre-fix migration bug.
-    // Runs once per save slot (gated by armory._dedupedV1 flag). Safe no-op after.
-    const removed = dedupeArmoryByOwnerSlot(Game.roster);
-    if (removed > 0) saveArmory();
+    // One-time migration to armory-as-single-source-of-truth: move soldier.kits
+    // into armory.kits[soldierId] and strip the deprecated soldier.loadout / soldier.kits
+    // fields. Gated by armory._sotMigratedV1. See ADR-0004.
+    _migrateToArmorySOT();
     // Seed starters if first time
     seedStarterRoster();
     seedStarterVehicles();
@@ -319,4 +319,48 @@ export function deleteFRNamedConfig(name) {
   } catch (e) {
     console.warn('Failed to delete named FR config:', e);
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ARMORY AS SINGLE SOURCE OF TRUTH MIGRATION (one-shot per slot)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Move `soldier.kits` into `armory.kits[soldierId]` and strip both
+ * `soldier.loadout` and `soldier.kits` from every soldier. Defensively
+ * reconciles any item whose assignedTo/equipped doesn't match the old
+ * soldier.loadout reference — this is the last chance to compare the
+ * dual sources before the cache is gone. See ADR-0004.
+ *
+ * Gated by `armory._sotMigratedV1` so it runs exactly once per save slot.
+ */
+function _migrateToArmorySOT() {
+  if (!Game.armory) return;
+  if (Game.armory._sotMigratedV1) return;
+  if (!Game.armory.kits) Game.armory.kits = {};
+  let rosterTouched = false;
+
+  for (const s of (Game.roster || [])) {
+    // Move kits intact.
+    if (s.kits && Object.keys(s.kits).length > 0) {
+      Game.armory.kits[s.id] = s.kits;
+    }
+    if ('kits' in s) { delete s.kits; rosterTouched = true; }
+
+    // Reconcile loadout → items (defensive — last chance to compare).
+    if (s.loadout) {
+      for (const [, itemId] of Object.entries(s.loadout)) {
+        if (!itemId) continue;
+        const item = Game.armory.items.find(i => i.id === itemId);
+        if (!item) continue;
+        if (item.assignedTo !== s.id) item.assignedTo = s.id;
+        if (item.equipped === false) item.equipped = true;
+      }
+    }
+    if ('loadout' in s) { delete s.loadout; rosterTouched = true; }
+  }
+
+  Game.armory._sotMigratedV1 = true;
+  saveArmory();
+  if (rosterTouched) saveRoster();
 }
