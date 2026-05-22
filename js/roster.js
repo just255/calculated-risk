@@ -140,11 +140,8 @@ export function createSoldier(opts) {
     assignedSlot: null,
     isSquadLeader: false,
 
-    // Gear loadout — armory item IDs per slot
-    loadout: { primary: null, sidearm: null, optic: null, attachment: null, armor: null, utility: null },
-
-    // Saved kits — map of MOS → { slot: itemId } for that MOS's saved loadout
-    kits: {},
+    // Equipment ownership lives on armory items (assignedTo + equipped) and
+    // armory.kits[soldier.id] — NOT on the soldier object. See ADR-0004.
 
     battlesServed: 0,
     kills: 0,
@@ -1547,9 +1544,12 @@ export function seedStarterRoster() {
       physicals: generatePhysicals('starter'),
       survivability: 0.55
     });
+    equipSoldierStandardIssue(s);
     roster.push(s);
   }
 
+  // Persist the seeded roster + armory items so reloads don't re-seed.
+  saveRoster();
 }
 
 // ─── Persistence ──────────────────────────────────────────────
