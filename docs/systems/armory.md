@@ -3,7 +3,7 @@ name: armory
 type: system
 status: stable
 verified: 2026-05-22
-verified_hash: 98fca20
+verified_hash: 0e7f782
 tags: [armory, gear, items, kits, loadout, dedup]
 files:
   - js/armory.js

@@ -16,6 +16,9 @@ log:
   - date: 2026-05-21
     hash: 98fca20
     note: Phases 1 (render) and 2 (actions) landed in 98fca20. Phases 3–5 pending.
+  - date: 2026-05-22
+    hash: 0e7f782
+    note: Closed panel-not-hiding edge case — explicit .deploy-panel.remove() in updateDeployment + deployPanelHTML phase guard. Belt-and-suspenders safety on the deploying→countdown transition.
 ---
 
 # ADR-0002: Move deploy panel from canvas to HTML (with surgical render)
@@ -63,6 +66,7 @@ Refactor is staged in 5 phases — phases 1 (render) and 2 (actions) are done; p
 Append-only. Don't edit prior entries.
 
 - **2026-05-21 @ 98fca20:** Phases 1 (render) and 2 (actions) landed. Panel is in HTML, all `dp-*` handlers wired, surgical render confirmed not to disturb the battle canvas. Phases 3–5 pending (tasks #111–#113).
+- **2026-05-22 @ 0e7f782:** Closed the panel-not-hiding edge case with belt-and-suspenders safety on the `deploying → countdown` transition: explicit `.deploy-panel.remove()` in `updateDeployment` (game.js:2311) + phase guard in `deployPanelHTML` that returns `''` when `b.phase !== 'deploying'` (ui.js:7982). Either alone would have closed it; both together survive future ordering changes.
 
 ---
 
