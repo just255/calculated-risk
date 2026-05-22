@@ -15,6 +15,9 @@ log:
   - date: 2026-05-22
     hash: 17f3bfe
     note: Initial decision and implementation. Removed soldier.loadout / soldier.kits; armory is now the only source of equipment ownership. Bandaid code from 0e7f782 deleted in the same change.
+  - date: 2026-05-22
+    hash: 14601d2
+    note: Two regressions caught by chrome-devtools-driven smoke pass. (1) createSoldier still initialized empty soldier.loadout/kits fields, so fresh soldiers re-grew the cache after migration stripped it. (2) seedStarterRoster relied on the deleted _migrateRoster orphan-recovery block to equip infantry starters, leaving them naked. Both fixed; doc bodies still accurate (the rule "soldier object carries no equipment state" was always the intent).
 ---
 
 # ADR-0004: Armory as single source of equipment ownership
@@ -81,6 +84,7 @@ Remove `soldier.loadout` and `soldier.kits` entirely. Make the armory the only s
 Append-only. Don't edit prior entries.
 
 - **2026-05-22 @ 17f3bfe:** Initial decision and implementation. `soldier.loadout` and `soldier.kits` removed from the soldier object. Kit storage moved to `armory.kits[soldierId]`. One-shot load-time migration (`_migrateToArmorySOT`, gated by `armory._sotMigratedV1`) strips legacy fields. Bandaid code from `0e7f782` (`dedupeArmoryByOwnerSlot`, `_migrationDirty`, loadout-backfill block in `_migrateRoster`) deleted in the same change.
+- **2026-05-22 @ 14601d2:** Two regressions caught by chrome-devtools smoke pass and fixed. (1) `createSoldier` still pre-initialized empty `soldier.loadout` and `soldier.kits` fields, so freshly-created soldiers re-grew the dead cache after migration stripped it. Removed the field initializers. (2) `seedStarterRoster` was relying on the deleted `_migrateRoster` orphan-recovery block to equip infantry starters on first load — without that block, starters spawned naked. Added an explicit `equipSoldierStandardIssue` call in the seed loop, plus a terminal `saveRoster()` so a reseed doesn't re-trigger. Doc bodies still accurate; the architectural rule ("soldier object carries no equipment state") was always the intent — these were missed write sites.
 
 ---
 

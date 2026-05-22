@@ -3,7 +3,7 @@ name: soldier-lifecycle
 type: system
 status: stable
 verified: 2026-05-22
-verified_hash: 17f3bfe
+verified_hash: 14601d2
 tags: [roster, soldier, recruitment, memorial, lineage]
 files:
   - js/roster.js
