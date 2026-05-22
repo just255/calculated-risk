@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Knowledge base
+
+The project KB lives in `docs/`. Any commit that touches a documented system **must update the doc in the same commit** — refresh `verified:` date and `verified_hash:` in the doc's frontmatter, and update the body if logic changed. See [`docs/README.md`](docs/README.md) for the standard, templates, and tooling (`tools/doc-context.js`, `/doc-status`, `/sync-docs`, etc.).
+
 ## Project Overview
 
 A military-themed math training game for a 12-year-old struggling with times tables and basic operations. Players solve math problems to deploy units that defend against enemy waves advancing toward their base.
