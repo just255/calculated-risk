@@ -180,6 +180,66 @@ export function migrateItemsForKits() {
   }
 }
 
+/**
+ * One-time cleanup: remove duplicate items left over from the pre-fix migration
+ * bug (loadRoster's _migrateRoster created new standard-issue items every load
+ * without persisting soldier.loadout, so each unsaved cycle accumulated a fresh
+ * set). For each soldier, keep at most one item per slot — preferring whatever
+ * the soldier currently has equipped, then the most recent. Items referenced
+ * by any saved kit are preserved (they're meant to be alternates).
+ *
+ * Idempotent — safe to call on every load. Sets armory._dedupedV1 flag once
+ * cleanup has happened so subsequent calls are no-ops.
+ */
+export function dedupeArmoryByOwnerSlot(roster) {
+  const armory = _ensureArmory();
+  if (armory._dedupedV1) return 0;
+  let removed = 0;
+
+  // Gather kit-referenced item IDs across all soldiers so we don't touch them.
+  const kitReferenced = new Set();
+  for (const s of (roster || [])) {
+    if (!s.kits) continue;
+    for (const kit of Object.values(s.kits)) {
+      for (const itemId of Object.values(kit || {})) {
+        if (itemId) kitReferenced.add(itemId);
+      }
+    }
+  }
+
+  // Group items by (assignedTo, slot)
+  const groups = new Map();
+  for (const item of armory.items) {
+    if (!item.assignedTo) continue;
+    const key = `${item.assignedTo}::${item.slot}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
+
+  for (const group of groups.values()) {
+    if (group.length <= 1) continue;
+    // Sort: equipped items first, then by id (most recent wins).
+    group.sort((a, b) => {
+      if (!!b.equipped - !!a.equipped !== 0) return !!b.equipped - !!a.equipped;
+      return (b.id || '').localeCompare(a.id || '');
+    });
+    // Keep the winner; remove the rest UNLESS they're referenced by a kit.
+    for (let i = 1; i < group.length; i++) {
+      const item = group[i];
+      if (kitReferenced.has(item.id)) continue;
+      const idx = armory.items.indexOf(item);
+      if (idx >= 0) {
+        armory.items.splice(idx, 1);
+        removed++;
+      }
+    }
+  }
+
+  armory._dedupedV1 = true;
+  if (removed > 0) console.log(`[armory] Deduped ${removed} duplicate items from prior migration bug`);
+  return removed;
+}
+
 // ─── Kit save/load ────────────────────────────────────────────
 
 /** Snapshot the soldier's currently equipped items into a kit for the given MOS. */

@@ -2308,6 +2308,8 @@ function updateDeployment(b, now) {
     b.countdownStart = now;
     // Deploy is done — now we show the radio HUD for the actual game.
     createRadioHUD();
+    // Remove the HTML deploy panel — phase is no longer 'deploying'.
+    document.querySelector('.deploy-panel')?.remove();
   }
 }
 

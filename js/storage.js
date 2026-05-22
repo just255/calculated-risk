@@ -4,7 +4,7 @@
 
 import { Game } from './state.js';
 import { loadRoster, saveRoster, seedStarterRoster, loadVehicles, saveVehicles, seedStarterVehicles, loadMemorial } from './roster.js';
-import { loadArmory } from './armory.js';
+import { loadArmory, saveArmory, dedupeArmoryByOwnerSlot } from './armory.js';
 
 // ── Save slot system ─────────────────────────────────────────
 
@@ -201,6 +201,10 @@ export function load() {
     loadRoster();
     loadVehicles();
     loadMemorial();
+    // One-time cleanup of duplicate items left over from the pre-fix migration bug.
+    // Runs once per save slot (gated by armory._dedupedV1 flag). Safe no-op after.
+    const removed = dedupeArmoryByOwnerSlot(Game.roster);
+    if (removed > 0) saveArmory();
     // Seed starters if first time
     seedStarterRoster();
     seedStarterVehicles();

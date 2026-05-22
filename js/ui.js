@@ -7979,6 +7979,10 @@ export function renderDeployPanel() {
 
 export function deployPanelHTML(b) {
   if (!b || !b.deployZones?.blue) return '';
+  // Only render during the deploy phase. After confirmDeployment flips
+  // deployReady.blue and updateDeployment transitions to 'countdown', this
+  // returns '' so renderDeployPanel() removes the panel from the DOM.
+  if (b.phase !== 'deploying') return '';
   const zones = b.deployZones.blue;
   const selZone = zones.find(z => z.selected) || zones[0];
   const expanded = !!selZone?._expanded;

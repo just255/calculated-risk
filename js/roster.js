@@ -1564,8 +1564,14 @@ export function importRoster(data) {
   _migrateRoster();
 }
 
+// Flag tracking whether any soldier's loadout was recovered/re-equipped during
+// migration. If true, saveRoster() is called at the end so the persisted state
+// reflects the recovery and migration doesn't run again on next load.
+let _migrationDirty = false;
+
 /** Migrate legacy soldiers: add physicals + MOS + training if missing. */
 function _migrateRoster() {
+  _migrationDirty = false;
   // Migration config: how personality traits seed physical attributes
   const MIGRATION_TRAIT_MAP = {
     vision:    'awareness',
@@ -1612,12 +1618,39 @@ function _migrateRoster() {
       const orphaned = s.loadout.primary && !primaryItem;
       const noGear = !s.loadout.primary;
       if (orphaned || noGear) {
-        // Clear stale references and re-equip standard issue
+        // Step 1: clear stale refs
         s.loadout = { primary: null, sidearm: null, optic: null, attachment: null, armor: null, utility: null };
-        equipSoldierStandardIssue(s);
+        // Step 2: recover from items already assigned to this soldier (left over from
+        // prior migrations that didn't persist soldier.loadout). Prevents duplication.
+        // For each slot, pick the most-recently-created owned item.
+        const owned = items.filter(i => i.assignedTo === s.id);
+        for (const slot of Object.keys(s.loadout)) {
+          const candidates = owned.filter(i => i.slot === slot);
+          if (candidates.length > 0) {
+            // Most recent (highest id timestamp suffix wins). If multiple owned items
+            // exist for the same slot, mark them all unequipped except the chosen one.
+            candidates.sort((a, b) => (b.id || '').localeCompare(a.id || ''));
+            s.loadout[slot] = candidates[0].id;
+            candidates[0].equipped = true;
+            for (let i = 1; i < candidates.length; i++) {
+              candidates[i].equipped = false;
+            }
+          }
+        }
+        // Step 3: only create standard issue for slots that are still empty.
+        const stillEmpty = Object.values(s.loadout).every(v => !v);
+        if (stillEmpty) {
+          equipSoldierStandardIssue(s);
+        }
+        _migrationDirty = true;
       }
     }
     if (!s.kits) s.kits = {};
+  }
+  // Persist the recovered/re-equipped loadouts so this migration doesn't repeat
+  // on next page load with the same orphan condition.
+  if (_migrationDirty) {
+    saveRoster();
   }
 }
 
