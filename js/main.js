@@ -664,7 +664,18 @@ document.getElementById('app').addEventListener('click', e => {
     }
     // HQ actions
     else if (a === 'hq-deploy-endless') { Game.endless = newEndlessRun(); Game.endless._record = Game.settings?.autoRecord !== false; initAudio(); fetchUnitVariants().then(() => { goto(State.ENDLESS_LOADOUT); render(); }); }
-    else if (a === 'hq-fire-range') { goto(State.FIRE_RANGE); }
+    else if (a === 'hq-fire-range') {
+      // Mirror the title-screen 'fire-range' init — without these, render()
+      // tries to read Game.fireRange.config on null and the page blanks to
+      // "Loading...". Same init pattern as main.js:2356.
+      Game.fireRange = newFireRangeRun();
+      const lastCfg = loadFRConfig();
+      if (lastCfg && ((lastCfg.blueTeam && lastCfg.redTeam) || (lastCfg.blueSquads && lastCfg.redSquads))) {
+        Game.fireRange.config = lastCfg;
+      }
+      initAudio();
+      goto(State.FIRE_RANGE);
+    }
     else if (a === 'hq-replays') {
       goto(State.REPLAY_THEATER);
       fetch('/api/replays').then(r => r.json()).then(list => {
