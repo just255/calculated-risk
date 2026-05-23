@@ -2,8 +2,8 @@
 name: battle-phases
 type: system
 status: stable
-verified: 2026-05-22
-verified_hash: e30f8c2
+verified: 2026-05-23
+verified_hash: 5c98eea
 tags: [battle, state-machine, phase, deploying, countdown, active]
 files:
   - js/game.js

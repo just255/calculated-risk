@@ -2,8 +2,8 @@
 name: intro-mission
 type: flow
 status: stable
-verified: 2026-05-22
-verified_hash: e30f8c2
+verified: 2026-05-23
+verified_hash: 5c98eea
 tags: [flow, intro, first-time, mission, deploy]
 files:
   - js/main.js
