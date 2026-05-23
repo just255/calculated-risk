@@ -59,6 +59,20 @@ A military-themed math training game for a 12-year-old struggling with times tab
     - If the user is asking questions or brainstorming, discuss first
     - Get explicit approval before implementing design decisions
     - Present options with pros/cons and a recommendation before building
+12. **Use the slash-command workflow even when you think you know enough** —
+    `/add-doc`, `/add-ref`, `/add-flow`, `/log-decision`, `/update-*` and `/build-plan`
+    all include an Explore-agent (or phased-Q&A) step that walks the actual code
+    fresh. Bypassing them to "author inline from memory" is the exact moment
+    pattern-matching takes over and unstated assumptions slip in. Concrete failure:
+    `docs/flows/intro-mission.md` was authored inline at commit `50f8b44` and got
+    the post-mission disposition wrong (claimed survivors transfer wholesale,
+    missed that nobody dies by design, missed that vehicle crew don't transfer,
+    missed motor pool transfer). The reference docs in the same session were
+    accurate because they used Explore agents. If you find yourself typing a
+    KB doc or non-trivial plan without first dispatching the agent / Q&A workflow,
+    stop and invoke the command. The discipline catches the shortcuts. This
+    isn't a deterministic guarantee — it's still on you to follow it — but the
+    explicit rule lowers the rate of recurrence.
 
 ## Development Commands
 
