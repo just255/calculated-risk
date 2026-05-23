@@ -1788,6 +1788,21 @@ export function newEndlessBattle(loadout, wave = 1, mapOverrides = null) {
         battle.hero._role = heroSoldier.role;
         initMagazine(battle.hero); // Re-init with correct role
       }
+      // Inject gear-derived combat stats so the hero benefits from optic /
+      // attachment / armor / training / physicals the same way soldier-pool
+      // units do at state.js:1395. Without this, hero plays at 0 crit / 0
+      // penetration / no gear-derived accuracy mod, and the replay recorder
+      // (line 26 of replay-recorder.js) skips hero gear capture. See Task #124.
+      const cs = getEffectiveCombatStats(heroSoldier);
+      if (cs) {
+        battle.hero._gearAccuracy = cs.accuracy || null;
+        battle.hero._gearSpread = cs.spread || null;
+        battle.hero._gearReloadTime = cs.reloadTime || null;
+        battle.hero._gearMagSize = cs.magSize || null;
+        battle.hero._gearCritChance = cs.critChance || 0;
+        battle.hero._gearPenetration = cs.penetrationChance || 0;
+        battle.hero._gearEffectiveRange = cs.effectiveRange || cs.range;
+      }
     }
   }
 
