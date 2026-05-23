@@ -3,7 +3,7 @@ name: intro-mission
 type: flow
 status: stable
 verified: 2026-05-22
-verified_hash: 881d7ec
+verified_hash: 33fc203
 tags: [flow, intro, first-time, mission, deploy]
 files:
   - js/main.js
@@ -107,7 +107,7 @@ sequenceDiagram
 
 5. **Combat plays out** via the standard battle loop (`game.js`). The recorder captures frames at 10fps to `battle._recorder`. On mission end, replay is POSTed to `/api/replays` → saved to `data/replays/<timestamp>-<seed>.json`.
 
-6. **Mission complete** → first-time mission is designed so **nobody dies** — worst case is wounded. The hero plus the 3 infantry reinforcements transfer to `Game.roster` carrying their wounded/ready status. The 2 vehicles transfer to the motor pool (`Game.vehicles`); vehicle-crew soldiers do **not** transfer to active roster. Player returns to HQ for the first time.
+6. **Mission complete** → user clicks **"medevac-continue"** → `extractFromRun()` (`game.js:405`). First-time mission is designed so **nobody dies** — worst case is wounded. Hero + 3 infantry reinforcements transfer to `Game.roster` carrying their wounded/ready status. The 2 reinforcement vehicles are **removed** from `Game.vehicles` (since `33fc203` — they were transient; the `_isReinforcement: true` flag is the marker). No vehicle-crew soldier records exist to clean up — they were only synthesized at deploy-time as unit-level state, not persistent soldiers. Player returns to HQ for the first time.
 
 ## Non-obvious facts
 
@@ -122,8 +122,8 @@ sequenceDiagram
 - **`Game._isFirstRun` and `Game._introSeed`** are flags set by setup-deploy, not by mission.js. They drive the first-mission cinematic path
 - **The intro mission uses `_allowedEnemyTypes`** to restrict enemies to swarmer/grunt (mission.js:155). Tougher types appear in later endless mode
 - **By design, nobody dies in the intro mission** — worst outcome is `status: 'wounded'` (with `hpPercent ≈ 0.05` and a `woundedBattlesLeft` countdown). No KIA path is exercised. `destroyGear` is NOT called in this flow
-- **Vehicle crew don't transfer to active roster.** The 2-3 soldiers spawned to crew the intro vehicles serve as units in-mission but are not added to `Game.roster` on completion. Their items remain `assignedTo` those soldier IDs — creating armory orphans (see Task #130)
-- **Vehicles transfer to motor pool** (`Game.vehicles`). Note: per user, this disposition is up for redesign — vehicles may not actually belong in motor pool long-term
+- **There are no vehicle-crew soldier records.** `generateMissionReinforcements` creates only infantry reinforcements (3 rifleman soldiers). `createVehicle` creates pure vehicle structs (id/unitId/hp/condition/status), no crew soldiers. Vehicle crew are synthesized at deploy-time as unit-level state and have no `armory.items` of their own. There is no vehicle-crew-orphan issue
+- **Vehicles do NOT persist post-mission** (since `33fc203`). `extractFromRun` filters out `_isReinforcement: true` vehicles from `Game.vehicles` before saving. The reinforcement Shermans served as in-mission entities only
 
 ## What this flow *doesn't* do
 
@@ -132,9 +132,9 @@ sequenceDiagram
 - **Seed starter roster (45 starters)** — `seedStarterRoster()` lives behind `load()`. Real first-mission content comes from `launchMission` + `generateMissionReinforcements`
 - **Initialize Game.armory** — relies on `_ensureArmory()` lazy-init from the first `createItem` call. `armory.kits = {}` set by the same lazy-init path
 - **Update `Game.stats.battles` / `Game.stats.kills`** — mission complete returns to HQ but doesn't bump these counters (verify if this is a bug — possibly only updates per endless-mode wave-complete, not first-mission complete)
-- **Reset Game.armory on retry** — known gap. Items from prior (failed or abandoned) attempts persist as orphans because setup-deploy only clears roster/vehicles/memorial. See Task #130
 - **Kill the player** — intro mission has no KIA path; wounded is the worst outcome by design
-- **Transfer vehicle crew to roster** — vehicle-crew soldiers stay only as in-mission entities; not added to active roster on completion (their gear becomes orphans — see Task #130)
+- **Persist mission vehicles to motor pool** — `extractFromRun` filters out `_isReinforcement: true` vehicles since `33fc203`. They exist in `Game.vehicles` only during the mission
+- **Create vehicle-crew soldier records** — no such records exist. Crew are unit-level synthesized state, not persistent soldiers
 
 ## Cross-references
 

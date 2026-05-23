@@ -3,7 +3,7 @@ name: battle
 type: reference
 status: stable
 verified: 2026-05-22
-verified_hash: 27f7b8d
+verified_hash: 33fc203
 tags: [data, shape, battle, runtime]
 files:
   - js/state.js
