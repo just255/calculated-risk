@@ -2558,6 +2558,16 @@ document.getElementById('app').addEventListener('click', e => {
         Game.fireRange.config.record = checked;
       }
     }
+    // Use-my-roster-hero toggle on fire range config. When enabled,
+    // newFireRangeBattle uses the player's isPlayerCharacter soldier as the
+    // hero (with full getEffectiveCombatStats gear injection) instead of the
+    // synthesized blueLeader or observer hero. See proving-ground.md.
+    else if (a === 'fr-toggle-use-hero') {
+      if (Game.fireRange) {
+        const checked = action.closest('label')?.querySelector('input')?.checked;
+        Game.fireRange.config.useRosterHero = checked;
+      }
+    }
     // Record toggle on campaign planning
     else if (a === 'campaign-record-toggle') {
       if (Game.campaign) {

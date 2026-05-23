@@ -2113,9 +2113,60 @@ export function newFireRangeBattle(config) {
     blueLeader.isLeader = true;
   }
 
-  // Hero: only include as a combatant if config.includeHero is true (default: observer)
+  // Hero assignment. Three paths in priority order:
+  //   1. config.useRosterHero — player wants to test their actual roster hero
+  //      with their actual equipped gear (full getEffectiveCombatStats injection,
+  //      same path endless mode uses). Hero is player-controlled. Adds a real
+  //      combatant separate from squad-config units.
+  //   2. config.includeHero — promotes the auto-selected blueLeader to hero
+  //      (synthesized stats from squad config). Legacy path.
+  //   3. Default — observer hero off-map, not in combat.
   let battleHero = null;
-  if (config.includeHero && blueLeader) {
+  const playerHero = config.useRosterHero
+    ? (Game.roster || []).find(s => s.isPlayerCharacter)
+    : null;
+
+  if (playerHero) {
+    const cs = getEffectiveCombatStats(playerHero);
+    const heroUnitId = 'infantry';
+    const heroX = blueSpawnZone ? blueSpawnZone.x : mapWidth / 2;
+    const heroY = blueSpawnZone ? blueSpawnZone.y : mapHeight - CELL_SIZE * 4;
+    battleHero = createUnit(heroUnitId, {
+      id: `hero_${Date.now()}`,
+      x: heroX,
+      y: heroY,
+      hp: cs?.hp || cs?.maxHp || 180,
+      maxHp: cs?.maxHp || 180,
+      speed: cs?.speed,
+      damage: cs?.damage,
+      fireRate: cs?.fireRate,
+      range: cs?.range,
+      _soldierId: playerHero.id,
+      _role: playerHero.role || 'rifleman',
+      unitName: getRankName(playerHero),
+      personality: { ...playerHero.personality },
+      _gearAccuracy: cs?.accuracy || null,
+      _gearSpread: cs?.spread || null,
+      _gearReloadTime: cs?.reloadTime || null,
+      _gearMagSize: cs?.magSize || null,
+      _gearCritChance: cs?.critChance || 0,
+      _gearPenetration: cs?.penetrationChance || 0,
+      _gearEffectiveRange: cs?.effectiveRange || cs?.range,
+      isHero: true,
+      angle: -Math.PI / 2,
+      hullAngle: -Math.PI / 2,
+      targetHullAngle: -Math.PI / 2,
+      animId: `hero-${heroUnitId}-${Date.now()}`,
+      isMoving: false,
+      lastX: heroX,
+      lastY: heroY,
+      _currentSpeed: cs?.speed,
+      viewRange: UNIT_COMBAT_STATS[heroUnitId]?.viewRange || 950,
+      viewCone: 360,
+      _awareness: 0.6,
+    });
+    initMagazine(battleHero);
+  } else if (config.includeHero && blueLeader) {
     blueLeader.isHero = true;
     battleHero = blueLeader;
   } else {

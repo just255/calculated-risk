@@ -8974,6 +8974,11 @@ function fireRangeConfigHTML() {
             <label class="fr-check"><input type="checkbox" data-action="fr-debug-toggle" data-key="noCooldowns" ${dbg.noCooldowns ? 'checked' : ''}> No Cooldowns</label>
             <label class="fr-check"><input type="checkbox" data-action="fr-debug-toggle" data-key="showRanges" ${dbg.showRanges ? 'checked' : ''}> Show Ranges</label>
             <label class="fr-check"><input type="checkbox" data-action="fr-record-toggle" ${cfg.record !== false && Game.settings?.autoRecord !== false ? 'checked' : ''}> Record</label>
+            <label class="fr-check" title="Spawns your roster hero (PC) with their actual loadout. Player-controlled.">
+              <input type="checkbox" data-action="fr-toggle-use-hero" ${cfg.useRosterHero ? 'checked' : ''}
+                ${(Game.roster || []).some(s => s.isPlayerCharacter) ? '' : 'disabled'}>
+              Use My Hero
+            </label>
           </div>
 
           <div class="fr-save-panel">
