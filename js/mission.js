@@ -41,6 +41,17 @@ export function launchMission(missionId) {
   const def = MISSION_DEFS[missionId];
   if (!def) throw new Error(`Unknown mission: ${missionId}`);
 
+  // Prune orphan items from any prior mission attempt. Items whose assignedTo
+  // points at a soldier no longer in roster are leftover from a prior launch
+  // (failed attempts, retry-on-death paths, abandoned missions). They never
+  // get cleaned up otherwise. This is the canonical gateway for all mission
+  // launches — setup-deploy AND the in-mission retry path at game.js:2802
+  // both pass through here. See ADR-0004 + Task #130.
+  if (Game.armory?.items) {
+    const rosterIds = new Set((Game.roster || []).map(s => s.id));
+    Game.armory.items = Game.armory.items.filter(i => !i.assignedTo || rosterIds.has(i.assignedTo));
+  }
+
   let soldier = null;
 
   // Create starter soldier if needed
