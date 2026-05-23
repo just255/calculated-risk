@@ -43,6 +43,8 @@ const REPO_ROOT = path.resolve(__dirname, '..');
 const DOCS_DIR = path.join(REPO_ROOT, 'docs');
 const SYSTEMS_DIR = path.join(DOCS_DIR, 'systems');
 const DECISIONS_DIR = path.join(DOCS_DIR, 'decisions');
+const REFERENCES_DIR = path.join(DOCS_DIR, 'references');
+const FLOWS_DIR = path.join(DOCS_DIR, 'flows');
 
 // ─── CLI parsing ──────────────────────────────────────────────
 
@@ -167,7 +169,12 @@ function parseDoc(filePath) {
 function loadAllDocs() {
   const docs = [];
   const errors = [];
-  const all = [...listDocFiles(SYSTEMS_DIR), ...listDocFiles(DECISIONS_DIR)];
+  const all = [
+    ...listDocFiles(SYSTEMS_DIR),
+    ...listDocFiles(DECISIONS_DIR),
+    ...listDocFiles(REFERENCES_DIR),
+    ...listDocFiles(FLOWS_DIR),
+  ];
   for (const f of all) {
     try {
       const doc = parseDoc(f);
