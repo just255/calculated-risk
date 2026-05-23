@@ -17,7 +17,7 @@ import { cameraKeyDown, cameraKeyUp, cameraZoom, cameraPanStart, cameraPanMove, 
 import { initController, getControllerInput, updateButtonStates, setControllerCallbacks, isControllerConnected } from './controller.js';
 import { initGestures, setResetJoysticksCallback } from './gestures.js';
 import { generateRecruit, saveRoster, createSoldier, removeFromMemorial, addToMemorial, replaceOnMemorial, saveMemorial, getRecentFallen, hasRosterRoom, dismissRecruit, promoteToOfficer, retireSoldier, debugSetRank, debugSetMMR, debugSetPhysicals, debugSetTraining, debugSetAllTraining, debugMaxSoldier, debugResetSoldier, getSoldier, generatePhysicals, rushHeal, getCrewForVehicle, assignToVehicle, unassignFromVehicle, getAvailableVehicles } from './roster.js';
-import { getEquipped, assignItem, unassignItem, saveArmory, saveKit, loadKit, hasKit, kitIsDirty } from './armory.js';
+import { getEquipped, assignItem, unassignItem, saveArmory, saveKit, loadKit, hasKit, kitIsDirty, resetArmory } from './armory.js';
 import { Objective, assignObjective } from './commander.js';
 import { PERSONALITY_PRESETS } from './ai-pipeline.js';
 import { EntityRenderer } from './entity-renderer.js';
@@ -632,6 +632,9 @@ document.getElementById('app').addEventListener('click', e => {
       Game.recentFallen = [];
       Game.resources = { scrap: 0, parts: 0 };
       Game.stats = { highestWave: 0, battles: 0, kills: 0 };
+      // Reset armory too — prior failed attempts on this slot would otherwise
+      // leave items assigned to wiped soldier IDs as orphans. See Task #130 / ADR-0004.
+      resetArmory();
       Game.settings = Game.settings || {};
       Game.hqRecruitPool = null;
       Game.opsConfig = null;

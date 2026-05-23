@@ -24,6 +24,15 @@ function _ensureArmory() {
   return Game.armory;
 }
 
+/**
+ * Reset the armory to a clean empty state. Called from setup-deploy on first-mission
+ * (re)start so items from prior failed/abandoned attempts don't accumulate as orphans
+ * (assignedTo points at soldier IDs no longer in roster). See Task #130 and ADR-0004.
+ */
+export function resetArmory() {
+  Game.armory = { items: [], capacity: DEFAULT_CAPACITY, kits: {} };
+}
+
 function _slotKey(key) {
   const slot = Game._activeSlot;
   return slot != null ? `cr_s${slot}_${key}` : key;
