@@ -3,7 +3,7 @@ name: deploy-panel
 type: system
 status: in-flux
 verified: 2026-05-22
-verified_hash: 0e7f782
+verified_hash: 881d7ec
 tags: [battle, deploy, ui, html-refactor]
 files:
   - js/ui.js

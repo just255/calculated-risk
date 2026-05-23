@@ -3,7 +3,7 @@ name: item
 type: reference
 status: stable
 verified: 2026-05-22
-verified_hash: 27f7b8d
+verified_hash: 881d7ec
 tags: [data, shape, armory, gear, items]
 files:
   - js/armory.js

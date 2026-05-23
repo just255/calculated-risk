@@ -3,7 +3,7 @@ name: armory
 type: system
 status: stable
 verified: 2026-05-22
-verified_hash: 17f3bfe
+verified_hash: 881d7ec
 tags: [armory, gear, items, kits, loadout]
 files:
   - js/armory.js
@@ -44,6 +44,7 @@ Owns the flat item pool (`Game.armory.items[]`), quality tiers, slot semantics, 
 - "Degrade after use" → `degradeItem(itemId, amount)`
 - "Destroy item" → `destroyItem(itemId)`
 - "Random loot drop" → `rollLoot()`
+- "Reset to empty (first-mission start)" → `armory.js resetArmory()`
 
 ## Call Graph
 
@@ -100,6 +101,7 @@ loadArmory → loadRoster → _migrateRoster
 | `createStandardIssue` | armory.js:465 | Build MOS-default loadout, items pre-tagged equipped |
 | `rollLoot` | armory.js | Add random unassigned items to pool |
 | `_migrateToArmorySOT` | storage.js | One-shot: move `soldier.kits` → `armory.kits`, strip `soldier.loadout` + `soldier.kits`, defensive item reconcile |
+| `resetArmory` | armory.js | Wipe to clean empty `{items: [], capacity: DEFAULT_CAPACITY, kits: {}}`. Called from setup-deploy first-mission (re)start so prior-attempt items don't orphan |
 
 ## Persistence
 
@@ -119,7 +121,9 @@ loadArmory → loadRoster → _migrateRoster
 ## Gotchas
 
 - **Single source of truth (ADR-0004)** — equipment ownership lives only on items (`assignedTo` + `equipped`) and `armory.kits[soldierId]`. Never add a `soldier.loadout` field back — it caused a class of duplication bugs that took two passes to clear.
-- **Orphaned items from reinforcement churn**: `generateMissionReinforcements` (`mission.js:190`) creates ~30 items per `launchMission`. Reinforcements live on `Game.endless._reinforcements`, not roster. If they don't get added to roster (mission abandoned, defeat), their items remain in `Game.armory.items[]` with `assignedTo` pointing to a non-existent soldier. No automatic GC; cleanup only via explicit destroy. Out-of-scope for ADR-0004.
+- **Orphan items — two paths, one fixed**: same symptom (items in `Game.armory.items[]` with `assignedTo` pointing at soldier IDs not in roster), two distinct causes:
+  - **Retry-orphan path (fixed `881d7ec`)**: `setup-deploy` (main.js) resets `Game.roster` on first-mission start but used to leave `Game.armory.items` intact. Failed/abandoned attempts on the same slot accumulated reinforcement gear as orphans (3 retries = 30 items at 100% armory capacity). Now resolved — `setup-deploy` calls `resetArmory()` alongside the roster reset.
+  - **Vehicle-crew-orphan path (open)**: by intro-mission design, vehicle crew soldiers don't transfer to active roster on successful mission complete. Their `equipSoldierStandardIssue`-created gear remains assigned to soldier IDs that no longer exist anywhere. See Task #130 for the disposition design question (unassign back to pool / follow vehicle to motor pool / destroy).
 - **`equipped` is now explicit**: `createItem` sets `equipped: false` by default; callers that want the item equipped pass `{ equipped: true }`. `createStandardIssue` does this. Legacy items missing the field default to `equipped = !!assignedTo` via `migrateItemsForKits`.
 - **Kit cleanup on retire**: `retireSoldier` (`roster.js`) explicitly calls `delete Game.armory.kits[soldier.id]` and `saveArmory()` so retired soldiers don't leave orphaned kit entries.
 - **Standard issue wear multiplier**: `'standard_issue'` quality has `wearRate: 1.5` (gear-templates.js). Standard kit degrades faster than `common`. Repair cost scales `0.8–1.2×` by quality, with `2×` penalty if `condition ≤ 0`.

@@ -3,7 +3,7 @@ name: intro-mission
 type: flow
 status: stable
 verified: 2026-05-22
-verified_hash: 554b0a1
+verified_hash: 881d7ec
 tags: [flow, intro, first-time, mission, deploy]
 files:
   - js/main.js
@@ -88,6 +88,7 @@ sequenceDiagram
    Game.roster = []; Game.vehicles = []; Game.memorial = []; Game.recentFallen = [];
    Game.resources = { scrap: 0, parts: 0 };
    Game.stats = { highestWave: 0, battles: 0, kills: 0 };
+   resetArmory();  // since 881d7ec — prior failed-attempt items don't orphan
    Game._isFirstRun = true;
    Game._introSeed = seed;
    launchFirstTimeMission();

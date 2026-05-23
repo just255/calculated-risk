@@ -18,6 +18,9 @@ log:
   - date: 2026-05-22
     hash: 14601d2
     note: Two regressions caught by chrome-devtools-driven smoke pass. (1) createSoldier still initialized empty soldier.loadout/kits fields, so fresh soldiers re-grew the cache after migration stripped it. (2) seedStarterRoster relied on the deleted _migrateRoster orphan-recovery block to equip infantry starters, leaving them naked. Both fixed; doc bodies still accurate (the rule "soldier object carries no equipment state" was always the intent).
+  - date: 2026-05-22
+    hash: 881d7ec
+    note: Fixed one of two distinct orphan paths called out in the Consequences section. The "retry-orphan" path (setup-deploy resets roster but not armory, so failed-attempt items accumulate across retries on the same first-mission slot) is fully resolved by a new resetArmory() helper called from main.js setup-deploy. The "vehicle-crew-orphan" path (vehicle crew don't transfer to roster on successful mission complete, their items orphan) is a separate code path and still open — Task #130 covers it as a design question on crew gear disposition.
 ---
 
 # ADR-0004: Armory as single source of equipment ownership
@@ -85,6 +88,7 @@ Append-only. Don't edit prior entries.
 
 - **2026-05-22 @ 17f3bfe:** Initial decision and implementation. `soldier.loadout` and `soldier.kits` removed from the soldier object. Kit storage moved to `armory.kits[soldierId]`. One-shot load-time migration (`_migrateToArmorySOT`, gated by `armory._sotMigratedV1`) strips legacy fields. Bandaid code from `0e7f782` (`dedupeArmoryByOwnerSlot`, `_migrationDirty`, loadout-backfill block in `_migrateRoster`) deleted in the same change.
 - **2026-05-22 @ 14601d2:** Two regressions caught by chrome-devtools smoke pass and fixed. (1) `createSoldier` still pre-initialized empty `soldier.loadout` and `soldier.kits` fields, so freshly-created soldiers re-grew the dead cache after migration stripped it. Removed the field initializers. (2) `seedStarterRoster` was relying on the deleted `_migrateRoster` orphan-recovery block to equip infantry starters on first load — without that block, starters spawned naked. Added an explicit `equipSoldierStandardIssue` call in the seed loop, plus a terminal `saveRoster()` so a reseed doesn't re-trigger. Doc bodies still accurate; the architectural rule ("soldier object carries no equipment state") was always the intent — these were missed write sites.
+- **2026-05-22 @ 881d7ec:** Fixed one of two distinct orphan paths flagged under Consequences. The "retry-orphan" path — `setup-deploy` resetting `Game.roster` but not `Game.armory`, so failed-attempt items accumulated across retries on the same slot (3 retries had been leaving 30 orphan items at 100% capacity) — is **fully resolved** by a new `resetArmory()` helper in `armory.js` called from `setup-deploy`. The "vehicle-crew-orphan" path — vehicle crew don't transfer to roster on successful mission complete, leaving their gear orphaned — is a **separate code path** and still open. Same observable symptom (orphan items), different cause. Task #130 covers it as a design question: should crew gear unassign back to the pool, follow the vehicle to motor pool, or destroy at mission complete.
 
 ---
 
