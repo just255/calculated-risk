@@ -431,6 +431,14 @@ export function extractFromRun() {
   // Tick recruit lockout timers
   tickRecruitLockouts();
 
+  // Remove transient mission vehicles. They were added to Game.vehicles in
+  // launchMission so battle/deploy code could see them, but they shouldn't
+  // persist in the motor pool after extraction. The _isReinforcement flag
+  // is the explicit "transient" marker. See ADR-0004 log + flow doc.
+  if (Game.vehicles) {
+    Game.vehicles = Game.vehicles.filter(v => !v._isReinforcement);
+  }
+
   save();
   destroyRadioHUD();
   goto(State.HQ);
