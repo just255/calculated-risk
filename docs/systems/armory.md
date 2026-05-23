@@ -3,7 +3,7 @@ name: armory
 type: system
 status: stable
 verified: 2026-05-22
-verified_hash: 33fc203
+verified_hash: e30f8c2
 tags: [armory, gear, items, kits, loadout]
 files:
   - js/armory.js
@@ -44,7 +44,7 @@ Owns the flat item pool (`Game.armory.items[]`), quality tiers, slot semantics, 
 - "Degrade after use" → `degradeItem(itemId, amount)`
 - "Destroy item" → `destroyItem(itemId)`
 - "Random loot drop" → `rollLoot()`
-- "Reset to empty (first-mission start)" → `armory.js resetArmory()`
+- "Reset to empty (utility, currently uncalled)" → `armory.js resetArmory()` — orphan cleanup now happens at the `launchMission` gateway in `mission.js` instead
 
 ## Call Graph
 
@@ -121,7 +121,7 @@ loadArmory → loadRoster → _migrateRoster
 ## Gotchas
 
 - **Single source of truth (ADR-0004)** — equipment ownership lives only on items (`assignedTo` + `equipped`) and `armory.kits[soldierId]`. Never add a `soldier.loadout` field back — it caused a class of duplication bugs that took two passes to clear.
-- **Orphan items — retry-orphan path fixed (`881d7ec`)**: `setup-deploy` (main.js) used to reset `Game.roster` on first-mission start but leave `Game.armory.items` intact. Failed/abandoned attempts on the same slot accumulated reinforcement gear as orphans (3 retries = 30 items at 100% armory capacity). Now resolved — `setup-deploy` calls `resetArmory()` alongside the roster reset. *Note*: a "vehicle-crew-orphan" path was previously documented here but retracted (`33fc203`) — code inspection confirmed there are no vehicle-crew soldier records, so they can't orphan items. See ADR-0004 Log.
+- **Orphan items — fully fixed (`e30f8c2`)**: prior failed/abandoned mission attempts used to leave reinforcement gear with `assignedTo` pointing at soldier IDs no longer in roster. Two passes resolved it: `881d7ec` added `resetArmory()` to `setup-deploy` for the slot-new path; `e30f8c2` moved the cleanup into `launchMission` itself (as a roster-based prune of `armory.items`) which catches BOTH the slot-new path AND the in-mission retry-on-death path at `game.js:2802` that bypasses `setup-deploy`. *Note*: a "vehicle-crew-orphan" path was previously documented here but retracted (`33fc203`) — code inspection confirmed there are no vehicle-crew soldier records, so they can't orphan items. See ADR-0004 Log.
 - **`equipped` is now explicit**: `createItem` sets `equipped: false` by default; callers that want the item equipped pass `{ equipped: true }`. `createStandardIssue` does this. Legacy items missing the field default to `equipped = !!assignedTo` via `migrateItemsForKits`.
 - **Kit cleanup on retire**: `retireSoldier` (`roster.js`) explicitly calls `delete Game.armory.kits[soldier.id]` and `saveArmory()` so retired soldiers don't leave orphaned kit entries.
 - **Standard issue wear multiplier**: `'standard_issue'` quality has `wearRate: 1.5` (gear-templates.js). Standard kit degrades faster than `common`. Repair cost scales `0.8–1.2×` by quality, with `2×` penalty if `condition ≤ 0`.

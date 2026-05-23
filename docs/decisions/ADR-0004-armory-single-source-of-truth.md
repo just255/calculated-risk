@@ -8,6 +8,9 @@ affected_files:
   - js/armory.js
   - js/roster.js
   - js/storage.js
+  - js/mission.js
+  - js/main.js
+  - js/game.js
 related:
   - systems/armory.md
   - systems/soldier-lifecycle.md
@@ -24,6 +27,9 @@ log:
   - date: 2026-05-22
     hash: 33fc203
     note: Cleaned up the "intro vehicles persist in motor pool" complaint (user-flagged) — extractFromRun now filters out _isReinforcement vehicles before save(). Also retracted the "vehicle-crew-orphan-items" concern (was Task #132, deleted) — code inspection confirmed generateMissionReinforcements creates only infantry reinforcements and createVehicle does not produce crew soldier records, so there's no orphan-items path from vehicle crew. The original confusion came from me inferring without reading the code, exactly the failure CLAUDE.md principle #12 warns against.
+  - date: 2026-05-22
+    hash: e30f8c2
+    note: Completed the retry-orphan fix. User-flagged 30 fresh orphan items appearing after intro-mission attempts despite 881d7ec. Root cause was game.js:2802's in-mission retry-on-death path calling launchFirstTimeMission() directly, bypassing setup-deploy and therefore my earlier resetArmory call. Moved the cleanup inside launchMission (the canonical gateway every mission launch passes through) as a roster-based prune of armory.items. setup-deploy's now-redundant resetArmory call was removed. Also added mission.js/main.js/game.js to this ADR's affected_files so the drift hook flags future commits.
 ---
 
 # ADR-0004: Armory as single source of equipment ownership
@@ -95,6 +101,7 @@ Append-only. Don't edit prior entries.
 - **2026-05-22 @ 33fc203:** Two corrections.
   1. **Vehicle-in-motor-pool cleanup (user-flagged real bug)**: intro-mission Sherman reinforcements were persisting in `Game.vehicles` post-mission. `extractFromRun()` now filters out `_isReinforcement: true` vehicles before `save()`. The `launchMission`-side filter (which removes prior reinforcements on next mission start) still exists; this adds the symmetric cleanup at mission-end.
   2. **Vehicle-crew-orphan-items was NOT a real bug** — Task #132 deleted. Code inspection confirmed `generateMissionReinforcements` only creates infantry reinforcements; `createVehicle` does not produce crew soldier records. Vehicle crew are synthesized at deploy-time as unit-level state with no persistent soldier identity, so they cannot orphan armory items. The original task description (and the corresponding gotcha in `armory.md`) was based on an unverified inference rather than reading the code. CLAUDE.md principle #12 captures the failure mode.
+- **2026-05-22 @ e30f8c2:** Completed the retry-orphan fix that `881d7ec` only half-addressed. User reported 30 fresh orphan items appearing post-mission despite the earlier `resetArmory()` call. Root cause: `game.js:2802` has a separate in-mission retry-on-death code path (`b._isMission` branch) that calls `launchFirstTimeMission()` directly, **bypassing** `setup-deploy` and therefore the `resetArmory` I added there. Each death-restart leaked 3 reinforcements × 5 items = 15 orphans; 2 deaths + a survival = 30 orphans in the user's save. **Fix**: moved the cleanup into `launchMission` itself as a roster-based prune (`armory.items.filter(i => !i.assignedTo || rosterIds.has(i.assignedTo))`). `launchMission` is the canonical gateway every mission launch passes through, so both `setup-deploy` *and* the retry-on-death path now get clean armories. The earlier `resetArmory()` call in `setup-deploy` is now redundant and was removed (the export remains as a documented utility). Also extended this ADR's `affected_files:` list to include `mission.js`, `main.js`, and `game.js` so the drift hook catches future regressions.
 
 ---
 

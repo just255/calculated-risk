@@ -3,7 +3,7 @@ name: soldier
 type: reference
 status: stable
 verified: 2026-05-22
-verified_hash: 33fc203
+verified_hash: e30f8c2
 tags: [data, shape, soldier, roster]
 files:
   - js/roster.js

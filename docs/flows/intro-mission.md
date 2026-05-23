@@ -3,7 +3,7 @@ name: intro-mission
 type: flow
 status: stable
 verified: 2026-05-22
-verified_hash: 33fc203
+verified_hash: e30f8c2
 tags: [flow, intro, first-time, mission, deploy]
 files:
   - js/main.js
@@ -88,15 +88,15 @@ sequenceDiagram
    Game.roster = []; Game.vehicles = []; Game.memorial = []; Game.recentFallen = [];
    Game.resources = { scrap: 0, parts: 0 };
    Game.stats = { highestWave: 0, battles: 0, kills: 0 };
-   resetArmory();  // since 881d7ec — prior failed-attempt items don't orphan
    Game._isFirstRun = true;
    Game._introSeed = seed;
    launchFirstTimeMission();
    goto(State.ENDLESS_BATTLE);
    ```
-   **`storage.load()` is NEVER called here** — see "What this flow doesn't do" below.
+   **`storage.load()` is NEVER called here.** Armory cleanup happens inside `launchMission` (see step 3); since roster is `[]` here, the prune effectively wipes the armory.
 
 3. **`launchFirstTimeMission()`** (`mission.js`) drives the rest:
+   - **Prune orphan items** (`e30f8c2`) — any `armory.items[i]` whose `assignedTo` isn't in current roster is removed. Catches reinforcement gear from prior failed attempts. Canonical cleanup gateway for ALL mission launches (slot-new + in-mission retry).
    - `createSoldier` for the hero (`pool: 'infantry'`, `role: 'rifleman'`, `isPlayerCharacter: true`)
    - `equipSoldierStandardIssue(hero)` → creates 5 items in armory (M4A1, M9, iron_sights, light_vest, frag_grenade), all `assignedTo: hero.id, equipped: true`
    - `generateMissionReinforcements()` creates 5 entities — 3 infantry rifleman reinforcements + 2 vehicles. Each soldier gets its own `equipSoldierStandardIssue` call. Reinforcements live in `Game.endless._reinforcements` (separate from `Game.roster`)
@@ -122,6 +122,7 @@ sequenceDiagram
 - **`Game._isFirstRun` and `Game._introSeed`** are flags set by setup-deploy, not by mission.js. They drive the first-mission cinematic path
 - **The intro mission uses `_allowedEnemyTypes`** to restrict enemies to swarmer/grunt (mission.js:155). Tougher types appear in later endless mode
 - **By design, nobody dies in the intro mission** — worst outcome is `status: 'wounded'` (with `hpPercent ≈ 0.05` and a `woundedBattlesLeft` countdown). No KIA path is exercised. `destroyGear` is NOT called in this flow
+- **There's a separate retry-on-death path at `game.js:2802`** (`b._isMission`) that bypasses `setup-deploy` and calls `launchFirstTimeMission()` directly. Since `e30f8c2`, this still gets the orphan-item cleanup because the prune lives inside `launchMission` — both code paths converge there
 - **There are no vehicle-crew soldier records.** `generateMissionReinforcements` creates only infantry reinforcements (3 rifleman soldiers). `createVehicle` creates pure vehicle structs (id/unitId/hp/condition/status), no crew soldiers. Vehicle crew are synthesized at deploy-time as unit-level state and have no `armory.items` of their own. There is no vehicle-crew-orphan issue
 - **Vehicles do NOT persist post-mission** (since `33fc203`). `extractFromRun` filters out `_isReinforcement: true` vehicles from `Game.vehicles` before saving. The reinforcement Shermans served as in-mission entities only
 
