@@ -2,8 +2,8 @@
 name: battle
 type: reference
 status: stable
-verified: 2026-05-22
-verified_hash: e30f8c2
+verified: 2026-05-23
+verified_hash: fd2ce61
 tags: [data, shape, battle, runtime]
 files:
   - js/state.js
@@ -80,7 +80,7 @@ Battle progresses through phases as strings (not enum constants). String-compare
 
 | Field | Type | Set by | Read by | Notes |
 |---|---|---|---|---|
-| `hero` | unit object | state.js:1667 (via `createUnit`) | hero input, render, damage | See [unit shape] (TBD). Always non-null during battle |
+| `hero` | unit object | state.js:1667 (via `createUnit`) + state.js:~1780 (opsConfig patch: `_soldierId`, `unitName`, `personality`, `_role`, and since `fd2ce61` the 7 gear-derived stats `_gearAccuracy` / `_gearSpread` / `_gearReloadTime` / `_gearMagSize` / `_gearCritChance` / `_gearPenetration` / `_gearEffectiveRange`) | hero input, render, damage, combat-stat lookup | See [unit shape] (TBD). Always non-null during battle. Gear stats only present when `Game.endless._opsConfig.heroUnit` resolves to a roster soldier |
 | `units` | Array | state.js:1699; deploy panel; reinforcement spawn | render, AI, deaths | Blue team. Always array, never null |
 | `enemies` | Array | state.js:1711; `spawnEndlessWave` | render, AI, targeting | Red team. Always array, never null |
 | `projectiles` | Array | state.js:1716; fire events; per-frame physics | render, collision | Active in-flight projectiles |
