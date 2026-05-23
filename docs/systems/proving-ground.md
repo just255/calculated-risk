@@ -3,7 +3,7 @@ name: proving-ground
 type: system
 status: stable
 verified: 2026-05-23
-verified_hash: 9754185
+verified_hash: 5ca8487
 tags: [proving-ground, fire-range, ai-test-bed, combat, debug]
 files:
   - js/main.js
@@ -47,6 +47,7 @@ An AI battle test bed for isolating combat behavior, unit balance, and squad-lev
 - "Back to config / reset" → `fr-config` / `fr-reset` (`main.js:~2391-2432`); `stopFireRangeLoop` (`game.js:~6269`)
 - "Toggle debug flags" → `fr-debug-toggle` (`main.js:~2545`)
 - "Toggle replay recording" → `fr-record-toggle` (`main.js:~2555`) — writes `Game.fireRange.config.record`
+- "Use my roster hero in Proving Ground" → `fr-toggle-use-hero` (`main.js:~2562`) — writes `Game.fireRange.config.useRosterHero`. Checkbox is disabled if no `isPlayerCharacter` soldier exists yet (e.g. before intro mission). See Gotchas for the hero-spawn path order.
 - "Personality sliders" → `fr-commander-slider` (`main.js:3416`) / `fr-sergeant-slider`
 
 ## Call Graph
@@ -202,10 +203,13 @@ To add a new preset: define a new entry in `FR_PRESETS` and add metadata to `FR_
 
 - **Two names**: code uses `fire_range` / `fireRange` / `fr-*`; UI says "Proving Ground". Grep for `fire.?range` (regex with optional separator) to catch both styles.
 - **HQ-tab init was broken until `5c98eea`**: handler used to just `goto(State.FIRE_RANGE)` without first calling `Game.fireRange = newFireRangeRun()` + `loadFRConfig()`, which crashed the render. Fixed by mirroring the title-screen init pattern.
-- **Hero is observer by default** — placed at `(-9999, -9999)` with `observer: true`. Combat skips it. `config.includeHero` flag exists but isn't surfaced in UI; combat-with-hero scenarios go through endless mode instead.
+- **Hero spawn has three paths** (state.js:~2116, priority order):
+  1. **`config.useRosterHero`** + roster has `isPlayerCharacter` — spawns the player's actual PC at the blue spawn zone, with full gear-derived stats injected via `getEffectiveCombatStats(playerHero)` (same seven `_gear*` fields as endless mode). Hero is player-controlled. UI checkbox added in `5ca8487`. This is the loadout-testing path: edit gear in the Armory tab, then come back to Proving Ground to test against a configured AI.
+  2. **`config.includeHero`** + `blueLeader` — promotes the auto-selected blue squad leader to hero (synthesized stats from squad config, no soldier link, no gear). Legacy.
+  3. **Default** — observer hero at `(-9999, -9999)` with `observer: true`. Combat skips it.
 - **No fog of war** — `_visibleEnemies: null` in fire-range battles. AI sees all enemies always. This is intentional for AI testing (isolates targeting decisions from spotting decisions) but means fire-range results don't reflect real engagement detection dynamics.
 - **No deploying / countdown phases** — fire-range battles start directly in active phase. `_battleStartTime` set at battle creation, not at countdown-end.
-- **Distinct battle factory** — `newFireRangeBattle` (`state.js:1899`) is NOT `newEndlessBattle`. Changes to endless behavior (e.g., hero gear injection at the opsConfig patch site) don't automatically apply to Proving Ground. The hero gear-stat injection at `state.js:~1780` doesn't run here because there's no `opsConfig.heroUnit` resolution path.
+- **Distinct battle factory** — `newFireRangeBattle` (`state.js:1899`) is NOT `newEndlessBattle`. Changes to endless behavior don't automatically apply to Proving Ground. Note: the hero gear-stat injection that landed for endless at `state.js:~1780` (`fd2ce61`) is now mirrored in Proving Ground for the `useRosterHero` path at `state.js:~2116` (`5ca8487`) — but they're separate code paths, so any future change to one needs a deliberate copy to the other if you want feature parity.
 - **Per-unit personality has 5 traits, not 6** — units lack `adaptation` (only commanders + sergeants have it). The slider UI elides it for unit slots.
 - **Sergeant slider override happens AFTER `initBattleAI`** — `state.js:~2225` overwrites the sergeant.personality default with the config slider values. Don't initialize sergeants twice or you'll lose the override.
 - **Legacy `enemyType` → `unitId` migration** is lazy (only fires on `migrateFRConfig` during config load). New code should always write `unitId`.
