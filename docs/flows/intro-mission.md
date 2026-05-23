@@ -106,7 +106,7 @@ sequenceDiagram
 
 5. **Combat plays out** via the standard battle loop (`game.js`). The recorder captures frames at 10fps to `battle._recorder`. On mission end, replay is POSTed to `/api/replays` → saved to `data/replays/<timestamp>-<seed>.json`.
 
-6. **Mission complete** → result is `'victory'` (survived) or `'defeat'` (hero died). Survivors stay in `Game.roster`; the player returns to HQ for the first time.
+6. **Mission complete** → first-time mission is designed so **nobody dies** — worst case is wounded. The hero plus the 3 infantry reinforcements transfer to `Game.roster` carrying their wounded/ready status. The 2 vehicles transfer to the motor pool (`Game.vehicles`); vehicle-crew soldiers do **not** transfer to active roster. Player returns to HQ for the first time.
 
 ## Non-obvious facts
 
@@ -120,6 +120,9 @@ sequenceDiagram
 - **`Game.armory.items` is NOT reset on setup-deploy.** Only `roster/vehicles/memorial/recentFallen/resources/stats` get cleared. Dead soldiers from prior attempts leave orphan items behind (gear with `assignedTo` pointing at IDs no longer in roster). See [Bug Task #130](../../../) — this matters once wave-end loot (#105) is wired
 - **`Game._isFirstRun` and `Game._introSeed`** are flags set by setup-deploy, not by mission.js. They drive the first-mission cinematic path
 - **The intro mission uses `_allowedEnemyTypes`** to restrict enemies to swarmer/grunt (mission.js:155). Tougher types appear in later endless mode
+- **By design, nobody dies in the intro mission** — worst outcome is `status: 'wounded'` (with `hpPercent ≈ 0.05` and a `woundedBattlesLeft` countdown). No KIA path is exercised. `destroyGear` is NOT called in this flow
+- **Vehicle crew don't transfer to active roster.** The 2-3 soldiers spawned to crew the intro vehicles serve as units in-mission but are not added to `Game.roster` on completion. Their items remain `assignedTo` those soldier IDs — creating armory orphans (see Task #130)
+- **Vehicles transfer to motor pool** (`Game.vehicles`). Note: per user, this disposition is up for redesign — vehicles may not actually belong in motor pool long-term
 
 ## What this flow *doesn't* do
 
@@ -128,7 +131,9 @@ sequenceDiagram
 - **Seed starter roster (45 starters)** — `seedStarterRoster()` lives behind `load()`. Real first-mission content comes from `launchMission` + `generateMissionReinforcements`
 - **Initialize Game.armory** — relies on `_ensureArmory()` lazy-init from the first `createItem` call. `armory.kits = {}` set by the same lazy-init path
 - **Update `Game.stats.battles` / `Game.stats.kills`** — mission complete returns to HQ but doesn't bump these counters (verify if this is a bug — possibly only updates per endless-mode wave-complete, not first-mission complete)
-- **Reset Game.armory on retry** — known gap. Items from dead attempts persist as orphans
+- **Reset Game.armory on retry** — known gap. Items from prior (failed or abandoned) attempts persist as orphans because setup-deploy only clears roster/vehicles/memorial. See Task #130
+- **Kill the player** — intro mission has no KIA path; wounded is the worst outcome by design
+- **Transfer vehicle crew to roster** — vehicle-crew soldiers stay only as in-mission entities; not added to active roster on completion (their gear becomes orphans — see Task #130)
 
 ## Cross-references
 
