@@ -2,8 +2,8 @@
 name: battle
 type: reference
 status: stable
-verified: 2026-05-23
-verified_hash: 5ca8487
+verified: 2026-05-24
+verified_hash: 43a2d54
 tags: [data, shape, battle, runtime]
 files:
   - js/state.js
@@ -124,6 +124,10 @@ Battle progresses through phases as strings (not enum constants). String-compare
 | `_battleStartTime` | timestamp | game.js:579 | elapsed time | Set when entering active |
 | `_now` | timestamp | ai-pipeline.js:573 | AI decision time ref | Per-frame snapshot |
 | `_waveGateLogged` | boolean | game.js:3031 | one-shot debug log gate | |
+| `_timeLimit` | number (ms) | state.js:2299 newFireRangeBattle | PG time-up check (game.js:6513) | PG only. 0 = unlimited. Default 300000 (5min). Auto-end as DRAW. |
+| `_waveTimeLimit` | number (ms) | state.js:1725 newEndlessBattle | endless time-up check (game.js:2803) | Endless only. Per-wave cap derived from mapSize: S=180000, M=300000, L=480000. Skipped for missions. |
+| `_waveTimerStart` | timestamp \| null | game.js:2410 updateCountdown | endless time-up check | Latches at countdown→active so deploy/countdown don't burn the clock. |
+| `_endedByTimeLimit` | boolean | game.js:6520/2806 | post-battle distinction | Set when time-up forced the end. |
 
 ### UI & camera
 
@@ -169,7 +173,7 @@ Battle progresses through phases as strings (not enum constants). String-compare
 | From → To | Where | Trigger | Guard |
 |---|---|---|---|
 | `deploying → countdown` | `updateDeployment` (game.js:2307) | both `deployReady.blue` and `deployReady.red` true | Side effects: removes `.deploy-panel` from DOM, calls `createRadioHUD()` |
-| `countdown → active` | `updateCountdown` (game.js:2399) | `now - countdownStart >= 5s` | Side effects: sets `_battleStartTime`, `_blueMarching` |
+| `countdown → active` | `updateCountdown` (game.js:2399) | `now - countdownStart >= 5s` | Side effects: sets `_battleStartTime`, `_blueMarching`, `_waveTimerStart` (endless wave timer) |
 | `active → wave_complete` | game.js:3046 | all enemies dead, spawn queue empty | Sets `waveComplete = true` |
 | `wave_complete → active` | `spawnEndlessWave` (game.js:2905) | "Next Wave" clicked | Increments `wave` |
 | `wave_complete → victory` | game.js:3016 | extract threshold / final wave | Sets `result = 'victory'` |

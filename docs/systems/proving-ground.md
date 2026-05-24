@@ -2,8 +2,8 @@
 name: proving-ground
 type: system
 status: stable
-verified: 2026-05-23
-verified_hash: HEAD
+verified: 2026-05-24
+verified_hash: 43a2d54
 tags: [proving-ground, fire-range, ai-test-bed, combat, debug]
 files:
   - js/main.js

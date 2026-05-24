@@ -2,8 +2,8 @@
 name: battle-phases
 type: system
 status: stable
-verified: 2026-05-23
-verified_hash: 5ca8487
+verified: 2026-05-24
+verified_hash: 43a2d54
 tags: [battle, state-machine, phase, deploying, countdown, active]
 files:
   - js/game.js
@@ -65,7 +65,7 @@ active ⇌ paused (mission cutscene, dialog, debug)
 | From → To | File:Line | Trigger |
 |---|---|---|
 | `deploying → countdown` | game.js:2307 | `updateDeployment`: both `deployReady` true; also calls `createRadioHUD()` and removes `.deploy-panel` |
-| `countdown → active` | game.js:2399 | `updateCountdown`: `elapsed >= 5.0s` |
+| `countdown → active` | game.js:2399 | `updateCountdown`: `elapsed >= 5.0s`. Also sets `_waveTimerStart` (endless per-wave time cap). |
 | `active → defeat` | game.js:2809, 7107 | Home zone lost / hero dead → set `b.result = 'defeat'` |
 | `active → victory` | game.js:7123, 7432 | Scenario win condition → set `b.result = 'victory'` |
 | `active → wave_complete` | game.js:3068 | Wave cleared (endless mode) |
