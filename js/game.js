@@ -2406,6 +2406,9 @@ function updateCountdown(b, now, dtSec) {
   if (elapsed >= COUNTDOWN_DURATION) {
     b.phase = 'active';
     b.hero.isMoving = false;
+    // Start the per-wave time cap clock at active-phase entry
+    // (deploy + countdown shouldn't burn the wave timer)
+    b._waveTimerStart = Date.now();
 
     if (b.playMode === 'cmd') {
       // CMD mode: free-pan camera, hero is AI-driven
@@ -2794,6 +2797,25 @@ function updateEndlessBattle(dt) {
 
   // --- RECORD REPLAY FRAME ---
   if (b._recorder) recordFrame(b, now);
+
+  // --- CHECK WAVE TIME CAP ---
+  // Non-mission only. Time-up forces defeat — mirrors hero-death post-battle path.
+  if (!b.result && !b._isMission && b._waveTimeLimit > 0 && b._waveTimerStart &&
+      (Date.now() - b._waveTimerStart) >= b._waveTimeLimit) {
+    b.result = 'defeat';
+    b._endedByTimeLimit = true;
+    Game.endless.result = 'time_out';
+    Game.endless.exitWave = Game.endless.wave;
+    _processPostBattle(b, 'loss');
+    processKIAToFallen();
+    if (Game.hqRecruitRefreshIn > 0) {
+      Game.hqRecruitRefreshIn--;
+      if (Game.hqRecruitRefreshIn <= 0) Game.hqRecruitPool = null;
+    }
+    saveReplay(b);
+    goto(State.ENDLESS_RESULT);
+    return;
+  }
 
   // --- CHECK HERO DEFEAT ---
   if (hero.hp <= 0) {
@@ -3718,6 +3740,20 @@ function drawEndlessBattle() {
   if (waveEl) waveEl.textContent = `Wave ${Game.endless.wave}`;
   if (killsEl) killsEl.textContent = `Kills: ${Game.endless.kills}`;
   if (scoreEl) scoreEl.textContent = Game.endless.score.toLocaleString();
+
+  // Wave time-remaining display (skips missions and unlimited)
+  const timeEl = document.querySelector('.endless-time-display');
+  if (timeEl) {
+    if (!b._isMission && b._waveTimeLimit > 0 && b._waveTimerStart && !b.result) {
+      const remain = Math.max(0, b._waveTimeLimit - (Date.now() - b._waveTimerStart));
+      const mins = Math.floor(remain / 60000);
+      const secs = Math.floor((remain % 60000) / 1000);
+      timeEl.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+      timeEl.style.color = remain < 30000 ? '#f87171' : (remain < 60000 ? '#fbbf24' : '#94a3b8');
+    } else {
+      timeEl.textContent = '';
+    }
+  }
 
   // Update kill feed
   updateKillFeed(b);
@@ -6514,7 +6550,19 @@ function updateFireRangeBattle(dt) {
   const blueAlive = b.units ? b.units.filter(u => !u.dead).length : 0;
   const redAlive = b.enemies.filter(e => !e.dead).length;
 
-  if (blueAlive === 0 && redAlive > 0) {
+  // Time-cap check first so it overrides ongoing combat.
+  // _battleStartTime is set ~50ms after newFireRangeBattle (BattleRenderer init).
+  if (!b.result && b._timeLimit > 0 && b._battleStartTime &&
+      (now - b._battleStartTime) >= b._timeLimit) {
+    if (blueAlive > 0 && redAlive === 0) {
+      b.result = 'blue_wins'; fr.result = 'blue_wins';
+    } else if (redAlive > 0 && blueAlive === 0) {
+      b.result = 'red_wins'; fr.result = 'red_wins';
+    } else {
+      b.result = 'draw'; fr.result = 'draw';
+      b._endedByTimeLimit = true;
+    }
+  } else if (blueAlive === 0 && redAlive > 0) {
     b.result = 'red_wins';
     fr.result = 'red_wins';
   } else if (redAlive === 0 && blueAlive > 0) {
@@ -6604,6 +6652,20 @@ function drawFireRangeBattle() {
   if (zoomEl) {
     const uz = b.camera.userZoom || 1;
     zoomEl.textContent = uz !== 1 ? `${Math.round(uz * 100)}%` : '';
+  }
+
+  // Update time-remaining display (Proving Ground)
+  const timeEl = document.querySelector('.fr-time-display');
+  if (timeEl) {
+    if (b._timeLimit > 0 && b._battleStartTime && !b.result) {
+      const remain = Math.max(0, b._timeLimit - (Date.now() - b._battleStartTime));
+      const mins = Math.floor(remain / 60000);
+      const secs = Math.floor((remain % 60000) / 1000);
+      timeEl.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+      timeEl.style.color = remain < 30000 ? '#f87171' : (remain < 60000 ? '#fbbf24' : '#94a3b8');
+    } else {
+      timeEl.textContent = '';
+    }
   }
 
   // Update live report overlay (throttled to 1 fps)

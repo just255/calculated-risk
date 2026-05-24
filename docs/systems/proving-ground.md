@@ -3,7 +3,7 @@ name: proving-ground
 type: system
 status: stable
 verified: 2026-05-23
-verified_hash: 5ca8487
+verified_hash: HEAD
 tags: [proving-ground, fire-range, ai-test-bed, combat, debug]
 files:
   - js/main.js
@@ -97,6 +97,9 @@ Game.fireRange = {
     redCommander:  { personality: {...} },
     mapSize: 'small' | 'medium' | 'large',
     terrainSeed: number | null,        // null = randomize per battle
+    timeLimit: number,                 // ms. Default 300000 (5 min). 0 = unlimited.
+                                       // Captured at fr-deploy from #fr-time-limit input.
+                                       // Battle auto-ends as 'draw' on expiry.
     debug: {
       blueInvincible: bool,
       redInvincible: bool,

@@ -1720,6 +1720,13 @@ export function newEndlessBattle(loadout, wave = 1, mapOverrides = null) {
     wave,
     waveStartTime: Date.now(),
     waveComplete: false,
+    // Per-wave time cap (ms). Driven by map size — small=3min, medium=5min, large=8min.
+    // 0 = unlimited. Reset to start-of-active in updateCountdown (so deploy/countdown
+    // don't burn the clock). Time-up → defeat.
+    _waveTimeLimit: chosenSize === 'large' ? 480000
+                    : chosenSize === 'medium' ? 300000
+                    : 180000,
+    _waveTimerStart: null,
 
     // Result
     result: null,  // null | 'victory' | 'defeat'
@@ -1876,6 +1883,7 @@ const DEFAULT_FIRE_RANGE_CONFIG = {
   blueCommander: { personality: {} },
   redCommander: { personality: {} },
   mapSize: 'medium',
+  timeLimit: 300000,   // 5 minutes (ms). 0 = unlimited. Auto-end as 'draw' on expiry.
   debug: {
     blueInvincible: false,
     redInvincible: false,
@@ -2288,6 +2296,10 @@ export function newFireRangeBattle(config) {
     blue: blueLeader || null,
     red: enemyLeader || null
   };
+
+  // Per-battle time cap (Proving Ground). 0 = unlimited. Auto-end as 'draw'
+  // on expiry. _battleStartTime is set in game.js after BattleRenderer init.
+  battle._timeLimit = (config.timeLimit ?? 300000);
 
   return battle;
 }

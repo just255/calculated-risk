@@ -2381,6 +2381,13 @@ document.getElementById('app').addEventListener('click', e => {
         const seedVal = seedInput?.value?.trim();
         Game.fireRange.config.terrainSeed = seedVal ? parseInt(seedVal, 10) || 0 : null;
 
+        // Capture time limit from input (minutes → ms, clamped 0..60)
+        const timeInput = document.getElementById('fr-time-limit');
+        if (timeInput) {
+          const mins = Math.max(0, Math.min(60, parseInt(timeInput.value, 10) || 0));
+          Game.fireRange.config.timeLimit = mins * 60000;
+        }
+
         saveFRConfig(Game.fireRange.config);
         stopFireRangeLoop(); // Destroy BattleRenderer BEFORE nulling battle
         Game.fireRange.battle = null;

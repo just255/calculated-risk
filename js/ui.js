@@ -8244,6 +8244,7 @@ function endlessBattleHTML() {
           <span class="kills-display">Kills: ${e.kills}</span>
         </div>
         <div class="hud-center">
+          <span class="endless-time-display" title="Time remaining this wave (map-size driven)"></span>
           <span class="fps-display"></span>
         </div>
         <div class="hud-right">
@@ -8387,7 +8388,8 @@ function endlessResultHTML() {
   const e = Game.endless;
   if (!e) return '<div class="screen">Loading...</div>';
 
-  const isDeath = e.result === 'death';
+  const isTimeOut = e.result === 'time_out';
+  const isDeath = e.result === 'death' || isTimeOut;
   const wave = e.exitWave || e.wave;
   const tab = e._resultTab || 'battle';
   const prog = e._progressionResults || [];
@@ -8398,10 +8400,14 @@ function endlessResultHTML() {
 
   const tabClass = (t) => t === tab ? 'results-tab active' : 'results-tab';
 
+  const headerLabel = isTimeOut ? 'TIME EXPIRED'
+                    : isDeath ? 'RUN ENDED'
+                    : `WAVE ${wave} COMPLETE`;
+
   return `
     <div class="screen endless-result-screen">
       <div class="result-header ${isDeath ? 'death' : 'wave-clear'}">
-        <h2>${isDeath ? 'RUN ENDED' : `WAVE ${wave} COMPLETE`}</h2>
+        <h2>${headerLabel}</h2>
       </div>
 
       <div class="results-tab-bar">
@@ -8966,6 +8972,12 @@ function fireRangeConfigHTML() {
             <span class="fr-label">Terrain Seed</span>
             <input type="text" id="fr-terrain-seed" placeholder="random" value="${cfg.terrainSeed || ''}" style="width:80px;background:#1a1a2e;color:#ccc;border:1px solid #333;padding:2px 4px;font-size:0.7rem;border-radius:3px">
           </div>
+          <div class="fr-time-limit" title="Auto-end battle as DRAW after this many minutes. 0 = unlimited.">
+            <span class="fr-label">Time Limit (min)</span>
+            <input type="number" id="fr-time-limit" min="0" max="60" step="1"
+                   value="${Math.round((cfg.timeLimit ?? 300000) / 60000)}"
+                   style="width:60px;background:#1a1a2e;color:#ccc;border:1px solid #333;padding:2px 4px;font-size:0.7rem;border-radius:3px">
+          </div>
 
           <div class="fr-debug-options">
             <span class="fr-label">Debug</span>
@@ -9017,6 +9029,7 @@ function fireRangeBattleHTML() {
         </div>
         <div class="hud-center">
           <span class="fr-status">${b.result ? (b.result === 'blue_wins' ? 'BLUE WINS' : b.result === 'draw' ? 'DRAW' : 'RED WINS') : 'BATTLE'}</span>
+          <span class="fr-time-display" title="Time remaining before auto-draw"></span>
           <span class="fps-display"></span>
           <span class="fr-zoom-display" title="Scroll wheel to zoom, M = fit map, F = follow leader"></span>
         </div>
