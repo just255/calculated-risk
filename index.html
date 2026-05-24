@@ -10643,9 +10643,30 @@
     .endless-battlefield.hero-crosshair { cursor: none; }
 
     /* Menu cursor — driven by --cursor-menu, written by js/cursor-apply.js from
-       Game.settings.cursors.menu. See docs/systems/cursors.md. */
+       Game.settings.cursors.menu. Applies to body + every interactive element so
+       browser defaults (button → pointer) don't override the player's pick.
+       See docs/systems/cursors.md. */
     :root { --cursor-menu: auto; }
-    body { cursor: var(--cursor-menu); }
+    body,
+    button,
+    a,
+    label,
+    select,
+    summary,
+    [data-action],
+    [data-toggle],
+    [data-set],
+    [data-control],
+    [data-cursor-part],
+    .menu-btn,
+    .setting-btn,
+    .cursor-swatch,
+    .toggle,
+    input[type="color"],
+    input[type="range"],
+    input[type="checkbox"] {
+      cursor: var(--cursor-menu);
+    }
 
     .endless-controls {
       position: absolute;
