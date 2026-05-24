@@ -10640,33 +10640,21 @@
       position: relative;
       background: #1a1a2e;
     }
-    .endless-battlefield.hero-crosshair { cursor: none; }
-
     /* Menu cursor — driven by --cursor-menu, written by js/cursor-apply.js from
-       Game.settings.cursors.menu. Applies to body + every interactive element so
-       browser defaults (button → pointer) don't override the player's pick.
-       See docs/systems/cursors.md. */
+       Game.settings.cursors.menu. The universal selector + !important wins over
+       the 230+ explicit `cursor: pointer` rules baked into the legacy CSS so
+       the player's chosen cursor shows everywhere, not just empty space.
+       Exceptions also use !important to stay above the universal rule:
+       text inputs keep the I-beam; in-battle hides the cursor for the canvas
+       crosshair. See docs/systems/cursors.md. */
     :root { --cursor-menu: auto; }
-    body,
-    button,
-    a,
-    label,
-    select,
-    summary,
-    [data-action],
-    [data-toggle],
-    [data-set],
-    [data-control],
-    [data-cursor-part],
-    .menu-btn,
-    .setting-btn,
-    .cursor-swatch,
-    .toggle,
-    input[type="color"],
-    input[type="range"],
-    input[type="checkbox"] {
-      cursor: var(--cursor-menu);
+    * { cursor: var(--cursor-menu) !important; }
+    input[type="text"], input[type="number"], input[type="search"],
+    input:not([type]), textarea {
+      cursor: text !important;
     }
+    .endless-battlefield.hero-crosshair,
+    .endless-battlefield.hero-crosshair * { cursor: none !important; }
 
     .endless-controls {
       position: absolute;
