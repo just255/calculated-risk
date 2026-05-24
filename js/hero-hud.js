@@ -7,6 +7,7 @@
 
 import { computeShotAccuracy } from './fire-decision.js';
 import { UNIT_COMBAT_STATS, DEFAULT_MAX_SPREAD_DEG, CREW_MOD_CEILING, isInfantryUnit } from './constants.js';
+import { resolveBattleReticle } from './cursor-apply.js';
 
 const COLOR_RED = '#f87171';
 const COLOR_GREEN = '#4ade80';
@@ -190,26 +191,13 @@ export function renderHeroCrosshair(ctx, b, now) {
   // Skip tick crosshair for infantry on mobile (aim line replaces it)
   const skipCrosshair = isInf && b.aimAngle != null;
 
-  if (!skipCrosshair) {
-    // Shadow pass for contrast
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)';
-    ctx.lineWidth = CROSSHAIR_WIDTH + 2;
-    ctx.lineCap = 'round';
-    _drawTicks(ctx, aimX, aimY);
-
-    // Colored ticks
-    ctx.strokeStyle = crossColor;
-    ctx.lineWidth = CROSSHAIR_WIDTH;
-    _drawTicks(ctx, aimX, aimY);
+  // Dispatch to the player-selected battle reticle. Always called — canvasDraw
+  // handles `skipCrosshair` (infantry-on-mobile with joystick aim) internally
+  // by reducing to just the center dot. See js/cursor-library.js.
+  {
+    const { entry, colors } = resolveBattleReticle();
+    entry.canvasDraw(ctx, aimX, aimY, colors, { crossColor, ready, skipCrosshair });
   }
-
-  // Center dot
-  ctx.fillStyle = crossColor;
-  ctx.globalAlpha = 0.8;
-  ctx.beginPath();
-  ctx.arc(aimX, aimY, 1.5, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.globalAlpha = 1;
 
   // Reload arc (only visible while reloading)
   if (!ready) {

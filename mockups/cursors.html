@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Cursor Reticles — Test Page</title>
+<style>
+  :root {
+    --bg-dark:#1a1f2e;
+    --bg-medium:#252b3d;
+    --bg-light:#2f3749;
+    --accent-green:#4ade80;
+    --accent-yellow:#fbbf24;
+    --accent-blue:#60a5fa;
+    --accent-orange:#fb923c;
+    --olive:#8a9a4d;
+    --text-primary:#e2e8f0;
+    --text-secondary:#94a3b8;
+  }
+  body {
+    background: var(--bg-dark);
+    color: var(--text-primary);
+    font-family: Oxanium, sans-serif;
+    margin: 0;
+    padding: 32px;
+  }
+  h1 { font-size: 20px; margin: 0 0 8px; letter-spacing: 2px; }
+  h2 { font-size: 14px; letter-spacing: 1.5px; color: var(--accent-green); text-transform: uppercase; margin: 40px 0 4px; }
+  .subtitle { color: var(--text-secondary); font-size: 13px; margin-bottom: 16px; }
+  .row {
+    display: grid;
+    grid-template-columns: 220px repeat(5, 1fr);
+    gap: 12px;
+    padding: 16px 12px;
+    border-top: 1px solid #333;
+    align-items: center;
+  }
+  .row.header {
+    border-top: none;
+    border-bottom: 2px solid var(--accent-green);
+    color: var(--text-secondary);
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 8px 12px;
+  }
+  .name { font-size: 15px; font-weight: 600; }
+  .name small { display: block; font-weight: 400; color: var(--text-secondary); font-size: 12px; margin-top: 2px; }
+  .swatch {
+    background: var(--bg-medium);
+    border: 1px solid #444;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 1;
+  }
+  .hover-zone {
+    padding: 32px 16px;
+    background: var(--bg-medium);
+    border: 1px dashed var(--accent-yellow);
+    border-radius: 6px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+  .hover-grid { display: grid; gap: 12px; margin-top: 12px; }
+  .hover-grid.cols-5 { grid-template-columns: repeat(5, 1fr); }
+  .bg-contrast {
+    margin-top: 16px;
+    padding: 16px;
+    background: linear-gradient(135deg, #1a1f2e 0%, #2f3749 50%, #1a1a2e 100%);
+    border-radius: 6px;
+    border: 1px solid #333;
+  }
+  .bg-contrast .strip {
+    display: flex; gap: 16px; align-items: center; padding: 10px 14px; border-radius: 4px;
+  }
+  .bg-contrast .strip strong { width: 200px; }
+  .bg-contrast .strip svg { width: 32px; height: 32px; }
+  code { background: var(--bg-light); padding: 1px 6px; border-radius: 3px; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>RETICLE / CURSOR DESIGNS</h1>
+<div class="subtitle">Two groups: battle-style reticles (for canvas / deploy / aiming) and menu-style cursors (for HQ / tabs / buttons). All viewBoxes are 32×32; 32px is the actual OS-cursor render size.</div>
+
+<h2>Battle reticles</h2>
+<div class="subtitle">Centered hot spot (16, 16). Pair with the canvas aim system.</div>
+
+<div class="row header">
+  <div>Name</div>
+  <div style="text-align:center">16 px</div>
+  <div style="text-align:center">24 px</div>
+  <div style="text-align:center">32 px (actual)</div>
+  <div style="text-align:center">48 px</div>
+  <div style="text-align:center">64 px</div>
+</div>
+
+<!-- B1. Olive Reticle -->
+<div class="row">
+  <div class="name">B1. Olive Reticle<small>kept — military sight, olive + amber</small></div>
+  <div class="swatch"><svg width="16" height="16" viewBox="0 0 32 32"><g stroke="#8a9a4d" stroke-width="1.6" fill="none"><circle cx="16" cy="16" r="9"/><line x1="16" y1="2" x2="16" y2="9"/><line x1="16" y1="23" x2="16" y2="30"/><line x1="2" y1="16" x2="9" y2="16"/><line x1="23" y1="16" x2="30" y2="16"/></g><circle cx="16" cy="16" r="1.8" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="24" height="24" viewBox="0 0 32 32"><g stroke="#8a9a4d" stroke-width="1.6" fill="none"><circle cx="16" cy="16" r="9"/><line x1="16" y1="2" x2="16" y2="9"/><line x1="16" y1="23" x2="16" y2="30"/><line x1="2" y1="16" x2="9" y2="16"/><line x1="23" y1="16" x2="30" y2="16"/></g><circle cx="16" cy="16" r="1.8" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="32" height="32" viewBox="0 0 32 32"><g stroke="#8a9a4d" stroke-width="1.6" fill="none"><circle cx="16" cy="16" r="9"/><line x1="16" y1="2" x2="16" y2="9"/><line x1="16" y1="23" x2="16" y2="30"/><line x1="2" y1="16" x2="9" y2="16"/><line x1="23" y1="16" x2="30" y2="16"/></g><circle cx="16" cy="16" r="1.8" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="48" height="48" viewBox="0 0 32 32"><g stroke="#8a9a4d" stroke-width="1.6" fill="none"><circle cx="16" cy="16" r="9"/><line x1="16" y1="2" x2="16" y2="9"/><line x1="16" y1="23" x2="16" y2="30"/><line x1="2" y1="16" x2="9" y2="16"/><line x1="23" y1="16" x2="30" y2="16"/></g><circle cx="16" cy="16" r="1.8" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="64" height="64" viewBox="0 0 32 32"><g stroke="#8a9a4d" stroke-width="1.6" fill="none"><circle cx="16" cy="16" r="9"/><line x1="16" y1="2" x2="16" y2="9"/><line x1="16" y1="23" x2="16" y2="30"/><line x1="2" y1="16" x2="9" y2="16"/><line x1="23" y1="16" x2="30" y2="16"/></g><circle cx="16" cy="16" r="1.8" fill="#fbbf24"/></svg></div>
+</div>
+
+<!-- B2. Diamond Marker -->
+<div class="row">
+  <div class="name">B2. Diamond Marker<small>kept — map waypoint, orange + amber</small></div>
+  <div class="swatch"><svg width="16" height="16" viewBox="0 0 32 32"><polygon points="16,3 29,16 16,29 3,16" fill="none" stroke="#fb923c" stroke-width="2"/><line x1="16" y1="10" x2="16" y2="22" stroke="#fb923c" stroke-width="1.2"/><line x1="10" y1="16" x2="22" y2="16" stroke="#fb923c" stroke-width="1.2"/><circle cx="16" cy="16" r="2" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="24" height="24" viewBox="0 0 32 32"><polygon points="16,3 29,16 16,29 3,16" fill="none" stroke="#fb923c" stroke-width="2"/><line x1="16" y1="10" x2="16" y2="22" stroke="#fb923c" stroke-width="1.2"/><line x1="10" y1="16" x2="22" y2="16" stroke="#fb923c" stroke-width="1.2"/><circle cx="16" cy="16" r="2" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="32" height="32" viewBox="0 0 32 32"><polygon points="16,3 29,16 16,29 3,16" fill="none" stroke="#fb923c" stroke-width="2"/><line x1="16" y1="10" x2="16" y2="22" stroke="#fb923c" stroke-width="1.2"/><line x1="10" y1="16" x2="22" y2="16" stroke="#fb923c" stroke-width="1.2"/><circle cx="16" cy="16" r="2" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="48" height="48" viewBox="0 0 32 32"><polygon points="16,3 29,16 16,29 3,16" fill="none" stroke="#fb923c" stroke-width="2"/><line x1="16" y1="10" x2="16" y2="22" stroke="#fb923c" stroke-width="1.2"/><line x1="10" y1="16" x2="22" y2="16" stroke="#fb923c" stroke-width="1.2"/><circle cx="16" cy="16" r="2" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="64" height="64" viewBox="0 0 32 32"><polygon points="16,3 29,16 16,29 3,16" fill="none" stroke="#fb923c" stroke-width="2"/><line x1="16" y1="10" x2="16" y2="22" stroke="#fb923c" stroke-width="1.2"/><line x1="10" y1="16" x2="22" y2="16" stroke="#fb923c" stroke-width="1.2"/><circle cx="16" cy="16" r="2" fill="#fbbf24"/></svg></div>
+</div>
+
+<h2>Menu — default cursor (classic arrow, colored)</h2>
+<div class="subtitle">Same well-known pointer shape. Differences are only color &amp; outline. Tip at (3, 3) = hot spot.</div>
+
+<div class="row header">
+  <div>Name</div>
+  <div style="text-align:center">16 px</div>
+  <div style="text-align:center">24 px</div>
+  <div style="text-align:center">32 px (actual)</div>
+  <div style="text-align:center">48 px</div>
+  <div style="text-align:center">64 px</div>
+</div>
+
+<!-- D1. Olive arrow + dark outline (most "military") -->
+<div class="row">
+  <div class="name">D1. Olive arrow<small>olive fill + dark outline</small></div>
+  <div class="swatch"><svg width="16" height="16" viewBox="0 0 32 32"><defs><linearGradient id="og" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="#c5d68a"/><stop offset="1" stop-color="#6b7a38"/></linearGradient><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(#og)" stroke="#1a1f2e" stroke-width="1.2" filter="url(#ds)"/></svg></div>
+  <div class="swatch"><svg width="24" height="24" viewBox="0 0 32 32"><defs><linearGradient id="og" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="#c5d68a"/><stop offset="1" stop-color="#6b7a38"/></linearGradient><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(#og)" stroke="#1a1f2e" stroke-width="1.2" filter="url(#ds)"/></svg></div>
+  <div class="swatch"><svg width="32" height="32" viewBox="0 0 32 32"><defs><linearGradient id="og" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="#c5d68a"/><stop offset="1" stop-color="#6b7a38"/></linearGradient><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(#og)" stroke="#1a1f2e" stroke-width="1.2" filter="url(#ds)"/></svg></div>
+  <div class="swatch"><svg width="48" height="48" viewBox="0 0 32 32"><defs><linearGradient id="og" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="#c5d68a"/><stop offset="1" stop-color="#6b7a38"/></linearGradient><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(#og)" stroke="#1a1f2e" stroke-width="1.2" filter="url(#ds)"/></svg></div>
+  <div class="swatch"><svg width="64" height="64" viewBox="0 0 32 32"><defs><linearGradient id="og" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="#c5d68a"/><stop offset="1" stop-color="#6b7a38"/></linearGradient><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(#og)" stroke="#1a1f2e" stroke-width="1.2" filter="url(#ds)"/></svg></div>
+</div>
+
+<!-- D2. Olive + amber tip (subtle accent) -->
+<div class="row">
+  <div class="name">D2. Olive + amber tip<small>olive fill, amber dot at the tip</small></div>
+  <div class="swatch"><svg width="16" height="16" viewBox="0 0 32 32"><defs><linearGradient id="og" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="#c5d68a"/><stop offset="1" stop-color="#6b7a38"/></linearGradient><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(#og)" stroke="#1a1f2e" stroke-width="1.2" filter="url(#ds)"/><circle cx="4" cy="4" r="1.5" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="24" height="24" viewBox="0 0 32 32"><defs><linearGradient id="og" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="#c5d68a"/><stop offset="1" stop-color="#6b7a38"/></linearGradient><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(#og)" stroke="#1a1f2e" stroke-width="1.2" filter="url(#ds)"/><circle cx="4" cy="4" r="1.5" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="32" height="32" viewBox="0 0 32 32"><defs><linearGradient id="og" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="#c5d68a"/><stop offset="1" stop-color="#6b7a38"/></linearGradient><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(#og)" stroke="#1a1f2e" stroke-width="1.2" filter="url(#ds)"/><circle cx="4" cy="4" r="1.5" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="48" height="48" viewBox="0 0 32 32"><defs><linearGradient id="og" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="#c5d68a"/><stop offset="1" stop-color="#6b7a38"/></linearGradient><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(#og)" stroke="#1a1f2e" stroke-width="1.2" filter="url(#ds)"/><circle cx="4" cy="4" r="1.5" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="64" height="64" viewBox="0 0 32 32"><defs><linearGradient id="og" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="#c5d68a"/><stop offset="1" stop-color="#6b7a38"/></linearGradient><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(#og)" stroke="#1a1f2e" stroke-width="1.2" filter="url(#ds)"/><circle cx="4" cy="4" r="1.5" fill="#fbbf24"/></svg></div>
+</div>
+
+<!-- D3. Amber arrow (most visible) -->
+<div class="row">
+  <div class="name">D3. Amber arrow<small>amber fill + dark outline, max visibility</small></div>
+  <div class="swatch"><svg width="16" height="16" viewBox="0 0 32 32"><defs><linearGradient id="ag" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="#fde68a"/><stop offset="1" stop-color="#d97706"/></linearGradient><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(#ag)" stroke="#1a1f2e" stroke-width="1.2" filter="url(#ds)"/></svg></div>
+  <div class="swatch"><svg width="24" height="24" viewBox="0 0 32 32"><defs><linearGradient id="ag" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="#fde68a"/><stop offset="1" stop-color="#d97706"/></linearGradient><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(#ag)" stroke="#1a1f2e" stroke-width="1.2" filter="url(#ds)"/></svg></div>
+  <div class="swatch"><svg width="32" height="32" viewBox="0 0 32 32"><defs><linearGradient id="ag" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="#fde68a"/><stop offset="1" stop-color="#d97706"/></linearGradient><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(#ag)" stroke="#1a1f2e" stroke-width="1.2" filter="url(#ds)"/></svg></div>
+  <div class="swatch"><svg width="48" height="48" viewBox="0 0 32 32"><defs><linearGradient id="ag" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="#fde68a"/><stop offset="1" stop-color="#d97706"/></linearGradient><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(#ag)" stroke="#1a1f2e" stroke-width="1.2" filter="url(#ds)"/></svg></div>
+  <div class="swatch"><svg width="64" height="64" viewBox="0 0 32 32"><defs><linearGradient id="ag" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="#fde68a"/><stop offset="1" stop-color="#d97706"/></linearGradient><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(#ag)" stroke="#1a1f2e" stroke-width="1.2" filter="url(#ds)"/></svg></div>
+</div>
+
+<h2>Menu — click cursor (over buttons / links)</h2>
+<div class="subtitle">What replaces the default browser hand pointer when hovering interactive elements. Pairs visually with whichever default you pick.</div>
+
+<div class="row header">
+  <div>Name</div>
+  <div style="text-align:center">16 px</div>
+  <div style="text-align:center">24 px</div>
+  <div style="text-align:center">32 px (actual)</div>
+  <div style="text-align:center">48 px</div>
+  <div style="text-align:center">64 px</div>
+</div>
+
+<!-- C1. Amber arrow (same shape, hover color) -->
+<!-- DESIGN: same shape as the default arrow but in amber instead of olive — clearest visual cue
+     that "this is the interactive state of the cursor I already know." -->
+<div class="row">
+  <div class="name">C1. Amber arrow (state change)<small>same shape as default, amber instead of olive</small></div>
+  <div class="swatch"><svg width="16" height="16" viewBox="0 0 32 32"><defs><linearGradient id="ag" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="#fde68a"/><stop offset="1" stop-color="#d97706"/></linearGradient><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(#ag)" stroke="#1a1f2e" stroke-width="1.2" filter="url(#ds)"/></svg></div>
+  <div class="swatch"><svg width="24" height="24" viewBox="0 0 32 32"><defs><linearGradient id="ag" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="#fde68a"/><stop offset="1" stop-color="#d97706"/></linearGradient><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(#ag)" stroke="#1a1f2e" stroke-width="1.2" filter="url(#ds)"/></svg></div>
+  <div class="swatch"><svg width="32" height="32" viewBox="0 0 32 32"><defs><linearGradient id="ag" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="#fde68a"/><stop offset="1" stop-color="#d97706"/></linearGradient><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(#ag)" stroke="#1a1f2e" stroke-width="1.2" filter="url(#ds)"/></svg></div>
+  <div class="swatch"><svg width="48" height="48" viewBox="0 0 32 32"><defs><linearGradient id="ag" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="#fde68a"/><stop offset="1" stop-color="#d97706"/></linearGradient><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(#ag)" stroke="#1a1f2e" stroke-width="1.2" filter="url(#ds)"/></svg></div>
+  <div class="swatch"><svg width="64" height="64" viewBox="0 0 32 32"><defs><linearGradient id="ag" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="#fde68a"/><stop offset="1" stop-color="#d97706"/></linearGradient><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(#ag)" stroke="#1a1f2e" stroke-width="1.2" filter="url(#ds)"/></svg></div>
+</div>
+
+<!-- C2. Mini reticle (lock-on) -->
+<!-- DESIGN: shrink the B1 olive reticle so it works as a small "lock on this button" pointer.
+     Hot spot is the center of the reticle. Visually ties click feedback to the in-canvas aiming language. -->
+<div class="row">
+  <div class="name">C2. Mini reticle<small>compact B1 reticle, centered hot spot</small></div>
+  <div class="swatch"><svg width="16" height="16" viewBox="0 0 32 32"><g stroke="#fbbf24" stroke-width="2" fill="none"><circle cx="9" cy="9" r="6"/><line x1="9" y1="1" x2="9" y2="5"/><line x1="9" y1="13" x2="9" y2="17"/><line x1="1" y1="9" x2="5" y2="9"/><line x1="13" y1="9" x2="17" y2="9"/></g><circle cx="9" cy="9" r="1.6" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="24" height="24" viewBox="0 0 32 32"><g stroke="#fbbf24" stroke-width="2" fill="none"><circle cx="9" cy="9" r="6"/><line x1="9" y1="1" x2="9" y2="5"/><line x1="9" y1="13" x2="9" y2="17"/><line x1="1" y1="9" x2="5" y2="9"/><line x1="13" y1="9" x2="17" y2="9"/></g><circle cx="9" cy="9" r="1.6" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="32" height="32" viewBox="0 0 32 32"><g stroke="#fbbf24" stroke-width="2" fill="none"><circle cx="9" cy="9" r="6"/><line x1="9" y1="1" x2="9" y2="5"/><line x1="9" y1="13" x2="9" y2="17"/><line x1="1" y1="9" x2="5" y2="9"/><line x1="13" y1="9" x2="17" y2="9"/></g><circle cx="9" cy="9" r="1.6" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="48" height="48" viewBox="0 0 32 32"><g stroke="#fbbf24" stroke-width="2" fill="none"><circle cx="9" cy="9" r="6"/><line x1="9" y1="1" x2="9" y2="5"/><line x1="9" y1="13" x2="9" y2="17"/><line x1="1" y1="9" x2="5" y2="9"/><line x1="13" y1="9" x2="17" y2="9"/></g><circle cx="9" cy="9" r="1.6" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="64" height="64" viewBox="0 0 32 32"><g stroke="#fbbf24" stroke-width="2" fill="none"><circle cx="9" cy="9" r="6"/><line x1="9" y1="1" x2="9" y2="5"/><line x1="9" y1="13" x2="9" y2="17"/><line x1="1" y1="9" x2="5" y2="9"/><line x1="13" y1="9" x2="17" y2="9"/></g><circle cx="9" cy="9" r="1.6" fill="#fbbf24"/></svg></div>
+</div>
+
+<!-- C3. Bracket focus mark -->
+<!-- DESIGN: a 4-corner targeting frame with a small amber pip in the middle.
+     Most HUD-style: feels like "this element is locked / selectable". -->
+<div class="row">
+  <div class="name">C3. Bracket focus<small>4-corner frame + amber pip</small></div>
+  <div class="swatch"><svg width="16" height="16" viewBox="0 0 32 32"><g stroke="#fbbf24" stroke-width="2" fill="none"><path d="M3 8 L3 3 L8 3"/><path d="M19 3 L24 3 L24 8"/><path d="M24 19 L24 24 L19 24"/><path d="M8 24 L3 24 L3 19"/></g><circle cx="13.5" cy="13.5" r="2" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="24" height="24" viewBox="0 0 32 32"><g stroke="#fbbf24" stroke-width="2" fill="none"><path d="M3 8 L3 3 L8 3"/><path d="M19 3 L24 3 L24 8"/><path d="M24 19 L24 24 L19 24"/><path d="M8 24 L3 24 L3 19"/></g><circle cx="13.5" cy="13.5" r="2" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="32" height="32" viewBox="0 0 32 32"><g stroke="#fbbf24" stroke-width="2" fill="none"><path d="M3 8 L3 3 L8 3"/><path d="M19 3 L24 3 L24 8"/><path d="M24 19 L24 24 L19 24"/><path d="M8 24 L3 24 L3 19"/></g><circle cx="13.5" cy="13.5" r="2" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="48" height="48" viewBox="0 0 32 32"><g stroke="#fbbf24" stroke-width="2" fill="none"><path d="M3 8 L3 3 L8 3"/><path d="M19 3 L24 3 L24 8"/><path d="M24 19 L24 24 L19 24"/><path d="M8 24 L3 24 L3 19"/></g><circle cx="13.5" cy="13.5" r="2" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="64" height="64" viewBox="0 0 32 32"><g stroke="#fbbf24" stroke-width="2" fill="none"><path d="M3 8 L3 3 L8 3"/><path d="M19 3 L24 3 L24 8"/><path d="M24 19 L24 24 L19 24"/><path d="M8 24 L3 24 L3 19"/></g><circle cx="13.5" cy="13.5" r="2" fill="#fbbf24"/></svg></div>
+</div>
+
+<div class="row header">
+  <div>Name</div>
+  <div style="text-align:center">16 px</div>
+  <div style="text-align:center">24 px</div>
+  <div style="text-align:center">32 px (actual)</div>
+  <div style="text-align:center">48 px</div>
+  <div style="text-align:center">64 px</div>
+</div>
+
+<!-- M1. HUD Brackets -->
+<!-- DESIGN: two L-shaped corner brackets forming a partial target frame.
+     Top-left bracket is the hot spot; bottom-right bracket sits diagonally
+     so the shape reads as a "selection box opening from the cursor tip."
+     Single olive stroke, no fill — clean and tactical, no cartoon. -->
+<div class="row">
+  <div class="name">M1. HUD Brackets<small>L-corner targeting frame, olive stroke + amber pip</small></div>
+  <div class="swatch"><svg width="16" height="16" viewBox="0 0 32 32"><path d="M2 9 L2 2 L9 2" fill="none" stroke="#8a9a4d" stroke-width="2.2"/><path d="M21 14 L14 14 L14 21" fill="none" stroke="#8a9a4d" stroke-width="2.2"/><circle cx="2" cy="2" r="1.4" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="24" height="24" viewBox="0 0 32 32"><path d="M2 9 L2 2 L9 2" fill="none" stroke="#8a9a4d" stroke-width="2.2"/><path d="M21 14 L14 14 L14 21" fill="none" stroke="#8a9a4d" stroke-width="2.2"/><circle cx="2" cy="2" r="1.4" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="32" height="32" viewBox="0 0 32 32"><path d="M2 9 L2 2 L9 2" fill="none" stroke="#8a9a4d" stroke-width="2.2"/><path d="M21 14 L14 14 L14 21" fill="none" stroke="#8a9a4d" stroke-width="2.2"/><circle cx="2" cy="2" r="1.4" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="48" height="48" viewBox="0 0 32 32"><path d="M2 9 L2 2 L9 2" fill="none" stroke="#8a9a4d" stroke-width="2.2"/><path d="M21 14 L14 14 L14 21" fill="none" stroke="#8a9a4d" stroke-width="2.2"/><circle cx="2" cy="2" r="1.4" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="64" height="64" viewBox="0 0 32 32"><path d="M2 9 L2 2 L9 2" fill="none" stroke="#8a9a4d" stroke-width="2.2"/><path d="M21 14 L14 14 L14 21" fill="none" stroke="#8a9a4d" stroke-width="2.2"/><circle cx="2" cy="2" r="1.4" fill="#fbbf24"/></svg></div>
+</div>
+
+<!-- M2. Designator Beam -->
+<!-- DESIGN: amber pip at the hot spot, thin olive line trailing down-right to a small marker.
+     Reads as a laser designator / range finder, not a literal arrow or icon.
+     Hot spot is the bright pip; the line is purely visual weight. -->
+<div class="row">
+  <div class="name">M2. Designator Beam<small>amber pip + olive trail to marker</small></div>
+  <div class="swatch"><svg width="16" height="16" viewBox="0 0 32 32"><line x1="4" y1="4" x2="18" y2="18" stroke="#8a9a4d" stroke-width="1.4"/><circle cx="18" cy="18" r="1.5" fill="none" stroke="#8a9a4d" stroke-width="1.2"/><circle cx="3" cy="3" r="2.5" fill="#fbbf24" stroke="#1a1f2e" stroke-width="0.8"/></svg></div>
+  <div class="swatch"><svg width="24" height="24" viewBox="0 0 32 32"><line x1="4" y1="4" x2="18" y2="18" stroke="#8a9a4d" stroke-width="1.4"/><circle cx="18" cy="18" r="1.5" fill="none" stroke="#8a9a4d" stroke-width="1.2"/><circle cx="3" cy="3" r="2.5" fill="#fbbf24" stroke="#1a1f2e" stroke-width="0.8"/></svg></div>
+  <div class="swatch"><svg width="32" height="32" viewBox="0 0 32 32"><line x1="4" y1="4" x2="18" y2="18" stroke="#8a9a4d" stroke-width="1.4"/><circle cx="18" cy="18" r="1.5" fill="none" stroke="#8a9a4d" stroke-width="1.2"/><circle cx="3" cy="3" r="2.5" fill="#fbbf24" stroke="#1a1f2e" stroke-width="0.8"/></svg></div>
+  <div class="swatch"><svg width="48" height="48" viewBox="0 0 32 32"><line x1="4" y1="4" x2="18" y2="18" stroke="#8a9a4d" stroke-width="1.4"/><circle cx="18" cy="18" r="1.5" fill="none" stroke="#8a9a4d" stroke-width="1.2"/><circle cx="3" cy="3" r="2.5" fill="#fbbf24" stroke="#1a1f2e" stroke-width="0.8"/></svg></div>
+  <div class="swatch"><svg width="64" height="64" viewBox="0 0 32 32"><line x1="4" y1="4" x2="18" y2="18" stroke="#8a9a4d" stroke-width="1.4"/><circle cx="18" cy="18" r="1.5" fill="none" stroke="#8a9a4d" stroke-width="1.2"/><circle cx="3" cy="3" r="2.5" fill="#fbbf24" stroke="#1a1f2e" stroke-width="0.8"/></svg></div>
+</div>
+
+<!-- M3. Corner + Pip -->
+<!-- DESIGN: a single L bracket at the hot spot with a small amber pip inside.
+     Most minimal of the menu options — feels like a focus marker. -->
+<div class="row">
+  <div class="name">M3. Corner Mark<small>single L bracket + center pip, olive + amber</small></div>
+  <div class="swatch"><svg width="16" height="16" viewBox="0 0 32 32"><path d="M2 14 L2 2 L14 2" fill="none" stroke="#8a9a4d" stroke-width="2.4"/><circle cx="7" cy="7" r="1.8" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="24" height="24" viewBox="0 0 32 32"><path d="M2 14 L2 2 L14 2" fill="none" stroke="#8a9a4d" stroke-width="2.4"/><circle cx="7" cy="7" r="1.8" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="32" height="32" viewBox="0 0 32 32"><path d="M2 14 L2 2 L14 2" fill="none" stroke="#8a9a4d" stroke-width="2.4"/><circle cx="7" cy="7" r="1.8" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="48" height="48" viewBox="0 0 32 32"><path d="M2 14 L2 2 L14 2" fill="none" stroke="#8a9a4d" stroke-width="2.4"/><circle cx="7" cy="7" r="1.8" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="64" height="64" viewBox="0 0 32 32"><path d="M2 14 L2 2 L14 2" fill="none" stroke="#8a9a4d" stroke-width="2.4"/><circle cx="7" cy="7" r="1.8" fill="#fbbf24"/></svg></div>
+</div>
+
+<!-- M4. Recolored Crosshair -->
+<!-- DESIGN: same shape as the original "tactical crosshair" but recolored to
+     olive + amber so it lives in the same family as B1/B2. Tests the user's
+     hypothesis that the *shape* was fine and the *colors* were the issue. -->
+<div class="row">
+  <div class="name">M4. Crosshair (recolored)<small>same shape as before, olive + amber palette</small></div>
+  <div class="swatch"><svg width="16" height="16" viewBox="0 0 32 32"><rect x="14.5" y="3" width="3" height="11" fill="#8a9a4d"/><rect x="14.5" y="18" width="3" height="11" fill="#8a9a4d"/><rect x="3" y="14.5" width="11" height="3" fill="#8a9a4d"/><rect x="18" y="14.5" width="11" height="3" fill="#8a9a4d"/><circle cx="16" cy="16" r="2.2" fill="none" stroke="#fbbf24" stroke-width="1.4"/><circle cx="16" cy="16" r="1" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="24" height="24" viewBox="0 0 32 32"><rect x="14.5" y="3" width="3" height="11" fill="#8a9a4d"/><rect x="14.5" y="18" width="3" height="11" fill="#8a9a4d"/><rect x="3" y="14.5" width="11" height="3" fill="#8a9a4d"/><rect x="18" y="14.5" width="11" height="3" fill="#8a9a4d"/><circle cx="16" cy="16" r="2.2" fill="none" stroke="#fbbf24" stroke-width="1.4"/><circle cx="16" cy="16" r="1" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="32" height="32" viewBox="0 0 32 32"><rect x="14.5" y="3" width="3" height="11" fill="#8a9a4d"/><rect x="14.5" y="18" width="3" height="11" fill="#8a9a4d"/><rect x="3" y="14.5" width="11" height="3" fill="#8a9a4d"/><rect x="18" y="14.5" width="11" height="3" fill="#8a9a4d"/><circle cx="16" cy="16" r="2.2" fill="none" stroke="#fbbf24" stroke-width="1.4"/><circle cx="16" cy="16" r="1" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="48" height="48" viewBox="0 0 32 32"><rect x="14.5" y="3" width="3" height="11" fill="#8a9a4d"/><rect x="14.5" y="18" width="3" height="11" fill="#8a9a4d"/><rect x="3" y="14.5" width="11" height="3" fill="#8a9a4d"/><rect x="18" y="14.5" width="11" height="3" fill="#8a9a4d"/><circle cx="16" cy="16" r="2.2" fill="none" stroke="#fbbf24" stroke-width="1.4"/><circle cx="16" cy="16" r="1" fill="#fbbf24"/></svg></div>
+  <div class="swatch"><svg width="64" height="64" viewBox="0 0 32 32"><rect x="14.5" y="3" width="3" height="11" fill="#8a9a4d"/><rect x="14.5" y="18" width="3" height="11" fill="#8a9a4d"/><rect x="3" y="14.5" width="11" height="3" fill="#8a9a4d"/><rect x="18" y="14.5" width="11" height="3" fill="#8a9a4d"/><circle cx="16" cy="16" r="2.2" fill="none" stroke="#fbbf24" stroke-width="1.4"/><circle cx="16" cy="16" r="1" fill="#fbbf24"/></svg></div>
+</div>
+
+<h2>Live hover (real OS cursor)</h2>
+<div class="subtitle">Hover each box to feel the actual cursor at OS size (32 px). Battle reticles → centered hot spot. Menu cursors → tip at (3, 3).</div>
+<style>
+  #hz-b1 { cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><g stroke="%238a9a4d" stroke-width="1.6" fill="none"><circle cx="16" cy="16" r="9"/><line x1="16" y1="2" x2="16" y2="9"/><line x1="16" y1="23" x2="16" y2="30"/><line x1="2" y1="16" x2="9" y2="16"/><line x1="23" y1="16" x2="30" y2="16"/></g><circle cx="16" cy="16" r="1.8" fill="%23fbbf24"/></svg>') 16 16, crosshair; }
+  #hz-b2 { cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><polygon points="16,3 29,16 16,29 3,16" fill="none" stroke="%23fb923c" stroke-width="2"/><line x1="16" y1="10" x2="16" y2="22" stroke="%23fb923c" stroke-width="1.2"/><line x1="10" y1="16" x2="22" y2="16" stroke="%23fb923c" stroke-width="1.2"/><circle cx="16" cy="16" r="2" fill="%23fbbf24"/></svg>') 16 16, crosshair; }
+  #hz-d1 { cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><defs><linearGradient id="og" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="%23c5d68a"/><stop offset="1" stop-color="%236b7a38"/></linearGradient><filter id="ds" x="-30%25" y="-30%25" width="160%25" height="160%25"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(%23og)" stroke="%231a1f2e" stroke-width="1.2" filter="url(%23ds)"/></svg>') 3 3, auto; }
+  #hz-d2 { cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><defs><linearGradient id="og" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="%23c5d68a"/><stop offset="1" stop-color="%236b7a38"/></linearGradient><filter id="ds" x="-30%25" y="-30%25" width="160%25" height="160%25"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(%23og)" stroke="%231a1f2e" stroke-width="1.2" filter="url(%23ds)"/><circle cx="4" cy="4" r="1.5" fill="%23fbbf24"/></svg>') 3 3, auto; }
+  #hz-d3 { cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><defs><linearGradient id="ag" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="%23fde68a"/><stop offset="1" stop-color="%23d97706"/></linearGradient><filter id="ds" x="-30%25" y="-30%25" width="160%25" height="160%25"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(%23ag)" stroke="%231a1f2e" stroke-width="1.2" filter="url(%23ds)"/></svg>') 3 3, auto; }
+  #hz-c1 { cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><defs><linearGradient id="ag" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="%23fde68a"/><stop offset="1" stop-color="%23d97706"/></linearGradient><filter id="ds" x="-30%25" y="-30%25" width="160%25" height="160%25"><feGaussianBlur in="SourceAlpha" stdDeviation="0.7"/><feOffset dx="0.6" dy="1.1"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M3 3 L3 23 L9 18 L13 26 L16 24.5 L12 16.5 L20 16.5 Z" fill="url(%23ag)" stroke="%231a1f2e" stroke-width="1.2" filter="url(%23ds)"/></svg>') 3 3, pointer; }
+  #hz-c2 { cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><g stroke="%23fbbf24" stroke-width="2" fill="none"><circle cx="9" cy="9" r="6"/><line x1="9" y1="1" x2="9" y2="5"/><line x1="9" y1="13" x2="9" y2="17"/><line x1="1" y1="9" x2="5" y2="9"/><line x1="13" y1="9" x2="17" y2="9"/></g><circle cx="9" cy="9" r="1.6" fill="%23fbbf24"/></svg>') 9 9, pointer; }
+  #hz-c3 { cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><g stroke="%23fbbf24" stroke-width="2" fill="none"><path d="M3 8 L3 3 L8 3"/><path d="M19 3 L24 3 L24 8"/><path d="M24 19 L24 24 L19 24"/><path d="M8 24 L3 24 L3 19"/></g><circle cx="13.5" cy="13.5" r="2" fill="%23fbbf24"/></svg>') 13 13, pointer; }
+</style>
+<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-bottom:8px;color:var(--text-secondary);font-size:11px;letter-spacing:1px;text-transform:uppercase">
+  <div>Battle reticles</div><div>Default arrows</div>
+</div>
+<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+    <div class="hover-zone" id="hz-b1">B1. Olive Reticle</div>
+    <div class="hover-zone" id="hz-b2">B2. Diamond</div>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+    <div class="hover-zone" id="hz-d1">D1. Olive arrow</div>
+    <div class="hover-zone" id="hz-d2">D2. Olive + tip</div>
+    <div class="hover-zone" id="hz-d3">D3. Amber arrow</div>
+  </div>
+</div>
+<div style="display:grid;grid-template-columns:1fr;gap:8px;margin-top:8px;color:var(--text-secondary);font-size:11px;letter-spacing:1px;text-transform:uppercase">Click cursors (hover = click state)</div>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:4px">
+  <div class="hover-zone" id="hz-c1">C1. Amber arrow</div>
+  <div class="hover-zone" id="hz-c2">C2. Mini reticle</div>
+  <div class="hover-zone" id="hz-c3">C3. Bracket focus</div>
+</div>
+
+<h2>Background contrast</h2>
+<div class="bg-contrast">
+  <div class="strip" style="background:#0a1424">
+    <strong>Very dark (canvas)</strong>
+    <svg viewBox="0 0 32 32"><g stroke="#8a9a4d" stroke-width="1.6" fill="none"><circle cx="16" cy="16" r="9"/><line x1="16" y1="2" x2="16" y2="9"/><line x1="16" y1="23" x2="16" y2="30"/><line x1="2" y1="16" x2="9" y2="16"/><line x1="23" y1="16" x2="30" y2="16"/></g><circle cx="16" cy="16" r="1.8" fill="#fbbf24"/></svg>
+    <svg viewBox="0 0 32 32"><polygon points="16,3 29,16 16,29 3,16" fill="none" stroke="#fb923c" stroke-width="2"/><line x1="16" y1="10" x2="16" y2="22" stroke="#fb923c" stroke-width="1.2"/><line x1="10" y1="16" x2="22" y2="16" stroke="#fb923c" stroke-width="1.2"/><circle cx="16" cy="16" r="2" fill="#fbbf24"/></svg>
+    <svg viewBox="0 0 32 32"><line x1="2" y1="2" x2="10" y2="10" stroke="#fbbf24" stroke-width="1.4"/><g transform="rotate(-20 18 18)"><rect x="11" y="12" width="14" height="16" rx="2.5" fill="#8a9a4d" stroke="#1a1f2e" stroke-width="0.8"/><circle cx="18" cy="15" r="1" fill="#1a1f2e"/><line x1="13" y1="19" x2="23" y2="19" stroke="#1a1f2e" stroke-width="0.7"/><line x1="13" y1="22" x2="23" y2="22" stroke="#1a1f2e" stroke-width="0.7"/><line x1="13" y1="25" x2="21" y2="25" stroke="#1a1f2e" stroke-width="0.7"/></g></svg>
+    <svg viewBox="0 0 32 32"><path d="M2 4 L14 14 L8 16 L2 8 Z" fill="#fbbf24"/><path d="M2 12 L14 22 L8 24 L2 16 Z" fill="#fb923c"/></svg>
+    <svg viewBox="0 0 32 32"><path d="M2 2 L7 12 L18 12 L9 19 L13 30 L2 22 L-9 30 L-5 19 L-14 12 L-3 12 Z" fill="#fbbf24" stroke="#1a1f2e" stroke-width="0.8" transform="translate(12 2)"/></svg>
+    <svg viewBox="0 0 32 32"><g transform="rotate(-45 16 16)"><path d="M3 14 L9 9 L9 19 Z" fill="#cda73a"/><rect x="9" y="10" width="14" height="8" fill="#b08040"/><rect x="22" y="9" width="2" height="10" fill="#7a5028"/></g></svg>
+  </div>
+  <div class="strip" style="background:#4a5568;margin-top:8px">
+    <strong>Mid-tone (terrain)</strong>
+    <svg viewBox="0 0 32 32"><g stroke="#8a9a4d" stroke-width="1.6" fill="none"><circle cx="16" cy="16" r="9"/><line x1="16" y1="2" x2="16" y2="9"/><line x1="16" y1="23" x2="16" y2="30"/><line x1="2" y1="16" x2="9" y2="16"/><line x1="23" y1="16" x2="30" y2="16"/></g><circle cx="16" cy="16" r="1.8" fill="#fbbf24"/></svg>
+    <svg viewBox="0 0 32 32"><polygon points="16,3 29,16 16,29 3,16" fill="none" stroke="#fb923c" stroke-width="2"/><line x1="16" y1="10" x2="16" y2="22" stroke="#fb923c" stroke-width="1.2"/><line x1="10" y1="16" x2="22" y2="16" stroke="#fb923c" stroke-width="1.2"/><circle cx="16" cy="16" r="2" fill="#fbbf24"/></svg>
+    <svg viewBox="0 0 32 32"><line x1="2" y1="2" x2="10" y2="10" stroke="#fbbf24" stroke-width="1.4"/><g transform="rotate(-20 18 18)"><rect x="11" y="12" width="14" height="16" rx="2.5" fill="#8a9a4d" stroke="#1a1f2e" stroke-width="0.8"/><circle cx="18" cy="15" r="1" fill="#1a1f2e"/><line x1="13" y1="19" x2="23" y2="19" stroke="#1a1f2e" stroke-width="0.7"/><line x1="13" y1="22" x2="23" y2="22" stroke="#1a1f2e" stroke-width="0.7"/><line x1="13" y1="25" x2="21" y2="25" stroke="#1a1f2e" stroke-width="0.7"/></g></svg>
+    <svg viewBox="0 0 32 32"><path d="M2 4 L14 14 L8 16 L2 8 Z" fill="#fbbf24"/><path d="M2 12 L14 22 L8 24 L2 16 Z" fill="#fb923c"/></svg>
+    <svg viewBox="0 0 32 32"><path d="M2 2 L7 12 L18 12 L9 19 L13 30 L2 22 L-9 30 L-5 19 L-14 12 L-3 12 Z" fill="#fbbf24" stroke="#1a1f2e" stroke-width="0.8" transform="translate(12 2)"/></svg>
+    <svg viewBox="0 0 32 32"><g transform="rotate(-45 16 16)"><path d="M3 14 L9 9 L9 19 Z" fill="#cda73a"/><rect x="9" y="10" width="14" height="8" fill="#b08040"/><rect x="22" y="9" width="2" height="10" fill="#7a5028"/></g></svg>
+  </div>
+  <div class="strip" style="background:#d4d4aa;margin-top:8px;color:#1a1f2e">
+    <strong>Light (snow/sand)</strong>
+    <svg viewBox="0 0 32 32"><g stroke="#8a9a4d" stroke-width="1.6" fill="none"><circle cx="16" cy="16" r="9"/><line x1="16" y1="2" x2="16" y2="9"/><line x1="16" y1="23" x2="16" y2="30"/><line x1="2" y1="16" x2="9" y2="16"/><line x1="23" y1="16" x2="30" y2="16"/></g><circle cx="16" cy="16" r="1.8" fill="#fbbf24"/></svg>
+    <svg viewBox="0 0 32 32"><polygon points="16,3 29,16 16,29 3,16" fill="none" stroke="#fb923c" stroke-width="2"/><line x1="16" y1="10" x2="16" y2="22" stroke="#fb923c" stroke-width="1.2"/><line x1="10" y1="16" x2="22" y2="16" stroke="#fb923c" stroke-width="1.2"/><circle cx="16" cy="16" r="2" fill="#fbbf24"/></svg>
+    <svg viewBox="0 0 32 32"><line x1="2" y1="2" x2="10" y2="10" stroke="#fbbf24" stroke-width="1.4"/><g transform="rotate(-20 18 18)"><rect x="11" y="12" width="14" height="16" rx="2.5" fill="#8a9a4d" stroke="#1a1f2e" stroke-width="0.8"/><circle cx="18" cy="15" r="1" fill="#1a1f2e"/><line x1="13" y1="19" x2="23" y2="19" stroke="#1a1f2e" stroke-width="0.7"/><line x1="13" y1="22" x2="23" y2="22" stroke="#1a1f2e" stroke-width="0.7"/><line x1="13" y1="25" x2="21" y2="25" stroke="#1a1f2e" stroke-width="0.7"/></g></svg>
+    <svg viewBox="0 0 32 32"><path d="M2 4 L14 14 L8 16 L2 8 Z" fill="#fbbf24" stroke="#1a1f2e" stroke-width="0.6"/><path d="M2 12 L14 22 L8 24 L2 16 Z" fill="#fb923c" stroke="#1a1f2e" stroke-width="0.6"/></svg>
+    <svg viewBox="0 0 32 32"><path d="M2 2 L7 12 L18 12 L9 19 L13 30 L2 22 L-9 30 L-5 19 L-14 12 L-3 12 Z" fill="#fbbf24" stroke="#1a1f2e" stroke-width="0.8" transform="translate(12 2)"/></svg>
+    <svg viewBox="0 0 32 32"><g transform="rotate(-45 16 16)"><path d="M3 14 L9 9 L9 19 Z" fill="#cda73a" stroke="#1a1f2e" stroke-width="0.6"/><rect x="9" y="10" width="14" height="8" fill="#b08040" stroke="#1a1f2e" stroke-width="0.6"/><rect x="22" y="9" width="2" height="10" fill="#7a5028" stroke="#1a1f2e" stroke-width="0.6"/></g></svg>
+  </div>
+</div>
+
+<h2>Customization sketch (not built yet)</h2>
+<div class="subtitle" style="line-height:1.6;max-width:900px">
+  Path I'd take when you're ready:
+  <br>1. <strong>Built-in library</strong> &mdash; the picked battle + menu cursors ship as defaults. Cursor styles live as inline SVG strings keyed by name in <code>cursor-library.js</code>.
+  <br>2. <strong>Settings tab</strong> &mdash; under Settings, add a <code>Cursors</code> sub-tab with two pickers (Menu, Battle). Each picker shows a swatch grid like above; selection writes to <code>Game.settings.cursors = {menu, battle}</code> and persists to localStorage.
+  <br>3. <strong>CSS variable plumbing</strong> &mdash; a tiny module reads <code>Game.settings.cursors</code> on load + setting change and updates two CSS custom properties (<code>--cursor-menu</code>, <code>--cursor-battle</code>). All rules use those vars so the switch is instant, no reload.
+  <br>4. <strong>Custom upload</strong> &mdash; an "Add custom" button accepts an SVG paste or file upload, validates it (size, viewBox, no scripts), stores it in the user's settings, and adds it to their picker. Library entries are read-only; user entries are editable / deletable.
+  <br>5. <strong>Share</strong> &mdash; export-as-string + import-from-string round-trips a single cursor, so a community can swap designs.
+</div>
+<div class="subtitle" style="margin-top:12px">Tell me which of B1/B2 you want for battle, which of M1&ndash;M4 you want for menus, and whether you want the customization feature wired now or filed as a follow-up.</div>
+
+</body>
+</html>

@@ -179,6 +179,17 @@ export function load() {
         Game.settings.controls = Game.settings.controls || {};
         Object.assign(Game.settings.controls, data.settings.controls);
       }
+      // Deep merge cursor settings (default-init if missing on older saves)
+      Game.settings.cursors = Game.settings.cursors || {
+        menu:   { id: 'd3-amber', colors: undefined },
+        battle: { id: 'original', colors: undefined },
+        custom: []
+      };
+      if (data.settings?.cursors) {
+        Object.assign(Game.settings.cursors, data.settings.cursors);
+        Game.settings.cursors.custom = Array.isArray(data.settings.cursors.custom)
+          ? data.settings.cursors.custom : [];
+      }
       if (data.player) {
         Object.assign(Game.player, data.player);
         // Ensure unitColors exists for older saves

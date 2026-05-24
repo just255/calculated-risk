@@ -6,6 +6,8 @@ import { State, SubState, HQTab, UNITS, PROJECTILES, UNIT_PROJECTILES, SquadOrde
 import { Game, newBattlePlan, newCampaign, createAdvancingScenario, createFrontlineScenario, newZoneBattle, newEndlessRun, newFireRangeRun, ENDLESS_MAP_SIZES } from './state.js';
 import { initAudio, sound } from './audio.js';
 import { save, load, saveFRConfig, loadFRConfig, saveFRNamedConfig, loadFRNamedConfigs, deleteFRNamedConfig, migrateFRConfig } from './storage.js';
+import { applyMenuCursor } from './cursor-apply.js';
+import { getCursor, defaultColors, sanitizeSvg } from './cursor-library.js';
 import { goto, deploy, switchUnit, stopLoop, stopFireRangeLoop, formatFireRangeLog, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, endlessKeyDown, endlessKeyUp, endlessMouseMove, endlessMouseDown, endlessMouseUp, handleDeployClick, confirmDeployment, selectDeployZone, fireRangeKeyDown, fireRangeKeyUp, fireRangeWheel, updateEventLog, extractFromRun, battleMouseDown, battleMouseUp, battleSetAimAngle, battleClearAimAngle, battleSetJoystick, battleClearJoystick, battleSetAimDepth, battleClearAimDepth, getActiveBattle, getHeroTouchConfig } from './game.js';
 import { applyPreset } from './loadouts.js';
 import { FR_PRESETS } from './fire-range-presets.js';
@@ -225,6 +227,8 @@ async function initApp() {
       });
   };
   preloadInsignia(Game.settings.insigniaSetId).catch(err => console.warn('[main] Insignia preload failed:', err));
+  // Apply default menu cursor (settings.cursors.menu) — works pre-load using in-memory defaults.
+  applyMenuCursor();
   // Render initial state
   render();
   setupEventHandlers();
@@ -602,6 +606,7 @@ document.getElementById('app').addEventListener('click', e => {
       const idx = parseInt(action.dataset.slot);
       setActiveSlot(idx);
       load(); // Load this slot's data
+      applyMenuCursor(); // Re-apply per-slot cursor settings
       goto(State.HQ);
     }
     else if (a === 'slot-new') {
@@ -1254,6 +1259,113 @@ document.getElementById('app').addEventListener('click', e => {
       if (Game.hqBarracksView === 'insignia') {
         setTimeout(() => initInsigniaTab(), 0);
       }
+    }
+    else if (a === 'hq-settings-view') {
+      Game.hqSettingsView = action.dataset.view || 'general';
+      Game._cursorAddDrawer = null; // close drawer on tab change
+      render();
+    }
+    else if (a === 'cursor-select') {
+      const slot = action.dataset.slot;
+      const id = action.dataset.id;
+      if ((slot === 'menu' || slot === 'battle') && Game.settings.cursors) {
+        Game.settings.cursors[slot] = { id, colors: undefined };
+        if (slot === 'menu') applyMenuCursor();
+        save();
+        render();
+      }
+    }
+    else if (a === 'cursor-reset') {
+      const slot = action.dataset.slot;
+      if ((slot === 'menu' || slot === 'battle') && Game.settings.cursors?.[slot]) {
+        Game.settings.cursors[slot].colors = undefined;
+        if (slot === 'menu') applyMenuCursor();
+        save();
+        render();
+      }
+    }
+    else if (a === 'cursor-save-custom') {
+      const slot = action.dataset.slot;
+      const c = Game.settings.cursors;
+      if (!c || !c[slot]) return;
+      const base = getCursor(c[slot].id, c.custom);
+      if (!base) return;
+      const baseColors = { ...defaultColors(base), ...(c[slot].colors || {}) };
+      const newId = `custom-${Date.now()}`;
+      const baseName = base.name || base.id;
+      c.custom.push({
+        id: newId,
+        baseId: base.id,
+        name: `${baseName} (custom)`,
+        type: base.type,
+        colors: baseColors,
+        // For library-derived customs, the template + parts + canvasDraw come
+        // from the base via resolution; we store nothing extra.
+      });
+      c[slot] = { id: newId, colors: undefined };
+      if (slot === 'menu') applyMenuCursor();
+      save();
+      render();
+    }
+    else if (a === 'cursor-delete') {
+      const slot = action.dataset.slot;
+      const id = action.dataset.id;
+      const c = Game.settings.cursors;
+      if (!c || !id) return;
+      c.custom = (c.custom || []).filter(e => e.id !== id);
+      // If the deleted entry was selected, fall back to default.
+      if (c[slot]?.id === id) {
+        c[slot] = { id: slot === 'menu' ? 'd3-amber' : 'original', colors: undefined };
+      }
+      if (slot === 'menu') applyMenuCursor();
+      save();
+      render();
+    }
+    else if (a === 'cursor-add-open') {
+      Game._cursorAddDrawer = { slot: action.dataset.slot, text: '' };
+      render();
+    }
+    else if (a === 'cursor-add-close') {
+      Game._cursorAddDrawer = null;
+      render();
+    }
+    else if (a === 'cursor-add-validate') {
+      const d = Game._cursorAddDrawer;
+      if (!d) return;
+      const result = sanitizeSvg(d.text || '');
+      if (result.ok) {
+        // Build a thumbnail data URI for preview (raw, no token substitution needed)
+        d.parsed = 'data:image/svg+xml;utf8,' + encodeURIComponent(result.svg);
+        d.svg = result.svg;
+        d.parts = result.parts;
+        d.err = null;
+      } else {
+        d.parsed = null;
+        d.err = result.err;
+      }
+      render();
+    }
+    else if (a === 'cursor-add-save') {
+      const d = Game._cursorAddDrawer;
+      if (!d || !d.svg) return;
+      const c = Game.settings.cursors;
+      const newId = `custom-${Date.now()}`;
+      const slot = d.slot;
+      c.custom.push({
+        id: newId,
+        baseId: null,
+        name: `Custom ${c.custom.length + 1}`,
+        type: slot,         // menu or battle
+        template: d.svg,    // raw sanitized SVG string
+        parts: d.parts && d.parts.length ? d.parts : [],
+        colors: undefined,
+        hotspot: slot === 'menu' ? [3, 3] : undefined
+      });
+      c[slot] = { id: newId, colors: undefined };
+      Game._cursorAddDrawer = null;
+      if (slot === 'menu') applyMenuCursor();
+      save();
+      render();
     }
     else if (a === 'hq-rush-heal') {
       const soldierId = action.dataset.soldier;
@@ -3501,6 +3613,31 @@ document.getElementById('app').addEventListener('input', e => {
     Game.settings.controls[key] = value;
     save();
     render();
+    return;
+  }
+  // Cursor color part edits (live preview — no re-render of the whole screen)
+  const cursorColor = e.target.closest('[data-cursor-part]');
+  if (cursorColor && Game.state === State.SETTINGS) {
+    const slot = cursorColor.dataset.cursorSlot;
+    const token = cursorColor.dataset.cursorPart;
+    const value = cursorColor.value;
+    const c = Game.settings.cursors;
+    if (c && (slot === 'menu' || slot === 'battle')) {
+      c[slot].colors = c[slot].colors || {};
+      c[slot].colors[token] = value;
+      if (slot === 'menu') applyMenuCursor();
+      // Re-render so the swatch + part rows reflect the change.
+      // Battle reticle re-renders next frame on the live canvas; no extra work.
+      save();
+      render();
+    }
+    return;
+  }
+  // Cursor add-drawer textarea — store text in flight without re-rendering on every keystroke
+  const cursorAdd = e.target.closest('[data-cursor-add-text]');
+  if (cursorAdd && Game.state === State.SETTINGS && Game._cursorAddDrawer) {
+    Game._cursorAddDrawer.text = cursorAdd.value;
+    // Skip render — textarea would lose focus on every key.
     return;
   }
 });

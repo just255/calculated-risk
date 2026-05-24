@@ -7,6 +7,7 @@ import { Game, ENDLESS_MAP_SIZES } from './state.js';
 import { getCachedInsignia } from './insignia-renderer.js';
 import { save, getSlotMetas, getMaxSlots, slotExists } from './storage.js';
 import { getSkinSelectorData, setSkinPref, clearCache as clearSkinCache, loadVariantData, getCachedVariant } from './skins.js';
+import { BUILT_IN_CURSORS, getCursor, resolveColors, buildCursorSvg } from './cursor-library.js';
 import { getSprite, hasSprite, loadPartSprites, compositeUnitSprite, getPartImage, loadVariant, renderVariant } from './sprites.js';
 import { FR_PRESET_LIST } from './fire-range-presets.js';
 import { Objective } from './commander.js';
@@ -630,12 +631,24 @@ function menuHTML() {
 function settingsHTML() {
   const s = Game.settings;
   const c = s.controls || {};
+  const view = Game.hqSettingsView || 'general';
   return `
     <div class="screen settings-screen">
       <div class="settings-header">
         <button class="back-btn" data-action="menu">←</button>
         <h2 class="settings-title">Settings</h2>
       </div>
+      <div class="settings-sub-tabs">
+        <button class="settings-sub-tab ${view==='general'?'active':''}" data-action="hq-settings-view" data-view="general">GENERAL</button>
+        <button class="settings-sub-tab ${view==='cursors'?'active':''}" data-action="hq-settings-view" data-view="cursors">CURSORS</button>
+      </div>
+      ${view === 'cursors' ? settingsCursorsHTML() : settingsGeneralHTML(s, c)}
+    </div>
+  `;
+}
+
+function settingsGeneralHTML(s, c) {
+  return `
       <div class="setting-group">
         <div class="setting-label">Difficulty</div>
         <div class="setting-options">
@@ -686,6 +699,91 @@ function settingsHTML() {
         <div class="skins-container" id="skinsContainer">
           <p style="color:var(--text-secondary);font-size:0.85rem;">Loading skins...</p>
         </div>
+      </div>
+  `;
+}
+
+function _cursorColumnHTML(slot, sel, custom, label) {
+  const all = [...BUILT_IN_CURSORS.filter(e => e.type === slot), ...custom.filter(e => e.type === slot || !e.type)];
+  const entry = getCursor(sel.id, custom);
+  const colors = entry ? resolveColors(entry, sel.colors) : {};
+  const swatch = (e, isActive) => {
+    const rawColors = resolveColors(e, e.id === sel.id ? sel.colors : undefined);
+    // 'auto' sentinel is meaningful at runtime (dynamic crossColor) but not a
+    // valid SVG color — substitute a dim gray for the picker thumbnail.
+    const c = {};
+    for (const [k, v] of Object.entries(rawColors)) c[k] = (v === 'auto' ? '#94a3b8' : v);
+    const thumb = buildCursorSvg(e, c);
+    return `
+      <button class="cursor-swatch ${isActive ? 'active' : ''}" data-action="cursor-select"
+              data-slot="${slot}" data-id="${e.id}" title="${e.name}">
+        <img src="${thumb}" width="48" height="48" alt="${e.name}">
+        <span class="cursor-swatch-name">${e.name}</span>
+      </button>
+    `;
+  };
+  const partsRows = entry ? entry.parts.map(p => {
+    const v = colors[p.token];
+    const isAuto = v === 'auto';
+    const isColorHex = typeof v === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(v);
+    return `
+      <div class="cursor-part-row">
+        <label>${p.label}</label>
+        ${isAuto ? '<span class="cursor-part-auto">auto (dynamic)</span>' :
+          isColorHex ? `<input type="color" value="${v}" data-cursor-part="${p.token}" data-cursor-slot="${slot}">` :
+          `<span class="cursor-part-static" title="${v}">${v.slice(0, 22)}${v.length > 22 ? '…' : ''}</span>`}
+      </div>
+    `;
+  }).join('') : '';
+  const drawer = Game._cursorAddDrawer?.slot === slot ? _cursorAddDrawerHTML(slot) : '';
+  return `
+    <div class="cursor-column">
+      <div class="cursor-col-header">${label}</div>
+      <div class="cursor-swatch-grid">${all.map(e => swatch(e, e.id === sel.id)).join('')}</div>
+      ${entry ? `
+        <div class="cursor-selected">Selected: <strong>${entry.name}</strong></div>
+        <div class="cursor-parts">${partsRows}</div>
+        <div class="cursor-actions">
+          <button class="menu-btn small" data-action="cursor-save-custom" data-slot="${slot}">Save as Custom</button>
+          <button class="menu-btn small" data-action="cursor-reset" data-slot="${slot}">Reset</button>
+          <button class="menu-btn small" data-action="cursor-add-open" data-slot="${slot}">Add Custom SVG…</button>
+          ${entry.id.startsWith('custom-') ? `<button class="menu-btn small danger" data-action="cursor-delete" data-slot="${slot}" data-id="${entry.id}">Delete</button>` : ''}
+        </div>
+      ` : ''}
+      ${drawer}
+    </div>
+  `;
+}
+
+function _cursorAddDrawerHTML(slot) {
+  const d = Game._cursorAddDrawer;
+  return `
+    <div class="cursor-add-drawer">
+      <div class="cursor-add-header">Add Custom SVG (${slot})</div>
+      <textarea class="cursor-add-textarea" data-cursor-add-text data-slot="${slot}" placeholder='Paste an SVG (must have viewBox; max 10kb). Add data-part="name" to make a color editable.' rows="6">${d.text || ''}</textarea>
+      ${d.err ? `<div class="cursor-add-error">${d.err}</div>` : ''}
+      ${d.parsed ? `<div class="cursor-add-preview"><img src="${d.parsed}" width="64" height="64"></div>` : ''}
+      <div class="cursor-add-actions">
+        <button class="menu-btn small" data-action="cursor-add-validate" data-slot="${slot}">Validate</button>
+        <button class="menu-btn small ${d.parsed ? 'primary' : ''}" data-action="cursor-add-save" data-slot="${slot}" ${!d.parsed ? 'disabled' : ''}>Save</button>
+        <button class="menu-btn small" data-action="cursor-add-close" data-slot="${slot}">Cancel</button>
+      </div>
+    </div>
+  `;
+}
+
+function settingsCursorsHTML() {
+  const c = Game.settings.cursors || { menu: {id: 'd3-amber'}, battle: {id: 'original'}, custom: [] };
+  const custom = c.custom || [];
+  return `
+    <div class="cursor-settings">
+      <div class="cursor-settings-grid">
+        ${_cursorColumnHTML('menu',   c.menu,   custom, 'MENU CURSOR')}
+        ${_cursorColumnHTML('battle', c.battle, custom, 'BATTLE RETICLE')}
+      </div>
+      <div class="cursor-help">
+        Pick a swatch to switch. Edit a color to live-preview. <em>auto (dynamic)</em> means the
+        game picks the color at runtime (e.g. red/green/gray based on alignment for Original).
       </div>
     </div>
   `;

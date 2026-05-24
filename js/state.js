@@ -26,6 +26,8 @@ export const Game = {
   hqTab: HQTab.LINEUP,
   hqSelectedSlot: null,
   hqSelectedUnit: null,  // Selected unit index for details panel
+  hqSettingsView: 'general',  // Settings sub-tab: 'general' | 'cursors'
+  _cursorAddDrawer: null,  // {slot:'menu'|'battle', text, parsed?, parts?, err?} when open
   insigniaEditor: null,  // InsigniaEditor singleton ref (set by insignia-events.js)
   h2hDefenseSlot: undefined,
   h2hWaveLane: undefined,
@@ -42,6 +44,12 @@ export const Game = {
       joystickActivationRadius: 80,  // Pixels from anchor to activate joystick
       gestureHoldTime: 1000,         // Ms to hold for artillery
       gestureTapInterval: 300        // Ms between multi-taps
+    },
+    // Cursor + reticle picks (see js/cursor-library.js, docs/systems/cursors.md)
+    cursors: {
+      menu:   { id: 'd3-amber', colors: undefined },
+      battle: { id: 'original', colors: undefined },
+      custom: []  // [{id, baseId, name, colors, template?, parts?}]
     }
   },
 

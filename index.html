@@ -838,6 +838,171 @@
       margin-bottom: 20px;
     }
 
+    /* Settings sub-tabs (general / cursors) */
+    .settings-sub-tabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--bg-light, #2f3749);
+    }
+    .settings-sub-tab {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      padding: 8px 16px;
+      font-family: Oxanium, sans-serif;
+      font-size: 0.78rem;
+      letter-spacing: 1px;
+      cursor: var(--cursor-menu);
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+    }
+    .settings-sub-tab.active {
+      color: var(--accent-green, #4ade80);
+      border-bottom-color: var(--accent-green, #4ade80);
+    }
+
+    /* Cursor settings — two-column picker */
+    .cursor-settings-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    .cursor-column {
+      background: var(--bg-medium, #252b3d);
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 14px;
+    }
+    .cursor-col-header {
+      font-size: 0.75rem;
+      letter-spacing: 1px;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+    .cursor-swatch-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .cursor-swatch {
+      background: var(--bg-light, #2f3749);
+      border: 2px solid transparent;
+      border-radius: 4px;
+      padding: 6px 4px 4px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      cursor: var(--cursor-menu);
+      color: var(--text-primary);
+    }
+    .cursor-swatch.active {
+      border-color: var(--accent-green, #4ade80);
+    }
+    .cursor-swatch:hover {
+      background: #383f54;
+    }
+    .cursor-swatch img {
+      background: #0a1424;
+      border-radius: 3px;
+    }
+    .cursor-swatch-name {
+      font-size: 10px;
+      color: var(--text-secondary);
+    }
+    .cursor-selected {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+    }
+    .cursor-selected strong { color: var(--text-primary); }
+    .cursor-parts { margin-bottom: 10px; }
+    .cursor-part-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 4px 0;
+      font-size: 12px;
+    }
+    .cursor-part-row label { flex: 1; color: var(--text-secondary); }
+    .cursor-part-row input[type="color"] {
+      width: 32px; height: 24px;
+      border: 1px solid #444;
+      background: transparent;
+      cursor: var(--cursor-menu);
+    }
+    .cursor-part-auto, .cursor-part-static {
+      font-size: 11px;
+      color: var(--text-secondary);
+      font-style: italic;
+    }
+    .cursor-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .cursor-add-drawer {
+      margin-top: 12px;
+      padding: 10px;
+      background: #0a1424;
+      border: 1px solid var(--accent-yellow, #fbbf24);
+      border-radius: 4px;
+    }
+    .cursor-add-header {
+      font-size: 11px;
+      color: var(--accent-yellow, #fbbf24);
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+    .cursor-add-textarea {
+      width: 100%;
+      background: #1a1f2e;
+      color: var(--text-primary);
+      border: 1px solid #333;
+      border-radius: 3px;
+      font-family: Consolas, monospace;
+      font-size: 11px;
+      padding: 6px;
+      resize: vertical;
+      box-sizing: border-box;
+    }
+    .cursor-add-error {
+      color: var(--accent-red, #f87171);
+      font-size: 11px;
+      margin-top: 4px;
+    }
+    .cursor-add-preview {
+      margin-top: 8px;
+      padding: 6px;
+      background: #1a1f2e;
+      border-radius: 3px;
+      text-align: center;
+    }
+    .cursor-add-preview img { background: #0a1424; border-radius: 3px; }
+    .cursor-add-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .cursor-help {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-top: 12px;
+      padding: 8px;
+      background: var(--bg-medium, #252b3d);
+      border-radius: 4px;
+    }
+    .menu-btn.small {
+      padding: 4px 10px;
+      font-size: 11px;
+    }
+    .menu-btn.danger { color: var(--accent-red, #f87171); border-color: var(--accent-red, #f87171); }
+
     .setting-label {
       font-size: 0.8rem;
       color: var(--text-secondary);
@@ -10476,6 +10641,11 @@
       background: #1a1a2e;
     }
     .endless-battlefield.hero-crosshair { cursor: none; }
+
+    /* Menu cursor — driven by --cursor-menu, written by js/cursor-apply.js from
+       Game.settings.cursors.menu. See docs/systems/cursors.md. */
+    :root { --cursor-menu: auto; }
+    body { cursor: var(--cursor-menu); }
 
     .endless-controls {
       position: absolute;
