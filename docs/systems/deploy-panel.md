@@ -2,8 +2,8 @@
 name: deploy-panel
 type: system
 status: in-flux
-verified: 2026-05-23
-verified_hash: 5ca8487
+verified: 2026-05-24
+verified_hash: 8e876cc
 tags: [battle, deploy, ui, html-refactor]
 files:
   - js/ui.js
@@ -119,6 +119,7 @@ N/A. Deploy panel state is transient (lives only on the battle object during the
 - **Panel-not-hiding after DEPLOY** (resolved): two-layer safety — `updateDeployment` (game.js:2312) explicitly removes the panel on phase transition; `deployPanelHTML` (ui.js:7985) returns empty string if `phase !== 'deploying'`, so a stray render call still removes the node.
 - **Wrong container positioning** (resolved): panel is `position:absolute` inside `.endless-battle-screen` (which is `position:relative`, set at index.html:10404). Panel is a sibling of `.endless-controls`, NOT inside it. Z-index 10; kill feed is 300+ but only renders during combat.
 - **Phase-gate on all `dp-*` handlers**: if a handler runs after phase transitioned to `countdown`, `renderDeployPanel()` produces empty HTML and the panel disappears as expected. Never call `render()` from a deploy handler — it will redraw the battle screen and destroy the canvas.
+- **Virtual joystick touch zones overlap panel** (resolved `8e876cc`): document-level `touchstart`/`touchmove`/`touchend` in `main.js:3759+` set `moveJoystick.pending` / `shootJoystick.pending` whenever a touch lands within `joystickActivationRadius` (default 80px) of either anchor (bottom-left/right ~20%/80% of viewport). On landscape mobile those zones overlap the deploy panel and silently steal taps. Fix: `isHeroBattle()` (`main.js:3754`) now also requires `phase === 'active'`, so deploy + countdown skip the joystick handlers entirely. Future deploy-panel layouts that drift further into the joystick anchor zones don't need a re-fix as long as the phase gate stays.
 
 ## Pending Work (Phases 3–5)
 
