@@ -11801,12 +11801,14 @@
       overflow-y: auto;
     }
 
-    /* PG config — mobile landscape (narrow viewport).
-       Header shrinks, three-column body stays horizontal but each panel can
-       scroll vertically. Without this the title bleeds over center-column
-       content (justify-content: center used to push content above the
-       column's top edge into the header). */
-    @media (max-width: 900px) and (orientation: landscape) {
+    /* PG config — mobile landscape (short viewport).
+       Trigger on max-height rather than max-width so it catches modern
+       phones whose landscape widths are ~932–1100px (iPhone Pro Max, Galaxy,
+       iPad mini) — the 900px width breakpoint would miss them. The real
+       constraint is vertical: <500px tall = phone landscape.
+       Header shrinks, three-column body stays horizontal but each panel
+       can scroll vertically. */
+    @media (orientation: landscape) and (max-height: 500px) {
       .fr-config-screen { padding: 6px; }
       .fr-header { margin-bottom: 6px; }
       .fr-header h1 { font-size: 1.1rem; letter-spacing: 2px; }
