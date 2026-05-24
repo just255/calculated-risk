@@ -3,7 +3,7 @@ name: cursors
 type: system
 status: stable
 verified: 2026-05-24
-verified_hash: HEAD
+verified_hash: efa0b2a
 tags: [cursors, reticle, settings, ui, customization]
 files:
   - js/cursor-library.js
