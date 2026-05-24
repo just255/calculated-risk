@@ -115,7 +115,7 @@ Game.settings.cursors = {
 ```css
 :root { --cursor-menu: url("data:image/svg+xml;utf8,<encoded>") <hotX> <hotY>, auto; }
 ```
-CSS rule in `index.html` (~line 10484) applies `cursor: var(--cursor-menu) !important` via the **universal selector `*`**. `!important` is required because index.html has ~230 explicit `cursor: pointer` declarations baked into individual class rules (`.slot-card`, `.menu-btn`, etc.) that beat the universal selector by specificity; without `!important` the OS hand-pointer still leaked through on every clickable element (fixed `93bdafb`). Two exceptions also use `!important` to stay above: `input[type="text"|"number"|"search"]` + `textarea` → `cursor: text` (so typing keeps the I-beam), and `.endless-battlefield.hero-crosshair` → `cursor: none` (so the canvas crosshair takes over during active combat).
+CSS rule in `index.html` (~line 10484) applies `cursor: var(--cursor-menu) !important` via the **universal selector `*`**. `!important` is required because index.html has ~230 explicit `cursor: pointer` declarations baked into individual class rules (`.slot-card`, `.menu-btn`, etc.) that beat the universal selector by specificity; without `!important` the OS hand-pointer still leaked through on every clickable element (fixed `93bdafb`). Only one exception keeps its own `!important` cursor: `.endless-battlefield.hero-crosshair` → `cursor: none` (so the canvas crosshair takes over during active combat). Text inputs and textareas show the menu cursor too — there is no text I-beam exception (user preference).
 
 Called from:
 - `js/main.js initApp()` after preloads — applies in-memory defaults pre-load.
