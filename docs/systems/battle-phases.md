@@ -3,7 +3,7 @@ name: battle-phases
 type: system
 status: stable
 verified: 2026-05-24
-verified_hash: 43a2d54
+verified_hash: 89ac2f8
 tags: [battle, state-machine, phase, deploying, countdown, active]
 files:
   - js/game.js
@@ -110,6 +110,7 @@ N/A. Phase is transient battle state, not saved. The persistent side effects (so
 - **Blue march delay**: `_blueMarching` doesn't flip immediately on countdown — there's a ~2s pre-march pause so the camera lerp completes before units start moving. AI for red runs throughout countdown.
 - **`paused` is not a phase mutation.** Pause is implemented via `isDialogPaused(b)` and `_debugPaused` flags that short-circuit updates. `phase` stays `'active'`. UI checks the flag separately.
 - **Wave-complete uses `result` field, not phase string.** Endless mode wave-complete sets `b.result = 'wave_complete'` rather than mutating `phase` (game.js:3068). Treat `result` as the terminal signal, not phase.
+- **Hero crosshair is phase-gated** (`89ac2f8`). `battle-renderer.js:184` only draws `renderHeroCrosshair` when `b.phase === 'active'` so the aim circle / reticle / spread arc don't render over the deploy panel or during countdown march-in. The default browser cursor remains visible during deploy because `game.js:3702` withholds the `.hero-crosshair` CSS class outside active combat.
 
 ## Cross-references
 
