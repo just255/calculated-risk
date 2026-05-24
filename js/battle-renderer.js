@@ -180,8 +180,11 @@ export class BattleRenderer {
       this._entityRenderer.renderSpeechBubbles(effectsCtx, b, Date.now());
     }
 
-    // Hero crosshair + reload arc (screen space, above canopy/effects)
-    if (b.hero && !b.hero.dead && !b.hero.observer && !b.fireRange && !b._isReplay) {
+    // Hero crosshair + reload arc (screen space, above canopy/effects).
+    // Gate on phase === 'active' so the aim circle doesn't draw over the
+    // deploy panel / countdown — the default browser cursor stays visible
+    // during deploy via .hero-crosshair class not being applied (game.js:3702).
+    if (b.hero && !b.hero.dead && !b.hero.observer && !b.fireRange && !b._isReplay && b.phase === 'active') {
       const chCtx = this._viewport.getContext('effects');
       if (chCtx) {
         chCtx.save();
