@@ -3,7 +3,7 @@ name: cursors
 type: system
 status: stable
 verified: 2026-05-24
-verified_hash: efa0b2a
+verified_hash: 6c586a5
 tags: [cursors, reticle, settings, ui, customization]
 files:
   - js/cursor-library.js
@@ -115,7 +115,7 @@ Game.settings.cursors = {
 ```css
 :root { --cursor-menu: url("data:image/svg+xml;utf8,<encoded>") <hotX> <hotY>, auto; }
 ```
-CSS rule in `index.html` (~line 10484): `body { cursor: var(--cursor-menu); }`. All menu surfaces inherit. `.endless-battlefield.hero-crosshair { cursor: none; }` still wins during active combat so the canvas crosshair takes over.
+CSS rule in `index.html` (~line 10484) applies `cursor: var(--cursor-menu)` to `body` **and** every interactive element (`button`, `a`, `label`, `select`, `summary`, `[data-action]`, `[data-toggle]`, `[data-set]`, `[data-control]`, `[data-cursor-part]`, `.menu-btn`, `.setting-btn`, `.cursor-swatch`, `.toggle`, color/range/checkbox inputs). The explicit selector list overrides the user-agent default `cursor: pointer` on buttons — without it the chosen cursor only showed in empty space (fixed `6c586a5`). `.endless-battlefield.hero-crosshair { cursor: none; }` still wins during active combat so the canvas crosshair takes over.
 
 Called from:
 - `js/main.js initApp()` after preloads — applies in-memory defaults pre-load.
