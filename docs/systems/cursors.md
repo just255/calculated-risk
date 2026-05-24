@@ -3,7 +3,7 @@ name: cursors
 type: system
 status: stable
 verified: 2026-05-24
-verified_hash: 6c586a5
+verified_hash: 93bdafb
 tags: [cursors, reticle, settings, ui, customization]
 files:
   - js/cursor-library.js
@@ -115,7 +115,7 @@ Game.settings.cursors = {
 ```css
 :root { --cursor-menu: url("data:image/svg+xml;utf8,<encoded>") <hotX> <hotY>, auto; }
 ```
-CSS rule in `index.html` (~line 10484) applies `cursor: var(--cursor-menu)` to `body` **and** every interactive element (`button`, `a`, `label`, `select`, `summary`, `[data-action]`, `[data-toggle]`, `[data-set]`, `[data-control]`, `[data-cursor-part]`, `.menu-btn`, `.setting-btn`, `.cursor-swatch`, `.toggle`, color/range/checkbox inputs). The explicit selector list overrides the user-agent default `cursor: pointer` on buttons — without it the chosen cursor only showed in empty space (fixed `6c586a5`). `.endless-battlefield.hero-crosshair { cursor: none; }` still wins during active combat so the canvas crosshair takes over.
+CSS rule in `index.html` (~line 10484) applies `cursor: var(--cursor-menu) !important` via the **universal selector `*`**. `!important` is required because index.html has ~230 explicit `cursor: pointer` declarations baked into individual class rules (`.slot-card`, `.menu-btn`, etc.) that beat the universal selector by specificity; without `!important` the OS hand-pointer still leaked through on every clickable element (fixed `93bdafb`). Two exceptions also use `!important` to stay above: `input[type="text"|"number"|"search"]` + `textarea` → `cursor: text` (so typing keeps the I-beam), and `.endless-battlefield.hero-crosshair` → `cursor: none` (so the canvas crosshair takes over during active combat).
 
 Called from:
 - `js/main.js initApp()` after preloads — applies in-memory defaults pre-load.
