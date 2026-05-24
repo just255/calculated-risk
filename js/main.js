@@ -3752,7 +3752,12 @@ let joystickHoldY = 0;
 const JOYSTICK_HOLD_MS = 1000;  // 1 second hold to reposition
 
 function isHeroBattle() {
-  return Game.state === State.CAMPAIGN_BATTLE || Game.state === State.ENDLESS_BATTLE;
+  if (Game.state !== State.CAMPAIGN_BATTLE && Game.state !== State.ENDLESS_BATTLE) return false;
+  // Only enable hero-control input (joysticks, gamepad) when the player can drive the hero.
+  // During 'deploying' the deploy panel overlays the canvas — joystick touch zones intercept
+  // panel taps. During 'countdown' the hero auto-marches. Gate to 'active'.
+  const phase = Game.endless?.battle?.phase || Game.campaign?.battle?.phase;
+  return phase === 'active';
 }
 
 // Handle joystick touch start - set PENDING if near anchor (activate on drag)
