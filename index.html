@@ -11446,15 +11446,23 @@
     }
 
     /* ═══ FIRE RANGE ═══ */
-    /* PG config — now embedded as an HQ tab content view (_provingGroundTabHTML
+    /* PG config — embedded as an HQ tab content view (_provingGroundTabHTML
        in ui.js). Title / DEPLOY / MAP live in the HQ header (context-aware).
-       This screen has no standalone wrapper anymore — the .fr-config-embed
-       container just hosts the three-column body inside .hq-content. */
+       When this tab is active, lock .hq-content to overflow:hidden so each
+       column inside .fr-body can scroll independently — otherwise the whole
+       page scrolls and HQ chrome leaves the viewport on mobile.
+       Uses :has() — supported in Chrome 105+, Firefox 121+, Safari 15.4+. */
+    .hq-content:has(.fr-config-embed) {
+      overflow: hidden;
+      padding: 8px;
+      max-width: none;
+    }
     .fr-config-embed {
       display: flex;
       flex-direction: column;
       height: 100%;
       gap: 8px;
+      min-height: 0;
     }
     .fr-body {
       display: flex;
@@ -11542,39 +11550,50 @@
       flex-shrink: 0;
       text-transform: uppercase;
     }
+    /* Slider — thicker bar + larger thumb so it reads as 'grabbable' even at
+       default 0.50 (where multiple thumbs would otherwise stack as identical dots).
+       accent-color paints the bar fill in modern browsers; thumb gets a colored
+       ring so it pops against the muted bar track. */
     .fr-slider {
       flex: 1;
-      height: 4px;
+      height: 8px;
       -webkit-appearance: none;
       appearance: none;
-      background: rgba(255,255,255,0.15);
-      border-radius: 2px;
+      background: rgba(255,255,255,0.12);
+      border-radius: 4px;
       outline: none;
+      accent-color: #4a9eff;
     }
     .fr-slider::-webkit-slider-thumb {
       -webkit-appearance: none;
-      width: 12px;
-      height: 12px;
+      width: 20px;
+      height: 20px;
       border-radius: 50%;
       background: #4a9eff;
+      border: 2px solid #0a1424;
+      box-shadow: 0 0 0 1px rgba(74,158,255,0.6);
       cursor: pointer;
     }
     .fr-slider::-moz-range-thumb {
-      width: 12px;
-      height: 12px;
+      width: 20px;
+      height: 20px;
       border-radius: 50%;
       background: #4a9eff;
+      border: 2px solid #0a1424;
+      box-shadow: 0 0 0 1px rgba(74,158,255,0.6);
       cursor: pointer;
-      border: none;
     }
-    .fr-red .fr-slider::-webkit-slider-thumb { background: #ff4444; }
-    .fr-red .fr-slider::-moz-range-thumb { background: #ff4444; }
+    .fr-red .fr-slider { accent-color: #ff4444; }
+    .fr-red .fr-slider::-webkit-slider-thumb { background: #ff4444; box-shadow: 0 0 0 1px rgba(255,68,68,0.6); }
+    .fr-red .fr-slider::-moz-range-thumb { background: #ff4444; box-shadow: 0 0 0 1px rgba(255,68,68,0.6); }
     .fr-slider-val {
-      font-size: 0.6rem;
-      color: var(--text-secondary, #888);
-      width: 30px;
+      font-size: 0.62rem;
+      color: var(--text-primary, #eee);
+      font-family: 'Share Tech Mono', monospace;
+      width: 64px;
       text-align: right;
       flex-shrink: 0;
+      letter-spacing: 0.3px;
     }
     .fr-leader-btn {
       width: 24px;

@@ -11,7 +11,7 @@ import { getCursor, defaultColors, sanitizeSvg } from './cursor-library.js';
 import { goto, deploy, switchUnit, stopLoop, stopFireRangeLoop, formatFireRangeLog, addH2HWave, removeH2HWave, setH2HWaveUnit, clearH2HWaveLane, setH2HDefense, nextH2HRound, resetH2H, campaignKeyDown, campaignKeyUp, campaignMouseMove, endlessKeyDown, endlessKeyUp, endlessMouseMove, endlessMouseDown, endlessMouseUp, handleDeployClick, confirmDeployment, selectDeployZone, fireRangeKeyDown, fireRangeKeyUp, fireRangeWheel, updateEventLog, extractFromRun, battleMouseDown, battleMouseUp, battleSetAimAngle, battleClearAimAngle, battleSetJoystick, battleClearJoystick, battleSetAimDepth, battleClearAimDepth, getActiveBattle, getHeroTouchConfig } from './game.js';
 import { applyPreset } from './loadouts.js';
 import { FR_PRESETS } from './fire-range-presets.js';
-import { render, updateBarracksPanel, updateOpsPanel, setSubState, fetchAvailableVehicles, fetchUnitVariants, fetchVariantData, getUnitVariants, fireRangeResultsHTML, replayTheaterHTML, newGameSetupHTML, removeIntroSeed, saveIntroSeed, renderDeployPanel } from './ui.js';
+import { render, updateBarracksPanel, updateOpsPanel, setSubState, fetchAvailableVehicles, fetchUnitVariants, fetchVariantData, getUnitVariants, fireRangeResultsHTML, replayTheaterHTML, newGameSetupHTML, removeIntroSeed, saveIntroSeed, renderDeployPanel, frBandLabel } from './ui.js';
 import { setActiveSlot, migrateLegacySave, updateActiveSlotMeta, deleteSlot } from './storage.js';
 import { advanceDialog, isDialogPaused, launchFirstTimeMission } from './mission.js';
 import { ReplayPlayer } from './replay-player.js';
@@ -3575,7 +3575,7 @@ document.getElementById('app').addEventListener('input', e => {
         cmdConfig.personality[trait] = val;
       }
       const valSpan = cmdSlider.parentElement.querySelector('.fr-slider-val');
-      if (valSpan) valSpan.textContent = val.toFixed(2);
+      if (valSpan) valSpan.textContent = frBandLabel(val);
       return;
     }
     // Sergeant trait sliders
@@ -3591,7 +3591,7 @@ document.getElementById('app').addEventListener('input', e => {
         squads[si].sergeant[trait] = val;
       }
       const valSpan = sgtSlider.parentElement.querySelector('.fr-slider-val');
-      if (valSpan) valSpan.textContent = val.toFixed(2);
+      if (valSpan) valSpan.textContent = frBandLabel(val);
       return;
     }
 
@@ -3606,7 +3606,7 @@ document.getElementById('app').addEventListener('input', e => {
       if (squads && squads[si] && squads[si].units[idx]) {
         squads[si].units[idx][field] = val;
         const valSpan = slider.parentElement.querySelector('.fr-slider-val');
-        if (valSpan) valSpan.textContent = val.toFixed(2);
+        if (valSpan) valSpan.textContent = frBandLabel(val);
         // If user manually changes a personality trait, switch preset to Custom
         const traitKeys = ['aggression','patience','courage','discipline','initiative','awareness'];
         if (traitKeys.includes(field)) {

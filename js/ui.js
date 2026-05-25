@@ -8787,6 +8787,15 @@ const FR_FORMATIONS = [
   { value: 'echelon_r', label: 'Echelon R' }
 ];
 
+// PG slider value label — "BAL · 0.50" format (band tag + decimal). 5-band split:
+// 0.00-0.20 LOW, 0.20-0.40 CAU, 0.40-0.60 BAL, 0.60-0.80 AGG, 0.80-1.00 MAX.
+// Exported so main.js can use the same format when updating labels on input.
+export function frBandLabel(val) {
+  const v = Number(val);
+  const band = v < 0.2 ? 'LOW' : v < 0.4 ? 'CAU' : v < 0.6 ? 'BAL' : v < 0.8 ? 'AGG' : 'MAX';
+  return `${band} · ${v.toFixed(2)}`;
+}
+
 function frSlotRow(slot, i, team, typeField, typeOptions, squadIdx) {
   const expanded = slot._expanded ? ' expanded' : '';
   const leaderCls = slot.isLeader ? ' active' : '';
@@ -8797,7 +8806,7 @@ function frSlotRow(slot, i, team, typeField, typeOptions, squadIdx) {
     return `<div class="fr-slider-item" title="${s.title}">
       <span class="fr-slider-label">${s.label}</span>
       <input type="range" class="fr-slider" data-field="${s.key}" data-team="${team}" data-idx="${i}" data-squad="${squadIdx}" min="0" max="1" step="0.05" value="${val}">
-      <span class="fr-slider-val" data-val-for="${s.key}-${team}-${squadIdx}-${i}">${val.toFixed(2)}</span>
+      <span class="fr-slider-val" data-val-for="${s.key}-${team}-${squadIdx}-${i}">${frBandLabel(val)}</span>
     </div>`;
   }).join('');
 
@@ -8806,7 +8815,7 @@ function frSlotRow(slot, i, team, typeField, typeOptions, squadIdx) {
     return `<div class="fr-slider-item" title="${s.title}">
       <span class="fr-slider-label">${s.label}</span>
       <input type="range" class="fr-slider" data-field="${s.key}" data-team="${team}" data-idx="${i}" data-squad="${squadIdx}" min="0" max="1" step="0.05" value="${val}">
-      <span class="fr-slider-val" data-val-for="${s.key}-${team}-${squadIdx}-${i}">${val.toFixed(2)}</span>
+      <span class="fr-slider-val" data-val-for="${s.key}-${team}-${squadIdx}-${i}">${frBandLabel(val)}</span>
     </div>`;
   }).join('');
 
@@ -8857,7 +8866,7 @@ function sgtSliders(sgt, team, squadIdx) {
     return `<div class="fr-slider-item" title="${t.title}">
       <span class="fr-slider-label">${t.label}</span>
       <input type="range" class="fr-slider fr-sgt-slider" data-sgt-trait="${t.key}" data-sgt-team="${team}"${sqAttr} min="0" max="1" step="0.05" value="${val}">
-      <span class="fr-slider-val">${val.toFixed(2)}</span>
+      <span class="fr-slider-val">${frBandLabel(val)}</span>
     </div>`;
   }).join('');
 }
@@ -8878,7 +8887,7 @@ function cmdSliders(cmdConfig, team) {
     return `<div class="fr-slider-item" title="${t.title}">
       <span class="fr-slider-label">${t.label}</span>
       <input type="range" class="fr-slider fr-cmd-slider" data-cmd-trait="${t.key}" data-cmd-team="${team}" min="0" max="1" step="0.05" value="${val}">
-      <span class="fr-slider-val">${val.toFixed(2)}</span>
+      <span class="fr-slider-val">${frBandLabel(val)}</span>
     </div>`;
   }).join('');
 }
