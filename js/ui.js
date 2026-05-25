@@ -3,9 +3,9 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { State, SubState, HQTab, UnitType, UNITS, ENEMIES, UNIT_COSTS, H2H_BUDGET, VEHICLE_UNITS, TYPE_CHART, UNIT_PROJECTILES, PROJECTILES, UNIT_DESCRIPTIONS, CAMPAIGN_ERAS, CAMPAIGN_MOS, SquadOrder, TargetPriority, Formation, VEHICLE_CATEGORIES, ENDLESS_VEHICLES, PART_CATEGORY_CONFIG, SYSTEM_DEFINITIONS, UNIT_PART_SLOTS, UNIT_TYPE_MAP, Team, RANK_NAMES, INSIGNIA_SHAPE_TYPES, RANK_TABLE, HEROIC_ACTIONS, GAME_VERSION_STRING, UNIT_COMBAT_STATS, WAVE_POWER_CURVE, CREW_SCHEMAS, getRoleLabel, PHYSICAL_LABELS, TRAINING_CAP, ALL_ROLES, MOS_DEFINITIONS, OFFICER_RANKS, PIXELS_TO_METERS, DISPLAY_SPEED_KMH, DISPLAY_RANGE_M, DEFAULT_INTRO_SEED } from './constants.js';
-import { Game, ENDLESS_MAP_SIZES } from './state.js';
+import { Game, ENDLESS_MAP_SIZES, newFireRangeRun } from './state.js';
 import { getCachedInsignia } from './insignia-renderer.js';
-import { save, getSlotMetas, getMaxSlots, slotExists } from './storage.js';
+import { save, getSlotMetas, getMaxSlots, slotExists, loadFRConfig, migrateFRConfig } from './storage.js';
 import { getSkinSelectorData, setSkinPref, clearCache as clearSkinCache, loadVariantData, getCachedVariant } from './skins.js';
 import { BUILT_IN_CURSORS, getCursor, resolveColors, buildCursorSvg } from './cursor-library.js';
 import { getSprite, hasSprite, loadPartSprites, compositeUnitSprite, getPartImage, loadVariant, renderVariant } from './sprites.js';
@@ -1030,13 +1030,14 @@ function headquartersHTML() {
         <button class="hq-tab ${tab===HQTab.BARRACKS?'active':''}" data-hq-tab="${HQTab.BARRACKS}">BARRACKS</button>
         <button class="hq-tab ${tab===HQTab.ARMORY?'active':''}" data-hq-tab="${HQTab.ARMORY}">ARMORY</button>
         <button class="hq-tab ${tab===HQTab.MOTOR_POOL?'active':''}" data-hq-tab="${HQTab.MOTOR_POOL}">MOTOR POOL</button>
-        <button class="hq-tab" data-action="hq-fire-range">PROVING GROUND</button>
+        <button class="hq-tab ${tab===HQTab.PROVING_GROUND?'active':''}" data-hq-tab="${HQTab.PROVING_GROUND}">PROVING GROUNDS</button>
         <button class="hq-tab" data-action="hq-replays">REPLAYS</button>
       </div>
       <div class="hq-content">
         ${tab === HQTab.BARRACKS ? _barracksTabHTML() : ''}
         ${tab === HQTab.ARMORY ? _armoryTabHTML() : ''}
         ${tab === HQTab.MOTOR_POOL ? _motorPoolTabHTML() : ''}
+        ${tab === HQTab.PROVING_GROUND ? _provingGroundTabHTML() : ''}
       </div>
     </div>
   `;
@@ -2150,8 +2151,26 @@ function _operationsTabHTML() {
   `;
 }
 
-/** Compact deploy bar rendered in the HQ header — visible on every tab. */
+/** Compact deploy bar rendered in the HQ header — visible on every tab.
+ *  Context-aware: on PROVING GROUNDS tab, MAP controls Game.fireRange.config.mapSize,
+ *  DEPLOY launches the PG battle, and WAVE/POW are hidden (not applicable).
+ *  On every other tab, normal Operations behavior. */
 function _hqHeaderDeployBar() {
+  const isPG = Game.hqTab === HQTab.PROVING_GROUND;
+
+  if (isPG) {
+    const cfg = Game.fireRange?.config || {};
+    const currentSize = cfg.mapSize || 'medium';
+    const mapBtns = Object.entries(ENDLESS_MAP_SIZES).map(([key, c]) =>
+      `<button class="hq-map-btn ${currentSize === key ? 'active' : ''}" data-action="ops-set-map" data-size="${key}" title="${c.label}">${(c.label || key)[0].toUpperCase()}</button>`
+    ).join('');
+    return `
+      <div class="hq-deploy-bar">
+        <div class="hq-deploy-group"><span class="hq-deploy-label">MAP</span><div class="hq-map-buttons">${mapBtns}</div></div>
+        <button class="hq-deploy-btn" data-action="ops-deploy">DEPLOY ▶</button>
+      </div>`;
+  }
+
   const ctx = _initOpsState();
   const { ops, highestWave } = ctx;
   const wp = WAVE_POWER_CURVE;
@@ -9034,12 +9053,7 @@ function fireRangeConfigHTML() {
   }
 
   return `
-    <div class="screen fr-config-screen">
-      <div class="fr-header">
-        <h1>PROVING GROUND</h1>
-        <p class="fr-subtitle">AI Battle Test Bed</p>
-      </div>
-
+    <div class="fr-config-embed">
       <div class="fr-body">
         ${teamPanel(Team.BLUE, blueSquads, '#4a9eff', 'BLUE TEAM (Allies)', 'unitId', FR_BLUE_UNITS)}
 
@@ -9057,15 +9071,6 @@ function fireRangeConfigHTML() {
             <button class="fr-save-btn" data-action="fr-preset-load">Load</button>
           </div>
 
-          <div class="fr-map-size">
-            <span class="fr-label">Map Size</span>
-            <div class="fr-size-btns">
-              ${['small', 'medium', 'large'].map(s => `
-                <button class="fr-size-btn ${cfg.mapSize === s ? 'active' : ''}"
-                        data-action="fr-map-size" data-size="${s}">${s}</button>
-              `).join('')}
-            </div>
-          </div>
           <div class="fr-terrain-seed">
             <span class="fr-label">Terrain Seed</span>
             <input type="text" id="fr-terrain-seed" placeholder="random" value="${cfg.terrainSeed || ''}" style="width:80px;background:#1a1a2e;color:#ccc;border:1px solid #333;padding:2px 4px;font-size:0.7rem;border-radius:3px">
@@ -9097,15 +9102,24 @@ function fireRangeConfigHTML() {
             <button class="fr-save-btn" data-action="fr-export">Export</button>
             <button class="fr-save-btn" data-action="fr-import">Import</button>
           </div>
-
-          <button class="menu-btn primary fr-deploy-btn" data-action="fr-deploy">DEPLOY</button>
-          <button class="menu-btn secondary" data-action="menu">Back</button>
         </div>
 
         ${teamPanel(Team.RED, redSquads, '#ff4444', 'RED TEAM (Enemies)', 'unitId', FR_RED_TYPES)}
       </div>
     </div>
   `;
+}
+
+// HQ tab content for PROVING GROUNDS. Ensures Game.fireRange is initialized
+// (lazy init when the user first lands on the tab) then renders the config
+// body. The HQ header DEPLOY + MAP S/M/L are context-aware (see main.js).
+function _provingGroundTabHTML() {
+  if (!Game.fireRange) {
+    Game.fireRange = newFireRangeRun();
+    const stored = loadFRConfig();
+    if (stored) Game.fireRange.config = migrateFRConfig({ ...Game.fireRange.config, ...stored });
+  }
+  return fireRangeConfigHTML();
 }
 
 function fireRangeBattleHTML() {

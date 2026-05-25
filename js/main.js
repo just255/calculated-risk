@@ -670,16 +670,13 @@ document.getElementById('app').addEventListener('click', e => {
     // HQ actions
     else if (a === 'hq-deploy-endless') { Game.endless = newEndlessRun(); Game.endless._record = Game.settings?.autoRecord !== false; initAudio(); fetchUnitVariants().then(() => { goto(State.ENDLESS_LOADOUT); render(); }); }
     else if (a === 'hq-fire-range') {
-      // Mirror the title-screen 'fire-range' init — without these, render()
-      // tries to read Game.fireRange.config on null and the page blanks to
-      // "Loading...". Same init pattern as main.js:2356.
-      Game.fireRange = newFireRangeRun();
-      const lastCfg = loadFRConfig();
-      if (lastCfg && ((lastCfg.blueTeam && lastCfg.redTeam) || (lastCfg.blueSquads && lastCfg.redSquads))) {
-        Game.fireRange.config = lastCfg;
-      }
+      // PG is now an HQ tab (see _provingGroundTabHTML in ui.js). The tab
+      // button uses data-hq-tab so this action is only hit by legacy callers.
+      // Set the tab + render in place — fireRange itself is lazy-initialized
+      // by the tab render fn on first visit.
+      Game.hqTab = HQTab.PROVING_GROUND;
       initAudio();
-      goto(State.FIRE_RANGE);
+      if (Game.state !== State.HQ) goto(State.HQ); else render();
     }
     else if (a === 'hq-replays') {
       goto(State.REPLAY_THEATER);
@@ -750,6 +747,14 @@ document.getElementById('app').addEventListener('click', e => {
       }
     }
     else if (a === 'ops-set-map') {
+      // Context-aware: on PROVING GROUNDS tab the map size controls the PG run;
+      // on every other tab it controls operations / endless mode.
+      if (Game.hqTab === HQTab.PROVING_GROUND && Game.fireRange) {
+        Game.fireRange.config.mapSize = action.dataset.size;
+        saveFRConfig(Game.fireRange.config);
+        render();
+        return;
+      }
       if (!Game.opsConfig) Game.opsConfig = { mapSize: 'small', startWave: 1, heroUnit: null, squads: [{ units: [], vehicleId: null }], record: true };
       Game.opsConfig.mapSize = action.dataset.size;
       // Trim squads if map size reduced
@@ -1196,6 +1201,25 @@ document.getElementById('app').addEventListener('click', e => {
       render();
     }
     else if (a === 'ops-deploy') {
+      // Context-aware: on PROVING GROUNDS tab the HQ deploy button launches the
+      // PG test battle; on every other tab it launches an operations / endless run.
+      if (Game.hqTab === HQTab.PROVING_GROUND && Game.fireRange) {
+        // Mirror fr-deploy: capture inline inputs, save config, jump to battle.
+        const seedInput = document.getElementById('fr-terrain-seed');
+        const seedVal = seedInput?.value?.trim();
+        Game.fireRange.config.terrainSeed = seedVal ? parseInt(seedVal, 10) || 0 : null;
+        const timeInput = document.getElementById('fr-time-limit');
+        if (timeInput) {
+          const mins = Math.max(0, Math.min(60, parseInt(timeInput.value, 10) || 0));
+          Game.fireRange.config.timeLimit = mins * 60000;
+        }
+        saveFRConfig(Game.fireRange.config);
+        stopFireRangeLoop();
+        Game.fireRange.battle = null;
+        Game.fireRange.result = null;
+        goto(State.FIRE_RANGE_BATTLE);
+        return;
+      }
       if (!Game.opsConfig?.heroUnit) return;
       const ops = Game.opsConfig;
 
@@ -2477,14 +2501,13 @@ document.getElementById('app').addEventListener('click', e => {
     }
     // Fire Range actions
     else if (a === 'fire-range') {
-      Game.fireRange = newFireRangeRun();
-      // Restore last config if available
-      const lastCfg = loadFRConfig();
-      if (lastCfg && ((lastCfg.blueTeam && lastCfg.redTeam) || (lastCfg.blueSquads && lastCfg.redSquads))) {
-        Game.fireRange.config = lastCfg;
-      }
+      // PG now lives as an HQ tab. Title-screen entry requires an active slot
+      // (HQ assumes one). If none is loaded, no-op silently — the title-screen
+      // PG button is hidden in that state via the slot selector flow.
+      if (Game.activeSlot == null) return;
+      Game.hqTab = HQTab.PROVING_GROUND;
       initAudio();
-      goto(State.FIRE_RANGE);
+      goto(State.HQ);
     }
     else if (a === 'fr-deploy') {
       if (Game.fireRange) {
@@ -2515,7 +2538,9 @@ document.getElementById('app').addEventListener('click', e => {
         }
         stopFireRangeLoop(); // Destroy BattleRenderer BEFORE nulling battle
         Game.fireRange.battle = null;
-        goto(State.FIRE_RANGE);
+        // Return to the PG tab inside HQ (replaces the old State.FIRE_RANGE).
+        Game.hqTab = HQTab.PROVING_GROUND;
+        goto(State.HQ);
       }
     }
     else if (a === 'fr-results-dismiss') {

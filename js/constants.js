@@ -68,12 +68,14 @@ export const HQTab = {
   REPLAYS: 'replays'
 };
 
-// Tabs that render content directly in the HQ shell. PROVING_GROUND and REPLAYS
-// are nav-only (they goto a separate state on click), so they aren't rendered.
+// Tabs that render content directly in the HQ shell. REPLAYS still navigates
+// to a separate state on click; PROVING_GROUND now renders inline (since efa0b2a
+// follow-up: PG moved into HQ as a tab — see docs/systems/proving-ground.md).
 export const HQ_RENDER_TABS = [
   HQTab.BARRACKS,
   HQTab.ARMORY,
-  HQTab.MOTOR_POOL
+  HQTab.MOTOR_POOL,
+  HQTab.PROVING_GROUND
 ];
 
 export const RANK_NAMES = ['PVT', 'PV2', 'PFC', 'SPC', 'CPL', 'SGT'];
@@ -636,7 +638,7 @@ export const UNIT_PROJECTILES = {
 // viewRange (pixels): how far the crew can see (independent of fire range)
 // viewCone (degrees): forward vision cone angle (peripheral/rear zones computed from this)
 // Game version — single source of truth. Build number tracks iteration.
-export const GAME_VERSION = { major: 1, minor: 0, build: 300 };
+export const GAME_VERSION = { major: 1, minor: 0, build: 301 };
 export const GAME_VERSION_STRING = `${GAME_VERSION.major}.${GAME_VERSION.minor}.${GAME_VERSION.build}`;
 
 // Default max spread angle (degrees) — per-unit override via maxSpreadDeg in UNIT_COMBAT_STATS
