@@ -11653,23 +11653,52 @@
       line-height: 1;
     }
     .fr-remove:hover { background: rgba(255,60,60,0.3); }
+    /* DEBUG section — 2-column grid for the 6 toggles. The label sits in
+       its own row above the grid via the .fr-label rule (column container
+       handles centering). */
     .fr-debug-options {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      margin-top: 8px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px 10px;
+      margin-top: 6px;
+      justify-items: start;
     }
+    .fr-debug-options .fr-label {
+      grid-column: 1 / -1;
+      justify-self: center;
+    }
+    /* LED-style checkbox: round, dim when off, accent-green glow when on. */
     .fr-check {
       font-size: 0.7rem;
       color: var(--text-secondary, #888);
       display: flex;
       align-items: center;
       gap: 6px;
-      cursor: pointer;
+      cursor: var(--cursor-menu);
+      user-select: none;
     }
     .fr-check input[type="checkbox"] {
-      accent-color: #4a9eff;
+      -webkit-appearance: none;
+      appearance: none;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.2);
+      margin: 0;
+      flex-shrink: 0;
+      transition: background 0.15s, box-shadow 0.15s, border-color 0.15s;
     }
+    .fr-check input[type="checkbox"]:checked {
+      background: var(--accent-green, #4ade80);
+      border-color: var(--accent-green, #4ade80);
+      box-shadow: 0 0 6px rgba(74,222,128,0.7), inset 0 0 2px rgba(255,255,255,0.4);
+    }
+    .fr-check:hover input[type="checkbox"]:not(:checked) {
+      border-color: rgba(255,255,255,0.4);
+      background: rgba(255,255,255,0.1);
+    }
+    .fr-check:has(input:checked) { color: var(--text-primary, #eee); }
     .fr-sergeant-panel {
       margin-top: 10px;
       padding: 6px;
@@ -11797,8 +11826,10 @@
     }
     /* Center column as a tactical "control panel":
        all groups center-aligned, section dividers between them,
-       labels styled as console-style headers. */
+       labels styled as console-style headers, corner brackets
+       at TL + BR for tactical HUD framing. */
     .fr-center-col {
+      position: relative;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -11807,11 +11838,34 @@
       gap: 0;
       flex: 0 0 220px;
       overflow-y: auto;
-      padding: 10px 8px;
+      padding: 14px 8px;
       background: linear-gradient(180deg, var(--bg-medium, #1a1a2e) 0%, #0d1421 100%);
       border-radius: 8px;
       border: 1px solid rgba(74,158,255,0.15);
       box-shadow: inset 0 0 12px rgba(0,0,0,0.4);
+    }
+    /* Corner brackets — tactical HUD frame (TL + BR). */
+    .fr-center-col::before,
+    .fr-center-col::after {
+      content: '';
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      border: 2px solid var(--accent-blue, #60a5fa);
+      pointer-events: none;
+      opacity: 0.7;
+    }
+    .fr-center-col::before {
+      top: 4px;
+      left: 4px;
+      border-right: none;
+      border-bottom: none;
+    }
+    .fr-center-col::after {
+      bottom: 4px;
+      right: 4px;
+      border-left: none;
+      border-top: none;
     }
     /* Each group is its own centered tile separated by a thin divider. */
     .fr-center-col > * {
@@ -11826,6 +11880,21 @@
       letter-spacing: 1.5px;
       font-size: 0.68rem;
       opacity: 0.85;
+    }
+    /* Yellow asterisk next to a Terrain Seed that's been filled
+       (anything other than the 'random' placeholder). Pure CSS via
+       :placeholder-shown — no JS class management. */
+    .fr-terrain-seed { position: relative; }
+    .fr-terrain-seed input:not(:placeholder-shown) + *::before,
+    .fr-terrain-seed:has(input:not(:placeholder-shown))::after {
+      content: '*';
+      color: var(--accent-yellow, #fbbf24);
+      font-weight: bold;
+      margin-left: 4px;
+      position: absolute;
+      right: 8px;
+      top: 8px;
+      font-size: 0.85rem;
     }
     /* Body — every panel + center scrolls independently. min-height: 0 on the
        body is required so flex children can shrink below their intrinsic
