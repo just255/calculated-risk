@@ -3,8 +3,8 @@ name: proving-ground
 type: system
 status: stable
 verified: 2026-05-24
-verified_hash: 43a2d54
-tags: [proving-ground, fire-range, ai-test-bed, combat, debug]
+verified_hash: 9ef4066
+tags: [proving-ground, fire-range, ai-test-bed, combat, debug, hq-tab]
 files:
   - js/main.js
   - js/state.js
@@ -12,16 +12,19 @@ files:
   - js/ui.js
   - js/fire-range-presets.js
   - js/storage.js
+  - js/constants.js
   - js/projectile-resolver.js
   - js/ai-pipeline.js
   - js/replay-recorder.js
 entry_points:
-  - "main.js:2356 fire-range handler (title screen)"
-  - "main.js:667 hq-fire-range handler (HQ tab)"
-  - "main.js:~2377 fr-deploy handler (start battle)"
-  - "state.js:1872 newFireRangeRun"
-  - "state.js:1899 newFireRangeBattle"
-  - "ui.js:8879 fireRangeConfigHTML"
+  - "constants.js HQTab.PROVING_GROUND + HQ_RENDER_TABS"
+  - "ui.js _provingGroundTabHTML() (lazy-init + fireRangeConfigHTML)"
+  - "ui.js fireRangeConfigHTML() returns embedded body (.fr-config-embed)"
+  - "ui.js _hqHeaderDeployBar() context-aware (PG variant)"
+  - "main.js ops-set-map handler — branches on Game.hqTab === HQTab.PROVING_GROUND"
+  - "main.js ops-deploy handler — branches on Game.hqTab === HQTab.PROVING_GROUND"
+  - "main.js hq-fire-range / fire-range / fr-config — redirect to State.HQ + tab"
+  - "state.js newFireRangeRun / newFireRangeBattle"
 related:
   - systems/battle-phases.md
   - references/battle.md
@@ -30,17 +33,24 @@ related:
 
 # Proving Ground
 
-Internally still called "fire range" in code (`Game.fireRange`, `FIRE_RANGE` state, `fr-*` actions). The UI label is **Proving Ground** since the rename. Treat the two names as interchangeable; new code/comments should prefer "Proving Ground" but be aware grep needs `fire.?range`.
+Internally still called "fire range" in code (`Game.fireRange`, `fr-*` actions). The UI label is **PROVING GROUNDS** (plural, since `9ef4066`). Treat the two names as interchangeable; new code/comments should prefer "Proving Ground" but be aware grep needs `fire.?range`.
 
 ## Purpose
 
 An AI battle test bed for isolating combat behavior, unit balance, and squad-level tactics — distinct from campaign, endless, and intro mission. The player configures two custom squads (blue + red), tunes commander and sergeant personality sliders, picks a map size + terrain seed, optionally enables debug toggles (invincibility, no cooldowns, range overlays), then watches the AI fight without needing to drive a hero. Hero is in observer mode by default (off-map, unreachable), so combat math + AI decisions can be studied in isolation. ~25 named test presets (Tier Damage, Behavior, Vision, Morale, Combined Arms, etc.) provide canonical scenarios.
 
+## Where it lives (`9ef4066`)
+
+PROVING GROUNDS is now an **HQ tab content view**, not a separate screen. The same HQ chrome (header + tab bar) wraps it, alongside `BARRACKS / ARMORY / MOTOR POOL`. There is no longer a standalone PG config screen — `State.FIRE_RANGE` exists as an enum value but is not reached by any active code path. `State.FIRE_RANGE_BATTLE` (the in-battle screen) is unchanged.
+
+The HQ header's DEPLOY button and MAP S/M/L chips are **context-aware**: on the PG tab they target `Game.fireRange.config`; on every other tab they target `Game.opsConfig`. WAVE + POW are hidden on the PG tab (not applicable to AI test bed). See `_hqHeaderDeployBar()` in `ui.js`.
+
 ## Quick Reference
 
-- "Open from title screen" → `main.js:2356 fire-range` handler (`Game.fireRange = newFireRangeRun()` + `loadFRConfig` restore)
-- "Open from HQ tab" → `main.js:667 hq-fire-range` handler (mirror of title path; was broken until commit `5c98eea`)
-- "Configure squads" → `fireRangeConfigHTML()` (`ui.js:8879`) + action handlers `fr-add` / `fr-remove` / `fr-squad-add` (`main.js:~2452`)
+- "Open the PG tab" → click `PROVING GROUNDS` tab in HQ. `_provingGroundTabHTML()` lazy-inits `Game.fireRange = newFireRangeRun()` + restores config via `loadFRConfig`/`migrateFRConfig` on first visit
+- "Configure squads" → `fireRangeConfigHTML()` returns the embedded body (BLUE / center / RED columns) wrapped in `.fr-config-embed`. Action handlers `fr-add` / `fr-remove` / `fr-squad-add` (`main.js:~2452`)
+- "Change map size" → HQ header chips dispatch `ops-set-map`, which branches on `Game.hqTab` and mutates `Game.fireRange.config.mapSize` (+ `saveFRConfig`) when on PG
+- "Start the battle" → HQ header DEPLOY dispatches `ops-deploy`, which branches on `Game.hqTab`, captures `#fr-terrain-seed` + `#fr-time-limit` inputs, calls `saveFRConfig` + `stopFireRangeLoop` + `goto(State.FIRE_RANGE_BATTLE)`
 - "Apply test preset" → `fr-preset-load` (`main.js:~2576`) → `FR_PRESETS[id]` (`fire-range-presets.js`)
 - "Save / load / export / import named config" → `saveFRNamedConfig` / `loadFRNamedConfigs` / `deleteFRNamedConfig` (`storage.js:295-322`)
 - "Start battle (DEPLOY)" → `fr-deploy` (`main.js:~2377`) → `Game.fireRange.battle = newFireRangeBattle(config)` (`state.js:1899`)
