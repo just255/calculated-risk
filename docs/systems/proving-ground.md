@@ -3,7 +3,7 @@ name: proving-ground
 type: system
 status: stable
 verified: 2026-05-24
-verified_hash: 9ef4066
+verified_hash: 49ebc51
 tags: [proving-ground, fire-range, ai-test-bed, combat, debug, hq-tab]
 files:
   - js/main.js
@@ -42,6 +42,10 @@ An AI battle test bed for isolating combat behavior, unit balance, and squad-lev
 ## Where it lives (`9ef4066`)
 
 PROVING GROUNDS is now an **HQ tab content view**, not a separate screen. The same HQ chrome (header + tab bar) wraps it, alongside `BARRACKS / ARMORY / MOTOR POOL`. There is no longer a standalone PG config screen — `State.FIRE_RANGE` exists as an enum value but is not reached by any active code path. `State.FIRE_RANGE_BATTLE` (the in-battle screen) is unchanged.
+
+**Scrolling** (`49ebc51`): each column (BLUE team / center config / RED team) scrolls independently inside the embed. Implemented via `:has(.fr-config-embed)` on `.hq-content` (sets `overflow: hidden`) + `min-height: 0` on `.fr-body` so children can flex-shrink and engage their own `overflow-y: auto`. HQ header + tab bar stay locked.
+
+**Slider polish** (`49ebc51`): personality `<input type=range>` tracks bumped from 4px → 8px, thumbs from 12px → 20px (with ring + dark border). Value labels switched to `frBandLabel(val)` from `js/ui.js` — format `"BAL · 0.50"` mapping 5 bands (LOW / CAU / BAL / AGG / MAX) to the underlying 0–1 value. Applied to all three slider families (CMD, SGT, per-unit), updated both at initial render and on every input event in `main.js`.
 
 The HQ header's DEPLOY button and MAP S/M/L chips are **context-aware**: on the PG tab they target `Game.fireRange.config`; on every other tab they target `Game.opsConfig`. WAVE + POW are hidden on the PG tab (not applicable to AI test bed). See `_hqHeaderDeployBar()` in `ui.js`.
 
