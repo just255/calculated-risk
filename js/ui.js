@@ -9060,7 +9060,7 @@ function fireRangeConfigHTML() {
         <div class="fr-center-col">
           <div class="fr-presets">
             <span class="fr-label">Test Presets</span>
-            <select class="fr-preset-select">
+            <select class="fr-preset-select fr-select">
               <option value="">-- Select Scenario --</option>
               ${FR_PRESET_LIST.map(cat => `
                 <optgroup label="${cat.category}">
